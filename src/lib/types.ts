@@ -175,10 +175,28 @@ export interface MainContract {
   customerId: string;
   contractNumber: string;
   title: string;
+  projectId?: string;
   startDate: number;
   endDate: number;
-  status: 'active' | 'expired' | 'pending';
+  currency: string;
+  billingTerms: string;
+  paymentTerms: string;
+  status: 'active' | 'expired' | 'pending' | 'closed';
+  notes?: string;
   createdAt: number;
+  updatedAt: number;
+}
+
+export interface PositionRate {
+  id: string;
+  positionId: string;
+  sellRate: number;
+  costBaseline: number;
+  billingUnit: 'daily' | 'monthly' | 'hourly';
+  overtimeRule: string;
+  active: boolean;
+  notes?: string;
+  _path: string;
 }
 
 export interface PurchaseOrder {

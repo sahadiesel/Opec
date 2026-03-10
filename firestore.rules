@@ -45,6 +45,15 @@ service cloud.firestore {
       allow write: if isSalesStaff(); 
     }
     
+    match /main_contracts {
+      allow list: if isStaff();
+      match /{id} {
+        allow get: if isStaff();
+        allow write: if isSalesStaff();
+        match /{sub=**} { allow read, write: if isSalesStaff(); }
+      }
+    }
+    
     match /{path=**}/main_contracts/{id} { 
       allow read: if isStaff(); 
       allow write: if isSalesStaff(); 
