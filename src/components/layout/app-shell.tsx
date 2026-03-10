@@ -25,7 +25,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       <div className="flex min-h-screen w-full bg-background">
         <SidebarNav userRole={user.roleId} />
         <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center justify-between border-b bg-card px-4 transition-[width,height] ease-linear">
+          <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
               <SidebarTrigger />
               <div className="h-4 w-px bg-border mx-2" />
@@ -46,7 +46,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
               </Button>
             </div>
           </header>
-          <main className="flex-1 overflow-y-auto p-6">
+          <main className="flex-1 p-6">
             {children}
           </main>
         </SidebarInset>
