@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, CheckCircle2, XCircle, AlertCircle, FileQuestion, MoreHorizontal, UserCheck, ShieldAlert } from 'lucide-react';
+import { Plus, Search, CheckCircle2, AlertCircle, FileQuestion, MoreHorizontal, UserCheck, ShieldAlert, FileCheck, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { RoleType, Worker, ReadinessStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -17,15 +17,20 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { collection, doc } from 'firebase/firestore';
+import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 export default function WorkersPage() {
   const [user, setUser] = useState<{ displayName: string; role: RoleType } | null>(null);
-  const [workers, setWorkers] = useState<Worker[]>([
-    { id: '1', firstName: 'สมชาย', lastName: 'สายชล', nationalId: '1-2345-67890-12-3', positionId: '1', status: 'available', readinessStatus: 'READY' },
-    { id: '2', firstName: 'วิภา', lastName: 'รักไทย', nationalId: '3-4567-89012-34-5', positionId: '2', status: 'assigned', readinessStatus: 'MISSING_CERTIFICATE' },
-    { id: '3', firstName: 'มานะ', lastName: 'มั่นใจ', nationalId: '1-1111-22222-33-4', positionId: '1', status: 'available', readinessStatus: 'MEDICAL_EXPIRED' },
-    { id: '4', firstName: 'สมนึก', lastName: 'รักดี', nationalId: '2-2222-33333-44-5', positionId: '3', status: 'available', readinessStatus: 'DOCUMENT_MISSING' },
-  ]);
+  const { firestore } = useFirestore() ? { firestore: useFirestore() } : { firestore: null };
+
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'workers');
+  }, [firestore]);
+
+  const { data: workers, isLoading } = useCollection<Worker>(workersQuery as any);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -61,6 +66,13 @@ export default function WorkersPage() {
     }
   };
 
+  const handleDelete = (id: string) => {
+    if (!firestore) return;
+    if (confirm('ยืนยันการลบข้อมูลคนงานนี้?')) {
+      deleteDocumentNonBlocking(doc(firestore, 'workers', id));
+    }
+  };
+
   if (!user) return null;
 
   return (
@@ -68,7 +80,7 @@ export default function WorkersPage() {
       <div className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">ทะเบียนคนงาน (Worker Directory)</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-primary">ทะเบียนคนงาน (Worker Directory)</h1>
             <p className="text-muted-foreground">จัดการข้อมูลและตรวจสอบความพร้อม (Readiness) รายบุคคล</p>
           </div>
           <Button className="gap-2">
@@ -92,61 +104,72 @@ export default function WorkersPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ชื่อ-นามสกุล (Name)</TableHead>
-                  <TableHead>ตำแหน่ง (Position)</TableHead>
-                  <TableHead>สถานะงาน (Status)</TableHead>
-                  <TableHead>ความพร้อม (Readiness)</TableHead>
-                  <TableHead className="text-right">การจัดการ</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {workers.map((worker) => (
-                  <TableRow key={worker.id} className="group">
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-semibold">{worker.firstName} {worker.lastName}</span>
-                        <span className="text-xs text-muted-foreground">{worker.nationalId}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-normal">
-                        {worker.positionId === '1' ? 'Offshore Welder' : worker.positionId === '2' ? 'Safety Officer' : 'Crane Operator'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={worker.status === 'available' ? 'default' : 'secondary'} className={worker.status === 'available' ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}>
-                        {worker.status === 'available' ? 'ว่าง (Available)' : 'ติดงาน (Assigned)'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {getReadinessBadge(worker.readinessStatus)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-56">
-                          <DropdownMenuLabel>เมนูจัดการคนงาน</DropdownMenuLabel>
-                          <DropdownMenuItem>ดูข้อมูลโปรไฟล์</DropdownMenuItem>
-                          <DropdownMenuItem>แก้ไขข้อมูลพื้นฐาน</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="gap-2"><FileCheck className="h-4 w-4" /> จัดการใบรับรอง</DropdownMenuItem>
-                          <DropdownMenuItem className="gap-2"><ShieldAlert className="h-4 w-4" /> บันทึกการตรวจสุขภาพ</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive">ระงับสถานะชั่วคราว</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+            {isLoading ? (
+              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลคนงาน...</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>ชื่อ-นามสกุล (Name)</TableHead>
+                    <TableHead>ตำแหน่ง (Position)</TableHead>
+                    <TableHead>สถานะงาน (Status)</TableHead>
+                    <TableHead>ความพร้อม (Readiness)</TableHead>
+                    <TableHead className="text-right">การจัดการ</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {workers?.map((worker) => (
+                    <TableRow key={worker.id} className="group">
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-semibold">{worker.firstName} {worker.lastName}</span>
+                          <span className="text-xs text-muted-foreground">{worker.thaiNationalId}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-normal">
+                          {worker.currentPositionId}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={worker.workerStatus === 'available' ? 'default' : 'secondary'} className={worker.workerStatus === 'available' ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}>
+                          {worker.workerStatus === 'available' ? 'ว่าง (Available)' : 'ติดงาน (Assigned)'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {getReadinessBadge(worker.readinessStatus)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuLabel>เมนูจัดการคนงาน</DropdownMenuLabel>
+                            <DropdownMenuItem>ดูข้อมูลโปรไฟล์</DropdownMenuItem>
+                            <DropdownMenuItem>แก้ไขข้อมูลพื้นฐาน</DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="gap-2"><FileCheck className="h-4 w-4" /> จัดการใบรับรอง</DropdownMenuItem>
+                            <DropdownMenuItem className="gap-2"><ShieldAlert className="h-4 w-4" /> บันทึกการตรวจสุขภาพ</DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive gap-2" onClick={() => handleDelete(worker.id)}>
+                              <Trash2 className="h-4 w-4" /> ลบข้อมูล
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!isLoading && (!workers || workers.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลคนงาน</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       </div>
