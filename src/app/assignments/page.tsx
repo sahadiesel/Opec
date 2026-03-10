@@ -43,21 +43,21 @@ export default function AssignmentsPage() {
   }, []);
 
   const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
     return collectionGroup(firestore, 'assignments');
   }, [firestore, firebaseUser, isUserLoading, currentUser]);
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
     return collection(firestore, 'workers');
   }, [firestore, firebaseUser, isUserLoading, currentUser]);
   
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const poLinesQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
     return collectionGroup(firestore, 'po_lines');
   }, [firestore, firebaseUser, isUserLoading, currentUser]);
   

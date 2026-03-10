@@ -16,53 +16,52 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
 
-    // Role check helpers
-    function isSystemAdmin() { return hasRole('system_admin'); }
-    function isHRManager() { return hasRole('hr_manager'); }
-    function isHROfficer() { return hasRole('hr_officer'); }
-    function isSalesOfficer() { return hasRole('sales_officer'); }
-    function isFinanceOfficer() { return hasRole('finance_officer'); }
-    function isPayrollOfficer() { return hasRole('payroll_officer'); }
-    function isStoreOfficer() { return hasRole('store_officer'); }
-
-    // Combined Staff check
+    // Combined Staff check - efficient branching
     function isStaff() {
       return isSignedIn() && (
-        isSystemAdmin() || 
-        isHRManager() || 
-        isHROfficer() || 
-        isSalesOfficer() || 
-        isFinanceOfficer() || 
-        isPayrollOfficer() || 
-        isStoreOfficer()
+        hasRole('system_admin') || 
+        hasRole('hr_manager') || 
+        hasRole('hr_officer') || 
+        hasRole('sales_officer') || 
+        hasRole('finance_officer') || 
+        hasRole('payroll_officer') || 
+        hasRole('store_officer')
       );
     }
 
-    function isHRStaff() {
-      return isSignedIn() && (isSystemAdmin() || isHRManager() || isHROfficer());
-    }
+    function isSystemAdmin() { return hasRole('system_admin'); }
+    function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
+    function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
 
-    function isSalesStaff() {
-      return isSignedIn() && (isSystemAdmin() || isSalesOfficer());
-    }
-
-    // Collection Group support
+    // Collection Group support - Must be matched with recursive {path=**}
     match /{path=**}/assignments/{asgnId} { 
+      // Allow read for staff or if user is the specific customer for this assignment
       allow read: if isStaff() || (isSignedIn() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId); 
       allow write: if isStaff();
     }
-    match /{path=**}/purchase_orders/{poId} { allow read: if isStaff(); allow write: if isSalesStaff(); }
-    match /{path=**}/main_contracts/{id} { allow read: if isStaff(); allow write: if isSalesStaff(); }
-    match /{path=**}/po_lines/{lineId} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+    
+    match /{path=**}/purchase_orders/{poId} { 
+      allow read: if isStaff(); 
+      allow write: if isSalesStaff(); 
+    }
+    
+    match /{path=**}/main_contracts/{id} { 
+      allow read: if isStaff(); 
+      allow write: if isSalesStaff(); 
+    }
+    
+    match /{path=**}/po_lines/{lineId} { 
+      allow read: if isStaff(); 
+      allow write: if isSalesStaff(); 
+    }
 
-    // Users
+    // Top-level collections
     match /users/{userId} {
       allow get: if isStaff() || (isSignedIn() && request.auth.uid == userId);
       allow list: if isStaff();
       allow write: if isSystemAdmin() || (isSignedIn() && request.auth.uid == userId);
     }
 
-    // Master Data
     match /workers {
       allow list: if isStaff();
       match /{workerId} {
@@ -81,7 +80,6 @@ service cloud.firestore {
       }
     }
 
-    // Commercial Hierarchy
     match /customers {
       allow list: if isStaff();
       match /{customerId} {
@@ -91,7 +89,7 @@ service cloud.firestore {
       }
     }
 
-    // Roles & System Bootstrap
+    // Role verification documents
     match /roles_hr_manager/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
@@ -102,6 +100,7 @@ service cloud.firestore {
     
     match /system/bootstrap { allow read: if true; }
 
+    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }

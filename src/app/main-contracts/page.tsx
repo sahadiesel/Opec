@@ -7,33 +7,48 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, ClipboardList, MoreHorizontal } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { MainContract, RoleType } from '@/lib/types';
+import { MainContract, RoleType, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collectionGroup } from 'firebase/firestore';
 
 export default function MainContractsPage() {
-  const [user, setUser] = useState<{ displayName: string; roleId: RoleType } | null>(null);
-  const { user: firebaseUser } = useUser();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
-
-  // Using collectionGroup as MainContracts are nested under Customers
-  const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !user) return null;
-    return collectionGroup(firestore, 'main_contracts');
-  }, [firestore, firebaseUser, user]);
-
-  const { data: contracts, isLoading } = useCollection<MainContract>(contractsQuery as any);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
-  if (!user) return null;
+  // Using collectionGroup as MainContracts are nested under Customers
+  const contractsQuery = useMemoFirebase(() => {
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
+    return collectionGroup(firestore, 'main_contracts');
+  }, [firestore, isUserLoading, firebaseUser, currentUser]);
+
+  const { data: contracts, isLoading } = useCollection<MainContract>(contractsQuery as any);
+
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <AppShell user={user} onLogout={() => {}}>
+    <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>

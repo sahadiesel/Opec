@@ -18,26 +18,41 @@ export default function PurchaseOrdersPage() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
+  }, []);
+
   const poQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
     return collectionGroup(firestore, 'purchase_orders');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, isUserLoading, firebaseUser, currentUser]);
 
   const { data: pos, isLoading: isPOLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
   const poLinesQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
     return collectionGroup(firestore, 'po_lines');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, isUserLoading, firebaseUser, currentUser]);
 
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

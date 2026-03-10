@@ -76,7 +76,7 @@ export function useCollection<T = any>(
         // Handle collection group queries which might return empty/root path strings
         let path: string = memoizedTargetRefOrQuery.type === 'collection'
           ? (memoizedTargetRefOrQuery as CollectionReference).path
-          : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString();
+          : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query?.path?.canonicalString?.() || "";
         
         // If path is root or empty, it's likely a collection group query denied at the root level
         if (!path || path === "" || path === "/") {
