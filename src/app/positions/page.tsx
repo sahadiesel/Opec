@@ -74,7 +74,6 @@ export default function PositionsPage() {
         description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด...",
       });
       
-      // Navigate to detail page after a short delay
       if (docRef) {
         router.push(`/positions/${docRef.id}`);
       }

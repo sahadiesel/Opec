@@ -31,12 +31,6 @@ export type AssignmentStatus =
   | 'cancelled'
   | 'replaced';
 
-export type ClientApprovalStatus = 
-  | 'pending'
-  | 'approved'
-  | 'rejected'
-  | 'replacement_requested';
-
 export interface User {
   id: string;
   email: string;
@@ -144,11 +138,13 @@ export interface Assignment {
   workerId: string;
   poLineId: string;
   positionId: string;
+  customerId: string;
   startDate: number;
   endDate: number;
   status: AssignmentStatus;
   createdAt: number;
   updatedAt: number;
+  clientComments?: string;
 }
 
 // --- HR & WORKFORCE ---
