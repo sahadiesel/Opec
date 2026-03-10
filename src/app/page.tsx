@@ -1,3 +1,176 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { AppShell } from '@/components/layout/app-shell';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { RoleType, User } from '@/lib/types';
+import { Briefcase, UserSquare2, ShieldCheck, ClipboardList, Info } from 'lucide-react';
+
+const MOCK_USERS: User[] = [
+  { id: '1', email: 'admin@opec.com', displayName: 'System Admin', role: 'system_admin', createdAt: Date.now() },
+  { id: '2', email: 'sales@opec.com', displayName: 'Sales Officer', role: 'sales_officer', createdAt: Date.now() },
+  { id: '3', email: 'hrmgr@opec.com', displayName: 'HR Manager', role: 'hr_manager', createdAt: Date.now() },
+];
+
 export default function Home() {
-  return <></>;
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [email, setEmail] = useState('');
+
+  useEffect(() => {
+    // Simulate hydration check
+    setIsLoaded(true);
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) setUser(JSON.parse(stored));
+  }, []);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const found = MOCK_USERS.find(u => u.email === email);
+    if (found) {
+      setUser(found);
+      localStorage.setItem('opsflow_user', JSON.stringify(found));
+    } else {
+      alert('Mock Login: Try admin@opec.com, sales@opec.com, or hrmgr@opec.com');
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('opsflow_user');
+  };
+
+  if (!isLoaded) return null;
+
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Card className="w-full max-w-md shadow-xl border-t-4 border-t-primary">
+          <CardHeader className="space-y-1 text-center">
+            <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-4">
+              <Briefcase className="h-8 w-8 text-primary" />
+            </div>
+            <CardTitle className="text-2xl">OPEC OpsFlow</CardTitle>
+            <CardDescription>
+              ระบบจัดการกำลังคน OPEC Manpower Supply
+            </CardDescription>
+          </CardHeader>
+          <form onSubmit={handleLogin}>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">อีเมลผู้ใช้งาน</Label>
+                <Input 
+                  id="email" 
+                  type="email" 
+                  placeholder="name@opec.com" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required 
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">รหัสผ่าน</Label>
+                <Input id="password" type="password" required defaultValue="password123" />
+              </div>
+              <div className="bg-accent/50 p-3 rounded-md border border-accent flex gap-2">
+                <Info className="h-5 w-5 text-secondary shrink-0" />
+                <p className="text-xs text-muted-foreground">
+                  สำหรับ Phase 1A กรุณาใช้อีเมลตัวอย่าง: <b>admin@opec.com</b> หรือ <b>hrmgr@opec.com</b>
+                </p>
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Button type="submit" className="w-full h-11 text-lg">เข้าสู่ระบบ</Button>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <AppShell user={user} onLogout={handleLogout}>
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-primary">แดชบอร์ดภาพรวม</h1>
+          <p className="text-muted-foreground mt-2">ยินดีต้อนรับกลับมา, {user.displayName} ระบบพร้อมสำหรับการจัดการกำลังคนวันนี้</p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">คนงานทั้งหมด</CardTitle>
+              <UserSquare2 className="h-4 w-4 text-secondary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">1,284</div>
+              <p className="text-xs text-muted-foreground">+20.1% จากเดือนที่แล้ว</p>
+            </CardContent>
+          </Card>
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">คนงานพร้อมทำงาน</CardTitle>
+              <ShieldCheck className="h-4 w-4 text-green-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">842</div>
+              <p className="text-xs text-muted-foreground">พร้อมเข้าปฏิบัติงานทันที</p>
+            </CardContent>
+          </Card>
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">รอการตรวจสอบ (HR)</CardTitle>
+              <ClipboardList className="h-4 w-4 text-amber-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">42</div>
+              <p className="text-xs text-muted-foreground">ใบรับรองรอการยืนยัน</p>
+            </CardContent>
+          </Card>
+          <Card className="hover:shadow-md transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">สัญญาที่กำลังดำเนินอยู่</CardTitle>
+              <Briefcase className="h-4 w-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">12</div>
+              <p className="text-xs text-muted-foreground">สัญญาโครงการหลัก</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+          <Card className="col-span-4">
+            <CardHeader>
+              <CardTitle>สถานะความพร้อมคนงานรายสัปดาห์</CardTitle>
+            </CardHeader>
+            <CardContent className="h-[300px] flex items-center justify-center border-2 border-dashed rounded-lg bg-muted/20">
+              <p className="text-muted-foreground">กราฟสถานะความพร้อม (Chart จะแสดงที่นี่ใน Phase 1B)</p>
+            </CardContent>
+          </Card>
+          <Card className="col-span-3">
+            <CardHeader>
+              <CardTitle>รายการอัปเดตล่าสุด</CardTitle>
+              <CardDescription>ข้อมูลที่มีการเปลี่ยนแปลงล่าสุดในระบบ</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-8">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="flex items-center">
+                    <div className="ml-4 space-y-1">
+                      <p className="text-sm font-medium leading-none">เพิ่มข้อมูลคนงานใหม่: สมชาย สายชล</p>
+                      <p className="text-xs text-muted-foreground">2 ชั่วโมงที่แล้ว โดย HR Officer</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </AppShell>
+  );
 }
