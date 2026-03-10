@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Briefcase } from 'lucide-react';
+import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PurchaseOrder, User, Customer, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
