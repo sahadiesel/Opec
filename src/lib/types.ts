@@ -203,12 +203,17 @@ export interface PurchaseOrder {
   id: string;
   contractId: string;
   customerId: string;
-  poNumber: string;
+  poCode: string; // Mapping to poNumber but following requirement
+  poNumber?: string; 
   title: string;
+  projectName?: string;
+  description?: string;
   startDate: number;
   endDate: number;
   status: 'active' | 'closed' | 'pending';
+  notes?: string;
   createdAt: number;
+  updatedAt: number;
 }
 
 export interface POLine {
@@ -216,6 +221,8 @@ export interface POLine {
   poId: string;
   positionId: string;
   quantity: number;
+  startDate: number;
+  endDate: number;
   sellRateSnapshot: number;
   costBaselineSnapshot: number;
   billingUnitSnapshot: 'daily' | 'monthly' | 'hourly';
@@ -227,6 +234,7 @@ export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
+  poId?: string; // Denormalized for easier filtering in PO view
   positionId: string;
   customerId: string;
   startDate: number;
@@ -235,6 +243,7 @@ export interface Assignment {
   createdAt: number;
   updatedAt: number;
   clientComments?: string;
+  _path?: string;
 }
 
 // --- HR & WORKFORCE ---

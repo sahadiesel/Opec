@@ -4,14 +4,14 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar } from 'lucide-react';
+import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Briefcase } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PurchaseOrder, User, Customer, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, query, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 
 export default function PurchaseOrdersPage() {
   const router = useRouter();
@@ -36,27 +37,39 @@ export default function PurchaseOrdersPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newPO, setNewPO] = useState<Partial<PurchaseOrder>>({
     title: '',
-    poNumber: '',
+    poCode: '',
     customerId: '',
     contractId: '',
+    projectName: '',
+    description: '',
     startDate: Date.now(),
     endDate: Date.now() + 2592000000, // +30 days
-    status: 'pending'
+    status: 'pending',
+    notes: ''
   });
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
   const poQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
     return collection(firestore, 'purchase_orders');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
 
   const { data: pos, isLoading: isPOLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
-  const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || isUserLoading || !firebaseUser) return null;
+    return collection(firestore, 'customers');
+  }, [firestore, isUserLoading, firebaseUser]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
@@ -72,7 +85,8 @@ export default function PurchaseOrdersPage() {
     try {
       const docRef = await addDocumentNonBlocking(colRef, {
         ...newPO,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       });
       
       setIsCreateOpen(false);
@@ -86,7 +100,16 @@ export default function PurchaseOrdersPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <ShoppingCart className="h-12 w-12 text-primary animate-pulse mx-auto" />
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -105,19 +128,23 @@ export default function PurchaseOrdersPage() {
                 <Plus className="h-4 w-4" /> สร้างใบสั่งซื้อใหม่
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>สร้างใบสั่งซื้อใหม่</DialogTitle>
                 <DialogDescription>เลือกคู่ค้าและสัญญาหลักที่อ้างอิงเพื่อจองโควต้ากำลังคน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
-                  <Label>ชื่อใบสั่งซื้อ (PO Title)</Label>
+                  <Label>หัวข้อใบสั่งซื้อ (Title)</Label>
                   <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น สั่งจองกำลังคนรอบเดือน พ.ค. 2567" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>เลขที่ PO (PO Number)</Label>
-                  <Input value={newPO.poNumber} onChange={e => setNewPO({...newPO, poNumber: e.target.value})} placeholder="PO-2024-001" />
+                  <Label>เลขที่ PO (PO Code)</Label>
+                  <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-2024-001" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>ชื่อโครงการ (Project Name)</Label>
+                  <Input value={newPO.projectName} onChange={e => setNewPO({...newPO, projectName: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
                   <Label>ลูกค้า (Customer)</Label>
@@ -130,7 +157,7 @@ export default function PurchaseOrdersPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-2 col-span-2">
+                <div className="grid gap-2">
                   <Label>สัญญาหลักที่อ้างอิง (Main Contract)</Label>
                   <Select onValueChange={v => setNewPO({...newPO, contractId: v})} value={newPO.contractId} disabled={!newPO.customerId}>
                     <SelectTrigger><SelectValue placeholder="เลือกสัญญาหลัก..." /></SelectTrigger>
@@ -143,16 +170,32 @@ export default function PurchaseOrdersPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มงาน</Label>
-                  <Input type="date" onChange={e => setNewPO({...newPO, startDate: new Date(e.target.value).getTime()})} />
+                  <Input type="date" value={newPO.startDate ? new Date(newPO.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, startDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่สิ้นสุดงาน</Label>
-                  <Input type="date" onChange={e => setNewPO({...newPO, endDate: new Date(e.target.value).getTime()})} />
+                  <Input type="date" value={newPO.endDate ? new Date(newPO.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, endDate: new Date(e.target.value).getTime()})} />
+                </div>
+                <div className="grid gap-2 col-span-2">
+                  <Label>รายละเอียด</Label>
+                  <Textarea value={newPO.description} onChange={e => setNewPO({...newPO, description: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>สถานะ</Label>
+                  <Select onValueChange={v => setNewPO({...newPO, status: v as any})} value={newPO.status}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} disabled={!newPO.title || !newPO.customerId || !newPO.contractId}>บันทึกและจัดการ PO Lines</Button>
+                <Button onClick={handleCreate} disabled={!newPO.title || !newPO.customerId || !newPO.contractId || !newPO.poCode}>
+                  บันทึกและจัดการ PO Lines
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -164,7 +207,7 @@ export default function PurchaseOrdersPage() {
               <CardTitle>รายการใบสั่งซื้อทั้งหมด</CardTitle>
               <div className="relative w-72">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาเลขที่ PO..." className="pl-8" />
+                <Input type="search" placeholder="ค้นหาเลขที่ PO หรือชื่อโครงการ..." className="pl-8" />
               </div>
             </div>
           </CardHeader>
@@ -176,8 +219,8 @@ export default function PurchaseOrdersPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>เลขที่ PO</TableHead>
-                    <TableHead>หัวข้อใบสั่งซื้อ</TableHead>
-                    <TableHead>ลูกค้า</TableHead>
+                    <TableHead>ลูกค้า / สัญญา</TableHead>
+                    <TableHead>โครงการ</TableHead>
                     <TableHead>ระยะเวลา</TableHead>
                     <TableHead>สถานะ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
@@ -186,18 +229,26 @@ export default function PurchaseOrdersPage() {
                 <TableBody>
                   {pos?.map((po) => {
                     const customer = customers?.find(c => c.id === po.customerId);
+                    const contract = contracts?.find(c => c.id === po.contractId);
                     return (
                       <TableRow 
                         key={po.id} 
                         className="cursor-pointer hover:bg-muted/50 group"
                         onClick={() => router.push(`/purchase-orders/${po.id}`)}
                       >
-                        <TableCell className="font-mono text-xs">{po.poNumber}</TableCell>
-                        <TableCell className="font-semibold">{po.title}</TableCell>
+                        <TableCell className="font-mono text-xs font-bold">{po.poCode}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-xs">
-                            <Building2 className="h-3 w-3 text-muted-foreground" />
-                            {customer?.name || 'N/A'}
+                          <div className="flex flex-col text-xs">
+                            <span className="font-semibold text-sm">{customer?.name || 'N/A'}</span>
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <FileText className="h-3 w-3" /> {contract?.contractNumber || 'No Contract'}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+                            {po.projectName || '-'}
                           </div>
                         </TableCell>
                         <TableCell className="text-xs">

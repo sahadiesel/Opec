@@ -16,7 +16,7 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
 
-    // Combined Staff check - efficient branching
+    // Combined Staff check
     function isStaff() {
       return isSignedIn() && (
         hasRole('system_admin') || 
@@ -32,37 +32,6 @@ service cloud.firestore {
     function isSystemAdmin() { return hasRole('system_admin'); }
     function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
     function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
-
-    // Collection Group support - Must be matched with recursive {path=**}
-    match /{path=**}/assignments/{asgnId} { 
-      // Allow read for staff or if user is the specific customer for this assignment
-      allow read: if isStaff() || (isSignedIn() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId); 
-      allow write: if isStaff();
-    }
-    
-    match /{path=**}/purchase_orders/{poId} { 
-      allow read: if isStaff(); 
-      allow write: if isSalesStaff(); 
-    }
-    
-    match /main_contracts {
-      allow list: if isStaff();
-      match /{id} {
-        allow get: if isStaff();
-        allow write: if isSalesStaff();
-        match /{sub=**} { allow read, write: if isSalesStaff(); }
-      }
-    }
-    
-    match /{path=**}/main_contracts/{id} { 
-      allow read: if isStaff(); 
-      allow write: if isSalesStaff(); 
-    }
-    
-    match /{path=**}/po_lines/{lineId} { 
-      allow read: if isStaff(); 
-      allow write: if isSalesStaff(); 
-    }
 
     // Top-level collections
     match /users/{userId} {
@@ -95,6 +64,31 @@ service cloud.firestore {
         allow get: if isStaff();
         allow write: if isSalesStaff();
         match /{sub=**} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+      }
+    }
+
+    match /main_contracts {
+      allow list: if isStaff();
+      match /{id} {
+        allow get: if isStaff();
+        allow write: if isSalesStaff();
+        match /{sub=**} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+      }
+    }
+
+    match /purchase_orders {
+      allow list: if isStaff();
+      match /{poId} {
+        allow get: if isStaff();
+        allow write: if isSalesStaff();
+        match /po_lines/{lineId} {
+          allow read: if isStaff();
+          allow write: if isSalesStaff();
+          match /assignments/{asgnId} {
+            allow read: if isStaff();
+            allow write: if isHRStaff();
+          }
+        }
       }
     }
 

@@ -19,7 +19,10 @@ import {
   FileText,
   Building2,
   Briefcase,
-  Users
+  Users,
+  Calendar,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -31,11 +34,12 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where } from 'firebase/firestore';
+import { doc, collection, query, where, collectionGroup } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { PurchaseOrder, POLine, Customer, MainContract, Position, PositionRate, User } from '@/lib/types';
+import { PurchaseOrder, POLine, Customer, MainContract, Position, PositionRate, User, Assignment, Worker } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { Textarea } from '@/components/ui/textarea';
 
 export default function PODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -49,6 +53,15 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
 
   const poLinesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders', id, 'po_lines') : null), [firestore, id]);
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
+
+  const assignmentsQuery = useMemoFirebase(() => {
+    if (!firestore || isUserLoading || !firebaseUser) return null;
+    return collectionGroup(firestore, 'assignments');
+  }, [firestore, firebaseUser, isUserLoading]);
+  const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
+
+  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
@@ -66,7 +79,11 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
   const [editedPO, setEditedPO] = useState<Partial<PurchaseOrder>>({});
 
   const [isAddLineOpen, setIsAddLineOpen] = useState(false);
-  const [newLine, setNewLine] = useState<Partial<POLine>>({ quantity: 1 });
+  const [newLine, setNewLine] = useState<Partial<POLine>>({ 
+    quantity: 1,
+    startDate: po?.startDate || Date.now(),
+    endDate: po?.endDate || Date.now() + 2592000000
+  });
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -93,6 +110,8 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
       poId: id,
       positionId: newLine.positionId,
       quantity: Number(newLine.quantity) || 1,
+      startDate: newLine.startDate || po?.startDate || Date.now(),
+      endDate: newLine.endDate || po?.endDate || Date.now(),
       sellRateSnapshot: rate.sellRate,
       costBaselineSnapshot: rate.costBaseline,
       billingUnitSnapshot: rate.billingUnit,
@@ -106,7 +125,7 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
 
   const deleteLine = (lineId: string) => {
     if (!firestore) return;
-    if (confirm('ยืนยันการลบรายการนี้?')) {
+    if (confirm('ยืนยันการลบรายการนี้? การมอบหมายที่เกี่ยวข้องอาจได้รับผลกระทบ')) {
       deleteDocumentNonBlocking(doc(firestore, 'purchase_orders', id, 'po_lines', lineId));
     }
   };
@@ -122,6 +141,7 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
   }
 
   const customer = customers?.find(c => c.id === po.customerId);
+  const poAssignments = allAssignments?.filter(a => poLines?.some(l => l.id === a.poLineId)) || [];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -133,12 +153,13 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{po.title}</h1>
-              <Badge variant="outline" className="font-mono">{po.poNumber}</Badge>
+              <Badge variant="outline" className="font-mono text-primary border-primary/20">{po.poCode}</Badge>
               <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
             </div>
             <p className="text-muted-foreground flex items-center gap-4 mt-1 text-sm">
-              <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
-              <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '...'}</span>
+              <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
+              <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '...'}</span>
+              <span className="flex items-center gap-1 text-xs"><Briefcase className="h-3.5 w-3.5" /> โครงการ: {po.projectName || 'N/A'}</span>
             </p>
           </div>
           <div className="flex gap-2">
@@ -147,17 +168,69 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
             </Button>
             {isEditing && (
               <Button className="gap-2" onClick={handleSaveMaster}>
-                <Save className="h-4 w-4" /> บันทึก
+                <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง
               </Button>
             )}
           </div>
         </div>
 
         <Tabs defaultValue="lines" className="w-full">
-          <TabsList className="grid grid-cols-2 w-full md:w-fit h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
+            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูล PO</TabsTrigger>
             <TabsTrigger value="lines" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> รายการสั่งจอง (PO Lines)</TabsTrigger>
-            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูลใบสั่งซื้อ</TabsTrigger>
+            <TabsTrigger value="assignments" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> การมอบหมายงาน</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="info" className="mt-6">
+            <Card>
+              <CardHeader><CardTitle>ข้อมูลพื้นฐานใบสั่งซื้อ (PO Header Info)</CardTitle></CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label>หัวข้อใบสั่งซื้อ (Title)</Label>
+                    <Input disabled={!isEditing} value={isEditing ? editedPO.title : po.title} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>เลขที่ใบสั่งซื้อ (PO Code)</Label>
+                    <Input disabled={!isEditing} value={isEditing ? editedPO.poCode : po.poCode} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>ชื่อโครงการ (Project Name)</Label>
+                    <Input disabled={!isEditing} value={isEditing ? editedPO.projectName : po.projectName} onChange={e => setEditedPO({...editedPO, projectName: e.target.value})} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>วันที่เริ่มงาน (ตาม PO)</Label>
+                      <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.startDate || 0).toISOString().split('T')[0] : new Date(po.startDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, startDate: new Date(e.target.value).getTime()})} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>วันที่สิ้นสุดงาน</Label>
+                      <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.endDate || 0).toISOString().split('T')[0] : new Date(po.endDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, endDate: new Date(e.target.value).getTime()})} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>รายละเอียดโครงการ</Label>
+                    <Textarea disabled={!isEditing} value={isEditing ? editedPO.description : po.description} onChange={e => setEditedPO({...editedPO, description: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>สถานะใบสั่งซื้อ</Label>
+                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as any})} value={isEditing ? editedPO.status : po.status}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="closed">Closed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>หมายเหตุ</Label>
+                  <Textarea disabled={!isEditing} value={isEditing ? editedPO.notes : po.notes} onChange={e => setEditedPO({...editedPO, notes: e.target.value})} />
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="lines" className="mt-6">
             <Card>
@@ -191,8 +264,18 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
                         </Select>
                       </div>
                       <div className="grid gap-2">
-                        <Label>จำนวนคนงาน (อัตรารวม)</Label>
+                        <Label>จำนวนคนงานที่ต้องการ (Quantity)</Label>
                         <Input type="number" min="1" value={newLine.quantity} onChange={e => setNewLine({...newLine, quantity: parseInt(e.target.value)})} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label>วันที่เริ่ม</Label>
+                          <Input type="date" value={newLine.startDate ? new Date(newLine.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewLine({...newLine, startDate: new Date(e.target.value).getTime()})} />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>วันที่สิ้นสุด</Label>
+                          <Input type="date" value={newLine.endDate ? new Date(newLine.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewLine({...newLine, endDate: new Date(e.target.value).getTime()})} />
+                        </div>
                       </div>
                     </div>
                     <DialogFooter>
@@ -207,28 +290,53 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
                   <TableHeader>
                     <TableRow>
                       <TableHead>ตำแหน่งงาน</TableHead>
-                      <TableHead>จำนวน</TableHead>
+                      <TableHead>ความต้องการ</TableHead>
+                      <TableHead>มอบหมายแล้ว</TableHead>
+                      <TableHead>พื้นที่ว่าง (Slots)</TableHead>
                       <TableHead>ราคาขาย (Sell)</TableHead>
-                      <TableHead>ต้นทุน (Cost)</TableHead>
-                      <TableHead>หน่วย</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {poLines?.map(line => {
                       const pos = allPositions?.find(p => p.id === line.positionId);
+                      const assignedCount = allAssignments?.filter(a => a.poLineId === line.id && ['approved', 'active', 'mobilizing'].includes(a.status)).length || 0;
+                      const remaining = line.quantity - assignedCount;
+                      
                       return (
                         <TableRow key={line.id}>
                           <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
-                              <Briefcase className="h-4 w-4 text-muted-foreground" />
-                              {pos?.positionName || line.positionId}
+                            <div className="flex flex-col">
+                              <span>{pos?.positionName || line.positionId}</span>
+                              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                <Calendar className="h-2.5 w-2.5" />
+                                {new Date(line.startDate).toLocaleDateString('th-TH')} - {new Date(line.endDate).toLocaleDateString('th-TH')}
+                              </span>
                             </div>
                           </TableCell>
                           <TableCell className="font-bold">{line.quantity} อัตรา</TableCell>
-                          <TableCell className="text-green-600">฿{line.sellRateSnapshot.toLocaleString()}</TableCell>
-                          <TableCell className="text-muted-foreground">฿{line.costBaselineSnapshot.toLocaleString()}</TableCell>
-                          <TableCell className="capitalize">{line.billingUnitSnapshot}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                              {assignedCount} คน
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {remaining > 0 ? (
+                              <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200">
+                                {remaining} ว่าง
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-green-200">
+                                <CheckCircle2 className="h-3 w-3 mr-1" /> เต็มแล้ว
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            <div className="flex flex-col">
+                              <span className="text-green-600 font-semibold">฿{line.sellRateSnapshot.toLocaleString()}</span>
+                              <span className="text-muted-foreground italic">/{line.billingUnitSnapshot}</span>
+                            </div>
+                          </TableCell>
                           <TableCell className="text-right">
                             <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteLine(line.id)}>
                               <Trash2 className="h-4 w-4" />
@@ -248,41 +356,63 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
             </Card>
           </TabsContent>
 
-          <TabsContent value="info" className="mt-6">
+          <TabsContent value="assignments" className="mt-6">
             <Card>
-              <CardHeader><CardTitle>ข้อมูลพื้นฐานใบสั่งซื้อ (PO Header Info)</CardTitle></CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label>หัวข้อใบสั่งซื้อ (Title)</Label>
-                    <Input disabled={!isEditing} value={isEditing ? editedPO.title : po.title} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>เลขที่ใบสั่งซื้อ (PO No.)</Label>
-                    <Input disabled={!isEditing} value={isEditing ? editedPO.poNumber : po.poNumber} onChange={e => setEditedPO({...editedPO, poNumber: e.target.value})} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>วันที่เริ่มงาน (ตาม PO)</Label>
-                      <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.startDate || 0).toISOString().split('T')[0] : new Date(po.startDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, startDate: new Date(e.target.value).getTime()})} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>วันที่สิ้นสุดงาน</Label>
-                      <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.endDate || 0).toISOString().split('T')[0] : new Date(po.endDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, endDate: new Date(e.target.value).getTime()})} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>สถานะใบสั่งซื้อ</Label>
-                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as any})} value={isEditing ? editedPO.status : po.status}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="closed">Closed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
+              <CardHeader>
+                <CardTitle>รายการคนงานที่ได้รับมอบหมาย (Assigned Workers)</CardTitle>
+                <CardDescription>แสดงรายชื่อคนงานทั้งหมดที่ทำงานภายใต้ใบสั่งซื้อโครงการนี้</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>คนงาน</TableHead>
+                      <TableHead>ตำแหน่ง</TableHead>
+                      <TableHead>ระยะเวลาทำงาน</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right">จัดการ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {poAssignments.length > 0 ? (
+                      poAssignments.map(asgn => {
+                        const worker = allWorkers?.find(w => w.id === asgn.workerId);
+                        const pos = allPositions?.find(p => p.id === asgn.positionId);
+                        return (
+                          <TableRow key={asgn.id}>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Users className="h-4 w-4 text-muted-foreground" />
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{worker ? `${worker.firstName} ${worker.lastName}` : 'N/A'}</span>
+                                  <span className="text-[10px] text-muted-foreground">{worker?.thaiNationalId}</span>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs font-semibold">{pos?.positionName || asgn.positionId}</TableCell>
+                            <TableCell className="text-xs">
+                              {new Date(asgn.startDate).toLocaleDateString('th-TH')} - {new Date(asgn.endDate).toLocaleDateString('th-TH')}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="capitalize">{asgn.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="sm" asChild>
+                                <Link href="/assignments">ดูในหน้าจัดการ</Link>
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">
+                          ยังไม่มีการมอบหมายคนงานใน PO นี้ (กรุณาไปที่เมนู 'การมอบหมาย' เพื่อเพิ่มคนงาน)
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </TabsContent>
