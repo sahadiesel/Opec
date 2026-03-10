@@ -1,0 +1,849 @@
+{
+  "entities": {
+    "User": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "User",
+      "type": "object",
+      "description": "Represents a staff member with access to the OPEC OpsFlow system, managed via Firebase Auth and Firestore for profile and role data.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the User entity. (Primary Key)"
+        },
+        "email": {
+          "type": "string",
+          "description": "The email address of the user, used for authentication.",
+          "format": "email"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "The full display name of the user."
+        },
+        "roleId": {
+          "type": "string",
+          "description": "Reference to the Role assigned to this user. (Relationship: Role 1:N User)"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the user account was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the user account was last updated.",
+          "format": "date-time"
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "description": "Timestamp of the user's last successful login.",
+          "format": "date-time"
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Indicates if the user account is currently active."
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "displayName",
+        "roleId",
+        "createdAt",
+        "isActive"
+      ]
+    },
+    "Role": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Role",
+      "type": "object",
+      "description": "Defines a system role with a set of permissions, governing access to application features.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Role entity. (Primary Key)"
+        },
+        "name": {
+          "type": "string",
+          "description": "The unique name of the role (e.g., 'system_admin', 'sales_officer')."
+        },
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the role's responsibilities and access level."
+        },
+        "permissions": {
+          "type": "array",
+          "description": "An array of permission strings associated with this role (e.g., 'users.read', 'positions.write').",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "permissions"
+      ]
+    },
+    "Position": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Position",
+      "type": "object",
+      "description": "Defines a job position or skill set for workers (e.g., 'Offshore Rigger', 'Welder').",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Position entity. (Primary Key)"
+        },
+        "name": {
+          "type": "string",
+          "description": "The official name of the position."
+        },
+        "description": {
+          "type": "string",
+          "description": "A brief description of the position's responsibilities or nature."
+        },
+        "code": {
+          "type": "string",
+          "description": "A short, unique code for the position."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Indicates if the position is currently active and available for assignments."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "code",
+        "isActive"
+      ]
+    },
+    "PositionCertificateRequirement": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PositionCertificateRequirement",
+      "type": "object",
+      "description": "Specifies a certificate that is required for a particular Position.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the PositionCertificateRequirement entity. (Primary Key)"
+        },
+        "positionId": {
+          "type": "string",
+          "description": "Reference to the Position this requirement belongs to. (Relationship: Position 1:N PositionCertificateRequirement)"
+        },
+        "certificateName": {
+          "type": "string",
+          "description": "The name of the required certificate (e.g., 'BOSIET', 'First Aid')."
+        },
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the certificate requirement."
+        },
+        "requiredValidityMonths": {
+          "type": "number",
+          "description": "The minimum validity duration required for the certificate, in months."
+        },
+        "isMandatory": {
+          "type": "boolean",
+          "description": "Indicates if this certificate is absolutely mandatory for the position."
+        }
+      },
+      "required": [
+        "id",
+        "positionId",
+        "certificateName",
+        "requiredValidityMonths",
+        "isMandatory"
+      ]
+    },
+    "PositionPPERequirement": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PositionPPERequirement",
+      "type": "object",
+      "description": "Specifies a Personal Protective Equipment (PPE) item required for a particular Position.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the PositionPPERequirement entity. (Primary Key)"
+        },
+        "positionId": {
+          "type": "string",
+          "description": "Reference to the Position this PPE requirement belongs to. (Relationship: Position 1:N PositionPPERequirement)"
+        },
+        "itemName": {
+          "type": "string",
+          "description": "The name of the required PPE item (e.g., 'Safety Helmet', 'Coveralls')."
+        },
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the PPE item and its requirement."
+        },
+        "quantity": {
+          "type": "number",
+          "description": "The required quantity of the PPE item for the position."
+        },
+        "isMandatory": {
+          "type": "boolean",
+          "description": "Indicates if this PPE item is absolutely mandatory for the position."
+        }
+      },
+      "required": [
+        "id",
+        "positionId",
+        "itemName",
+        "quantity",
+        "isMandatory"
+      ]
+    },
+    "PositionToolRequirement": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PositionToolRequirement",
+      "type": "object",
+      "description": "Specifies a tool required or allowed for a particular Position.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the PositionToolRequirement entity. (Primary Key)"
+        },
+        "positionId": {
+          "type": "string",
+          "description": "Reference to the Position this tool requirement belongs to. (Relationship: Position 1:N PositionToolRequirement)"
+        },
+        "itemName": {
+          "type": "string",
+          "description": "The name of the required tool (e.g., 'Wrench Set', 'Grinding Machine')."
+        },
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the tool and its requirement/allowance."
+        },
+        "isMandatory": {
+          "type": "boolean",
+          "description": "Indicates if this tool is absolutely mandatory for the position, or merely allowed."
+        }
+      },
+      "required": [
+        "id",
+        "positionId",
+        "itemName",
+        "isMandatory"
+      ]
+    },
+    "Worker": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Worker",
+      "type": "object",
+      "description": "Represents a worker (manpower) available for assignment to offshore/onshore operations, separate from system users.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Worker entity. (Primary Key)"
+        },
+        "firstName": {
+          "type": "string",
+          "description": "The worker's first name."
+        },
+        "lastName": {
+          "type": "string",
+          "description": "The worker's last name."
+        },
+        "thaiNationalId": {
+          "type": "string",
+          "description": "The worker's Thai National ID number or equivalent unique national identification."
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "description": "The worker's date of birth.",
+          "format": "date"
+        },
+        "contactEmail": {
+          "type": "string",
+          "description": "The worker's primary contact email address.",
+          "format": "email"
+        },
+        "contactPhone": {
+          "type": "string",
+          "description": "The worker's primary contact phone number."
+        },
+        "currentPositionId": {
+          "type": "string",
+          "description": "Reference to the worker's primary assigned Position. (Relationship: Position 1:N Worker)"
+        },
+        "workerStatus": {
+          "type": "string",
+          "description": "The current employment or availability status of the worker (e.g., 'Available', 'Assigned', 'On Leave')."
+        },
+        "readinessStatus": {
+          "type": "string",
+          "description": "The computed readiness status of the worker based on compliance with position requirements (e.g., 'Ready', 'Not Ready - Certificates Expired')."
+        },
+        "nationality": {
+          "type": "string",
+          "description": "The worker's nationality."
+        },
+        "gender": {
+          "type": "string",
+          "description": "The worker's gender (e.g., 'Male', 'Female', 'Other')."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp when the worker record was created.",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp when the worker record was last updated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "firstName",
+        "lastName",
+        "thaiNationalId",
+        "dateOfBirth",
+        "contactPhone",
+        "currentPositionId",
+        "workerStatus",
+        "readinessStatus",
+        "nationality",
+        "gender",
+        "createdAt"
+      ]
+    },
+    "WorkerCertificate": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WorkerCertificate",
+      "type": "object",
+      "description": "Records a specific certificate held by a worker.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the WorkerCertificate entity. (Primary Key)"
+        },
+        "workerId": {
+          "type": "string",
+          "description": "Reference to the Worker who holds this certificate. (Relationship: Worker 1:N WorkerCertificate)"
+        },
+        "certificateName": {
+          "type": "string",
+          "description": "The name of the certificate (e.g., 'BOSIET', 'H2S Awareness')."
+        },
+        "issuingAuthority": {
+          "type": "string",
+          "description": "The organization or body that issued the certificate."
+        },
+        "certificateNumber": {
+          "type": "string",
+          "description": "The unique identification number of the certificate."
+        },
+        "issueDate": {
+          "type": "string",
+          "description": "The date the certificate was issued.",
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "description": "The date the certificate expires.",
+          "format": "date"
+        },
+        "documentUrl": {
+          "type": "string",
+          "description": "URL to the scanned copy or digital version of the certificate stored in Firebase Storage.",
+          "format": "uri"
+        },
+        "isVerified": {
+          "type": "boolean",
+          "description": "Indicates if the certificate has been verified by an HR staff."
+        },
+        "verifiedByUserId": {
+          "type": "string",
+          "description": "Reference to the User who last verified this certificate. (Relationship: User 1:N WorkerCertificate)"
+        },
+        "verifiedAt": {
+          "type": "string",
+          "description": "Timestamp when the certificate was last verified.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workerId",
+        "certificateName",
+        "issuingAuthority",
+        "certificateNumber",
+        "issueDate",
+        "expiryDate",
+        "documentUrl",
+        "isVerified"
+      ]
+    },
+    "WorkerMedicalRecord": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WorkerMedicalRecord",
+      "type": "object",
+      "description": "Records a worker's medical examination results and fitness status.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the WorkerMedicalRecord entity. (Primary Key)"
+        },
+        "workerId": {
+          "type": "string",
+          "description": "Reference to the Worker this medical record belongs to. (Relationship: Worker 1:N WorkerMedicalRecord)"
+        },
+        "medicalCheckType": {
+          "type": "string",
+          "description": "The type of medical check-up (e.g., 'Offshore Medical', 'Annual Health Check')."
+        },
+        "clinicName": {
+          "type": "string",
+          "description": "The name of the clinic or hospital where the examination was performed."
+        },
+        "examinationDate": {
+          "type": "string",
+          "description": "The date the medical examination was performed.",
+          "format": "date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "description": "The date the medical fitness certificate expires, if applicable.",
+          "format": "date"
+        },
+        "overallFitnessStatus": {
+          "type": "string",
+          "description": "The overall fitness status determined by the medical examination (e.g., 'Fit for Duty', 'Temporarily Unfit')."
+        },
+        "documentUrl": {
+          "type": "string",
+          "description": "URL to the scanned copy or digital version of the medical report stored in Firebase Storage.",
+          "format": "uri"
+        },
+        "isVerified": {
+          "type": "boolean",
+          "description": "Indicates if the medical record has been verified by an HR staff."
+        },
+        "verifiedByUserId": {
+          "type": "string",
+          "description": "Reference to the User who last verified this medical record. (Relationship: User 1:N WorkerMedicalRecord)"
+        },
+        "verifiedAt": {
+          "type": "string",
+          "description": "Timestamp when the medical record was last verified.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workerId",
+        "medicalCheckType",
+        "clinicName",
+        "examinationDate",
+        "overallFitnessStatus",
+        "documentUrl",
+        "isVerified"
+      ]
+    },
+    "WorkerDrugTest": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WorkerDrugTest",
+      "type": "object",
+      "description": "Records a worker's drug test results.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the WorkerDrugTest entity. (Primary Key)"
+        },
+        "workerId": {
+          "type": "string",
+          "description": "Reference to the Worker this drug test record belongs to. (Relationship: Worker 1:N WorkerDrugTest)"
+        },
+        "testDate": {
+          "type": "string",
+          "description": "The date the drug test was conducted.",
+          "format": "date"
+        },
+        "testingFacility": {
+          "type": "string",
+          "description": "The name of the facility where the drug test was performed."
+        },
+        "result": {
+          "type": "string",
+          "description": "The result of the drug test (e.g., 'Negative', 'Positive', 'Pending')."
+        },
+        "documentUrl": {
+          "type": "string",
+          "description": "URL to the scanned copy or digital version of the drug test report stored in Firebase Storage.",
+          "format": "uri"
+        },
+        "isVerified": {
+          "type": "boolean",
+          "description": "Indicates if the drug test result has been verified by an HR staff."
+        },
+        "verifiedByUserId": {
+          "type": "string",
+          "description": "Reference to the User who last verified this drug test. (Relationship: User 1:N WorkerDrugTest)"
+        },
+        "verifiedAt": {
+          "type": "string",
+          "description": "Timestamp when the drug test record was last verified.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workerId",
+        "testDate",
+        "testingFacility",
+        "result",
+        "documentUrl",
+        "isVerified"
+      ]
+    },
+    "AuditLog": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AuditLog",
+      "type": "object",
+      "description": "Records immutable log entries for significant user actions (create, update, delete) across various system entities for accountability and traceability.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the AuditLog entity. (Primary Key)"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Reference to the User who performed the action. (Relationship: User 1:N AuditLog)"
+        },
+        "actionType": {
+          "type": "string",
+          "description": "The type of action performed (e.g., 'create', 'update', 'delete', 'login')."
+        },
+        "entityType": {
+          "type": "string",
+          "description": "The type of the entity that was affected by the action (e.g., 'Worker', 'Position', 'MainContract')."
+        },
+        "entityId": {
+          "type": "string",
+          "description": "The unique identifier of the entity that was affected."
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Timestamp when the action occurred.",
+          "format": "date-time"
+        },
+        "details": {
+          "type": "string",
+          "description": "A JSON string containing additional details about the action, such as 'before' and 'after' states for updates."
+        },
+        "ipAddress": {
+          "type": "string",
+          "description": "The IP address from which the action originated, if available."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "actionType",
+        "entityType",
+        "entityId",
+        "timestamp",
+        "details"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "User",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Stores staff user profiles, linked to Firebase Auth UIDs. Access for self-read, admin management. This collection links to the global role definitions but does not define a user's authorization role; rather, dedicated collections like '/roles_system_admin/{userId}' define the actual role for security rules."
+        }
+      },
+      {
+        "path": "/roles/{roleId}",
+        "definition": {
+          "entityName": "Role",
+          "schema": {
+            "$ref": "#/backend/entities/Role"
+          },
+          "description": "Master definitions of system roles (e.g., system_admin, hr_manager), including permissions. Read access for all authenticated users to understand roles, write access for system_admin only."
+        }
+      },
+      {
+        "path": "/roles_system_admin/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'system_admin' role. Document content can be minimal (e.g., { exists: true }). This enables DBAC without 'get()' calls.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'system_admin' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/roles_sales_officer/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'sales_officer' role. Document content can be minimal (e.g., { exists: true }).",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'sales_officer' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/roles_hr_manager/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'hr_manager' role. Document content can be minimal (e.g., { exists: true }).",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'hr_manager' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/roles_hr_officer/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'hr_officer' role. Document content can be minimal (e.g., { exists: true }).",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'hr_officer' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/roles_payroll_officer/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'payroll_officer' role. Document content can be minimal (e.g., { exists: true }).",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'payroll_officer' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/roles_store_officer/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'store_officer' role. Document content can be minimal (e.g., { exists: true }).",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'store_officer' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/roles_finance_officer/{userId}",
+        "definition": {
+          "entityName": "UserRole",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Dedicated collection for Authorization Independence. The existence of a document with 'userId' as its ID in this collection grants the 'finance_officer' role. Document content can be minimal (e.g., { exists: true }).",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The unique ID of the User who holds the 'finance_officer' role."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/audit_logs/{logId}",
+        "definition": {
+          "entityName": "AuditLog",
+          "schema": {
+            "$ref": "#/backend/entities/AuditLog"
+          },
+          "description": "Immutable log of significant system actions (create, update, delete). Write access for system processes (e.g., Cloud Functions), read access for system_admin. No cross-document dependencies for authorization."
+        }
+      },
+      {
+        "path": "/positions/{positionId}",
+        "definition": {
+          "entityName": "Position",
+          "schema": {
+            "$ref": "#/backend/entities/Position"
+          },
+          "description": "Master list of job positions/skill sets. Read access for HR, Sales, Admin. Write access for HR Manager, Admin."
+        }
+      },
+      {
+        "path": "/positions/{positionId}/certificate_requirements/{requirementId}",
+        "definition": {
+          "entityName": "PositionCertificateRequirement",
+          "schema": {
+            "$ref": "#/backend/entities/PositionCertificateRequirement"
+          },
+          "description": "Specific certificate requirements for a Position. Includes denormalized 'positionId' for Authorization Independence. Read access for HR, Sales, Admin. Write access for HR Manager, Admin.",
+          "params": [
+            {
+              "name": "positionId",
+              "description": "The unique ID of the parent Position."
+            },
+            {
+              "name": "requirementId",
+              "description": "The unique ID of the PositionCertificateRequirement."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/positions/{positionId}/ppe_requirements/{requirementId}",
+        "definition": {
+          "entityName": "PositionPPERequirement",
+          "schema": {
+            "$ref": "#/backend/entities/PositionPPERequirement"
+          },
+          "description": "Specific Personal Protective Equipment (PPE) requirements for a Position. Includes denormalized 'positionId' for Authorization Independence. Read access for HR, Sales, Store, Admin. Write access for HR Manager, Store Officer, Admin.",
+          "params": [
+            {
+              "name": "positionId",
+              "description": "The unique ID of the parent Position."
+            },
+            {
+              "name": "requirementId",
+              "description": "The unique ID of the PositionPPERequirement."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/positions/{positionId}/tool_requirements/{requirementId}",
+        "definition": {
+          "entityName": "PositionToolRequirement",
+          "schema": {
+            "$ref": "#/backend/entities/PositionToolRequirement"
+          },
+          "description": "Specific tool requirements for a Position. Includes denormalized 'positionId' for Authorization Independence. Read access for HR, Sales, Store, Admin. Write access for HR Manager, Store Officer, Admin.",
+          "params": [
+            {
+              "name": "positionId",
+              "description": "The unique ID of the parent Position."
+            },
+            {
+              "name": "requirementId",
+              "description": "The unique ID of the PositionToolRequirement."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/workers/{workerId}",
+        "definition": {
+          "entityName": "Worker",
+          "schema": {
+            "$ref": "#/backend/entities/Worker"
+          },
+          "description": "Master list of all manpower workers. Read access for HR, Payroll, Store, Sales (limited). Write access for HR Manager, HR Officer."
+        }
+      },
+      {
+        "path": "/workers/{workerId}/certificates/{certificateId}",
+        "definition": {
+          "entityName": "WorkerCertificate",
+          "schema": {
+            "$ref": "#/backend/entities/WorkerCertificate"
+          },
+          "description": "Certificates held by a specific worker. Includes denormalized 'workerId' for Authorization Independence. Read access for HR, Payroll, Sales (limited). Write access for HR Manager, HR Officer.",
+          "params": [
+            {
+              "name": "workerId",
+              "description": "The unique ID of the parent Worker."
+            },
+            {
+              "name": "certificateId",
+              "description": "The unique ID of the WorkerCertificate."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/workers/{workerId}/medical_records/{recordId}",
+        "definition": {
+          "entityName": "WorkerMedicalRecord",
+          "schema": {
+            "$ref": "#/backend/entities/WorkerMedicalRecord"
+          },
+          "description": "Medical records for a specific worker. Includes denormalized 'workerId' for Authorization Independence. Read access for HR, Payroll. Write access for HR Manager, HR Officer.",
+          "params": [
+            {
+              "name": "workerId",
+              "description": "The unique ID of the parent Worker."
+            },
+            {
+              "name": "recordId",
+              "description": "The unique ID of the WorkerMedicalRecord."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/workers/{workerId}/drug_tests/{testId}",
+        "definition": {
+          "entityName": "WorkerDrugTest",
+          "schema": {
+            "$ref": "#/backend/entities/WorkerDrugTest"
+          },
+          "description": "Drug test results for a specific worker. Includes denormalized 'workerId' for Authorization Independence. Read access for HR, Payroll. Write access for HR Manager, HR Officer.",
+          "params": [
+            {
+              "name": "workerId",
+              "description": "The unique ID of the parent Worker."
+            },
+            {
+              "name": "testId",
+              "description": "The unique ID of the WorkerDrugTest."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore data structure has been designed following the MASTER BLUEPRINT RULES and CORE DESIGN PRINCIPLES, prioritizing Authorization Independence, Structural Segregation, and DBAC (Database-Backed Access Control) for robust and debuggable security rules. The structure clearly separates 'Staff/Users' from 'Workers' and maintains consistent, semantic naming conventions.\n\n**Authorization Independence via Denormalization:**\n\n1.  **Role-Based Access Control (DBAC):** For system staff roles (e.g., `system_admin`, `hr_manager`), dedicated top-level collections like `/roles_system_admin/{userId}` are used. Authorization rules will check the *existence* of a document at `roles_system_admin/$(request.auth.uid)` rather than performing a `get()` operation on the `users` collection to retrieve a user's `roleId`. This completely decouples authentication from role assignment, eliminating cross-document `get()` dependencies in security rules for role checks, a critical aspect of Authorization Independence.\n2.  **Child Document Ownership:** For subcollections like `/workers/{workerId}/certificates` or `/positions/{positionId}/certificate_requirements`, the respective parent `workerId` or `positionId` is explicitly included (denormalized) within each child document. This allows security rules to verify the context and ownership (e.g., `request.resource.data.workerId == workerId`) directly from the document being operated on, without needing to perform a `get()` call to the parent `worker` or `position` document. This enables atomic operations (transactions/batches) for parent and child documents and simplifies rule logic.\n\n**QAPs (Queries as Permissions) Support:**\n\n1.  **Structural Segregation for Homogeneous Security:** Each collection and subcollection is designed to hold documents with a homogeneous security posture. For example, the `/users` collection is for system staff, while `/workers` is for manpower. `/positions` holds master position definitions, and its subcollections hold requirements. This segregation means that listing operations on a collection (`db.collection('workers').get()`) will naturally return only documents that the requesting user is authorized to see based on their role, without the need for server-side filtering by security rules. For example, an `hr_officer` will be granted `list` access to the entire `/workers` collection, and all `worker` documents will share the same `hr_officer` access criteria.\n2.  **Path-Based Ownership for Clarity:** For hierarchically owned data (e.g., worker's certificates), the paths `workers/{workerId}/certificates/{certificateId}` clearly indicate the ownership. A query for all certificates of a specific worker (`db.collection('workers').doc(workerId).collection('certificates').get()`) is implicitly secure as the rule will check access for `workers/{workerId}/certificates`. For collection group queries (e.g., finding all certificates across all workers), the denormalized `workerId` in each `worker_certificate` document would allow rules to efficiently check role-based permissions without complex lookups.\n\n**Summary of Blueprint Alignment:**\n*   **Matches:** The separation of Staff/Users and Workers is strictly adhered to. 'Main Contract' is correctly used (not 'Main Contact'). The core business flow entities are acknowledged, and the proposed structure for Phase 1A entities directly supports the beginning of this flow. All specified `REQUIRED FIRESTORE COLLECTIONS` (except `worker_documents` due to missing schema) are included. Consistent `id` naming for primary keys and descriptive wildcards are used. Audit logs are incorporated. The use of specific denormalized fields like `workerId` in subcollections supports invariants and simplified rules.\n*   **Changes/Refactoring:** The primary change is the explicit implementation of the DBAC pattern for user roles (e.g., `/roles_system_admin/{userId}`) to ensure true Authorization Independence, moving away from relying on a `roleId` field in the `users` document for direct rule checks. The `worker_documents` collection has been omitted as no corresponding schema was provided, with other specific worker document types (certificates, medical, drug tests) covering the document requirements.\n*   **Still Needs to be Built (Beyond Phase 1A):** The Commercial, Purchase Order, Assignment, Timesheet, Payroll, Store & PPE, and Finance & Billing modules are not yet designed in terms of data structure. The worker readiness *calculation logic* (as opposed to just the status field) and the AI-powered Position Requirements Assistant are application-level features to be developed."
+  }
+}

@@ -1,0 +1,216 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * OPEC OpsFlow Security Rules
+     *
+     * Core Philosophy:
+     * This ruleset implements a strict Role-Based Access Control (RBAC) model using a
+     * Database-Backed Access Control (DBAC) pattern. It prioritizes Authorization Independence
+     * by using dedicated collections for role assignments, allowing for high-performance
+     * security checks that do not depend on the user's primary profile document.
+     *
+     * Data Structure:
+     * - /users: Staff profiles.
+     * - /roles_*: Dedicated collections where the existence of a document named with a UID
+     *   grants that specific role (e.g., /roles_system_admin/{userId}).
+     * - /workers: Manpower data, isolated from system staff data.
+     * - /positions: Master data for job definitions and requirements.
+     *
+     * Key Security Decisions:
+     * - Authorization Independence: Role checks use the `exists()` function on dedicated
+     *   path-based role collections.
+     * - Structural Segregation: Staff and Workers are kept in entirely separate top-level trees.
+     * - Denormalization: Parent IDs (e.g., workerId, positionId) are enforced on child
+     *   documents to ensure relational integrity without complex lookups.
+     * - Prototyping Flexibility: Data types and optional fields are not strictly validated,
+     *   only critical relational and ownership fields.
+     */
+
+    // --- HELPER FUNCTIONS ---
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // DBAC Role Checks: Checks if a document exists in the role-specific collection
+    function hasRole(roleName) {
+      // FIX: Addressed "Unused variable: roleName." warning.
+      // Explicitly concatenate roleName to make its usage more direct for the linter.
+      // This constructs the specific document path for the role.
+      let roleDocRef = 'roles_' + roleName + '/' + request.auth.uid;
+      // Checks for existence of the role document for the authenticated user.
+      return isSignedIn() && exists(path('/databases/$(database)/documents/' + roleDocRef));
+    }
+
+    function isAdmin() {
+      return hasRole('system_admin');
+    }
+
+    function isHRManager() {
+      return hasRole('hr_manager');
+    }
+
+    function isHROfficer() {
+      return hasRole('hr_officer');
+    }
+
+    function isHR() {
+      return isHRManager() || isHROfficer() || isAdmin();
+    }
+
+    function isSales() {
+      return hasRole('sales_officer') || isAdmin();
+    }
+
+    function isPayroll() {
+      return hasRole('payroll_officer') || isAdmin();
+    }
+
+    function isStore() {
+      return hasRole('store_officer') || isAdmin();
+    }
+
+    // Removed unused function `isFinance` as per `firebaserules` warning.
+
+    // --- COLLECTION RULES ---
+
+    /**
+     * @description Rules for staff user profiles. Users can manage their own profile; Admins manage all.
+     * @path /users/{userId}
+     * @allow (get) request.auth.uid == userId
+     * @deny (write) if not an admin or the user themselves
+     * @principle Ownership for self, administrative override for management.
+     */
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isUser(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin() || isUser(userId);
+      allow update: if (isAdmin() || isUser(userId)) && resource != null;
+      allow delete: if isAdmin() && resource != null;
+    }
+
+    /**
+     * @description DBAC Role Assignment collections. Only Admins can modify role assignments.
+     * @path /roles_{roleName}/{userId}
+     * @allow (get) isSignedIn()
+     * @deny (write) !isAdmin()
+     * @principle Restricts role assignment to system administrators only.
+     */
+    match /{roleCollection}/{userId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isAdmin() && (
+        roleCollection == 'roles_system_admin' ||
+        roleCollection == 'roles_sales_officer' ||
+        roleCollection == 'roles_hr_manager' ||
+        roleCollection == 'roles_hr_officer' ||
+        roleCollection == 'roles_payroll_officer' ||
+        roleCollection == 'roles_store_officer' ||
+        roleCollection == 'roles_finance_officer'
+      );
+    }
+
+    /**
+     * @description Global audit logs for system accountability.
+     * @path /audit_logs/{logId}
+     * @allow (create) isSignedIn()
+     * @deny (delete) always
+     * @principle Immutable log pattern; everyone can write (audit), only admin can read.
+     */
+    match /audit_logs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+
+    /**
+     * @description Master role definitions and permissions.
+     * @path /roles/{roleId}
+     * @allow (read) isSignedIn()
+     * @deny (write) !isAdmin()
+     * @principle Public read for authenticated staff, admin-only write.
+     */
+    match /roles/{roleId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    /**
+     * @description Master job position definitions.
+     * @path /positions/{positionId}
+     * @allow (read) isHR() || isSales() || isStore()
+     * @deny (write) !isHRManager() && !isAdmin()
+     * @principle Cross-departmental read access, centralized HR management for writes.
+     */
+    match /positions/{positionId} {
+      allow get, list: if isHR() || isSales() || isStore();
+      allow create: if isHRManager() || isAdmin();
+      allow update, delete: if (isHRManager() || isAdmin()) && resource != null;
+
+      match /certificate_requirements/{reqId} {
+        allow get, list: if isHR() || isSales();
+        allow create: if (isHRManager() || isAdmin()) && request.resource.data.positionId == positionId;
+        allow update: if (isHRManager() || isAdmin()) && resource != null && request.resource.data.positionId == resource.data.positionId;
+        allow delete: if (isHRManager() || isAdmin()) && resource != null;
+      }
+
+      match /ppe_requirements/{reqId} {
+        allow get, list: if isHR() || isSales() || isStore();
+        allow create: if (isHRManager() || isStore() || isAdmin()) && request.resource.data.positionId == positionId;
+        allow update: if (isHRManager() || isStore() || isAdmin()) && resource != null && request.resource.data.positionId == resource.data.positionId;
+        allow delete: if (isHRManager() || isStore() || isAdmin()) && resource != null;
+      }
+
+      match /tool_requirements/{reqId} {
+        allow get, list: if isHR() || isSales() || isStore();
+        allow create: if (isHRManager() || isStore() || isAdmin()) && request.resource.data.positionId == positionId;
+        allow update: if (isHRManager() || isStore() || isAdmin()) && resource != null && request.resource.data.positionId == resource.data.positionId;
+        allow delete: if (isHRManager() || isStore() || isAdmin()) && resource != null;
+      }
+    }
+
+    /**
+     * @description Master Worker records.
+     * @path /workers/{workerId}
+     * @allow (read) isHR() || isPayroll() || isStore() || isSales()
+     * @deny (write) !isHR()
+     * @principle Operational visibility for most staff, restricted write access to HR.
+     */
+    match /workers/{workerId} {
+      allow get, list: if isHR() || isPayroll() || isStore() || isSales();
+      allow create: if isHR();
+      allow update, delete: if isHR() && resource != null;
+
+      match /certificates/{certId} {
+        allow get, list: if isHR() || isPayroll() || isSales();
+        allow create: if isHR() && request.resource.data.workerId == workerId;
+        allow update: if isHR() && resource != null && request.resource.data.workerId == resource.data.workerId;
+        allow delete: if isHR() && resource != null;
+      }
+
+      match /medical_records/{recordId} {
+        allow get, list: if isHR() || isPayroll();
+        allow create: if isHR() && request.resource.data.workerId == workerId;
+        allow update: if isHR() && resource != null && request.resource.data.workerId == resource.data.workerId;
+        allow delete: if isHR() && resource != null;
+      }
+
+      match /drug_tests/{testId} {
+        allow get, list: if isHR() || isPayroll();
+        allow create: if isHR() && request.resource.data.workerId == workerId;
+        allow update: if isHR() && resource != null && request.resource.data.workerId == resource.data.workerId;
+        allow delete: if isHR() && resource != null;
+      }
+    }
+
+    // --- DEFAULT DENY ALL ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
