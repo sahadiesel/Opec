@@ -14,6 +14,7 @@ import { collectionGroup, collection, doc } from 'firebase/firestore';
 import { 
   Dialog, 
   DialogContent, 
+  DialogDescription,
   DialogHeader, 
   DialogTitle, 
   DialogTrigger,
@@ -80,8 +81,6 @@ export default function AssignmentsPage() {
       return;
     }
 
-    // In a collectionGroup query environment, we usually write to a flattened operational path
-    // For this prototype, we'll store assignments in a way the collectionGroup can find them
     const assignmentsRef = collection(firestore, 'assignments');
     
     const newAssignment: Partial<Assignment> = {

@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
   DialogContent, 
+  DialogDescription,
   DialogHeader, 
   DialogTitle, 
   DialogTrigger,
