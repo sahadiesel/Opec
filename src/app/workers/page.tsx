@@ -23,7 +23,7 @@ import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 export default function WorkersPage() {
   const [user, setUser] = useState<{ displayName: string; role: RoleType } | null>(null);
-  const { firestore } = useFirestore() ? { firestore: useFirestore() } : { firestore: null };
+  const firestore = useFirestore();
 
   const workersQuery = useMemoFirebase(() => {
     if (!firestore) return null;

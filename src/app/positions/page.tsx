@@ -27,7 +27,7 @@ import { setDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/no
 
 export default function PositionsPage() {
   const [user, setUser] = useState<{ displayName: string; role: RoleType } | null>(null);
-  const { firestore } = useFirestore() ? { firestore: useFirestore() } : { firestore: null };
+  const firestore = useFirestore();
 
   const positionsQuery = useMemoFirebase(() => {
     if (!firestore) return null;

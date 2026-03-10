@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<{ displayName: string; role: RoleType } | null>(null);
-  const { firestore } = useFirestore() ? { firestore: useFirestore() } : { firestore: null };
+  const firestore = useFirestore();
 
   const usersQuery = useMemoFirebase(() => {
     if (!firestore) return null;
