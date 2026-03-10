@@ -4,20 +4,28 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
 import { User, RoleType } from '@/lib/types';
-import { Briefcase, Info, AlertTriangle, FileWarning, CheckCircle2, ShieldCheck, ClipboardList, UserPlus, Lock } from 'lucide-react';
+import { 
+  Briefcase, 
+  Info, 
+  AlertTriangle, 
+  FileWarning, 
+  CheckCircle2, 
+  ShieldCheck, 
+  ClipboardList, 
+  UserPlus, 
+  ShieldAlert,
+  ShoppingCart,
+  Users,
+  CircleDollarSign,
+  Clock
+} from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
-import { signInAnonymously, signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-
-const MOCK_USERS: any[] = [
-  { id: '1', email: 'admin@opec.com', displayName: 'System Admin', roleId: 'system_admin', createdAt: Date.now(), isActive: true },
-  { id: '2', email: 'sales@opec.com', displayName: 'Sales Officer', roleId: 'sales_officer', createdAt: Date.now(), isActive: true },
-  { id: '3', email: 'hrmgr@opec.com', displayName: 'HR Manager', roleId: 'hr_manager', createdAt: Date.now(), isActive: true },
-];
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -43,7 +51,6 @@ export default function Home() {
         const snap = await getDoc(doc(firestore, 'system', 'bootstrap'));
         setIsBootstrapped(snap.exists());
       } catch (e) {
-        console.warn('Bootstrap check failed (likely unauthenticated):', e);
         setIsBootstrapped(false);
       }
     }
@@ -55,38 +62,16 @@ export default function Home() {
     setIsLoggingIn(true);
     
     try {
-      // 1. Always attempt real Firebase Auth if bootstrapped
-      if (isBootstrapped) {
-        const cred = await signInWithEmailAndPassword(auth, email, password);
-        const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
-        
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as User;
-          
-          // Verify role in roles_system_admin if it's an admin
-          if (userData.roleId === 'system_admin') {
-            const roleDoc = await getDoc(doc(firestore, 'roles_system_admin', cred.user.uid));
-            if (!roleDoc.exists()) {
-              throw new Error('Access Denied: Admin role record missing.');
-            }
-          }
-
-          setUser(userData);
-          localStorage.setItem('opsflow_user', JSON.stringify(userData));
-          setIsLoggingIn(false);
-          return;
-        }
-      }
-
-      // 2. Fallback to Mock Login for local development/demo
-      const found = MOCK_USERS.find(u => u.email === email);
-      if (found) {
-        if (!firebaseUser) await signInAnonymously(auth);
-        setUser(found);
-        localStorage.setItem('opsflow_user', JSON.stringify(found));
-        toast({ title: "เข้าสู่ระบบสำเร็จ (Mock Mode)" });
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data() as User;
+        setUser(userData);
+        localStorage.setItem('opsflow_user', JSON.stringify(userData));
+        toast({ title: "เข้าสู่ระบบสำเร็จ" });
       } else {
-        throw new Error('ไม่พบข้อมูลผู้ใช้งาน หรือรหัสผ่านไม่ถูกต้อง');
+        throw new Error('ไม่พบข้อมูลโปรไฟล์ผู้ใช้งาน');
       }
     } catch (err: any) {
       toast({
@@ -109,162 +94,154 @@ export default function Home() {
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background p-4">
-        <div className="w-full max-w-md space-y-4">
-          <Card className="shadow-xl border-t-4 border-t-primary">
-            <CardHeader className="space-y-1 text-center">
-              <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-4">
-                <Briefcase className="h-8 w-8 text-primary" />
+        <Card className="w-full max-w-md shadow-xl border-t-4 border-t-primary">
+          <CardHeader className="space-y-1 text-center">
+            <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-4">
+              <Briefcase className="h-8 w-8 text-primary" />
+            </div>
+            <CardTitle className="text-2xl">OPEC OpsFlow</CardTitle>
+            <CardDescription>เข้าสู่ระบบจัดการกำลังคน</CardDescription>
+          </CardHeader>
+          <form onSubmit={handleLogin}>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">อีเมล</Label>
+                <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
               </div>
-              <CardTitle className="text-2xl">OPEC OpsFlow</CardTitle>
-              <CardDescription>
-                ระบบจัดการกำลังคน OPEC Manpower Supply
-              </CardDescription>
-            </CardHeader>
-            <form onSubmit={handleLogin}>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">อีเมลผู้ใช้งาน</Label>
-                  <input 
-                    id="email" 
-                    type="email" 
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder="name@opec.com" 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required 
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">รหัสผ่าน</Label>
-                  <input 
-                    id="password" 
-                    type="password" 
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    required 
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                {!isBootstrapped && isBootstrapped !== null && (
-                  <div className="bg-amber-50 p-3 rounded-md border border-amber-200 flex gap-2">
-                    <Info className="h-5 w-5 text-amber-600 shrink-0" />
-                    <div className="space-y-1">
-                      <p className="text-xs text-amber-800 font-bold">ยังไม่ได้ตั้งค่าระบบ</p>
-                      <p className="text-xs text-amber-700 leading-tight">กรุณาลงทะเบียนผู้ดูแลระบบคนแรกเพื่อเริ่มต้นใช้งาน</p>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-              <CardFooter className="flex flex-col gap-3">
-                <Button type="submit" className="w-full h-11 text-lg" disabled={isLoggingIn}>
-                  {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
+              <div className="space-y-2">
+                <Label htmlFor="password">รหัสผ่าน</Label>
+                <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col gap-3">
+              <Button type="submit" className="w-full" disabled={isLoggingIn}>
+                {isLoggingIn ? 'กำลังตรวจสอบ...' : 'เข้าสู่ระบบ'}
+              </Button>
+              {!isBootstrapped && (
+                <Button variant="outline" className="w-full gap-2" asChild>
+                  <Link href="/setup-admin"><UserPlus className="h-4 w-4" /> เริ่มต้นระบบครั้งแรก</Link>
                 </Button>
-                
-                {!isBootstrapped && isBootstrapped !== null && (
-                  <Button variant="outline" className="w-full gap-2 text-secondary border-secondary" asChild>
-                    <Link href="/setup-admin">
-                      <UserPlus className="h-4 w-4" /> ลงทะเบียน Admin คนแรก
-                    </Link>
-                  </Button>
-                )}
-              </CardFooter>
-            </form>
-          </Card>
-        </div>
+              )}
+            </CardFooter>
+          </form>
+        </Card>
       </div>
     );
   }
 
+  // --- Department Dashboards Mapping ---
+  const renderDashboard = () => {
+    switch (user.roleId) {
+      case 'system_admin': return <AdminDashboard user={user} />;
+      case 'hr_manager': return <HRDashboard user={user} manager />;
+      case 'hr_officer': return <HRDashboard user={user} />;
+      case 'sales_officer': return <CommercialDashboard user={user} />;
+      case 'payroll_officer': return <PayrollDashboard user={user} />;
+      case 'client': return <ClientDashboard user={user} />;
+      default: return <DefaultDashboard user={user} />;
+    }
+  };
+
+  return <AppShell user={user} onLogout={handleLogout}>{renderDashboard()}</AppShell>;
+}
+
+// Sub-components for Dashboards (Refactoring Task Set 1)
+
+function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   return (
-    <AppShell user={user} onLogout={handleLogout}>
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">แดชบอร์ดภาพรวม (Overall Dashboard)</h1>
-          <p className="text-muted-foreground mt-2">ยินดีต้อนับกลับมา, {user.displayName} ระบบพร้อมสำหรับการจัดการกำลังคนวันนี้</p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-green-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">คนงานที่พร้อม (Workers Ready)</CardTitle>
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">842</div>
-              <p className="text-xs text-muted-foreground">สามารถเข้าปฏิบัติงานได้ทันที</p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-amber-500">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">ขาดใบรับรอง (Missing Certs)</CardTitle>
-              <FileWarning className="h-4 w-4 text-amber-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">42</div>
-              <p className="text-xs text-muted-foreground">คนงานที่ยังมีเอกสารไม่ครบ</p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-destructive">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">การตรวจร่างกายหมดอายุ</CardTitle>
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">18</div>
-              <p className="text-xs text-muted-foreground">ต้องรีบดำเนินการตรวจร่างกาย</p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-primary">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">งานที่กำลังมอบหมาย</CardTitle>
-              <ClipboardList className="h-4 w-4 text-primary" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">156</div>
-              <p className="text-xs text-muted-foreground">จำนวนงานที่มอบหมาย (Active Assignments)</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-          <Card className="col-span-4">
-            <CardHeader>
-              <CardTitle>ความพร้อมของคนงานรายโครงการ (Readiness Status)</CardTitle>
-              <CardDescription>แสดงสัดส่วนคนงานที่พร้อมปฏิบัติงานตามมาตรฐาน OPEC</CardDescription>
-            </CardHeader>
-            <CardContent className="h-[300px] flex flex-col items-center justify-center border-2 border-dashed rounded-lg bg-muted/20 space-y-4">
-              <ShieldCheck className="h-12 w-12 text-primary opacity-20" />
-              <p className="text-muted-foreground">กราฟแสดงผลความพร้อมแบบเรียลไทม์ (Chart Visualization in Phase 1B)</p>
-            </CardContent>
-          </Card>
-          <Card className="col-span-3">
-            <CardHeader>
-              <CardTitle>รายการอัปเดตล่าสุด (Recent Updates)</CardTitle>
-              <CardDescription>กิจกรรมที่เกิดขึ้นล่าสุดในระบบ OpsFlow</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                {[
-                  { user: 'HR Manager', action: 'อัปเดตใบรับรอง', target: 'สมชาย สายชล', time: '10 นาทีที่แล้ว' },
-                  { user: 'HR Officer', action: 'เพิ่มคนงานใหม่', target: 'สมนึก รักดี', time: '1 ชั่วโมงที่แล้ว' },
-                  { user: 'Admin', action: 'แก้ไขตำแหน่งงาน', target: 'Offshore Welder', time: '2 ชั่วโมงที่แล้ว' },
-                  { user: 'System', action: 'ตรวจสอบความพร้อม', target: 'Batch Job #89', time: '3 ชั่วโมงที่แล้ว' }
-                ].map((item, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <div className="bg-primary/10 p-2 rounded-full">
-                      <Info className="h-4 w-4 text-primary" />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium leading-none">{item.action}: {item.target}</p>
-                      <p className="text-xs text-muted-foreground">{item.time} โดย {item.user}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    </AppShell>
+    <Card className={`hover:shadow-md transition-shadow border-l-4 ${colorClass}`}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <Icon className="h-4 w-4 opacity-70" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+        <p className="text-xs text-muted-foreground">{sub}</p>
+      </CardContent>
+    </Card>
   );
+}
+
+function HRDashboard({ user, manager }: { user: User, manager?: boolean }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">HR {manager ? 'Manager' : 'Operations'} Dashboard</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="คนงานทั้งหมด" value="1,240" sub="รายชื่อในระบบ" icon={UserSquare2} colorClass="border-l-primary" />
+        <StatCard title="พร้อมปฏิบัติงาน" value="842" sub="READY status" icon={CheckCircle2} colorClass="border-l-green-500" />
+        <StatCard title="ใบรับรองหมดอายุ" value="42" sub="ต้องต่ออายุ" icon={FileWarning} colorClass="border-l-amber-500" />
+        <StatCard title="รอพิจารณา" value="15" sub="เสนอตัวบุคคล" icon={ShieldAlert} colorClass="border-l-blue-500" />
+      </div>
+    </div>
+  );
+}
+
+function CommercialDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">Commercial Dashboard</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="ลูกค้าทั้งหมด" value="48" sub="บริษัท" icon={Users} colorClass="border-l-primary" />
+        <StatCard title="สัญญาที่เปิดอยู่" value="12" sub="Main Contracts" icon={ClipboardList} colorClass="border-l-blue-500" />
+        <StatCard title="ใบสั่งซื้อรอดำเนินการ" value="24" sub="Pending POs" icon={ShoppingCart} colorClass="border-l-amber-500" />
+        <StatCard title="รายได้ประมาณการ" value="฿4.2M" sub="เดือนปัจจุบัน" icon={CircleDollarSign} colorClass="border-l-green-500" />
+      </div>
+    </div>
+  );
+}
+
+function PayrollDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">Payroll Dashboard</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="จำนวนคนงานที่จ่ายเงิน" value="1,120" sub="รอบปัจจุบัน" icon={Users} colorClass="border-l-primary" />
+        <StatCard title="ไทม์ชีทที่รออนุมัติ" value="156" sub="รายการ" icon={Clock} colorClass="border-l-amber-500" />
+        <StatCard title="งบประมาณจ่าย" value="฿8.4M" sub="รอบนี้" icon={CircleDollarSign} colorClass="border-l-destructive" />
+        <StatCard title="จ่ายสำเร็จ" value="98%" sub="ความคืบหน้า" icon={CheckCircle2} colorClass="border-l-green-500" />
+      </div>
+    </div>
+  );
+}
+
+function ClientDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">Client Portal Dashboard</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <StatCard title="คนงานปฏิบัติงานอยู่" value="156" sub="Active on site" icon={UserPlus} colorClass="border-l-primary" />
+        <StatCard title="รอคุณพิจารณา" value="8" sub="Candidates for review" icon={ShieldAlert} colorClass="border-l-amber-500" />
+        <StatCard title="ใบสั่งซื้อทั้งหมด" value="5" sub="Active POs" icon={ShoppingCart} colorClass="border-l-blue-500" />
+      </div>
+    </div>
+  );
+}
+
+function AdminDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">System Executive Dashboard</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="สุขภาพระบบ" value="100%" sub="Healthy" icon={ShieldCheck} colorClass="border-l-green-500" />
+        <StatCard title="Staff Active" value="12" sub="เจ้าหน้าที่" icon={Users} colorClass="border-l-primary" />
+        <StatCard title="Audit Logs" value="4.2k" sub="รายการล่าสุด" icon={ClipboardList} colorClass="border-l-slate-500" />
+        <StatCard title="Alerts" value="0" sub="Critical Issues" icon={AlertTriangle} colorClass="border-l-green-500" />
+      </div>
+    </div>
+  );
+}
+
+function DefaultDashboard({ user }: { user: User }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+      <Info className="h-12 w-12 text-muted-foreground opacity-20" />
+      <h2 className="text-xl font-semibold">ยินดีต้อนรับสู่ OPEC OpsFlow</h2>
+      <p className="text-muted-foreground">กรุณาเลือกเมนูจากแถบด้านซ้ายเพื่อเริ่มต้นใช้งานตามสิทธิ์ของคุณ</p>
+    </div>
+  );
+}
+
+// Utility Input for simpler forms
+function Input(props: any) {
+  return <input {...props} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50" />;
 }

@@ -10,17 +10,17 @@ service cloud.firestore {
              exists(/databases/$(database)/documents/roles_hr_officer/$(request.auth.uid)) || 
              isAdmin(); 
     }
-
-    match /system/bootstrap {
-      allow get: if true;
-      allow create: if !exists(/databases/$(database)/documents/system/bootstrap);
+    function isFinance() {
+      return exists(/databases/$(database)/documents/roles_finance_officer/$(request.auth.uid)) || isAdmin();
+    }
+    function isClient(customerId) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId;
     }
 
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isAdmin();
-      allow create: if (!exists(/databases/$(database)/documents/system/bootstrap) && request.auth.uid == userId) || isAdmin();
-      allow update: if isAdmin() || request.auth.uid == userId;
+      allow create, update: if isAdmin();
     }
 
     match /roles_system_admin/{userId} {
@@ -31,6 +31,7 @@ service cloud.firestore {
     match /positions/{posId} {
       allow read: if isSignedIn();
       allow write: if isHR();
+      match /{allSub=**} { allow read: if isSignedIn(); allow write: if isHR(); }
     }
 
     match /workers/{workerId} {
@@ -42,26 +43,40 @@ service cloud.firestore {
     match /customers/{customerId} {
       allow read: if isSignedIn();
       allow write: if isSales();
+      
       match /contacts/{contactId} { allow read: if isSignedIn(); allow write: if isSales(); }
+      
       match /main_contracts/{contractId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && (isSales() || isFinance() || isClient(customerId));
         allow write: if isSales();
+        
         match /position_rates/{rateId} { allow read: if isSignedIn(); allow write: if isSales(); }
+        
         match /purchase_orders/{poId} {
-          allow read: if isSignedIn();
+          allow read: if isSignedIn() && (isSales() || isFinance() || isClient(customerId));
           allow write: if isSales();
+          
           match /po_lines/{lineId} { 
             allow read: if isSignedIn(); 
             allow write: if isSales(); 
-            match /assignments/{asgnId} { allow read: if isSignedIn(); allow write: if isHR() || isSales(); }
+            
+            match /assignments/{asgnId} { 
+              allow read: if isSignedIn() && (isHR() || isSales() || isClient(customerId)); 
+              allow write: if isHR() || isSales() || isClient(customerId); 
+            }
           }
         }
       }
     }
 
     match /audit_logs/{logId} {
-      allow get, list: if isAdmin();
+      allow read: if isAdmin();
       allow create: if isSignedIn();
+    }
+    
+    match /system/bootstrap {
+      allow get: if true;
+      allow create: if !exists(/databases/$(database)/documents/system/bootstrap);
     }
   }
 }

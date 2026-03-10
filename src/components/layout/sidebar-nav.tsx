@@ -7,19 +7,15 @@ import {
   Users, 
   Briefcase, 
   UserSquare2, 
-  FileCheck, 
-  History, 
   ShieldCheck,
-  Package,
-  CircleDollarSign,
   ClipboardList,
   ShoppingCart,
-  Receipt,
-  Clock,
-  HardHat,
-  Boxes,
   UserPlus,
-  ShieldAlert
+  CircleDollarSign,
+  Clock,
+  Boxes,
+  ShieldAlert,
+  FileText
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -46,13 +42,7 @@ const navItems: NavItem[] = [
     title: 'แดชบอร์ด (Dashboard)', 
     href: '/', 
     icon: LayoutDashboard, 
-    roles: ['system_admin', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'finance_officer'] 
-  },
-  { 
-    title: 'ผู้ใช้งานระบบ (Users)', 
-    href: '/users', 
-    icon: ShieldCheck, 
-    roles: ['system_admin'] 
+    roles: ['system_admin', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'finance_officer', 'client'] 
   },
   { 
     title: 'Client Portal (พิจารณาตัวบุคคล)', 
@@ -71,7 +61,7 @@ const navItems: NavItem[] = [
     title: 'สัญญาหลัก (Main Contracts)', 
     href: '/main-contracts', 
     icon: ClipboardList, 
-    roles: ['system_admin', 'sales_officer'] 
+    roles: ['system_admin', 'sales_officer', 'finance_officer'] 
   },
   { 
     title: 'ใบสั่งซื้อ (Purchase Orders)', 
@@ -84,7 +74,7 @@ const navItems: NavItem[] = [
     title: 'ตำแหน่งงาน (Positions)', 
     href: '/positions', 
     icon: Briefcase, 
-    roles: ['system_admin', 'hr_manager', 'sales_officer'] 
+    roles: ['system_admin', 'hr_manager'] 
   },
   { 
     title: 'คนงาน (Workers)', 
@@ -93,23 +83,30 @@ const navItems: NavItem[] = [
     roles: ['system_admin', 'hr_manager', 'hr_officer'] 
   },
   { 
-    title: 'การมอบหมายและพิจารณา', 
+    title: 'การมอบหมาย (Assignments)', 
     href: '/assignments', 
     icon: UserPlus, 
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer'] 
   },
-  // Payroll Module
+  // Payroll & Finance
   { 
     title: 'การจ่ายเงิน (Payroll)', 
     href: '/payroll', 
     icon: CircleDollarSign, 
-    roles: ['system_admin', 'payroll_officer'] 
+    roles: ['system_admin', 'payroll_officer', 'finance_officer'] 
   },
   { 
     title: 'ลงเวลา (Timesheets)', 
     href: '/timesheets', 
     icon: Clock, 
-    roles: ['system_admin', 'payroll_officer'] 
+    roles: ['system_admin', 'payroll_officer', 'hr_officer'] 
+  },
+  // Admin
+  { 
+    title: 'จัดการระบบ (System Admin)', 
+    href: '/users', 
+    icon: ShieldCheck, 
+    roles: ['system_admin'] 
   },
 ];
 
@@ -121,13 +118,13 @@ export function SidebarNav({ userRole }: { userRole: RoleType }) {
     <Sidebar variant="sidebar" collapsible="icon">
       <SidebarHeader className="border-b p-4">
         <div className="flex items-center gap-2 font-bold text-primary">
-          <Package className="h-6 w-6" />
+          <FileText className="h-6 w-6" />
           <span className="group-data-[collapsible=icon]:hidden">OPEC OpsFlow</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>เมนูการใช้งาน (Main Menu)</SidebarGroupLabel>
+          <SidebarGroupLabel>เมนูตามสิทธิ์การใช้งาน</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {filteredNav.map((item) => (

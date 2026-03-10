@@ -1,5 +1,5 @@
 /**
- * OPEC OpsFlow - TypeScript Data Models
+ * OPEC OpsFlow - Master TypeScript Data Models
  * Strictly aligned with MASTER BLUEPRINT for OPEC Manpower Supply.
  */
 
@@ -11,7 +11,7 @@ export type RoleType =
   | 'payroll_officer'
   | 'store_officer'
   | 'finance_officer'
-  | 'client'; // Added for Client Portal access
+  | 'client';
 
 export type ReadinessStatus = 
   | 'READY' 
@@ -35,14 +35,15 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
-  address?: string;
-  nationalId?: string;
   roleId: RoleType;
-  customerId?: string; // For client-role users to restrict data to their organization
+  isActive: boolean;
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
-  isActive: boolean;
+  // Shared Client Account fields
+  customerId?: string; 
+  isSharedAccount?: boolean;
+  linkedProjectIds?: string[];
 }
 
 export interface Position {
@@ -104,7 +105,7 @@ export interface MainContractPositionRate {
 export interface PurchaseOrder {
   id: string;
   contractId: string;
-  customerId: string; // Helpful for queries
+  customerId: string;
   poNumber: string;
   title: string;
   startDate: number;
@@ -118,6 +119,7 @@ export interface POLine {
   poId: string;
   positionId: string;
   quantity: number;
+  // Financial Snapshots (Blueprint Rule #6)
   sellRateSnapshot: number;
   costBaselineSnapshot: number;
   billingUnitSnapshot: 'daily' | 'monthly' | 'hourly';
@@ -128,8 +130,6 @@ export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
-  poId: string; // Reference for easier access
-  customerId: string; // Reference for Client Portal
   positionId: string;
   startDate: number;
   endDate: number;
@@ -137,6 +137,8 @@ export interface Assignment {
   clientComments?: string;
   createdAt: number;
   updatedAt: number;
+  // Metadata for filtering
+  customerId?: string;
 }
 
 // --- HR & WORKFORCE ---
@@ -147,9 +149,9 @@ export interface Worker {
   lastName: string;
   thaiNationalId: string;
   dateOfBirth: number;
-  contactEmail?: string;
   contactPhone: string;
   currentPositionId: string;
+  secondaryPositionIds?: string[]; // Blueprint: multiple positions in profile
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
   nationality: string;
@@ -158,57 +160,36 @@ export interface Worker {
   updatedAt: number;
 }
 
-export interface WorkerDocument {
-  id: string;
-  workerId: string;
-  documentType: string;
-  documentNumber: string;
-  expiryDate?: number;
-  documentUrl: string;
-  isVerified: boolean;
-}
-
 export interface WorkerCertificate {
   id: string;
   workerId: string;
   certificateName: string;
-  issuingAuthority: string;
-  certificateNumber: string;
-  issueDate: number;
   expiryDate: number;
-  documentUrl?: string;
   isVerified: boolean;
 }
 
 export interface WorkerMedicalRecord {
   id: string;
   workerId: string;
-  medicalCheckType: string;
-  clinicName: string;
-  examinationDate: number;
+  checkDate: number;
   expiryDate: number;
-  overallFitnessStatus: string;
-  documentUrl?: string;
-  isVerified: boolean;
+  result: 'pass' | 'fail';
 }
 
 export interface WorkerDrugTest {
   id: string;
   workerId: string;
   testDate: number;
-  testingFacility: string;
-  result: 'negative' | 'positive' | 'pending';
-  documentUrl?: string;
-  isVerified: boolean;
+  result: 'negative' | 'positive';
 }
 
 export interface AuditLog {
   id: string;
   userId: string;
-  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'APPROVAL' | 'REJECTION';
-  entityType: string;
-  entityId: string;
+  userName: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'APPROVE' | 'REPLACE';
+  collection: string;
+  documentId: string;
   timestamp: number;
-  details: string;
-  ipAddress?: string;
+  changes?: any;
 }

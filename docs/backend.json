@@ -2,16 +2,29 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Staff user profiles including Clients",
+      "description": "Staff user profiles including shared client accounts",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "roleId": { "type": "string" },
-        "customerId": { "type": "string", "description": "Linked customer ID for client users" },
-        "isActive": { "type": "boolean" },
-        "createdAt": { "type": "number" }
+        "customerId": { "type": "string" },
+        "isSharedAccount": { "type": "boolean" },
+        "isActive": { "type": "boolean" }
+      }
+    },
+    "Worker": {
+      "title": "Worker",
+      "description": "Field personnel managed by HR",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "thaiNationalId": { "type": "string" },
+        "workerStatus": { "type": "string", "enum": ["available", "assigned", "on_leave", "inactive"] },
+        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] }
       }
     },
     "MainContract": {
@@ -24,41 +37,6 @@
         "title": { "type": "string" },
         "status": { "type": "string", "enum": ["active", "expired", "pending"] }
       }
-    },
-    "PurchaseOrder": {
-      "title": "PurchaseOrder",
-      "description": "Commercial Purchase Order",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "poNumber": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "closed", "pending"] }
-      }
-    },
-    "POLine": {
-      "title": "POLine",
-      "description": "PO Line item with financial snapshots",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "quantity": { "type": "number" },
-        "positionId": { "type": "string" },
-        "sellRateSnapshot": { "type": "number" },
-        "costBaselineSnapshot": { "type": "number" },
-        "billingUnitSnapshot": { "type": "string", "enum": ["daily", "monthly", "hourly"] },
-        "overtimeRuleSnapshot": { "type": "string" }
-      }
-    },
-    "Assignment": {
-      "title": "Assignment",
-      "description": "Worker deployment through PO Line with client approval flow",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "poLineId": { "type": "string" },
-        "status": { "type": "string", "enum": ["proposed", "client_review", "approved", "mobilizing", "active", "demobilized", "cancelled", "replaced"] }
-      }
     }
   },
   "auth": {
@@ -67,7 +45,35 @@
   "firestore": {
     "/users/{userId}": {
       "schema": "#/backend/entities/User",
-      "description": "System users and clients"
+      "description": "System staff and shared client accounts"
+    },
+    "/roles_system_admin/{userId}": {
+      "schema": { "type": "object" },
+      "description": "System Admin role assignment"
+    },
+    "/positions/{posId}": {
+      "schema": { "type": "object" },
+      "description": "Job positions master"
+    },
+    "/positions/{posId}/requirements/{reqId}": {
+      "schema": { "type": "object" },
+      "description": "Subcollection for position requirements"
+    },
+    "/workers/{workerId}": {
+      "schema": "#/backend/entities/Worker",
+      "description": "Worker master records"
+    },
+    "/workers/{workerId}/certificates/{certId}": {
+      "schema": { "type": "object" },
+      "description": "Worker certs subcollection"
+    },
+    "/workers/{workerId}/medical_records/{medId}": {
+      "schema": { "type": "object" },
+      "description": "Worker medical checks subcollection"
+    },
+    "/workers/{workerId}/drug_tests/{drugId}": {
+      "schema": { "type": "object" },
+      "description": "Worker drug tests subcollection"
     },
     "/customers/{customerId}": {
       "schema": { "type": "object" },
@@ -75,43 +81,31 @@
     },
     "/customers/{customerId}/contacts/{contactId}": {
       "schema": { "type": "object" },
-      "description": "Customer contact persons"
+      "description": "Customer contact persons subcollection"
     },
     "/customers/{customerId}/main_contracts/{contractId}": {
       "schema": "#/backend/entities/MainContract",
-      "description": "Master commercial agreements"
+      "description": "Master agreements subcollection"
     },
     "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
       "schema": { "type": "object" },
-      "description": "Standard position rates per contract"
+      "description": "Master rates subcollection"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
-      "schema": "#/backend/entities/PurchaseOrder",
-      "description": "Purchase orders under a contract"
+      "schema": { "type": "object" },
+      "description": "Purchase orders subcollection"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
-      "schema": "#/backend/entities/POLine",
-      "description": "Detailed PO lines with cost snapshots"
+      "schema": { "type": "object" },
+      "description": "PO lines with financial snapshots"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
-      "schema": "#/backend/entities/Assignment",
-      "description": "Worker assignments to PO lines"
-    },
-    "/workers/{workerId}": {
       "schema": { "type": "object" },
-      "description": "Field worker personnel data"
+      "description": "Worker assignments subcollection"
     },
-    "/workers/{workerId}/certificates/{certId}": {
+    "/audit_logs/{logId}": {
       "schema": { "type": "object" },
-      "description": "Worker certificates"
-    },
-    "/workers/{workerId}/medical_records/{medId}": {
-      "schema": { "type": "object" },
-      "description": "Worker medical checks"
-    },
-    "/workers/{workerId}/drug_tests/{drugId}": {
-      "schema": { "type": "object" },
-      "description": "Worker drug tests"
+      "description": "Immutable system activity logs"
     }
   }
 }
