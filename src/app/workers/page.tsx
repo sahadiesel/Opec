@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, CheckCircle2, AlertCircle, FileQuestion, MoreHorizontal, UserCheck, ShieldAlert, FileCheck, Trash2, Edit } from 'lucide-react';
+import { Plus, Search, CheckCircle2, AlertCircle, FileQuestion, ShieldAlert, Trash2, Edit } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Worker, ReadinessStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -28,12 +28,29 @@ export default function WorkersPage() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
-  const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
-    return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, currentUser]);
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse stored user', e);
+      }
+    }
+  }, []);
 
-  const { data: workers, isLoading } = useCollection<Worker>(workersQuery as any);
+  // DEFENSIVE: Only query if auth is resolved and user has appropriate staff role
+  const workersQuery = useMemoFirebase(() => {
+    if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
+    
+    // Check if user role is permitted to see worker directory
+    const allowedRoles = ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'finance_officer'];
+    if (!allowedRoles.includes(currentUser.roleId)) return null;
+
+    return collection(firestore, 'workers');
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+
+  const { data: workers, isLoading: isCollectionLoading } = useCollection<Worker>(workersQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newWorker, setNewWorker] = useState({
@@ -43,11 +60,6 @@ export default function WorkersPage() {
     contactPhone: '',
     currentPositionId: ''
   });
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const handleCreate = () => {
     if (!firestore) return;
@@ -85,7 +97,26 @@ export default function WorkersPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  // Loading state
+  if (isUserLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not logged in or no permission
+  if (!currentUser) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-destructive">กรุณาเข้าสู่ระบบเพื่อดำเนินการต่อ</p>
+      </div>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -146,7 +177,7 @@ export default function WorkersPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {isLoading ? (
+            {isCollectionLoading ? (
               <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลคนงาน...</div>
             ) : (
               <Table>
@@ -187,6 +218,11 @@ export default function WorkersPage() {
                       </TableCell>
                     </TableRow>
                   ))}
+                  {(!workers || workers.length === 0) && !isCollectionLoading && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลคนงานในระบบ</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}
