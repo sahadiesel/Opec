@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, Edit, ChevronRight, Briefcase } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronRight, Briefcase } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Position, User } from '@/lib/types';
 import { 
