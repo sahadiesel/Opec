@@ -1,39 +1,85 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { RoleType, User } from '@/lib/types';
-import { Briefcase, UserSquare2, ShieldCheck, ClipboardList, Info, AlertTriangle, FileWarning, CheckCircle2 } from 'lucide-react';
+import { User } from '@/lib/types';
+import { Briefcase, Info, AlertTriangle, FileWarning, CheckCircle2, ShieldCheck, ClipboardList, UserPlus } from 'lucide-react';
+import { useFirestore, useAuth, useUser } from '@/firebase';
+import { signInAnonymously, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
-const MOCK_USERS: User[] = [
-  { id: '1', email: 'admin@opec.com', displayName: 'System Admin', role: 'system_admin', createdAt: Date.now() },
-  { id: '2', email: 'sales@opec.com', displayName: 'Sales Officer', role: 'sales_officer', createdAt: Date.now() },
-  { id: '3', email: 'hrmgr@opec.com', displayName: 'HR Manager', role: 'hr_manager', createdAt: Date.now() },
+const MOCK_USERS: any[] = [
+  { id: '1', email: 'admin@opec.com', displayName: 'System Admin', roleId: 'system_admin', createdAt: Date.now(), isActive: true },
+  { id: '2', email: 'sales@opec.com', displayName: 'Sales Officer', roleId: 'sales_officer', createdAt: Date.now(), isActive: true },
+  { id: '3', email: 'hrmgr@opec.com', displayName: 'HR Manager', roleId: 'hr_manager', createdAt: Date.now(), isActive: true },
 ];
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isBootstrapped, setIsBootstrapped] = useState<boolean | null>(null);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('password123');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const firestore = useFirestore();
+  const auth = useAuth();
+  const { user: firebaseUser } = useUser();
 
   useEffect(() => {
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setUser(JSON.parse(stored));
-  }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+    async function checkBootstrap() {
+      if (!firestore) return;
+      const snap = await getDoc(doc(firestore, 'system', 'bootstrap'));
+      setIsBootstrapped(snap.exists());
+    }
+    checkBootstrap();
+  }, [firestore]);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoggingIn(true);
+    
+    // First try real auth if bootstrapped
+    if (isBootstrapped) {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, email, password);
+        const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data() as User;
+          setUser(userData);
+          localStorage.setItem('opsflow_user', JSON.stringify(userData));
+          setIsLoggingIn(false);
+          return;
+        }
+      } catch (err) {
+        console.warn('Real login failed, checking mock...', err);
+      }
+    }
+
+    // Fallback to Mock Login for Phase 1A demo
     const found = MOCK_USERS.find(u => u.email === email);
     if (found) {
-      setUser(found);
-      localStorage.setItem('opsflow_user', JSON.stringify(found));
+      try {
+        if (!firebaseUser) await signInAnonymously(auth);
+        setUser(found);
+        localStorage.setItem('opsflow_user', JSON.stringify(found));
+      } catch (error) {
+        console.error('Firebase Auth error:', error);
+        alert('Authentication failed.');
+      } finally {
+        setIsLoggingIn(false);
+      }
     } else {
-      alert('Mock Login: Try admin@opec.com, sales@opec.com, or hrmgr@opec.com');
+      setIsLoggingIn(false);
+      alert('Login Failed: Check your email or use the admin bootstrap if first time.');
     }
   };
 
@@ -46,53 +92,69 @@ export default function Home() {
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <Card className="w-full max-w-md shadow-xl border-t-4 border-t-primary">
-          <CardHeader className="space-y-1 text-center">
-            <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-4">
-              <Briefcase className="h-8 w-8 text-primary" />
-            </div>
-            <CardTitle className="text-2xl">OPEC OpsFlow</CardTitle>
-            <CardDescription>
-              ระบบจัดการกำลังคน OPEC Manpower Supply
-            </CardDescription>
-          </CardHeader>
-          <form onSubmit={handleLogin}>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">อีเมลผู้ใช้งาน</Label>
-                <input 
-                  id="email" 
-                  type="email" 
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  placeholder="name@opec.com" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required 
-                />
+      <div className="flex items-center justify-center min-h-screen bg-background p-4">
+        <div className="w-full max-w-md space-y-4">
+          <Card className="shadow-xl border-t-4 border-t-primary">
+            <CardHeader className="space-y-1 text-center">
+              <div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-4">
+                <Briefcase className="h-8 w-8 text-primary" />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">รหัสผ่าน</Label>
-                <input 
-                  id="password" 
-                  type="password" 
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  required 
-                  defaultValue="password123" 
-                />
-              </div>
-              <div className="bg-accent/50 p-3 rounded-md border border-accent flex gap-2">
-                <Info className="h-5 w-5 text-secondary shrink-0" />
-                <p className="text-xs text-muted-foreground">
-                  สำหรับ Phase 1A กรุณาใช้อีเมลตัวอย่าง: <b>admin@opec.com</b> หรือ <b>hrmgr@opec.com</b>
-                </p>
-              </div>
-            </CardContent>
-            <CardFooter>
-              <Button type="submit" className="w-full h-11 text-lg">เข้าสู่ระบบ</Button>
-            </CardFooter>
-          </form>
-        </Card>
+              <CardTitle className="text-2xl">OPEC OpsFlow</CardTitle>
+              <CardDescription>
+                ระบบจัดการกำลังคน OPEC Manpower Supply
+              </CardDescription>
+            </CardHeader>
+            <form onSubmit={handleLogin}>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">อีเมลผู้ใช้งาน</Label>
+                  <input 
+                    id="email" 
+                    type="email" 
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="name@opec.com" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">รหัสผ่าน</Label>
+                  <input 
+                    id="password" 
+                    type="password" 
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    required 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                {!isBootstrapped && isBootstrapped !== null && (
+                  <div className="bg-amber-50 p-3 rounded-md border border-amber-200 flex gap-2">
+                    <Info className="h-5 w-5 text-amber-600 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="text-xs text-amber-800 font-bold">ยังไม่ได้ตั้งค่าระบบ</p>
+                      <p className="text-xs text-amber-700 leading-tight">กรุณาลงทะเบียนผู้ดูแลระบบคนแรกเพื่อเริ่มต้นใช้งาน</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+              <CardFooter className="flex flex-col gap-3">
+                <Button type="submit" className="w-full h-11 text-lg" disabled={isLoggingIn}>
+                  {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
+                </Button>
+                
+                {!isBootstrapped && isBootstrapped !== null && (
+                  <Button variant="outline" className="w-full gap-2 text-secondary border-secondary" asChild>
+                    <Link href="/setup-admin">
+                      <UserPlus className="h-4 w-4" /> ลงทะเบียน Admin คนแรก
+                    </Link>
+                  </Button>
+                )}
+              </CardFooter>
+            </form>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -102,7 +164,7 @@ export default function Home() {
       <div className="space-y-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-primary">แดชบอร์ดภาพรวม (Overall Dashboard)</h1>
-          <p className="text-muted-foreground mt-2">ยินดีต้อนรับกลับมา, {user.displayName} ระบบพร้อมสำหรับการจัดการกำลังคนวันนี้</p>
+          <p className="text-muted-foreground mt-2">ยินดีต้อนับกลับมา, {user.displayName} ระบบพร้อมสำหรับการจัดการกำลังคนวันนี้</p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

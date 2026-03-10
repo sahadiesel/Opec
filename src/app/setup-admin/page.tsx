@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { ShieldAlert, Briefcase, Lock, Mail, User } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { ShieldAlert, Briefcase, Lock, Mail, User, CreditCard, Home } from 'lucide-react';
 import { useFirestore, useAuth } from '@/firebase';
 import { doc, getDoc, setDoc, collection, getDocs, limit, query } from 'firebase/firestore';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
@@ -20,6 +21,8 @@ export default function SetupAdminPage() {
     displayName: '',
     email: '',
     password: '',
+    nationalId: '',
+    address: '',
   });
 
   const router = useRouter();
@@ -36,7 +39,6 @@ export default function SetupAdminPage() {
           setIsBootstrapped(true);
           router.push('/');
         } else {
-          // Double check the roles_system_admin collection
           const q = query(collection(firestore, 'roles_system_admin'), limit(1));
           const snapshot = await getDocs(q);
           if (!snapshot.empty) {
@@ -67,11 +69,13 @@ export default function SetupAdminPage() {
       );
       const uid = userCredential.user.uid;
 
-      // 2. Create User Profile
+      // 2. Create User Profile with requested fields
       await setDoc(doc(firestore, 'users', uid), {
         id: uid,
         email: formData.email,
         displayName: formData.displayName,
+        nationalId: formData.nationalId,
+        address: formData.address,
         roleId: 'system_admin',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -83,7 +87,7 @@ export default function SetupAdminPage() {
         assignedAt: Date.now(),
       });
 
-      // 4. Mark system as bootstrapped to close the flow
+      // 4. Mark system as bootstrapped
       await setDoc(doc(firestore, 'system', 'bootstrap'), {
         initializedAt: Date.now(),
         initializedBy: uid,
@@ -94,7 +98,6 @@ export default function SetupAdminPage() {
         description: "บัญชี System Admin ถูกสร้างเรียบร้อยแล้ว",
       });
 
-      // Clear local mock session if any and redirect
       localStorage.removeItem('opsflow_user');
       router.push('/');
     } catch (error: any) {
@@ -129,29 +132,41 @@ export default function SetupAdminPage() {
           <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-2">
             <ShieldAlert className="h-10 w-10 text-primary" />
           </div>
-          <CardTitle className="text-3xl font-bold">OPEC OpsFlow Setup</CardTitle>
+          <CardTitle className="text-3xl font-bold">ลงทะเบียนผู้ดูแลระบบคนแรก</CardTitle>
           <CardDescription className="text-lg">
-            ยินดีต้อนรับ! กรุณาสร้างบัญชี <b>System Admin</b> บัญชีแรกเพื่อเริ่มต้นใช้งาน
+            กรุณากรอกข้อมูลเพื่อเริ่มต้นใช้งานระบบ OPEC OpsFlow
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleSetup}>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
+          <CardContent className="space-y-4">
+            <div className="grid gap-4">
               <div className="space-y-2">
                 <Label htmlFor="displayName" className="flex items-center gap-2">
-                  <User className="h-4 w-4" /> ชื่อ-นามสกุล ผู้ดูแลระบบ
+                  <User className="h-4 w-4" /> ชื่อ-นามสกุล
                 </Label>
                 <Input
                   id="displayName"
-                  placeholder="เช่น P'Joe (Admin)"
+                  placeholder="ระบุชื่อ-นามสกุลจริง"
                   value={formData.displayName}
                   onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
                   required
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="nationalId" className="flex items-center gap-2">
+                  <CreditCard className="h-4 w-4" /> เลขบัตรประชาชน
+                </Label>
+                <Input
+                  id="nationalId"
+                  placeholder="เลขบัตรประชาชน 13 หลัก"
+                  value={formData.nationalId}
+                  onChange={(e) => setFormData({ ...formData, nationalId: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="email" className="flex items-center gap-2">
-                  <Mail className="h-4 w-4" /> อีเมล
+                  <Mail className="h-4 w-4" /> อีเมลใช้งาน
                 </Label>
                 <Input
                   id="email"
@@ -163,12 +178,25 @@ export default function SetupAdminPage() {
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="address" className="flex items-center gap-2">
+                  <Home className="h-4 w-4" /> ที่อยู่
+                </Label>
+                <Textarea
+                  id="address"
+                  placeholder="ระบุที่อยู่ปัจจุบัน"
+                  value={formData.address}
+                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="password" className="flex items-center gap-2">
-                  <Lock className="h-4 w-4" /> รหัสผ่าน (ขั้นต่ำ 6 ตัวอักษร)
+                  <Lock className="h-4 w-4" /> กำหนดรหัสผ่าน
                 </Label>
                 <Input
                   id="password"
                   type="password"
+                  placeholder="อย่างน้อย 6 ตัวอักษร"
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   required
@@ -177,11 +205,10 @@ export default function SetupAdminPage() {
               </div>
             </div>
             
-            <div className="bg-amber-50 p-4 rounded-lg border border-amber-200 flex gap-3">
+            <div className="bg-amber-50 p-4 rounded-lg border border-amber-200 flex gap-3 mt-2">
               <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0" />
               <p className="text-xs text-amber-800 leading-relaxed">
-                <b>คำเตือน:</b> บัญชีนี้จะมีสิทธิ์สูงสุดในการเข้าถึงข้อมูลทั้งหมดในระบบ OPEC OpsFlow 
-                หลังจากตั้งค่าเสร็จสิ้น หน้าจอนี้จะถูกปิดถาวรเพื่อความปลอดภัย
+                <b>คำเตือน:</b> คุณกำลังสร้างบัญชีผู้ดูแลระบบสูงสุด ข้อมูลเหล่านี้จะถูกบันทึกเป็นฐานข้อมูลพนักงานคนแรกของระบบ
               </p>
             </div>
           </CardContent>
@@ -191,7 +218,7 @@ export default function SetupAdminPage() {
               className="w-full h-12 text-lg font-semibold" 
               disabled={isSubmitting}
             >
-              {isSubmitting ? 'กำลังสร้างบัญชี...' : 'เริ่มต้นใช้งานระบบ OPEC'}
+              {isSubmitting ? 'กำลังสร้างบัญชี...' : 'ลงทะเบียนและเริ่มต้นระบบ'}
             </Button>
           </CardFooter>
         </form>

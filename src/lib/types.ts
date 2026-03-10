@@ -25,7 +25,9 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
-  roleId: RoleType; // Blueprint maps these to collection-based roles, but keeping for direct profile link
+  address?: string;      // Added for Staff/Admin
+  nationalId?: string;   // Added for Staff/Admin
+  roleId: RoleType;
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
