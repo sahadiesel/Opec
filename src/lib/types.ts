@@ -48,6 +48,15 @@ export interface Position {
   isActive: boolean;
 }
 
+export interface PositionRequirement {
+  id: string;
+  positionId: string;
+  type: 'certificate' | 'ppe' | 'tool' | 'medical';
+  name: string;
+  description?: string;
+  isMandatory: boolean;
+}
+
 // --- COMMERCIAL MODULE ---
 
 export interface Customer {
@@ -138,6 +147,16 @@ export interface Worker {
   gender: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface WorkerDocument {
+  id: string;
+  workerId: string;
+  documentType: string;
+  documentNumber: string;
+  expiryDate?: number;
+  documentUrl: string;
+  isVerified: boolean;
 }
 
 export interface WorkerCertificate {

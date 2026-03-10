@@ -1,25 +1,44 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "roleId": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      }
+    },
+    "Position": {
+      "title": "Position",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      }
+    },
+    "Worker": {
+      "title": "Worker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "workerStatus": { "type": "string" },
+        "readinessStatus": { "type": "string" }
+      }
+    },
     "Customer": {
       "title": "Customer",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "taxId": { "type": "string" },
-        "address": { "type": "string" },
-        "isActive": { "type": "boolean" }
-      }
-    },
-    "ContactPerson": {
-      "title": "ContactPerson",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "position": { "type": "string" },
-        "email": { "type": "string" },
-        "phone": { "type": "string" }
+        "taxId": { "type": "string" }
       }
     },
     "MainContract": {
@@ -28,10 +47,7 @@
       "properties": {
         "id": { "type": "string" },
         "contractNumber": { "type": "string" },
-        "title": { "type": "string" },
-        "startDate": { "type": "number" },
-        "endDate": { "type": "number" },
-        "status": { "type": "string", "enum": ["active", "expired", "pending"] }
+        "status": { "type": "string" }
       }
     },
     "PurchaseOrder": {
@@ -39,11 +55,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "poNumber": { "type": "string" },
-        "title": { "type": "string" },
-        "startDate": { "type": "number" },
-        "endDate": { "type": "number" },
-        "status": { "type": "string", "enum": ["active", "closed", "pending"] }
+        "poNumber": { "type": "string" }
       }
     },
     "POLine": {
@@ -51,11 +63,8 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "positionId": { "type": "string" },
         "quantity": { "type": "number" },
-        "sellRateSnapshot": { "type": "number" },
-        "costBaselineSnapshot": { "type": "number" },
-        "billingUnitSnapshot": { "type": "string" }
+        "positionId": { "type": "string" }
       }
     },
     "Assignment": {
@@ -64,11 +73,7 @@
       "properties": {
         "id": { "type": "string" },
         "workerId": { "type": "string" },
-        "poLineId": { "type": "string" },
-        "positionId": { "type": "string" },
-        "startDate": { "type": "number" },
-        "endDate": { "type": "number" },
-        "status": { "type": "string", "enum": ["active", "completed", "cancelled"] }
+        "status": { "type": "string" }
       }
     }
   },
@@ -76,29 +81,65 @@
     "providers": ["password"]
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": "#/backend/entities/User",
+      "description": "Staff user profiles"
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "type": "object" },
+      "description": "System audit logs"
+    },
+    "/positions/{posId}": {
+      "schema": "#/backend/entities/Position",
+      "description": "Standard job positions"
+    },
+    "/positions/{posId}/certificate_requirements/{reqId}": {
+      "schema": { "type": "object" },
+      "description": "Mandatory certificates for position"
+    },
+    "/workers/{workerId}": {
+      "schema": "#/backend/entities/Worker",
+      "description": "Field worker records"
+    },
+    "/workers/{workerId}/certificates/{certId}": {
+      "schema": { "type": "object" },
+      "description": "Worker held certificates"
+    },
+    "/workers/{workerId}/medical_records/{medId}": {
+      "schema": { "type": "object" },
+      "description": "Worker medical check history"
+    },
+    "/workers/{workerId}/drug_tests/{drugId}": {
+      "schema": { "type": "object" },
+      "description": "Worker drug test results"
+    },
     "/customers/{customerId}": {
       "schema": "#/backend/entities/Customer",
-      "description": "Master customer records"
+      "description": "Customer master data"
     },
     "/customers/{customerId}/contacts/{contactId}": {
-      "schema": "#/backend/entities/ContactPerson",
+      "schema": { "type": "object" },
       "description": "Customer contact persons"
     },
     "/customers/{customerId}/main_contracts/{contractId}": {
       "schema": "#/backend/entities/MainContract",
-      "description": "Commercial master agreements"
+      "description": "Master agreements"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
+      "schema": { "type": "object" },
+      "description": "Agreed position rates"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
       "schema": "#/backend/entities/PurchaseOrder",
-      "description": "Purchase orders under a contract"
+      "description": "Commercial purchase orders"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
       "schema": "#/backend/entities/POLine",
-      "description": "Line items in a PO"
+      "description": "PO line items with snapshots"
     },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{assignmentId}": {
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
       "schema": "#/backend/entities/Assignment",
-      "description": "Worker assignments for a PO Line"
+      "description": "Worker assignments to PO lines"
     }
   }
 }
