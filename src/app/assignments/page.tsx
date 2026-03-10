@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, UserPlus, MoreHorizontal, Briefcase, Send, Clock, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { addDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { setDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 
 export default function AssignmentsPage() {
@@ -72,8 +72,12 @@ export default function AssignmentsPage() {
   const handleCreateAssignment = async () => {
     if (!firestore || !selectedWorkerId || !selectedPOLineId || !startDate || !endDate) return;
 
-    const poLine = allPOLines?.find(l => l.id === selectedPOLineId);
-    if (!poLine) return;
+    // allPOLines items now have _path from our useCollection update
+    const poLine = (allPOLines as any)?.find((l: any) => l.id === selectedPOLineId);
+    if (!poLine || !poLine._path) {
+      toast({ variant: "destructive", title: "Error", description: "Could not resolve PO Line path" });
+      return;
+    }
 
     const existingCount = assignments?.filter(a => 
       a.poLineId === selectedPOLineId && 
@@ -89,12 +93,20 @@ export default function AssignmentsPage() {
       return;
     }
 
-    const assignmentsRef = collection(firestore, 'assignments');
+    // Parse customer ID from poLine._path: customers/{custId}/...
+    const pathSegments = poLine._path.split('/');
+    const customerId = pathSegments[1];
+
+    // Hierarchical path: .../po_lines/{lineId}/assignments/{newId}
+    const assignmentsCollectionRef = collection(firestore, poLine._path, 'assignments');
+    const newAssignmentRef = doc(assignmentsCollectionRef);
     
-    const newAssignment: Partial<Assignment> = {
+    const newAssignment: Assignment = {
+      id: newAssignmentRef.id,
       workerId: selectedWorkerId,
       poLineId: selectedPOLineId,
       positionId: poLine.positionId,
+      customerId: customerId, // Denormalize for portal filtering
       startDate: new Date(startDate).getTime(),
       endDate: new Date(endDate).getTime(),
       status: 'proposed',
@@ -102,7 +114,7 @@ export default function AssignmentsPage() {
       updatedAt: Date.now(),
     };
 
-    addDocumentNonBlocking(assignmentsRef, newAssignment);
+    setDocumentNonBlocking(newAssignmentRef, newAssignment, { merge: true });
     
     toast({
       title: "สร้างรายการเสนอตัวสำเร็จ",
@@ -113,9 +125,9 @@ export default function AssignmentsPage() {
     resetForm();
   };
 
-  const handleUpdateStatus = (asgnId: string, newStatus: AssignmentStatus) => {
-    if (!firestore) return;
-    updateDocumentNonBlocking(doc(firestore, 'assignments', asgnId), {
+  const handleUpdateStatus = (asgnId: string, asgnPath: string, newStatus: AssignmentStatus) => {
+    if (!firestore || !asgnPath) return;
+    updateDocumentNonBlocking(doc(firestore, asgnPath), {
       status: newStatus,
       updatedAt: Date.now()
     });
@@ -253,6 +265,7 @@ export default function AssignmentsPage() {
                 <TableBody>
                   {assignments?.map((asgn) => {
                     const worker = allWorkers?.find(w => w.id === asgn.workerId);
+                    const asgnPath = (asgn as any)._path;
                     return (
                       <TableRow key={asgn.id}>
                         <TableCell>
@@ -275,17 +288,17 @@ export default function AssignmentsPage() {
                         </TableCell>
                         <TableCell className="text-right space-x-2">
                           {asgn.status === 'proposed' && (
-                            <Button size="sm" variant="outline" className="text-blue-600 border-blue-200" onClick={() => handleUpdateStatus(asgn.id, 'client_review')}>
+                            <Button size="sm" variant="outline" className="text-blue-600 border-blue-200" onClick={() => handleUpdateStatus(asgn.id, asgnPath, 'client_review')}>
                               <Send className="h-3.5 w-3.5 mr-1" /> ส่งพิจารณา
                             </Button>
                           )}
                           {asgn.status === 'approved' && (
-                            <Button size="sm" variant="outline" className="text-amber-600 border-amber-200" onClick={() => handleUpdateStatus(asgn.id, 'mobilizing')}>
+                            <Button size="sm" variant="outline" className="text-amber-600 border-amber-200" onClick={() => handleUpdateStatus(asgn.id, asgnPath, 'mobilizing')}>
                               <Clock className="h-3.5 w-3.5 mr-1" /> เริ่มระดมพล
                             </Button>
                           )}
                           {asgn.status === 'mobilizing' && (
-                            <Button size="sm" className="bg-primary" onClick={() => handleUpdateStatus(asgn.id, 'active')}>
+                            <Button size="sm" className="bg-primary" onClick={() => handleUpdateStatus(asgn.id, asgnPath, 'active')}>
                               <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> เริ่มงาน (Active)
                             </Button>
                           )}
@@ -294,6 +307,11 @@ export default function AssignmentsPage() {
                       </TableRow>
                     );
                   })}
+                  {!isAssignmentsLoading && (!assignments || assignments.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบรายการการมอบหมาย</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}

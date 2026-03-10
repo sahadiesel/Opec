@@ -4,16 +4,14 @@ service cloud.firestore {
 
     /**
      * OPEC Manpower Supply - Security Rules
-     * 
-     * Core Philosophy: Role-Based Access Control (RBAC) via DBAC (Database Access Control).
-     * Staff roles are stored in dedicated collections: /roles_[role_name]/{uid}
+     * Core Philosophy: Role-Based Access Control (RBAC) via DBAC.
      */
 
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // Generic Role Check
+    // Optimized Role Check
     function hasRole(role) {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
@@ -27,7 +25,7 @@ service cloud.firestore {
     function isPayrollOfficer() { return hasRole('payroll_officer'); }
     function isStoreOfficer() { return hasRole('store_officer'); }
 
-    // General Staff check (Anyone with any staff role)
+    // Combined Staff check
     function isStaff() {
       return isSignedIn() && (
         isSystemAdmin() || 
@@ -40,47 +38,42 @@ service cloud.firestore {
       );
     }
 
-    // HR specific staff (Admins and HR roles)
     function isHRStaff() {
       return isSignedIn() && (isSystemAdmin() || isHRManager() || isHROfficer());
     }
 
-    // User profiles
-    match /users {
-      // Explicitly allow list if staff
+    // Collection Group support - MUST be defined early or specifically
+    match /{path=**}/assignments/{asgnId} { 
+      allow read: if isStaff() || (isSignedIn() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId); 
+      allow write: if isStaff();
+    }
+    match /{path=**}/purchase_orders/{poId} { allow read: if isStaff(); }
+    match /{path=**}/po_lines/{lineId} { allow read: if isStaff(); }
+    match /{path=**}/main_contracts/{id} { allow read: if isStaff(); }
+
+    // Users
+    match /users/{userId} {
+      allow get: if isStaff() || (isSignedIn() && request.auth.uid == userId);
       allow list: if isStaff();
-      match /{userId} {
-        // Anyone signed in can get their own or others can be gotten by staff
-        allow get: if isStaff() || (isSignedIn() && request.auth.uid == userId);
-        // Only system admins can create/update arbitrary profiles, users can update their own
-        allow write: if isSystemAdmin() || (isSignedIn() && request.auth.uid == userId);
-      }
+      allow write: if isSystemAdmin() || (isSignedIn() && request.auth.uid == userId);
     }
 
-    // Workers & Records
+    // Master Data
     match /workers {
       allow list: if isStaff();
       match /{workerId} {
         allow get: if isStaff();
         allow write: if isHRStaff();
-        
-        match /certificates/{id} { allow read: if isStaff(); allow write: if isHRStaff(); }
-        match /medical_records/{id} { allow read: if isStaff(); allow write: if isHRStaff(); }
-        match /drug_tests/{id} { allow read: if isStaff(); allow write: if isHRStaff(); }
-        match /documents/{id} { allow read: if isStaff(); allow write: if isHRStaff(); }
+        match /{sub=**} { allow read: if isStaff(); allow write: if isHRStaff(); }
       }
     }
 
-    // Positions & Requirements
     match /positions {
       allow list: if isStaff();
       match /{positionId} {
         allow get: if isStaff();
         allow write: if isHRStaff();
-        
-        match /certificate_requirements/{id} { allow read, write: if isHRStaff(); }
-        match /ppe_requirements/{id} { allow read, write: if isHRStaff(); }
-        match /tool_requirements/{id} { allow read, write: if isHRStaff(); }
+        match /{sub=**} { allow read: if isStaff(); allow write: if isHRStaff(); }
       }
     }
 
@@ -90,31 +83,11 @@ service cloud.firestore {
       match /{customerId} {
         allow get: if isStaff();
         allow write: if isSystemAdmin() || isSalesOfficer();
-        
-        match /contacts/{id} { allow read, write: if isStaff(); }
-        
-        match /main_contracts/{id} { 
-          allow read: if isStaff();
-          allow write: if isSystemAdmin() || isSalesOfficer();
-
-          match /position_rates/{rateId} { allow read, write: if isStaff(); }
-          
-          match /purchase_orders/{poId} { 
-            allow read: if isStaff();
-            allow write: if isSystemAdmin() || isSalesOfficer();
-
-            match /po_lines/{lineId} { 
-              allow read: if isStaff();
-              allow write: if isSystemAdmin() || isSalesOfficer();
-
-              match /assignments/{asgnId} { allow read, write: if isStaff(); }
-            }
-          }
-        }
+        match /{sub=**} { allow read, write: if isStaff(); }
       }
     }
 
-    // Roles & System Bootstrap - READ allowed for signed in users to check their own role status
+    // Roles & System Bootstrap
     match /roles_hr_manager/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
@@ -125,12 +98,6 @@ service cloud.firestore {
     
     match /system/bootstrap { allow read: if true; }
 
-    // Collection Group support for global listing
-    match /{path=**}/assignments/{asgnId} { allow read: if isStaff(); }
-    match /{path=**}/purchase_orders/{poId} { allow read: if isStaff(); }
-    match /{path=**}/po_lines/{lineId} { allow read: if isStaff(); }
-
-    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }

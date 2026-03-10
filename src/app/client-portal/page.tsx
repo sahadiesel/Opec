@@ -35,25 +35,35 @@ export default function ClientPortalPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
   const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
     return collectionGroup(firestore, 'assignments');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
 
-  const { data: assignments, isLoading } = useCollection<Assignment>(assignmentsQuery as any);
+  const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const handleApprove = (asgn: Assignment) => {
     if (!firestore) return;
-    updateDocumentNonBlocking(doc(firestore, 'assignments', asgn.id), {
+    const asgnPath = (asgn as any)._path;
+    if (!asgnPath) return;
+
+    updateDocumentNonBlocking(doc(firestore, asgnPath), {
       status: 'approved',
       clientComments: reviewComment,
       updatedAt: Date.now()
@@ -65,8 +75,11 @@ export default function ClientPortalPage() {
 
   const handleReject = (asgn: Assignment) => {
     if (!firestore) return;
-    updateDocumentNonBlocking(doc(firestore, 'assignments', asgn.id), {
-      status: 'replaced', // Blueprint rule for replacement request
+    const asgnPath = (asgn as any)._path;
+    if (!asgnPath) return;
+
+    updateDocumentNonBlocking(doc(firestore, asgnPath), {
+      status: 'replaced', 
       clientComments: reviewComment,
       updatedAt: Date.now()
     });
@@ -75,14 +88,26 @@ export default function ClientPortalPage() {
     setSelectedAssignment(null);
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <ShieldCheck className="h-12 w-12 text-primary animate-pulse mx-auto" />
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Task Set 2: Shared Client Account Support
   // Filter by customerId from the shared account session
-  const clientAssignments = assignments?.filter(a => 
-    (currentUser.roleId === 'client' ? a.customerId === currentUser.customerId : true) &&
-    ['client_review', 'approved', 'active', 'replaced', 'mobilizing'].includes(a.status)
-  ) || [];
+  const clientAssignments = assignments?.filter(a => {
+    const isRelevantStatus = ['client_review', 'approved', 'active', 'replaced', 'mobilizing'].includes(a.status);
+    if (currentUser.roleId === 'client') {
+      return a.customerId === currentUser.customerId && isRelevantStatus;
+    }
+    return isRelevantStatus;
+  }) || [];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -125,7 +150,7 @@ export default function ClientPortalPage() {
             <CardTitle>รายการพิจารณาผู้สมัคร (Candidate Review)</CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoading ? (
+            {isAssignmentsLoading ? (
               <div className="py-10 text-center text-muted-foreground italic">กำลังโหลด...</div>
             ) : (
               <Table>
@@ -226,6 +251,11 @@ export default function ClientPortalPage() {
                       </TableRow>
                     );
                   })}
+                  {!isAssignmentsLoading && clientAssignments.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีรายการที่ต้องพิจารณาในขณะนี้</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}
