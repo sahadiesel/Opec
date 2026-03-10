@@ -22,20 +22,20 @@ import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 export default function WorkersPage() {
-  const [user, setUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !user) return null;
+    if (!firestore || !firebaseUser || !currentUser) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, user]);
+  }, [firestore, firebaseUser, currentUser]);
 
   const { data: workers, isLoading } = useCollection<Worker>(workersQuery as any);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setUser(JSON.parse(stored));
+    if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
   const getReadinessBadge = (status: ReadinessStatus) => {
@@ -74,10 +74,10 @@ export default function WorkersPage() {
     }
   };
 
-  if (!user || isUserLoading) return null;
+  if (isUserLoading || !currentUser) return null;
 
   return (
-    <AppShell user={user} onLogout={() => {}}>
+    <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>

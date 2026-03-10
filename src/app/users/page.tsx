@@ -19,7 +19,8 @@ export default function UsersPage() {
   const firestore = useFirestore();
 
   const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    // CRITICAL: Only run the query if authentication is verified (request.auth != null)
+    if (!firestore || !firebaseUser || !currentUser || currentUser.roleId !== 'system_admin') return null;
     return collection(firestore, 'users');
   }, [firestore, firebaseUser, currentUser]);
 
@@ -37,7 +38,7 @@ export default function UsersPage() {
     }
   };
 
-  if (!currentUser || isUserLoading) {
+  if (isUserLoading || !currentUser) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <p className="text-muted-foreground animate-pulse">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>

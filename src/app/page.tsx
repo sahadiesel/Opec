@@ -6,11 +6,12 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { User } from '@/lib/types';
-import { Briefcase, Info, AlertTriangle, FileWarning, CheckCircle2, ShieldCheck, ClipboardList, UserPlus } from 'lucide-react';
+import { User, RoleType } from '@/lib/types';
+import { Briefcase, Info, AlertTriangle, FileWarning, CheckCircle2, ShieldCheck, ClipboardList, UserPlus, Lock } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { signInAnonymously, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { useToast } from '@/hooks/use-toast';
 
 const MOCK_USERS: any[] = [
   { id: '1', email: 'admin@opec.com', displayName: 'System Admin', roleId: 'system_admin', createdAt: Date.now(), isActive: true },
@@ -28,7 +29,8 @@ export default function Home() {
 
   const firestore = useFirestore();
   const auth = useAuth();
-  const { user: firebaseUser } = useUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
+  const { toast } = useToast();
 
   useEffect(() => {
     setIsLoaded(true);
@@ -37,8 +39,13 @@ export default function Home() {
 
     async function checkBootstrap() {
       if (!firestore) return;
-      const snap = await getDoc(doc(firestore, 'system', 'bootstrap'));
-      setIsBootstrapped(snap.exists());
+      try {
+        const snap = await getDoc(doc(firestore, 'system', 'bootstrap'));
+        setIsBootstrapped(snap.exists());
+      } catch (e) {
+        console.warn('Bootstrap check failed (likely unauthenticated):', e);
+        setIsBootstrapped(false);
+      }
     }
     checkBootstrap();
   }, [firestore]);
@@ -47,39 +54,48 @@ export default function Home() {
     e.preventDefault();
     setIsLoggingIn(true);
     
-    // First try real auth if bootstrapped
-    if (isBootstrapped) {
-      try {
+    try {
+      // 1. Always attempt real Firebase Auth if bootstrapped
+      if (isBootstrapped) {
         const cred = await signInWithEmailAndPassword(auth, email, password);
         const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
+        
         if (userDoc.exists()) {
           const userData = userDoc.data() as User;
+          
+          // Verify role in roles_system_admin if it's an admin
+          if (userData.roleId === 'system_admin') {
+            const roleDoc = await getDoc(doc(firestore, 'roles_system_admin', cred.user.uid));
+            if (!roleDoc.exists()) {
+              throw new Error('Access Denied: Admin role record missing.');
+            }
+          }
+
           setUser(userData);
           localStorage.setItem('opsflow_user', JSON.stringify(userData));
           setIsLoggingIn(false);
           return;
         }
-      } catch (err) {
-        console.warn('Real login failed, checking mock...', err);
       }
-    }
 
-    // Fallback to Mock Login for Phase 1A demo
-    const found = MOCK_USERS.find(u => u.email === email);
-    if (found) {
-      try {
+      // 2. Fallback to Mock Login for local development/demo
+      const found = MOCK_USERS.find(u => u.email === email);
+      if (found) {
         if (!firebaseUser) await signInAnonymously(auth);
         setUser(found);
         localStorage.setItem('opsflow_user', JSON.stringify(found));
-      } catch (error) {
-        console.error('Firebase Auth error:', error);
-        alert('Authentication failed.');
-      } finally {
-        setIsLoggingIn(false);
+        toast({ title: "เข้าสู่ระบบสำเร็จ (Mock Mode)" });
+      } else {
+        throw new Error('ไม่พบข้อมูลผู้ใช้งาน หรือรหัสผ่านไม่ถูกต้อง');
       }
-    } else {
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "เข้าสู่ระบบไม่สำเร็จ",
+        description: err.message || "กรุณาตรวจสอบอีเมลและรหัสผ่าน",
+      });
+    } finally {
       setIsLoggingIn(false);
-      alert('Login Failed: Check your email or use the admin bootstrap if first time.');
     }
   };
 
@@ -88,7 +104,7 @@ export default function Home() {
     localStorage.removeItem('opsflow_user');
   };
 
-  if (!isLoaded) return null;
+  if (!isLoaded || isUserLoading) return null;
 
   if (!user) {
     return (
