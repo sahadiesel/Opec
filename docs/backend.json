@@ -1,125 +1,254 @@
 {
   "entities": {
-    "User": {
-      "title": "User",
-      "description": "Staff user profiles and shared client accounts",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
-        "roleId": { "type": "string", "enum": ["system_admin", "finance_officer", "sales_officer", "hr_manager", "hr_officer", "payroll_officer", "store_officer", "client"] },
-        "customerId": { "type": "string" },
-        "isSharedAccount": { "type": "boolean" },
-        "isActive": { "type": "boolean" }
-      }
-    },
     "Position": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Position",
-      "description": "Job positions master",
       "type": "object",
+      "description": "Represents a specific job role or position within OPEC Manpower Supply, defining its core characteristics and requirements.",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "code": { "type": "string" },
-        "isActive": { "type": "boolean" }
-      }
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Position entity."
+        },
+        "positionName": {
+          "type": "string",
+          "description": "The official, human-readable name of the position (e.g., 'Welder', 'Rig Mechanic')."
+        },
+        "positionCode": {
+          "type": "string",
+          "description": "A unique alphanumeric code identifying the position."
+        },
+        "category": {
+          "type": "string",
+          "description": "The broader category to which the position belongs (e.g., 'Offshore', 'Onshore', 'Technical', 'Administrative')."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Indicates whether the position is currently active and can be assigned to workers."
+        },
+        "description": {
+          "type": "string",
+          "description": "A detailed description of the position's responsibilities, duties, and scope."
+        },
+        "payrollBasis": {
+          "type": "string",
+          "description": "The standard basis for calculating payroll for this position (e.g., 'Daily', 'Monthly', 'Hourly')."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Any additional internal notes or remarks relevant to the position."
+        }
+      },
+      "required": [
+        "id",
+        "positionName",
+        "positionCode",
+        "category",
+        "active",
+        "payrollBasis"
+      ]
     },
-    "Worker": {
-      "title": "Worker",
-      "description": "Field personnel managed by HR",
+    "PositionCertificateRequirement": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PositionCertificateRequirement",
       "type": "object",
+      "description": "Defines a specific certificate requirement for a particular position. These are managed as subcollections under the Position entity.",
       "properties": {
-        "id": { "type": "string" },
-        "firstName": { "type": "string" },
-        "lastName": { "type": "string" },
-        "thaiNationalId": { "type": "string" },
-        "workerStatus": { "type": "string" },
-        "readinessStatus": { "type": "string" }
-      }
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Position Certificate Requirement."
+        },
+        "certificateName": {
+          "type": "string",
+          "description": "The name of the required certificate (e.g., 'BOSIET', 'First Aid')."
+        },
+        "certificateCode": {
+          "type": "string",
+          "description": "A unique alphanumeric code for the certificate type."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Indicates whether this certificate is strictly mandatory for the position."
+        },
+        "validityMonths": {
+          "type": "number",
+          "description": "The number of months the certificate is considered valid for this position. This field is optional."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Any specific notes or additional context about this certificate requirement."
+        }
+      },
+      "required": [
+        "id",
+        "certificateName",
+        "certificateCode",
+        "required"
+      ]
     },
-    "Customer": {
-      "title": "Customer",
-      "description": "Customer master records",
+    "PositionPPERequirement": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PositionPPERequirement",
       "type": "object",
+      "description": "Defines a specific Personal Protective Equipment (PPE) requirement for a particular position. These are managed as subcollections under the Position entity.",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "taxId": { "type": "string" }
-      }
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Position PPE Requirement."
+        },
+        "itemName": {
+          "type": "string",
+          "description": "The name of the required PPE item (e.g., 'Safety Helmet', 'Coveralls')."
+        },
+        "itemCode": {
+          "type": "string",
+          "description": "A unique alphanumeric code for the PPE item type."
+        },
+        "quantityDefault": {
+          "type": "number",
+          "description": "The default quantity of this PPE item required for the position."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Indicates whether this PPE item is strictly mandatory for the position."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Any specific notes or additional context about this PPE requirement."
+        }
+      },
+      "required": [
+        "id",
+        "itemName",
+        "itemCode",
+        "quantityDefault",
+        "required"
+      ]
+    },
+    "PositionToolRequirement": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PositionToolRequirement",
+      "type": "object",
+      "description": "Defines an allowed tool or equipment item for a particular position. These are managed as subcollections under the Position entity.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Position Tool Requirement."
+        },
+        "itemName": {
+          "type": "string",
+          "description": "The name of the allowed tool or equipment item (e.g., 'Torque Wrench', 'Grinding Machine')."
+        },
+        "itemCode": {
+          "type": "string",
+          "description": "A unique alphanumeric code for the tool or equipment item type."
+        },
+        "itemType": {
+          "type": "string",
+          "description": "The classification of the item (e.g., 'tool', 'equipment', 'consumable')."
+        },
+        "quantityDefault": {
+          "type": "number",
+          "description": "The default quantity of this item that is allowed/expected for the position."
+        },
+        "allowed": {
+          "type": "boolean",
+          "description": "Indicates whether this tool/equipment is allowed for use by this position."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Any specific notes or additional context about this tool/equipment allowance."
+        }
+      },
+      "required": [
+        "id",
+        "itemName",
+        "itemCode",
+        "itemType",
+        "quantityDefault",
+        "allowed"
+      ]
     }
   },
   "auth": {
-    "providers": ["password"]
+    "providers": [
+      "password",
+      "anonymous"
+    ]
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": "#/backend/entities/User",
-      "description": "System staff and shared client accounts"
-    },
-    "/positions/{posId}": {
-      "schema": "#/backend/entities/Position",
-      "description": "Position master"
-    },
-    "/positions/{posId}/certificate_requirements/{reqId}": {
-      "schema": { "type": "object" },
-      "description": "Required certs for position"
-    },
-    "/positions/{posId}/ppe_requirements/{reqId}": {
-      "schema": { "type": "object" },
-      "description": "Required PPE for position"
-    },
-    "/positions/{posId}/tool_requirements/{reqId}": {
-      "schema": { "type": "object" },
-      "description": "Required tools for position"
-    },
-    "/workers/{workerId}": {
-      "schema": "#/backend/entities/Worker",
-      "description": "Worker master"
-    },
-    "/workers/{workerId}/certificates/{certId}": {
-      "schema": { "type": "object" },
-      "description": "Worker certificates"
-    },
-    "/workers/{workerId}/medical_records/{medId}": {
-      "schema": { "type": "object" },
-      "description": "Worker medical checks"
-    },
-    "/workers/{workerId}/drug_tests/{drugId}": {
-      "schema": { "type": "object" },
-      "description": "Worker drug tests"
-    },
-    "/workers/{workerId}/documents/{docId}": {
-      "schema": { "type": "object" },
-      "description": "Worker documents"
-    },
-    "/customers/{customerId}": {
-      "schema": "#/backend/entities/Customer",
-      "description": "Customer master"
-    },
-    "/customers/{customerId}/contacts/{contactId}": {
-      "schema": { "type": "object" },
-      "description": "Customer contacts"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}": {
-      "schema": { "type": "object" },
-      "description": "Master agreements"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
-      "schema": { "type": "object" },
-      "description": "Position billing rates"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
-      "schema": { "type": "object" },
-      "description": "Purchase orders"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
-      "schema": { "type": "object" },
-      "description": "PO items/positions"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
-      "schema": { "type": "object" },
-      "description": "Worker assignments"
-    }
+    "structure": [
+      {
+        "path": "/positions/{positionId}",
+        "definition": {
+          "entityName": "Position",
+          "schema": {
+            "$ref": "#/backend/entities/Position"
+          },
+          "description": "Top-level collection for all job positions. Each document stores core position attributes such as name, code, category, and general notes. Managed by HR/System Admin roles."
+        }
+      },
+      {
+        "path": "/positions/{positionId}/certificate_requirements/{reqId}",
+        "definition": {
+          "entityName": "PositionCertificateRequirement",
+          "schema": {
+            "$ref": "#/backend/entities/PositionCertificateRequirement"
+          },
+          "description": "Subcollection storing specific certificate requirements for a parent Position. Each document details a certificate, its code, and mandatory status. Authorization for these documents is based on the user's role (e.g., HR Manager) relative to the parent position, not on any denormalized fields from the Position document itself.",
+          "params": [
+            {
+              "name": "positionId",
+              "description": "The unique identifier of the parent Position."
+            },
+            {
+              "name": "reqId",
+              "description": "The unique identifier for a specific certificate requirement."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/positions/{positionId}/ppe_requirements/{reqId}",
+        "definition": {
+          "entityName": "PositionPPERequirement",
+          "schema": {
+            "$ref": "#/backend/entities/PositionPPERequirement"
+          },
+          "description": "Subcollection storing specific Personal Protective Equipment (PPE) requirements for a parent Position. Each document details a PPE item, its code, default quantity, and mandatory status. Authorization for these documents is based on the user's role (e.g., HR Manager) relative to the parent position.",
+          "params": [
+            {
+              "name": "positionId",
+              "description": "The unique identifier of the parent Position."
+            },
+            {
+              "name": "reqId",
+              "description": "The unique identifier for a specific PPE requirement."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/positions/{positionId}/tool_requirements/{reqId}",
+        "definition": {
+          "entityName": "PositionToolRequirement",
+          "schema": {
+            "$ref": "#/backend/entities/PositionToolRequirement"
+          },
+          "description": "Subcollection storing allowed tools and equipment for a parent Position. Each document details an item, its type, code, default quantity, and allowed status. Authorization for these documents is based on the user's role (e.g., HR Manager) relative to the parent position.",
+          "params": [
+            {
+              "name": "positionId",
+              "description": "The unique identifier of the parent Position."
+            },
+            {
+              "name": "reqId",
+              "description": "The unique identifier for a specific tool/equipment requirement."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The proposed Firestore structure for the Positions module follows the core design principles by utilizing a hierarchical subcollection model. The main `positions` collection stores the core attributes of each job position. Nested under each individual position document are three distinct subcollections: `certificate_requirements`, `ppe_requirements`, and `tool_requirements`. This design directly addresses the user's request for managing position-specific requirements.\n\n**Authorization Independence:** For the `Position` entity and its subcollections, authorization will primarily rely on the DBAC model (Database Access Control) where roles are stored in dedicated collections (e.g., `/roles_hr_manager/{uid}`). A user's UID will be checked against these role collections to determine if they have the necessary permissions (e.g., `hr_manager` or `system_admin`) to read or write to any `position` document or its associated requirements. This approach avoids hierarchical `get()` calls to parent documents for authorization purposes. Instead, authorization for subcollection documents depends on the user's global role, which is checked against a separate, non-hierarchical path, thus maintaining atomic operations and simplifying rules.\n\n**QAPs (Rules are not Filters):** This structure inherently supports Queryable Access Patterns. To list all positions, an authenticated user with the appropriate role can query the `/positions` collection directly, and the security rules will allow or deny access based on their role without needing to filter results. Similarly, to list all certificate requirements for a specific position (e.g., `positions/{positionId}/certificate_requirements`), the full path is provided, allowing security rules to grant access based on the user's role without requiring a `where` clause on an authorization field within the `certificate_requirements` documents themselves. The distinct segregation of `Position` data from its requirements into subcollections, coupled with role-based authorization, ensures that rules can be written clearly to grant blanket access to all documents within these collections for authorized roles, thereby avoiding filtering at the database level and maintaining QAP compliance. All documents within each subcollection (`certificate_requirements`, `ppe_requirements`, `tool_requirements`) share the same security posture – they are managed by specific staff roles for the parent position."
   }
 }

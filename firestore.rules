@@ -2,90 +2,123 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() { return request.auth != null; }
-    function isAdmin() { return exists(/databases/$(database)/documents/roles_system_admin/$(request.auth.uid)); }
-    function isSales() { return exists(/databases/$(database)/documents/roles_sales_officer/$(request.auth.uid)) || isAdmin(); }
-    function isHR() { 
-      return exists(/databases/$(database)/documents/roles_hr_manager/$(request.auth.uid)) || 
-             exists(/databases/$(database)/documents/roles_hr_officer/$(request.auth.uid)) || 
-             isAdmin(); 
-    }
-    function isFinance() {
-      return exists(/databases/$(database)/documents/roles_finance_officer/$(request.auth.uid)) || isAdmin();
-    }
-    function isClient(customerId) {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId;
+    /**
+     * OPEC Manpower Supply - Position Management Security Rules
+     * 
+     * Core Philosophy:
+     * This ruleset implements a Role-Based Access Control (RBAC) model specifically for managing 
+     * master data related to job positions and their operational requirements. Access is 
+     * strictly restricted to authorized administrative personnel (HR Managers and System Admins).
+     *
+     * Data Structure:
+     * - /positions/{positionId}: The master document for a job role.
+     * - /positions/{positionId}/certificate_requirements/{reqId}: Subcollection for mandatory certifications.
+     * - /positions/{positionId}/ppe_requirements/{reqId}: Subcollection for mandatory PPE.
+     * - /positions/{positionId}/tool_requirements/{reqId}: Subcollection for allowed/required tools.
+     *
+     * Key Security Decisions:
+     * 1. DBAC (Database Access Control): Authorization is verified by checking for the existence 
+     *    of the user's UID in specialized role collections (/roles_hr_manager or /roles_system_admin).
+     * 2. Staff-Only Access: Read and write access to the entire positions tree is reserved for 
+     *    authenticated staff members. General users or anonymous users are denied access by default.
+     * 3. Relational Integrity: On creation, documents must include an internal 'id' field that 
+     *    matches the Firestore Document ID to ensure consistency between the path and the data.
+     * 4. Prototyping Flexibility: While authorization is strictly enforced, the rules do not 
+     *    validate the specific schema of content fields (e.g., description, payrollBasis) to 
+     *    allow for rapid UI iteration.
+     */
+
+    // --- GLOBAL HELPER FUNCTIONS ---
+
+    /**
+     * @description Checks if the user is authenticated.
+     */
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // --- Support for collectionGroup queries (Dashboard & Flat Lists) ---
-    match /{path=**}/main_contracts/{id} { allow read: if isSignedIn(); }
-    match /{path=**}/purchase_orders/{id} { allow read: if isSignedIn(); }
-    match /{path=**}/po_lines/{id} { allow read: if isSignedIn(); }
-    match /{path=**}/assignments/{id} { 
-      allow read: if isSignedIn(); 
-      allow write: if isHR() || isSales(); 
+    /**
+     * @description Verifies if the user has the HR Manager role via DBAC.
+     */
+    function isHRManager() {
+      return exists(/databases/$(database)/documents/roles_hr_manager/$(request.auth.uid));
     }
 
-    match /users/{userId} {
-      allow get: if isSignedIn();
-      allow list: if isAdmin();
-      allow create, update: if isAdmin();
+    /**
+     * @description Verifies if the user has the System Admin role via DBAC.
+     */
+    function isSystemAdmin() {
+      return exists(/databases/$(database)/documents/roles_system_admin/$(request.auth.uid));
     }
 
-    match /roles_system_admin/{userId} {
-      allow read: if isSignedIn();
-      allow create: if !exists(/databases/$(database)/documents/system/bootstrap) || isAdmin();
+    /**
+     * @description Combines role checks to identify authorized staff members.
+     */
+    function isAuthorizedStaff() {
+      return isSignedIn() && (isHRManager() || isSystemAdmin());
     }
 
-    match /positions/{posId} {
-      allow read: if isSignedIn();
-      allow write: if isHR();
-      match /{allSub=**} { allow read: if isSignedIn(); allow write: if isHR(); }
-    }
+    // --- COLLECTION RULES ---
 
-    match /workers/{workerId} {
-      allow read: if isSignedIn();
-      allow write: if isHR();
-      match /{allSub=**} { allow read: if isSignedIn(); allow write: if isHR(); }
-    }
+    /**
+     * @description Rules for the Position master collection.
+     * @path /positions/{positionId}
+     * @allow Authenticated HR Manager (create) if data.id matches path.
+     * @deny Unauthenticated user (get) or mismatched internal ID (create).
+     * @principle Role-based access control with relational integrity enforcement.
+     */
+    match /positions/{positionId} {
+      allow get, list: if isAuthorizedStaff();
+      allow create: if isAuthorizedStaff() && request.resource.data.id == positionId;
+      allow update: if isAuthorizedStaff() && resource != null && request.resource.data.id == resource.data.id;
+      allow delete: if isAuthorizedStaff() && resource != null;
 
-    match /customers/{customerId} {
-      allow read: if isSignedIn();
-      allow write: if isSales();
-      
-      match /contacts/{contactId} { allow read: if isSignedIn(); allow write: if isSales(); }
-      
-      match /main_contracts/{contractId} {
-        allow read: if isSignedIn() && (isSales() || isFinance() || isClient(customerId));
-        allow write: if isSales();
-        
-        match /position_rates/{rateId} { allow read: if isSignedIn(); allow write: if isSales(); }
-        
-        match /purchase_orders/{poId} {
-          allow read: if isSignedIn() && (isSales() || isFinance() || isClient(customerId));
-          allow write: if isSales();
-          
-          match /po_lines/{lineId} { 
-            allow read: if isSignedIn(); 
-            allow write: if isSales(); 
-            
-            match /assignments/{asgnId} { 
-              allow read: if isSignedIn() && (isHR() || isSales() || isClient(customerId)); 
-              allow write: if isHR() || isSales() || isClient(customerId); 
-            }
-          }
-        }
+      /**
+       * @description Subcollection for certificate requirements specific to a position.
+       * @path /positions/{positionId}/certificate_requirements/{reqId}
+       * @allow HR Manager (list) requirements for a specific position.
+       * @deny Modifying a requirement that does not exist (update/delete).
+       * @principle Hierarchical access managed by global staff roles.
+       */
+      match /certificate_requirements/{reqId} {
+        allow get, list: if isAuthorizedStaff();
+        allow create: if isAuthorizedStaff() && request.resource.data.id == reqId;
+        allow update: if isAuthorizedStaff() && resource != null && request.resource.data.id == resource.data.id;
+        allow delete: if isAuthorizedStaff() && resource != null;
+      }
+
+      /**
+       * @description Subcollection for PPE requirements specific to a position.
+       * @path /positions/{positionId}/ppe_requirements/{reqId}
+       * @allow HR Manager (create) a new PPE requirement for a position.
+       * @deny Unauthorized users (list) or non-staff members.
+       * @principle RBAC protection for operational safety requirements.
+       */
+      match /ppe_requirements/{reqId} {
+        allow get, list: if isAuthorizedStaff();
+        allow create: if isAuthorizedStaff() && request.resource.data.id == reqId;
+        allow update: if isAuthorizedStaff() && resource != null && request.resource.data.id == resource.data.id;
+        allow delete: if isAuthorizedStaff() && resource != null;
+      }
+
+      /**
+       * @description Subcollection for tool and equipment allowances specific to a position.
+       * @path /positions/{positionId}/tool_requirements/{reqId}
+       * @allow Staff (update) an existing tool requirement.
+       * @deny Changing the internal 'id' field of a requirement document (update).
+       * @principle Ensures data integrity and staff-only management of assets.
+       */
+      match /tool_requirements/{reqId} {
+        allow get, list: if isAuthorizedStaff();
+        allow create: if isAuthorizedStaff() && request.resource.data.id == reqId;
+        allow update: if isAuthorizedStaff() && resource != null && request.resource.data.id == resource.data.id;
+        allow delete: if isAuthorizedStaff() && resource != null;
       }
     }
-
-    match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isSignedIn();
-    }
     
-    match /system/bootstrap {
-      allow get: if true;
-      allow create: if !exists(/databases/$(database)/documents/system/bootstrap);
+    // Default deny for any unspecified paths
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
