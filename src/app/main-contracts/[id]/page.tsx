@@ -20,10 +20,9 @@ import {
   ArrowLeft,
   CircleDollarSign,
   Briefcase,
-  Paperclip,
-  CheckCircle2,
   Building2,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -60,7 +59,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if (!firestore) return null;
     return query(collection(firestore, 'purchase_orders'), where('contractId', '==', id));
   }, [firestore, id]);
-  const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
+  const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
@@ -105,22 +104,22 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     });
     setIsAddRateOpen(false);
     setNewRate({ billingUnit: 'daily', active: true, sellRate: 0, costBaseline: 0, overtimeRule: '1.5x of Hourly Rate' });
+    toast({ title: "เพิ่มอัตราราคาสำเร็จ" });
   };
 
   const deleteRate = (rateId: string) => {
     if (!firestore) return;
     if (confirm('ยืนยันการลบอัตราราคานี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rateId));
+      toast({ title: "ลบข้อมูลสำเร็จ" });
     }
   };
 
   if (isMCLoading || !contract || !currentUser) {
     return (
-      <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลสัญญาหลัก...</div>
-        </div>
-      </AppShell>
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
     );
   }
 
@@ -136,7 +135,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{contract.title}</h1>
-              <Badge variant="outline" className="font-mono">{contract.contractNumber}</Badge>
+              <Badge variant="outline" className="font-mono text-primary border-primary/20">{contract.contractNumber}</Badge>
               <Badge variant={contract.status === 'active' ? 'default' : 'secondary'}>{contract.status.toUpperCase()}</Badge>
             </div>
             <p className="text-muted-foreground flex items-center gap-2 mt-1">
@@ -145,7 +144,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => { setEditedMC(contract); setIsEditing(!isEditing); }}>
-              {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูลสัญญา'}
+              {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
             </Button>
             {isEditing && (
               <Button className="gap-2" onClick={handleSaveMaster}>
@@ -156,24 +155,23 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         </div>
 
         <Tabs defaultValue="info" className="w-full">
-          <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูลสัญญา</TabsTrigger>
-            <TabsTrigger value="rates" className="gap-2 py-2 px-6"><CircleDollarSign className="h-4 w-4" /> อัตราราคา (Rates)</TabsTrigger>
-            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อลูกค้า (Customer POs)</TabsTrigger>
-            <TabsTrigger value="notes" className="gap-2 py-2 px-6"><Paperclip className="h-4 w-4" /> ไฟล์แนบ / หมายเหตุ</TabsTrigger>
+          <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
+            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูลสัญญาหลัก</TabsTrigger>
+            <TabsTrigger value="rates" className="gap-2 py-2 px-6"><CircleDollarSign className="h-4 w-4" /> อัตราราคาตามตำแหน่ง</TabsTrigger>
+            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> Customer PO</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6">
             <Card>
-              <CardHeader><CardTitle>รายละเอียดสัญญาหลัก (Master Agreement Info)</CardTitle></CardHeader>
+              <CardHeader><CardTitle>รายละเอียดสัญญาหลัก (Master Agreement Header)</CardTitle></CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label>หัวข้อสัญญา (Contract Title)</Label>
+                    <Label>ชื่อสัญญา (Contract Title)</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedMC.title : contract.title} onChange={e => setEditedMC({...editedMC, title: e.target.value})} />
                   </div>
                   <div className="space-y-2">
-                    <Label>เลขที่สัญญา (Contract No.)</Label>
+                    <Label>รหัสสัญญา (Contract Code)</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedMC.contractNumber : contract.contractNumber} onChange={e => setEditedMC({...editedMC, contractNumber: e.target.value})} />
                   </div>
                   <div className="space-y-2">
@@ -188,7 +186,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>รหัสโครงการ (Project ID)</Label>
+                    <Label>รหัสโครงการ (Project ID - ถ้ามี)</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedMC.projectId : contract.projectId} onChange={e => setEditedMC({...editedMC, projectId: e.target.value})} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -250,8 +248,8 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>อัตราราคาตามตำแหน่ง (Position Sell Rates)</CardTitle>
-                  <CardDescription>กำหนดราคาขายและฐานต้นทุนสำหรับตำแหน่งงานในสัญญานี้</CardDescription>
+                  <CardTitle>อัตราราคาตามตำแหน่ง (Position Rates Management)</CardTitle>
+                  <CardDescription>กำหนดราคาขายและฐานต้นทุนสำหรับตำแหน่งงานภายใต้สัญญานี้</CardDescription>
                 </div>
                 <Dialog open={isAddRateOpen} onOpenChange={setIsAddRateOpen}>
                   <DialogTrigger asChild>
@@ -260,7 +258,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <DialogContent className="max-w-md">
                     <DialogHeader>
                       <DialogTitle>กำหนดอัตราราคาใหม่</DialogTitle>
-                      <DialogDescription>เลือกตำแหน่งและระบุราคาขายตามเงื่อนไขสัญญา</DialogDescription>
+                      <DialogDescription>เลือกตำแหน่งและระบุราคาตามเงื่อนไขสัญญา</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
@@ -303,7 +301,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       </div>
                       <div className="grid gap-2">
                         <Label>หมายเหตุ</Label>
-                        <Input value={newRate.notes} onChange={e => setNewRate({...newRate, notes: e.target.value})} />
+                        <Input value={newRate.notes || ''} onChange={e => setNewRate({...newRate, notes: e.target.value})} />
                       </div>
                     </div>
                     <DialogFooter>
@@ -317,11 +315,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ตำแหน่ง</TableHead>
+                      <TableHead>ตำแหน่งงาน</TableHead>
                       <TableHead>ราคาขาย (Sell)</TableHead>
                       <TableHead>ต้นทุน (Cost)</TableHead>
                       <TableHead>หน่วย</TableHead>
-                      <TableHead>กฎโอที</TableHead>
+                      <TableHead>สถานะ</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -330,11 +328,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       const pos = allPositions?.find(p => p.id === r.positionId);
                       return (
                         <TableRow key={r.id}>
-                          <TableCell className="font-medium">{pos?.positionName || r.positionId}</TableCell>
-                          <TableCell className="text-green-600 font-bold">฿{r.sellRate.toLocaleString()}</TableCell>
-                          <TableCell className="text-muted-foreground">฿{r.costBaseline.toLocaleString()}</TableCell>
+                          <TableCell className="font-semibold text-primary">{pos?.positionName || r.positionId}</TableCell>
+                          <TableCell className="text-green-600 font-bold">{contract.currency} {r.sellRate.toLocaleString()}</TableCell>
+                          <TableCell className="text-muted-foreground">{contract.currency} {r.costBaseline.toLocaleString()}</TableCell>
                           <TableCell className="capitalize">{r.billingUnit}</TableCell>
-                          <TableCell className="text-xs">{r.overtimeRule}</TableCell>
+                          <TableCell>
+                            <Badge variant={r.active ? 'outline' : 'secondary'} className={r.active ? 'text-green-600 border-green-200' : ''}>
+                              {r.active ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </TableCell>
                           <TableCell className="text-right">
                             <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteRate(r.id)}>
                               <Trash2 className="h-4 w-4" />
@@ -358,29 +360,36 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Customer POs ภายใต้สัญญานี้ (Related POs)</CardTitle>
-                  <CardDescription>รายการใบสั่งซื้อลูกค้าที่อ้างอิงสัญญาฉบับนี้</CardDescription>
+                  <CardTitle>Customer POs ที่อ้างอิงสัญญานี้</CardTitle>
+                  <CardDescription>รายการใบสั่งซื้อบริการกำลังคนภายใต้สัญญาฉบับนี้</CardDescription>
                 </div>
-                <Button variant="outline" className="gap-2" onClick={() => router.push('/purchase-orders')}>
-                  <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
+                <Button variant="outline" className="gap-2" asChild>
+                  <Link href={`/purchase-orders?contractId=${id}&customerId=${contract.customerId}`}>
+                    <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
+                  </Link>
                 </Button>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>เลขที่ PO</TableHead>
-                      <TableHead>รายละเอียด</TableHead>
+                      <TableHead>เลขที่ Customer PO</TableHead>
+                      <TableHead>หัวข้อ / โครงการ</TableHead>
                       <TableHead>ระยะเวลา</TableHead>
                       <TableHead>สถานะ</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pos?.map(po => (
+                    {customerPOs?.map(po => (
                       <TableRow key={po.id}>
-                        <TableCell className="font-mono">{po.poNumber || po.poCode}</TableCell>
-                        <TableCell className="font-medium">{po.title}</TableCell>
+                        <TableCell className="font-mono font-bold">{po.poCode}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{po.title}</span>
+                            <span className="text-xs text-muted-foreground">{po.projectName || 'No Project Name'}</span>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-xs">
                           {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
                         </TableCell>
@@ -394,26 +403,13 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                         </TableCell>
                       </TableRow>
                     ))}
-                    {!pos?.length && (
+                    {!customerPOs?.length && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบใบสั่งซื้อลูกค้าที่เชื่อมโยง</TableCell>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบ Customer PO ที่อ้างอิงสัญญานี้</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="notes" className="mt-6">
-            <Card>
-              <CardHeader><CardTitle>ไฟล์แนบและหมายเหตุเพิ่มเติม</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                <div className="p-10 border-2 border-dashed rounded-lg text-center text-muted-foreground">
-                  <Paperclip className="h-10 w-10 mx-auto mb-2 opacity-20" />
-                  <p>ระบบอัปโหลดไฟล์กำลังอยู่ระหว่างการพัฒนา</p>
-                  <p className="text-xs">คุณสามารถใช้ช่องหมายเหตุในแท็บข้อมูลสัญญาเพื่อบันทึกข้อมูลสำคัญชั่วคราว</p>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>

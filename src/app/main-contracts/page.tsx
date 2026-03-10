@@ -120,13 +120,13 @@ export default function MainContractsPage() {
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
               <ClipboardList className="h-6 w-6" /> สัญญาหลัก (Main Contracts)
             </h1>
-            <p className="text-muted-foreground">จัดการสัญญาซื้อขายหลักและอัตราค่าจ้าง (Master Agreements)</p>
+            <p className="text-muted-foreground">จัดการสัญญาซื้อขายหลักและอัตราราคาบริการ (Master Agreements)</p>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
-                <Plus className="h-4 w-4" /> สร้างสัญญาใหม่
+                <Plus className="h-4 w-4" /> สร้างสัญญาหลักใหม่
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -136,11 +136,11 @@ export default function MainContractsPage() {
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
-                  <Label>ชื่อสัญญา (Title)</Label>
+                  <Label>ชื่อสัญญา (Contract Title)</Label>
                   <Input value={newContract.title} onChange={e => setNewContract({...newContract, title: e.target.value})} placeholder="เช่น สัญญาจ้างกำลังคนโครงการประมูล X" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>เลขที่สัญญา (Contract No.)</Label>
+                  <Label>รหัสสัญญา (Contract Code)</Label>
                   <Input value={newContract.contractNumber} onChange={e => setNewContract({...newContract, contractNumber: e.target.value})} placeholder="OPEC-MC-2024-001" />
                 </div>
                 <div className="grid gap-2">
@@ -156,11 +156,11 @@ export default function MainContractsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มสัญญา</Label>
-                  <Input type="date" onChange={e => setNewContract({...newContract, startDate: new Date(e.target.value).getTime()})} />
+                  <Input type="date" value={newContract.startDate ? new Date(newContract.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewContract({...newContract, startDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่สิ้นสุดสัญญา</Label>
-                  <Input type="date" onChange={e => setNewContract({...newContract, endDate: new Date(e.target.value).getTime()})} />
+                  <Input type="date" value={newContract.endDate ? new Date(newContract.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewContract({...newContract, endDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2">
                   <Label>สกุลเงิน</Label>
@@ -185,7 +185,7 @@ export default function MainContractsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} disabled={!newContract.title || !newContract.customerId}>บันทึกและจัดการรายละเอียด</Button>
+                <Button onClick={handleCreate} disabled={!newContract.title || !newContract.customerId || !newContract.contractNumber}>บันทึกและจัดการรายละเอียด</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -208,10 +208,10 @@ export default function MainContractsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>เลขที่สัญญา (No.)</TableHead>
-                    <TableHead>หัวข้อสัญญา (Title)</TableHead>
+                    <TableHead>รหัสสัญญา (Code)</TableHead>
+                    <TableHead>ชื่อสัญญา (Title)</TableHead>
                     <TableHead>ลูกค้า</TableHead>
-                    <TableHead>ระยะเวลา (Period)</TableHead>
+                    <TableHead>ระยะเวลา</TableHead>
                     <TableHead>สถานะ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
@@ -225,7 +225,7 @@ export default function MainContractsPage() {
                         className="cursor-pointer hover:bg-muted/50 group"
                         onClick={() => router.push(`/main-contracts/${contract.id}`)}
                       >
-                        <TableCell className="font-mono">{contract.contractNumber}</TableCell>
+                        <TableCell className="font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
                         <TableCell className="font-semibold">{contract.title}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-xs">

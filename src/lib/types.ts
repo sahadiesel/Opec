@@ -183,8 +183,8 @@ export interface ContactPerson {
 export interface MainContract {
   id: string;
   customerId: string;
-  contractNumber: string;
-  title: string;
+  contractNumber: string; // Used as Contract Code
+  title: string;          // Used as Contract Title
   projectId?: string;
   startDate: number;
   endDate: number;
