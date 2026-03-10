@@ -20,8 +20,7 @@ import {
   HardHat, 
   Hammer, 
   ArrowLeft,
-  Sparkles,
-  Edit
+  Sparkles
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -194,16 +193,16 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
         <Tabs defaultValue="master" className="w-full">
           <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="master" className="gap-2 py-2 px-6"><Briefcase className="h-4 w-4" /> ข้อมูลหลัก</TabsTrigger>
-            <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบรับรอง (Certs)</TabsTrigger>
+            <TabsTrigger value="master" className="gap-2 py-2 px-6"><Briefcase className="h-4 w-4" /> ข้อมูลตำแหน่ง</TabsTrigger>
+            <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบเซอร์ (Certificates)</TabsTrigger>
             <TabsTrigger value="ppe" className="gap-2 py-2 px-6"><HardHat className="h-4 w-4" /> PPE</TabsTrigger>
-            <TabsTrigger value="tools" className="gap-2 py-2 px-6"><Hammer className="h-4 w-4" /> อุปกรณ์ (Tools)</TabsTrigger>
+            <TabsTrigger value="tools" className="gap-2 py-2 px-6"><Hammer className="h-4 w-4" /> เครื่องมือ/อุปกรณ์</TabsTrigger>
           </TabsList>
 
           <TabsContent value="master" className="mt-6">
             <Card className="shadow-sm">
               <CardHeader>
-                <CardTitle>ข้อมูลหลัก (Position Info)</CardTitle>
+                <CardTitle>ข้อมูลตำแหน่ง (Position Info)</CardTitle>
                 <CardDescription>รายละเอียดพื้นฐานของตำแหน่งงาน</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -286,8 +285,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             <Card className="shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>ใบรับรองที่ต้องการ (Required Certificates)</CardTitle>
-                  <CardDescription>เกณฑ์ใบรับรองมาตรฐานสำหรับตำแหน่งนี้</CardDescription>
+                  <CardTitle>ใบเซอร์ที่ต้องมี (Required Certificates)</CardTitle>
+                  <CardDescription>เกณฑ์ใบเซอร์มาตรฐานสำหรับตำแหน่งนี้</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => handleGenerateAI('certificate')} disabled={isGenerating}>
@@ -295,20 +294,20 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </Button>
                   <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
                     <DialogTrigger asChild>
-                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มใบรับรอง</Button>
+                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มใบเซอร์</Button>
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>เพิ่มเกณฑ์ใบรับรอง</DialogTitle>
-                        <DialogDescription>เพิ่มมาตรฐานใบรับรองสำหรับพนักงานในตำแหน่งนี้</DialogDescription>
+                        <DialogTitle>เพิ่มเกณฑ์ใบเซอร์</DialogTitle>
+                        <DialogDescription>เพิ่มมาตรฐานใบเซอร์สำหรับตำแหน่งนี้</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่อใบรับรอง (Certificate Name)</Label>
+                          <Label>ชื่อใบเซอร์ (Certificate Name)</Label>
                           <Input value={newCert.certificateName || ''} onChange={e => setNewCert({...newCert, certificateName: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>รหัสใบรับรอง (Code)</Label>
+                          <Label>รหัสใบเซอร์ (Code)</Label>
                           <Input value={newCert.certificateCode || ''} onChange={e => setNewCert({...newCert, certificateCode: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
@@ -336,7 +335,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ใบรับรอง</TableHead>
+                      <TableHead>ใบเซอร์</TableHead>
                       <TableHead>รหัส</TableHead>
                       <TableHead>บังคับ</TableHead>
                       <TableHead>อายุใช้งาน (ด.)</TableHead>
@@ -357,7 +356,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     ))}
                     {!certs?.length && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลใบรับรอง</TableCell>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลใบเซอร์</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -370,7 +369,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             <Card className="shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>อุปกรณ์ PPE ที่ต้องการ (Required PPE)</CardTitle>
+                  <CardTitle>PPE ที่ต้องใช้ (Required PPE)</CardTitle>
                   <CardDescription>รายการชุดอุปกรณ์ป้องกันส่วนบุคคลพื้นฐาน</CardDescription>
                 </div>
                 <div className="flex gap-2">
@@ -454,8 +453,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             <Card className="shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>เครื่องมือและอุปกรณ์ (Tools / Equipment)</CardTitle>
-                  <CardDescription>รายการเครื่องมือที่ได้รับอนุญาตหรือจัดเตรียมให้</CardDescription>
+                  <CardTitle>เครื่องมือ/อุปกรณ์ (Tools / Equipment)</CardTitle>
+                  <CardDescription>รายการเครื่องมือที่ได้รับอนุญาต</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => handleGenerateAI('tool')} disabled={isGenerating}>
@@ -463,11 +462,11 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </Button>
                   <Dialog open={isAddToolOpen} onOpenChange={setIsAddToolOpen}>
                     <DialogTrigger asChild>
-                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มรายการเครื่องมือ</Button>
+                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มเครื่องมือ</Button>
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>เพิ่มรายการเครื่องมือ/อุปกรณ์</DialogTitle>
+                        <DialogTitle>เพิ่มเครื่องมือ/อุปกรณ์</DialogTitle>
                         <DialogDescription>กำหนดเครื่องมือมาตรฐานสำหรับตำแหน่งงาน</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
