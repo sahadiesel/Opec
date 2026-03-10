@@ -57,6 +57,19 @@
         "costBaselineSnapshot": { "type": "number" },
         "billingUnitSnapshot": { "type": "string" }
       }
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "poLineId": { "type": "string" },
+        "positionId": { "type": "string" },
+        "startDate": { "type": "number" },
+        "endDate": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed", "cancelled"] }
+      }
     }
   },
   "auth": {
@@ -75,10 +88,6 @@
       "schema": "#/backend/entities/MainContract",
       "description": "Commercial master agreements"
     },
-    "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
-      "schema": { "type": "object" },
-      "description": "Contract-specific position rates"
-    },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
       "schema": "#/backend/entities/PurchaseOrder",
       "description": "Purchase orders under a contract"
@@ -86,6 +95,10 @@
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
       "schema": "#/backend/entities/POLine",
       "description": "Line items in a PO"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{assignmentId}": {
+      "schema": "#/backend/entities/Assignment",
+      "description": "Worker assignments for a PO Line"
     }
   }
 }

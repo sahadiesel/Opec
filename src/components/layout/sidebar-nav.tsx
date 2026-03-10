@@ -17,7 +17,8 @@ import {
   Receipt,
   Clock,
   HardHat,
-  Boxes
+  Boxes,
+  UserPlus
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -89,6 +90,12 @@ const navItems: NavItem[] = [
     href: '/workers', 
     icon: UserSquare2, 
     roles: ['system_admin', 'hr_manager', 'hr_officer'] 
+  },
+  { 
+    title: 'การมอบหมายงาน (Assignments)', 
+    href: '/assignments', 
+    icon: UserPlus, 
+    roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer'] 
   },
   // Payroll Module
   { 

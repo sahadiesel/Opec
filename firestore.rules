@@ -50,7 +50,11 @@ service cloud.firestore {
         match /purchase_orders/{poId} {
           allow read: if isSignedIn();
           allow write: if isSales();
-          match /po_lines/{lineId} { allow read: if isSignedIn(); allow write: if isSales(); }
+          match /po_lines/{lineId} { 
+            allow read: if isSignedIn(); 
+            allow write: if isSales(); 
+            match /assignments/{asgnId} { allow read: if isSignedIn(); allow write: if isHR() || isSales(); }
+          }
         }
       }
     }

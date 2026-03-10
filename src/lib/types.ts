@@ -109,6 +109,18 @@ export interface POLine {
   overtimeRuleSnapshot: string;
 }
 
+export interface Assignment {
+  id: string;
+  workerId: string;
+  poLineId: string;
+  positionId: string;
+  startDate: number;
+  endDate: number;
+  status: 'active' | 'completed' | 'cancelled';
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- HR & WORKFORCE ---
 
 export interface Worker {
