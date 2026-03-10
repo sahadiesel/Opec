@@ -192,7 +192,7 @@ export default function AssignmentsPage() {
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label>ใบสั่งซื้อ / รายการ PO Line</Label>
+                  <Label>ใบสั่งซื้อลูกค้า / รายการ PO Line</Label>
                   <Select onValueChange={setSelectedPOLineId} value={selectedPOLineId}>
                     <SelectTrigger>
                       <SelectValue placeholder="เลือกรายการ PO Line..." />

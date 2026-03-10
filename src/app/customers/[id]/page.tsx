@@ -61,13 +61,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     if (!firestore) return null;
     return query(collection(firestore, 'main_contracts'), where('customerId', '==', id));
   }, [firestore, id]);
-  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
+  const { data: customerContracts } = useCollection<MainContract>(contractsQuery as any);
 
   const poQuery = useMemoFirebase(() => {
     if (!firestore) return null;
     return query(collection(firestore, 'purchase_orders'), where('customerId', '==', id));
   }, [firestore, id]);
-  const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
+  const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedCust, setEditedCust] = useState<Partial<Customer>>({});
@@ -160,7 +160,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><Building2 className="h-4 w-4" /> ข้อมูลบริษัท</TabsTrigger>
             <TabsTrigger value="contacts" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> ผู้ติดต่อ</TabsTrigger>
             <TabsTrigger value="contracts" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> สัญญาหลัก</TabsTrigger>
-            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อ</TabsTrigger>
+            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อลูกค้า (POs)</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6 space-y-6">
@@ -347,7 +347,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {contracts?.map(contract => (
+                    {customerContracts?.map(contract => (
                       <TableRow key={contract.id}>
                         <TableCell className="font-mono text-xs">{contract.contractNumber}</TableCell>
                         <TableCell className="font-medium">{contract.title}</TableCell>
@@ -364,7 +364,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         </TableCell>
                       </TableRow>
                     ))}
-                    {!contracts?.length && (
+                    {!customerContracts?.length && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบสัญญาหลักที่เชื่อมโยง</TableCell>
                       </TableRow>
@@ -379,11 +379,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>ใบสั่งซื้อ (Purchase Orders)</CardTitle>
+                  <CardTitle>Customer POs (ใบสั่งซื้อจากลูกค้ารายนี้)</CardTitle>
                   <CardDescription>รายการจองโควต้ากำลังคนตามสัญญา</CardDescription>
                 </div>
                 <Button variant="outline" className="gap-2" onClick={() => router.push('/purchase-orders')}>
-                  <Plus className="h-4 w-4" /> จัดการใบสั่งซื้อ
+                  <Plus className="h-4 w-4" /> สร้าง Customer PO
                 </Button>
               </CardHeader>
               <CardContent>
@@ -398,9 +398,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pos?.map(po => (
+                    {customerPOs?.map(po => (
                       <TableRow key={po.id}>
-                        <TableCell className="font-mono text-xs">{po.poNumber}</TableCell>
+                        <TableCell className="font-mono text-xs">{po.poNumber || po.poCode}</TableCell>
                         <TableCell className="font-medium">{po.title}</TableCell>
                         <TableCell className="text-xs">
                           {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
@@ -415,7 +415,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         </TableCell>
                       </TableRow>
                     ))}
-                    {!pos?.length && (
+                    {!customerPOs?.length && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบใบสั่งซื้อที่เชื่อมโยง</TableCell>
                       </TableRow>

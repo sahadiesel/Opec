@@ -65,7 +65,7 @@ const navItems: NavItem[] = [
     roles: ['system_admin', 'sales_officer', 'finance_officer'] 
   },
   { 
-    title: 'ใบสั่งซื้อ (Purchase Orders)', 
+    title: 'ใบสั่งซื้อลูกค้า (Customer POs)', 
     href: '/purchase-orders', 
     icon: ShoppingCart, 
     roles: ['system_admin', 'sales_officer'] 

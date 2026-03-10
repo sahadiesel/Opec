@@ -41,7 +41,7 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 
-export default function PODetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
@@ -94,7 +94,7 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
     if (!poRef) return;
     updateDocumentNonBlocking(poRef, { ...editedPO, updatedAt: Date.now() });
     setIsEditing(false);
-    toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลใบสั่งซื้อถูกอัปเดตแล้ว" });
+    toast({ title: "บันทึกสำเร็จ", description: "ข้อมูล Customer PO ถูกอัปเดตแล้ว" });
   };
 
   const handleAddLine = () => {
@@ -134,7 +134,7 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลใบสั่งซื้อ...</div>
+          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูล Customer PO...</div>
         </div>
       </AppShell>
     );
@@ -176,14 +176,14 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
 
         <Tabs defaultValue="lines" className="w-full">
           <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูล PO</TabsTrigger>
+            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูล Customer PO</TabsTrigger>
             <TabsTrigger value="lines" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> รายการสั่งจอง (PO Lines)</TabsTrigger>
             <TabsTrigger value="assignments" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> การมอบหมายงาน</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6">
             <Card>
-              <CardHeader><CardTitle>ข้อมูลพื้นฐานใบสั่งซื้อ (PO Header Info)</CardTitle></CardHeader>
+              <CardHeader><CardTitle>ข้อมูลพื้นฐาน Customer PO (Header Info)</CardTitle></CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
@@ -191,7 +191,7 @@ export default function PODetailPage({ params }: { params: Promise<{ id: string 
                     <Input disabled={!isEditing} value={isEditing ? editedPO.title : po.title} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
                   </div>
                   <div className="space-y-2">
-                    <Label>เลขที่ใบสั่งซื้อ (PO Code)</Label>
+                    <Label>เลขที่ Customer PO (PO Code)</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedPO.poCode : po.poCode} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
                   </div>
                   <div className="space-y-2">

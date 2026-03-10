@@ -23,7 +23,8 @@ import {
   Clock,
   UserSquare2,
   TrendingUp,
-  Warehouse
+  Warehouse,
+  Boxes
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -193,7 +194,7 @@ function CommercialDashboard({ user }: { user: User }) {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="ลูกค้าทั้งหมด" value="48" sub="บริษัท" icon={Users} colorClass="border-l-primary" />
         <StatCard title="สัญญาหลัก Active" value="12" sub="Main Contracts" icon={ClipboardList} colorClass="border-l-blue-500" />
-        <StatCard title="ใบสั่งซื้อรอดำเนินการ" value="24" sub="Pending POs" icon={ShoppingCart} colorClass="border-l-amber-500" />
+        <StatCard title="Customer POs ค้าง" value="24" sub="Pending POs" icon={ShoppingCart} colorClass="border-l-amber-500" />
         <StatCard title="งานรอส่งลูกค้า" value="8" sub="Proposed Assignments" icon={UserPlus} colorClass="border-l-secondary" />
       </div>
     </div>
@@ -263,7 +264,7 @@ function ClientDashboard({ user }: { user: User }) {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <StatCard title="คนงานหน้างาน" value="156" sub="Active on site" icon={UserPlus} colorClass="border-l-primary" />
         <StatCard title="รอพิจารณาตัวบุคคล" value="8" sub="Candidates for review" icon={ShieldAlert} colorClass="border-l-amber-500" />
-        <StatCard title="ใบสั่งซื้อ Active" value="5" sub="Current POs" icon={ShoppingCart} colorClass="border-l-blue-500" />
+        <StatCard title="Customer POs Active" value="5" sub="Current POs" icon={ShoppingCart} colorClass="border-l-blue-500" />
       </div>
     </div>
   );

@@ -22,7 +22,8 @@ import {
   Briefcase,
   Paperclip,
   CheckCircle2,
-  Building2
+  Building2,
+  ExternalLink
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -39,9 +40,11 @@ import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlo
 import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation';
 
 export default function MainContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -156,7 +159,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูลสัญญา</TabsTrigger>
             <TabsTrigger value="rates" className="gap-2 py-2 px-6"><CircleDollarSign className="h-4 w-4" /> อัตราราคา (Rates)</TabsTrigger>
-            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อ (POs)</TabsTrigger>
+            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อลูกค้า (Customer POs)</TabsTrigger>
             <TabsTrigger value="notes" className="gap-2 py-2 px-6"><Paperclip className="h-4 w-4" /> ไฟล์แนบ / หมายเหตุ</TabsTrigger>
           </TabsList>
 
@@ -355,11 +358,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>ใบสั่งซื้อภายใต้สัญญานี้ (Related POs)</CardTitle>
-                  <CardDescription>รายการใบสั่งซื้อที่อ้างอิงสัญญาฉบับนี้</CardDescription>
+                  <CardTitle>Customer POs ภายใต้สัญญานี้ (Related POs)</CardTitle>
+                  <CardDescription>รายการใบสั่งซื้อลูกค้าที่อ้างอิงสัญญาฉบับนี้</CardDescription>
                 </div>
-                <Button variant="outline" className="gap-2" asChild>
-                  <Link href="/purchase-orders"><Plus className="h-4 w-4" /> สร้างใบสั่งซื้อใหม่</Link>
+                <Button variant="outline" className="gap-2" onClick={() => router.push('/purchase-orders')}>
+                  <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
                 </Button>
               </CardHeader>
               <CardContent>
@@ -376,7 +379,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <TableBody>
                     {pos?.map(po => (
                       <TableRow key={po.id}>
-                        <TableCell className="font-mono">{po.poNumber}</TableCell>
+                        <TableCell className="font-mono">{po.poNumber || po.poCode}</TableCell>
                         <TableCell className="font-medium">{po.title}</TableCell>
                         <TableCell className="text-xs">
                           {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
@@ -385,13 +388,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" asChild><Link href="/purchase-orders"><ArrowLeft className="h-4 w-4 rotate-180" /></Link></Button>
+                          <Button variant="ghost" size="sm" className="gap-2" onClick={() => router.push(`/purchase-orders/${po.id}`)}>
+                            <ExternalLink className="h-4 w-4" /> ดูรายละเอียด
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
                     {!pos?.length && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบใบสั่งซื้อที่เชื่อมโยง</TableCell>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบใบสั่งซื้อลูกค้าที่เชื่อมโยง</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

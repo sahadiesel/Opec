@@ -27,7 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 
-export default function PurchaseOrdersPage() {
+export default function CustomerPOsPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
@@ -117,7 +117,7 @@ export default function PurchaseOrdersPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <ShoppingCart className="h-6 w-6" /> ใบสั่งซื้อ (Purchase Orders)
+              <ShoppingCart className="h-6 w-6" /> ใบสั่งซื้อลูกค้า (Customer POs)
             </h1>
             <p className="text-muted-foreground">จัดการใบสั่งซื้อและการจองโควต้ากำลังคน (Quota Booking)</p>
           </div>
@@ -125,12 +125,12 @@ export default function PurchaseOrdersPage() {
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
-                <Plus className="h-4 w-4" /> สร้างใบสั่งซื้อใหม่
+                <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>สร้างใบสั่งซื้อใหม่</DialogTitle>
+                <DialogTitle>สร้างใบสั่งซื้อจากลูกค้าใหม่</DialogTitle>
                 <DialogDescription>เลือกคู่ค้าและสัญญาหลักที่อ้างอิงเพื่อจองโควต้ากำลังคน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
@@ -139,7 +139,7 @@ export default function PurchaseOrdersPage() {
                   <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น สั่งจองกำลังคนรอบเดือน พ.ค. 2567" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>เลขที่ PO (PO Code)</Label>
+                  <Label>เลขที่ Customer PO (PO Code)</Label>
                   <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-2024-001" />
                 </div>
                 <div className="grid gap-2">
@@ -204,7 +204,7 @@ export default function PurchaseOrdersPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle>รายการใบสั่งซื้อทั้งหมด</CardTitle>
+              <CardTitle>รายการ Customer PO ทั้งหมด</CardTitle>
               <div className="relative w-72">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input type="search" placeholder="ค้นหาเลขที่ PO หรือชื่อโครงการ..." className="pl-8" />
@@ -270,7 +270,7 @@ export default function PurchaseOrdersPage() {
                   })}
                   {!isPOLoading && (!pos || pos.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อ</TableCell>
+                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อลูกค้า</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
