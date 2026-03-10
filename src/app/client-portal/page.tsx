@@ -5,8 +5,8 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ShieldCheck, UserCheck, XCircle, Eye, FileText, CheckCircle2, History } from 'lucide-react';
-import { User, Assignment, Worker, AssignmentStatus } from '@/lib/types';
+import { ShieldCheck, Eye, FileText, CheckCircle2, XCircle } from 'lucide-react';
+import { User, Assignment, Worker } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collectionGroup, collection, doc } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ import {
   DialogFooter
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 
@@ -38,8 +39,7 @@ export default function ClientPortalPage() {
 
   const assignmentsQuery = useMemoFirebase(() => {
     if (!firestore || !firebaseUser || !currentUser) return null;
-    // Client only sees assignments sent to review or already approved/active
-    return collectionGroup(firestore, 'assignments_sync');
+    return collectionGroup(firestore, 'assignments');
   }, [firestore, firebaseUser, currentUser]);
 
   const { data: assignments, isLoading } = useCollection<Assignment>(assignmentsQuery as any);
@@ -52,7 +52,7 @@ export default function ClientPortalPage() {
 
   const handleApprove = (asgn: Assignment) => {
     if (!firestore) return;
-    updateDocumentNonBlocking(doc(firestore, 'assignments_sync', asgn.id), {
+    updateDocumentNonBlocking(doc(firestore, 'assignments', asgn.id), {
       status: 'approved',
       clientComments: reviewComment,
       updatedAt: Date.now()
@@ -64,7 +64,7 @@ export default function ClientPortalPage() {
 
   const handleReject = (asgn: Assignment) => {
     if (!firestore) return;
-    updateDocumentNonBlocking(doc(firestore, 'assignments_sync', asgn.id), {
+    updateDocumentNonBlocking(doc(firestore, 'assignments', asgn.id), {
       status: 'cancelled',
       clientComments: reviewComment,
       updatedAt: Date.now()
@@ -76,7 +76,6 @@ export default function ClientPortalPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  // Filter assignments relevant for this customer
   const clientAssignments = assignments?.filter(a => 
     (currentUser.roleId === 'client' ? a.customerId === currentUser.customerId : true) &&
     ['client_review', 'approved', 'active', 'replaced'].includes(a.status)

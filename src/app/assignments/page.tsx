@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, UserPlus, MoreHorizontal, Calendar, Briefcase, CheckCircle2, Send, Clock, ShieldCheck, XCircle } from 'lucide-react';
+import { Plus, UserPlus, MoreHorizontal, Briefcase, Send, Clock, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, AssignmentStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -66,7 +66,6 @@ export default function AssignmentsPage() {
     const poLine = allPOLines?.find(l => l.id === selectedPOLineId);
     if (!poLine) return;
 
-    // RULE: Check if quantity is exceeded (counting approved/active only)
     const existingCount = assignments?.filter(a => 
       a.poLineId === selectedPOLineId && 
       ['approved', 'active', 'mobilizing'].includes(a.status)
@@ -81,9 +80,9 @@ export default function AssignmentsPage() {
       return;
     }
 
-    // Path in Master Blueprint: /customers/{c}/main_contracts/{mc}/purchase_orders/{po}/po_lines/{pol}/assignments
-    // Note: For prototype simplification we are using a synchronized collection for flat listing
-    const assignmentsRef = collection(firestore, 'assignments_sync');
+    // In a collectionGroup query environment, we usually write to a flattened operational path
+    // For this prototype, we'll store assignments in a way the collectionGroup can find them
+    const assignmentsRef = collection(firestore, 'assignments');
     
     const newAssignment: Partial<Assignment> = {
       workerId: selectedWorkerId,
@@ -91,7 +90,7 @@ export default function AssignmentsPage() {
       positionId: poLine.positionId,
       startDate: new Date(startDate).getTime(),
       endDate: new Date(endDate).getTime(),
-      status: 'proposed', // Start in proposed state
+      status: 'proposed',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -109,7 +108,7 @@ export default function AssignmentsPage() {
 
   const handleUpdateStatus = (asgnId: string, newStatus: AssignmentStatus) => {
     if (!firestore) return;
-    updateDocumentNonBlocking(doc(firestore, 'assignments_sync', asgnId), {
+    updateDocumentNonBlocking(doc(firestore, 'assignments', asgnId), {
       status: newStatus,
       updatedAt: Date.now()
     });

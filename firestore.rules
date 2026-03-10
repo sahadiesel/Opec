@@ -17,6 +17,15 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId;
     }
 
+    // --- Support for collectionGroup queries (Dashboard & Flat Lists) ---
+    match /{path=**}/main_contracts/{id} { allow read: if isSignedIn(); }
+    match /{path=**}/purchase_orders/{id} { allow read: if isSignedIn(); }
+    match /{path=**}/po_lines/{id} { allow read: if isSignedIn(); }
+    match /{path=**}/assignments/{id} { 
+      allow read: if isSignedIn(); 
+      allow write: if isHR() || isSales(); 
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isAdmin();
