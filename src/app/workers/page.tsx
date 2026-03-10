@@ -41,9 +41,13 @@ export default function WorkersPage() {
 
   // DEFENSIVE: Only query if auth is resolved and user has appropriate staff role
   const workersQuery = useMemoFirebase(() => {
+    // 1. Wait for auth state to be resolved
     if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
     
-    // Check if user role is permitted to see worker directory
+    // 2. Ensure UID in storage matches current Auth UID
+    if (firebaseUser.uid !== currentUser.id) return null;
+    
+    // 3. Check if user role is permitted to see worker directory
     const allowedRoles = ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'finance_officer'];
     if (!allowedRoles.includes(currentUser.roleId)) return null;
 
@@ -98,7 +102,7 @@ export default function WorkersPage() {
   };
 
   // Loading state
-  if (isUserLoading || !currentUser) {
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center space-y-4">

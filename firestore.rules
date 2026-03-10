@@ -13,36 +13,21 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Generic Role Check
+    function hasRole(role) {
+      return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
+    }
+
     // Role check helpers
-    function isSystemAdmin() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_system_admin/$(request.auth.uid));
-    }
+    function isSystemAdmin() { return hasRole('system_admin'); }
+    function isHRManager() { return hasRole('hr_manager'); }
+    function isHROfficer() { return hasRole('hr_officer'); }
+    function isSalesOfficer() { return hasRole('sales_officer'); }
+    function isFinanceOfficer() { return hasRole('finance_officer'); }
+    function isPayrollOfficer() { return hasRole('payroll_officer'); }
+    function isStoreOfficer() { return hasRole('store_officer'); }
 
-    function isHRManager() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_hr_manager/$(request.auth.uid));
-    }
-
-    function isHROfficer() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_hr_officer/$(request.auth.uid));
-    }
-
-    function isSalesOfficer() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_sales_officer/$(request.auth.uid));
-    }
-
-    function isFinanceOfficer() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_finance_officer/$(request.auth.uid));
-    }
-
-    function isPayrollOfficer() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_payroll_officer/$(request.auth.uid));
-    }
-
-    function isStoreOfficer() {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_store_officer/$(request.auth.uid));
-    }
-
-    // General Staff check (Anyone with a staff role)
+    // General Staff check (Anyone with any staff role)
     function isStaff() {
       return isSignedIn() && (
         isSystemAdmin() || 
@@ -55,21 +40,24 @@ service cloud.firestore {
       );
     }
 
-    // HR specific staff
+    // HR specific staff (Admins and HR roles)
     function isHRStaff() {
       return isSignedIn() && (isSystemAdmin() || isHRManager() || isHROfficer());
     }
 
-    // User profiles - Explicitly allow listing for staff
+    // User profiles
     match /users {
+      // Allow listing users only for staff
       allow list: if isStaff();
       match /{userId} {
-        allow get: if isSignedIn();
+        // Anyone signed in can get their own or others can be gotten by staff
+        allow get: if isStaff() || (isSignedIn() && request.auth.uid == userId);
+        // Only system admins can create/update arbitrary profiles, users can update their own
         allow write: if isSystemAdmin() || (isSignedIn() && request.auth.uid == userId);
       }
     }
 
-    // Workers & Records - Explicitly allow listing for staff
+    // Workers & Records
     match /workers {
       allow list: if isStaff();
       match /{workerId} {
@@ -126,20 +114,20 @@ service cloud.firestore {
       }
     }
 
-    // Roles & System Bootstrap - READ allowed for signed in users to check their own role
-    match /roles_hr_manager/{uid} { allow read: if isSignedIn(); }
-    match /roles_hr_officer/{uid} { allow read: if isSignedIn(); }
-    match /roles_system_admin/{uid} { allow read: if isSignedIn(); }
-    match /roles_sales_officer/{uid} { allow read: if isSignedIn(); }
-    match /roles_finance_officer/{uid} { allow read: if isSignedIn(); }
-    match /roles_payroll_officer/{uid} { allow read: if isSignedIn(); }
-    match /roles_store_officer/{uid} { allow read: if isSignedIn(); }
+    // Roles & System Bootstrap - READ allowed for signed in users to check their own role status
+    match /roles_hr_manager/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_sales_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_finance_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_payroll_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_store_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     
     match /system/bootstrap { allow read: if true; }
 
-    // Collection Group support for global listing
+    // Collection Group support for global listing (Assignments, POs, etc.)
     match /{path=**}/assignments/{asgnId} {
-      allow read: if isStaff() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+      allow read: if isStaff();
     }
     match /{path=**}/purchase_orders/{poId} {
       allow read: if isStaff();

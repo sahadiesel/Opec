@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, ShieldCheck, Mail, Clock, Trash2, UserCog } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { User, RoleType } from '@/lib/types';
+import { User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -30,10 +30,14 @@ export default function UsersPage() {
   }, []);
 
   const usersQuery = useMemoFirebase(() => {
-    // CRITICAL: Only run the query if authentication is verified AND role is system_admin
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    // CRITICAL: Defensive gating to prevent permission errors
+    // 1. Wait for auth state to be resolved
+    if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
     
-    // Defensive gating: only system_admin should query the full user list
+    // 2. Ensure UID in storage matches current Auth UID to prevent stale session leaks
+    if (firebaseUser.uid !== currentUser.id) return null;
+    
+    // 3. Only system_admin should query the full user list
     if (currentUser.roleId !== 'system_admin') return null;
     
     return collection(firestore, 'users');
@@ -49,7 +53,7 @@ export default function UsersPage() {
   };
 
   // Wait for auth resolution
-  if (isUserLoading || !currentUser) {
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center space-y-4">
