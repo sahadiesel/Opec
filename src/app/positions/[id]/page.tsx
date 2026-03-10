@@ -20,7 +20,8 @@ import {
   HardHat, 
   Hammer, 
   ArrowLeft,
-  Sparkles
+  Sparkles,
+  Briefcase
 } from 'lucide-react';
 import { 
   Dialog, 
