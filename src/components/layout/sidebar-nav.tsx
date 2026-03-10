@@ -18,7 +18,8 @@ import {
   Clock,
   HardHat,
   Boxes,
-  UserPlus
+  UserPlus,
+  ShieldAlert
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -54,10 +55,10 @@ const navItems: NavItem[] = [
     roles: ['system_admin'] 
   },
   { 
-    title: 'บันทึกการใช้งาน (Audit Logs)', 
-    href: '/audit-logs', 
-    icon: History, 
-    roles: ['system_admin'] 
+    title: 'Client Portal (พิจารณาตัวบุคคล)', 
+    href: '/client-portal', 
+    icon: ShieldAlert, 
+    roles: ['client', 'system_admin', 'hr_manager'] 
   },
   // Commercial Module
   { 
@@ -92,7 +93,7 @@ const navItems: NavItem[] = [
     roles: ['system_admin', 'hr_manager', 'hr_officer'] 
   },
   { 
-    title: 'การมอบหมายงาน (Assignments)', 
+    title: 'การมอบหมายและพิจารณา', 
     href: '/assignments', 
     icon: UserPlus, 
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer'] 
@@ -109,32 +110,6 @@ const navItems: NavItem[] = [
     href: '/timesheets', 
     icon: Clock, 
     roles: ['system_admin', 'payroll_officer'] 
-  },
-  // Store Module
-  { 
-    title: 'สต็อก PPE (PPE Stock)', 
-    href: '/ppe-stock', 
-    icon: HardHat, 
-    roles: ['system_admin', 'store_officer'] 
-  },
-  { 
-    title: 'อุปกรณ์ (Equipment)', 
-    href: '/equipment', 
-    icon: Boxes, 
-    roles: ['system_admin', 'store_officer'] 
-  },
-  // Finance Module
-  { 
-    title: 'ใบเสนอราคา (Quotations)', 
-    href: '/quotations', 
-    icon: FileCheck, 
-    roles: ['system_admin', 'finance_officer'] 
-  },
-  { 
-    title: 'ใบแจ้งหนี้ (Invoices)', 
-    href: '/invoices', 
-    icon: Receipt, 
-    roles: ['system_admin', 'finance_officer'] 
   },
 ];
 

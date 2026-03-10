@@ -10,7 +10,8 @@ export type RoleType =
   | 'hr_officer'
   | 'payroll_officer'
   | 'store_officer'
-  | 'finance_officer';
+  | 'finance_officer'
+  | 'client'; // Added for Client Portal access
 
 export type ReadinessStatus = 
   | 'READY' 
@@ -20,6 +21,16 @@ export type ReadinessStatus =
 
 export type WorkerStatus = 'available' | 'assigned' | 'on_leave' | 'inactive';
 
+export type AssignmentStatus = 
+  | 'proposed'
+  | 'client_review'
+  | 'approved'
+  | 'mobilizing'
+  | 'active'
+  | 'demobilized'
+  | 'cancelled'
+  | 'replaced';
+
 export interface User {
   id: string;
   email: string;
@@ -27,6 +38,7 @@ export interface User {
   address?: string;
   nationalId?: string;
   roleId: RoleType;
+  customerId?: string; // For client-role users to restrict data to their organization
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
@@ -92,6 +104,7 @@ export interface MainContractPositionRate {
 export interface PurchaseOrder {
   id: string;
   contractId: string;
+  customerId: string; // Helpful for queries
   poNumber: string;
   title: string;
   startDate: number;
@@ -115,10 +128,13 @@ export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
+  poId: string; // Reference for easier access
+  customerId: string; // Reference for Client Portal
   positionId: string;
   startDate: number;
   endDate: number;
-  status: 'active' | 'completed' | 'cancelled';
+  status: AssignmentStatus;
+  clientComments?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -189,7 +205,7 @@ export interface WorkerDrugTest {
 export interface AuditLog {
   id: string;
   userId: string;
-  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN';
+  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'APPROVAL' | 'REJECTION';
   entityType: string;
   entityId: string;
   timestamp: number;

@@ -2,67 +2,16 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Staff user profiles (Separate from Workers)",
+      "description": "Staff user profiles including Clients",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
-        "address": { "type": "string" },
-        "nationalId": { "type": "string" },
         "roleId": { "type": "string" },
+        "customerId": { "type": "string", "description": "Linked customer ID for client users" },
         "isActive": { "type": "boolean" },
-        "createdAt": { "type": "number" },
-        "updatedAt": { "type": "number" }
-      }
-    },
-    "Position": {
-      "title": "Position",
-      "description": "Standard job positions in the position matrix",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "code": { "type": "string" },
-        "description": { "type": "string" },
-        "isActive": { "type": "boolean" }
-      }
-    },
-    "PositionRequirement": {
-      "title": "PositionRequirement",
-      "description": "Mandatory requirement for a position (Certificate, PPE, Tool, or Medical)",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "type": { "type": "string", "enum": ["certificate", "ppe", "tool", "medical"] },
-        "name": { "type": "string" },
-        "description": { "type": "string" },
-        "isMandatory": { "type": "boolean" }
-      }
-    },
-    "Worker": {
-      "title": "Worker",
-      "description": "Field worker personnel data",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "firstName": { "type": "string" },
-        "lastName": { "type": "string" },
-        "thaiNationalId": { "type": "string" },
-        "workerStatus": { "type": "string", "enum": ["available", "assigned", "on_leave", "inactive"] },
-        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] },
-        "currentPositionId": { "type": "string" }
-      }
-    },
-    "Customer": {
-      "title": "Customer",
-      "description": "Client organization data",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "taxId": { "type": "string" },
-        "address": { "type": "string" }
+        "createdAt": { "type": "number" }
       }
     },
     "MainContract": {
@@ -78,7 +27,7 @@
     },
     "PurchaseOrder": {
       "title": "PurchaseOrder",
-      "description": "Commercial Purchase Order tied to a Main Contract",
+      "description": "Commercial Purchase Order",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -102,15 +51,13 @@
     },
     "Assignment": {
       "title": "Assignment",
-      "description": "Operational bridge between PO Line and Worker",
+      "description": "Worker deployment through PO Line with client approval flow",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "workerId": { "type": "string" },
         "poLineId": { "type": "string" },
-        "startDate": { "type": "number" },
-        "endDate": { "type": "number" },
-        "status": { "type": "string", "enum": ["active", "completed", "cancelled"] }
+        "status": { "type": "string", "enum": ["proposed", "client_review", "approved", "mobilizing", "active", "demobilized", "cancelled", "replaced"] }
       }
     }
   },
@@ -120,23 +67,39 @@
   "firestore": {
     "/users/{userId}": {
       "schema": "#/backend/entities/User",
-      "description": "Staff user profiles"
+      "description": "System users and clients"
     },
-    "/audit_logs/{logId}": {
+    "/customers/{customerId}": {
       "schema": { "type": "object" },
-      "description": "System audit logs"
+      "description": "Customer master records"
     },
-    "/positions/{posId}": {
-      "schema": "#/backend/entities/Position",
-      "description": "Standard job positions"
+    "/customers/{customerId}/contacts/{contactId}": {
+      "schema": { "type": "object" },
+      "description": "Customer contact persons"
     },
-    "/positions/{posId}/requirements/{reqId}": {
-      "schema": "#/backend/entities/PositionRequirement",
-      "description": "Mandatory matrix requirements for position"
+    "/customers/{customerId}/main_contracts/{contractId}": {
+      "schema": "#/backend/entities/MainContract",
+      "description": "Master commercial agreements"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
+      "schema": { "type": "object" },
+      "description": "Standard position rates per contract"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
+      "schema": "#/backend/entities/PurchaseOrder",
+      "description": "Purchase orders under a contract"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
+      "schema": "#/backend/entities/POLine",
+      "description": "Detailed PO lines with cost snapshots"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
+      "schema": "#/backend/entities/Assignment",
+      "description": "Worker assignments to PO lines"
     },
     "/workers/{workerId}": {
-      "schema": "#/backend/entities/Worker",
-      "description": "Field worker records"
+      "schema": { "type": "object" },
+      "description": "Field worker personnel data"
     },
     "/workers/{workerId}/certificates/{certId}": {
       "schema": { "type": "object" },
@@ -149,38 +112,6 @@
     "/workers/{workerId}/drug_tests/{drugId}": {
       "schema": { "type": "object" },
       "description": "Worker drug tests"
-    },
-    "/workers/{workerId}/documents/{docId}": {
-      "schema": { "type": "object" },
-      "description": "Worker documents"
-    },
-    "/customers/{customerId}": {
-      "schema": "#/backend/entities/Customer",
-      "description": "Customer master data"
-    },
-    "/customers/{customerId}/contacts/{contactId}": {
-      "schema": { "type": "object" },
-      "description": "Customer contacts"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}": {
-      "schema": "#/backend/entities/MainContract",
-      "description": "Master agreements"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
-      "schema": { "type": "object" },
-      "description": "Contract position rates"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
-      "schema": "#/backend/entities/PurchaseOrder",
-      "description": "Purchase orders"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
-      "schema": "#/backend/entities/POLine",
-      "description": "PO line items with cost/sell snapshots"
-    },
-    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
-      "schema": "#/backend/entities/Assignment",
-      "description": "Worker assignments to PO lines"
     }
   }
 }

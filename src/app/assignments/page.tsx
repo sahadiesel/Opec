@@ -5,9 +5,9 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, UserPlus, MoreHorizontal, Calendar, Briefcase, Info, AlertCircle } from 'lucide-react';
+import { Plus, Search, UserPlus, MoreHorizontal, Calendar, Briefcase, CheckCircle2, Send, Clock, ShieldCheck, XCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, POLine, RoleType, User } from '@/lib/types';
+import { Assignment, Worker, POLine, User, AssignmentStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collectionGroup, collection, doc } from 'firebase/firestore';
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { addDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 
 export default function AssignmentsPage() {
@@ -60,35 +60,38 @@ export default function AssignmentsPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const handleAssignWorker = async () => {
+  const handleCreateAssignment = async () => {
     if (!firestore || !selectedWorkerId || !selectedPOLineId || !startDate || !endDate) return;
 
     const poLine = allPOLines?.find(l => l.id === selectedPOLineId);
     if (!poLine) return;
 
-    // RULE: Check if quantity is exceeded
-    const existingAssignments = assignments?.filter(a => a.poLineId === selectedPOLineId && a.status === 'active') || [];
-    if (existingAssignments.length >= poLine.quantity) {
+    // RULE: Check if quantity is exceeded (counting approved/active only)
+    const existingCount = assignments?.filter(a => 
+      a.poLineId === selectedPOLineId && 
+      ['approved', 'active', 'mobilizing'].includes(a.status)
+    ).length || 0;
+
+    if (existingCount >= poLine.quantity) {
       toast({
         variant: "destructive",
-        title: "โควต้าเต็ม (Quota Exceeded)",
-        description: `ใบสั่งซื้อนี้มีโควต้าจำกัดที่ ${poLine.quantity} อัตรา ซึ่งมีการมอบหมายเต็มแล้ว`,
+        title: "โควต้าเต็ม (Quota Full)",
+        description: `โควต้าของ PO Line นี้คือ ${poLine.quantity} ซึ่งมีการจองเต็มแล้ว`,
       });
       return;
     }
 
-    // In a production environment, we would use the full nested path:
-    // /customers/{c}/main_contracts/{mc}/purchase_orders/{po}/po_lines/{pol}/assignments
-    // For Phase 1A Prototype, we use a root-level mock collection that is picked up by collectionGroup
+    // Path in Master Blueprint: /customers/{c}/main_contracts/{mc}/purchase_orders/{po}/po_lines/{pol}/assignments
+    // Note: For prototype simplification we are using a synchronized collection for flat listing
     const assignmentsRef = collection(firestore, 'assignments_sync');
     
     const newAssignment: Partial<Assignment> = {
       workerId: selectedWorkerId,
       poLineId: selectedPOLineId,
-      positionId: poLine.positionId, // One assignment has exactly one position (from PO Line)
+      positionId: poLine.positionId,
       startDate: new Date(startDate).getTime(),
       endDate: new Date(endDate).getTime(),
-      status: 'active',
+      status: 'proposed', // Start in proposed state
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -96,12 +99,24 @@ export default function AssignmentsPage() {
     addDocumentNonBlocking(assignmentsRef, newAssignment);
     
     toast({
-      title: "มอบหมายงานสำเร็จ",
-      description: "ข้อมูลการมอบหมายงานถูกบันทึกเข้าระบบแล้ว",
+      title: "สร้างรายการเสนอตัวสำเร็จ",
+      description: "คนงานถูกเพิ่มเข้ารายการ 'Proposed' เพื่อรอส่งให้ลูกค้าพิจารณา",
     });
     
     setIsDialogOpen(false);
     resetForm();
+  };
+
+  const handleUpdateStatus = (asgnId: string, newStatus: AssignmentStatus) => {
+    if (!firestore) return;
+    updateDocumentNonBlocking(doc(firestore, 'assignments_sync', asgnId), {
+      status: newStatus,
+      updatedAt: Date.now()
+    });
+    toast({
+      title: "อัปเดตสถานะสำเร็จ",
+      description: `เปลี่ยนสถานะเป็น ${newStatus.toUpperCase()} เรียบร้อยแล้ว`,
+    });
   };
 
   const resetForm = () => {
@@ -109,6 +124,19 @@ export default function AssignmentsPage() {
     setSelectedPOLineId('');
     setStartDate('');
     setEndDate('');
+  };
+
+  const getStatusBadge = (status: AssignmentStatus) => {
+    switch(status) {
+      case 'proposed': return <Badge variant="outline" className="bg-slate-100 text-slate-700">Proposed</Badge>;
+      case 'client_review': return <Badge variant="outline" className="bg-blue-100 text-blue-700 border-blue-200">Reviewing</Badge>;
+      case 'approved': return <Badge variant="outline" className="bg-green-100 text-green-700 border-green-200">Approved</Badge>;
+      case 'active': return <Badge className="bg-primary">Active</Badge>;
+      case 'mobilizing': return <Badge variant="secondary" className="bg-amber-100 text-amber-700">Mobilizing</Badge>;
+      case 'cancelled': return <Badge variant="destructive">Cancelled</Badge>;
+      case 'replaced': return <Badge variant="outline" className="bg-orange-50 text-orange-600">Replaced</Badge>;
+      default: return <Badge variant="outline">{status}</Badge>;
+    }
   };
 
   if (isUserLoading || !currentUser) return null;
@@ -119,21 +147,21 @@ export default function AssignmentsPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <UserPlus className="h-6 w-6" /> การมอบหมายงาน (Worker Assignments)
+              <UserPlus className="h-6 w-6" /> จัดการการมอบหมายและพิจารณา (Assignments & Approvals)
             </h1>
-            <p className="text-muted-foreground">บริหารจัดการการส่งคนงานลงพื้นที่ตามใบสั่งซื้อ (PO Lines)</p>
+            <p className="text-muted-foreground">บริหารจัดการขั้นตอนการเสนอตัวคนงานและการส่งพิจารณาจากลูกค้า</p>
           </div>
           
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
-                <Plus className="h-4 w-4" /> สร้างการมอบหมายใหม่
+                <Plus className="h-4 w-4" /> เสนอตัวคนงานใหม่
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>มอบหมายคนงานเข้าโครงการ</DialogTitle>
-                <DialogDescription>เลือกคนงานที่พร้อมและใบสั่งซื้อที่ยังมีโควต้าว่าง</DialogDescription>
+                <DialogTitle>เสนอชื่อคนงานเข้าโครงการ</DialogTitle>
+                <DialogDescription>เลือกคนงานที่พร้อมและ PO Line ที่ต้องการจองพื้นที่</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
@@ -143,26 +171,23 @@ export default function AssignmentsPage() {
                       <SelectValue placeholder="เลือกรายการ PO Line..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {allPOLines?.map(line => {
-                        const count = assignments?.filter(a => a.poLineId === line.id && a.status === 'active').length || 0;
-                        return (
-                          <SelectItem key={line.id} value={line.id} disabled={count >= line.quantity}>
-                            {line.positionId} (ว่าง: {line.quantity - count}/{line.quantity})
-                          </SelectItem>
-                        );
-                      })}
+                      {allPOLines?.map(line => (
+                        <SelectItem key={line.id} value={line.id}>
+                          {line.positionId} (โควต้า: {line.quantity})
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label>คนงาน (เฉพาะผู้ที่ READY)</Label>
+                  <Label>คนงาน (READY)</Label>
                   <Select onValueChange={setSelectedWorkerId} value={selectedWorkerId}>
                     <SelectTrigger>
                       <SelectValue placeholder="เลือกคนงาน..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {allWorkers?.filter(w => w.workerStatus === 'available' && w.readinessStatus === 'READY').map(worker => (
+                      {allWorkers?.filter(w => w.readinessStatus === 'READY').map(worker => (
                         <SelectItem key={worker.id} value={worker.id}>
                           {worker.firstName} {worker.lastName}
                         </SelectItem>
@@ -184,8 +209,8 @@ export default function AssignmentsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleAssignWorker} disabled={!selectedWorkerId || !selectedPOLineId || !startDate || !endDate}>
-                  ยืนยันการมอบหมาย
+                <Button onClick={handleCreateAssignment} disabled={!selectedWorkerId || !selectedPOLineId || !startDate || !endDate}>
+                  สร้างรายการเสนอ
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -193,14 +218,8 @@ export default function AssignmentsPage() {
         </div>
 
         <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle>รายการการมอบหมายปัจจุบัน</CardTitle>
-              <div className="relative w-72">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาคนงาน..." className="pl-8" />
-              </div>
-            </div>
+          <CardHeader>
+            <CardTitle>รายการการมอบหมายทั้งหมด</CardTitle>
           </CardHeader>
           <CardContent>
             {isAssignmentsLoading ? (
@@ -209,12 +228,11 @@ export default function AssignmentsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>คนงาน (Worker)</TableHead>
-                    <TableHead>ตำแหน่งงาน (Position)</TableHead>
-                    <TableHead>รหัส PO Line</TableHead>
-                    <TableHead>ระยะเวลา (Period)</TableHead>
-                    <TableHead>สถานะ (Status)</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
+                    <TableHead>คนงาน</TableHead>
+                    <TableHead>ตำแหน่ง</TableHead>
+                    <TableHead>ระยะเวลา</TableHead>
+                    <TableHead>สถานะ</TableHead>
+                    <TableHead className="text-right">จัดการขั้นตอน</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -223,46 +241,44 @@ export default function AssignmentsPage() {
                     return (
                       <TableRow key={asgn.id}>
                         <TableCell>
-                          <div className="flex items-center gap-3">
-                            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                              <UserPlus className="h-4 w-4 text-primary" />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="font-semibold">{worker ? `${worker.firstName} ${worker.lastName}` : 'ไม่พบข้อมูล'}</span>
-                              <span className="text-xs text-muted-foreground">{worker?.thaiNationalId || '-'}</span>
-                            </div>
+                          <div className="flex flex-col">
+                            <span className="font-semibold">{worker ? `${worker.firstName} ${worker.lastName}` : 'N/A'}</span>
+                            <span className="text-xs text-muted-foreground">{worker?.thaiNationalId}</span>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="flex items-center w-fit gap-1">
-                            <Briefcase className="h-3 w-3" /> {asgn.positionId}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {asgn.poLineId.substring(0, 8)}...
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1.5 text-xs">
-                            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                            {new Date(asgn.startDate).toLocaleDateString('th-TH')} - {new Date(asgn.endDate).toLocaleDateString('th-TH')}
+                          <div className="flex items-center gap-2">
+                            <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="text-sm">{asgn.positionId}</span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge variant={asgn.status === 'active' ? 'default' : 'secondary'}>
-                            {asgn.status === 'active' ? 'กำลังปฏิบัติงาน' : asgn.status.toUpperCase()}
-                          </Badge>
+                        <TableCell className="text-xs">
+                          {new Date(asgn.startDate).toLocaleDateString('th-TH')} - {new Date(asgn.endDate).toLocaleDateString('th-TH')}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell>
+                          {getStatusBadge(asgn.status)}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
+                          {asgn.status === 'proposed' && (
+                            <Button size="sm" variant="outline" className="text-blue-600 border-blue-200" onClick={() => handleUpdateStatus(asgn.id, 'client_review')}>
+                              <Send className="h-3.5 w-3.5 mr-1" /> ส่งพิจารณา
+                            </Button>
+                          )}
+                          {asgn.status === 'approved' && (
+                            <Button size="sm" variant="outline" className="text-amber-600 border-amber-200" onClick={() => handleUpdateStatus(asgn.id, 'mobilizing')}>
+                              <Clock className="h-3.5 w-3.5 mr-1" /> เริ่มระดมพล
+                            </Button>
+                          )}
+                          {asgn.status === 'mobilizing' && (
+                            <Button size="sm" className="bg-primary" onClick={() => handleUpdateStatus(asgn.id, 'active')}>
+                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> เริ่มงาน (Active)
+                            </Button>
+                          )}
                           <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                         </TableCell>
                       </TableRow>
                     );
                   })}
-                  {!isAssignmentsLoading && (!assignments || assignments.length === 0) && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ยังไม่มีการมอบหมายงานในระบบ</TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             )}
