@@ -20,7 +20,8 @@ import {
   HardHat, 
   Hammer, 
   ArrowLeft,
-  Sparkles
+  Sparkles,
+  Edit
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -46,6 +47,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const firestore = useFirestore();
   const { toast } = useToast();
 
+  // --- Firestore Data ---
   const posRef = useMemoFirebase(() => (firestore ? doc(firestore, 'positions', id) : null), [firestore, id]);
   const { data: position, isLoading: isPosLoading } = useDoc<Position>(posRef as any);
 
@@ -58,6 +60,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const toolsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions', id, 'tool_requirements') : null), [firestore, id]);
   const { data: tools } = useCollection<PositionToolRequirement>(toolsQuery as any);
 
+  // --- Local States ---
   const [isEditing, setIsEditing] = useState(false);
   const [editedPos, setEditedPos] = useState<Partial<Position>>({});
 
@@ -76,6 +79,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
+  // --- Actions ---
   const handleSaveMaster = () => {
     if (!posRef) return;
     updateDocumentNonBlocking(posRef, { ...editedPos, updatedAt: Date.now() });
@@ -86,10 +90,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const handleAddCert = () => {
     if (!certsQuery) return;
     addDocumentNonBlocking(certsQuery, {
-      certificateName: newCert.certificateName || 'Unknown Cert',
-      certificateCode: newCert.certificateCode || 'CODE',
+      certificateName: newCert.certificateName || '',
+      certificateCode: newCert.certificateCode || '',
       required: newCert.required ?? true,
-      validityMonths: newCert.validityMonths,
+      validityMonths: newCert.validityMonths || 0,
       notes: newCert.notes || ''
     });
     setIsAddCertOpen(false);
@@ -99,8 +103,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const handleAddPPE = () => {
     if (!ppeQuery) return;
     addDocumentNonBlocking(ppeQuery, {
-      itemName: newPPE.itemName || 'Unknown PPE',
-      itemCode: newPPE.itemCode || 'CODE',
+      itemName: newPPE.itemName || '',
+      itemCode: newPPE.itemCode || '',
       quantityDefault: newPPE.quantityDefault ?? 1,
       required: newPPE.required ?? true,
       notes: newPPE.notes || ''
@@ -112,8 +116,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const handleAddTool = () => {
     if (!toolsQuery) return;
     addDocumentNonBlocking(toolsQuery, {
-      itemName: newTool.itemName || 'Unknown Tool',
-      itemCode: newTool.itemCode || 'CODE',
+      itemName: newTool.itemName || '',
+      itemCode: newTool.itemCode || '',
       itemType: newTool.itemType || 'tool',
       quantityDefault: newTool.quantityDefault ?? 1,
       allowed: newTool.allowed ?? true,
@@ -140,8 +144,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
         additionalDetails: position.description
       });
       
-      // For simplicity in this UI, we'll just toast the AI suggestion or update notes
-      // In a real app, this might populate the fields or open a special modal
       toast({
         title: "AI Suggested Requirements",
         description: result.description,
@@ -150,7 +152,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       toast({
         variant: "destructive",
         title: "AI Generation Failed",
-        description: "Could not generate suggestions at this time."
+        description: "ไม่สามารถสร้างคำแนะนำได้ในขณะนี้"
       });
     } finally {
       setIsGenerating(false);
@@ -161,7 +163,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">Loading position data...</div>
+          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลตำแหน่งงาน...</div>
         </div>
       </AppShell>
     );
@@ -177,35 +179,36 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{position.positionName}</h1>
-              <Badge variant="outline" className="font-mono">{position.positionCode}</Badge>
+              <Badge variant="outline" className="font-mono text-primary border-primary/20">{position.positionCode}</Badge>
             </div>
-            <p className="text-muted-foreground">{position.category} | {position.payrollBasis} Basis</p>
+            <p className="text-muted-foreground">{position.category} | จ่ายแบบ {position.payrollBasis}</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => { setEditedPos(position); setIsEditing(!isEditing); }}>
-              {isEditing ? 'Cancel Edit' : 'Edit Master Data'}
+              {isEditing ? 'ยกเลิกการแก้ไข' : 'แก้ไขข้อมูลหลัก'}
             </Button>
             {isEditing && (
               <Button className="gap-2" onClick={handleSaveMaster}>
-                <Save className="h-4 w-4" /> Save
+                <Save className="h-4 w-4" /> บันทึก
               </Button>
             )}
           </div>
         </div>
 
         <Tabs defaultValue="master" className="w-full">
-          <TabsList className="grid grid-cols-4 w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="master" className="gap-2 py-2 px-4"><FileText className="h-4 w-4" /> ข้อมูลหลัก</TabsTrigger>
-            <TabsTrigger value="certs" className="gap-2 py-2 px-4"><FileText className="h-4 w-4" /> ใบรับรอง (Certs)</TabsTrigger>
-            <TabsTrigger value="ppe" className="gap-2 py-2 px-4"><HardHat className="h-4 w-4" /> PPE</TabsTrigger>
-            <TabsTrigger value="tools" className="gap-2 py-2 px-4"><Hammer className="h-4 w-4" /> อุปกรณ์ (Tools)</TabsTrigger>
+          <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
+            <TabsTrigger value="master" className="gap-2 py-2 px-6"><Briefcase className="h-4 w-4" /> ข้อมูลหลัก</TabsTrigger>
+            <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบรับรอง (Certs)</TabsTrigger>
+            <TabsTrigger value="ppe" className="gap-2 py-2 px-6"><HardHat className="h-4 w-4" /> PPE</TabsTrigger>
+            <TabsTrigger value="tools" className="gap-2 py-2 px-6"><Hammer className="h-4 w-4" /> อุปกรณ์ (Tools)</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="master">
+          {/* SECTION: Position Info */}
+          <TabsContent value="master" className="mt-6">
             <Card className="shadow-sm">
               <CardHeader>
-                <CardTitle>Master Data Profile</CardTitle>
-                <CardDescription>ข้อมูลพื้นฐานและรายละเอียดของตำแหน่งงาน</CardDescription>
+                <CardTitle>Position Info</CardTitle>
+                <CardDescription>รายละเอียดพื้นฐานของตำแหน่งงาน</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -283,16 +286,17 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             </Card>
           </TabsContent>
 
-          <TabsContent value="certs">
+          {/* SECTION 1: Required Certificates */}
+          <TabsContent value="certs" className="mt-6">
             <Card className="shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Certificate Requirements</CardTitle>
-                  <CardDescription>ใบรับรองและวุฒิบัตรที่จำเป็นสำหรับตำแหน่งนี้</CardDescription>
+                  <CardTitle>Required Certificates</CardTitle>
+                  <CardDescription>เกณฑ์ใบรับรองมาตรฐานสำหรับตำแหน่งนี้</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => handleGenerateAI('certificate')} disabled={isGenerating}>
-                    <Sparkles className="h-4 w-4 mr-2" /> AI Suggestions
+                    <Sparkles className="h-4 w-4 mr-2" /> AI Helper
                   </Button>
                   <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
                     <DialogTrigger asChild>
@@ -301,24 +305,24 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>เพิ่มเกณฑ์ใบรับรอง</DialogTitle>
-                        <DialogDescription>ระบุรายละเอียดใบรับรองที่พนักงานต้องมี</DialogDescription>
+                        <DialogDescription>Firestore: positions/{id}/certificate_requirements</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่อใบรับรอง</Label>
+                          <Label>ชื่อใบรับรอง (certificateName)</Label>
                           <Input value={newCert.certificateName || ''} onChange={e => setNewCert({...newCert, certificateName: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>รหัสใบรับรอง</Label>
+                          <Label>รหัสใบรับรอง (certificateCode)</Label>
                           <Input value={newCert.certificateCode || ''} onChange={e => setNewCert({...newCert, certificateCode: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>อายุการใช้งาน (เดือน)</Label>
+                          <Label>อายุการใช้งาน (validityMonths - เดือน)</Label>
                           <Input type="number" value={newCert.validityMonths || ''} onChange={e => setNewCert({...newCert, validityMonths: parseInt(e.target.value)})} />
                         </div>
                         <div className="flex items-center space-x-2">
                           <Checkbox id="req" checked={newCert.required} onCheckedChange={v => setNewCert({...newCert, required: !!v})} />
-                          <Label htmlFor="req">บังคับ (Mandatory)</Label>
+                          <Label htmlFor="req">บังคับ (Required)</Label>
                         </div>
                         <div className="grid gap-2">
                           <Label>หมายเหตุ</Label>
@@ -327,7 +331,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </div>
                       <DialogFooter>
                         <Button variant="outline" onClick={() => setIsAddCertOpen(false)}>ยกเลิก</Button>
-                        <Button onClick={handleAddCert}>เพิ่มรายการ</Button>
+                        <Button onClick={handleAddCert}>บันทึกรายการ</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
@@ -337,11 +341,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ชื่อใบรับรอง</TableHead>
+                      <TableHead>ใบรับรอง</TableHead>
                       <TableHead>รหัส</TableHead>
                       <TableHead>บังคับ</TableHead>
-                      <TableHead>อายุการใช้งาน (เดือน)</TableHead>
-                      <TableHead>หมายเหตุ</TableHead>
+                      <TableHead>อายุการใช้งาน (ด.)</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -351,8 +354,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="font-medium">{c.certificateName}</TableCell>
                         <TableCell className="font-mono text-xs">{c.certificateCode}</TableCell>
                         <TableCell>{c.required ? <Badge>Mandatory</Badge> : <Badge variant="outline">Optional</Badge>}</TableCell>
-                        <TableCell>{c.validityMonths || 'N/A'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{c.notes}</TableCell>
+                        <TableCell>{c.validityMonths || '-'}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteReq('certificate_requirements', c.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
@@ -360,7 +362,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     ))}
                     {!certs?.length && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่มีรายการเกณฑ์ใบรับรอง</TableCell>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลใบรับรอง</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -369,16 +371,17 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             </Card>
           </TabsContent>
 
-          <TabsContent value="ppe">
+          {/* SECTION 2: Required PPE */}
+          <TabsContent value="ppe" className="mt-6">
             <Card className="shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>PPE Requirements</CardTitle>
-                  <CardDescription>รายการชุดป้องกันส่วนบุคคลที่ต้องจัดเตรียม</CardDescription>
+                  <CardTitle>Required PPE</CardTitle>
+                  <CardDescription>รายการชุดอุปกรณ์ป้องกันส่วนบุคคล</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => handleGenerateAI('ppe')} disabled={isGenerating}>
-                    <Sparkles className="h-4 w-4 mr-2" /> AI Suggestions
+                    <Sparkles className="h-4 w-4 mr-2" /> AI Helper
                   </Button>
                   <Dialog open={isAddPPEOpen} onOpenChange={setIsAddPPEOpen}>
                     <DialogTrigger asChild>
@@ -387,24 +390,24 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>เพิ่มรายการ PPE</DialogTitle>
-                        <DialogDescription>ระบุชื่ออุปกรณ์ป้องกันและจำนวนมาตรฐาน</DialogDescription>
+                        <DialogDescription>Firestore: positions/{id}/ppe_requirements</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่ออุปกรณ์</Label>
+                          <Label>ชื่ออุปกรณ์ (itemName)</Label>
                           <Input value={newPPE.itemName || ''} onChange={e => setNewPPE({...newPPE, itemName: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>รหัสอุปกรณ์</Label>
+                          <Label>รหัสรายการ (itemCode)</Label>
                           <Input value={newPPE.itemCode || ''} onChange={e => setNewPPE({...newPPE, itemCode: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>จำนวนมาตรฐาน (Default Quantity)</Label>
+                          <Label>จำนวนมาตรฐาน (quantityDefault)</Label>
                           <Input type="number" value={newPPE.quantityDefault || 1} onChange={e => setNewPPE({...newPPE, quantityDefault: parseInt(e.target.value)})} />
                         </div>
                         <div className="flex items-center space-x-2">
                           <Checkbox id="ppe-req" checked={newPPE.required} onCheckedChange={v => setNewPPE({...newPPE, required: !!v})} />
-                          <Label htmlFor="ppe-req">บังคับ (Mandatory)</Label>
+                          <Label htmlFor="ppe-req">บังคับ (Required)</Label>
                         </div>
                         <div className="grid gap-2">
                           <Label>หมายเหตุ</Label>
@@ -413,7 +416,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </div>
                       <DialogFooter>
                         <Button variant="outline" onClick={() => setIsAddPPEOpen(false)}>ยกเลิก</Button>
-                        <Button onClick={handleAddPPE}>เพิ่มรายการ</Button>
+                        <Button onClick={handleAddPPE}>บันทึกรายการ</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
@@ -423,11 +426,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ชื่อรายการ PPE</TableHead>
+                      <TableHead>อุปกรณ์ PPE</TableHead>
                       <TableHead>รหัส</TableHead>
-                      <TableHead>จำนวน (Default)</TableHead>
+                      <TableHead>จำนวน</TableHead>
                       <TableHead>บังคับ</TableHead>
-                      <TableHead>หมายเหตุ</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -438,7 +440,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="font-mono text-xs">{p.itemCode}</TableCell>
                         <TableCell>{p.quantityDefault}</TableCell>
                         <TableCell>{p.required ? <Badge>Required</Badge> : <Badge variant="outline">Optional</Badge>}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{p.notes}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteReq('ppe_requirements', p.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
@@ -446,7 +447,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     ))}
                     {!ppe?.length && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่มีรายการเกณฑ์ PPE</TableCell>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูล PPE</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -455,16 +456,17 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             </Card>
           </TabsContent>
 
-          <TabsContent value="tools">
+          {/* SECTION 3: Allowed Tools / Equipment */}
+          <TabsContent value="tools" className="mt-6">
             <Card className="shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Tools & Equipment Allowance</CardTitle>
-                  <CardDescription>อุปกรณ์และเครื่องมือที่อนุญาตให้ใช้หรือต้องจัดเตรียม</CardDescription>
+                  <CardTitle>Allowed Tools / Equipment</CardTitle>
+                  <CardDescription>รายการเครื่องมือและอุปกรณ์ที่ได้รับอนุญาต</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => handleGenerateAI('tool')} disabled={isGenerating}>
-                    <Sparkles className="h-4 w-4 mr-2" /> AI Suggestions
+                    <Sparkles className="h-4 w-4 mr-2" /> AI Helper
                   </Button>
                   <Dialog open={isAddToolOpen} onOpenChange={setIsAddToolOpen}>
                     <DialogTrigger asChild>
@@ -473,19 +475,19 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>เพิ่มรายการอุปกรณ์/เครื่องมือ</DialogTitle>
-                        <DialogDescription>ระบุประเภทอุปกรณ์และเงื่อนไขการใช้งาน</DialogDescription>
+                        <DialogDescription>Firestore: positions/{id}/tool_requirements</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่ออุปกรณ์</Label>
+                          <Label>ชื่อรายการ (itemName)</Label>
                           <Input value={newTool.itemName || ''} onChange={e => setNewTool({...newTool, itemName: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>รหัสอุปกรณ์</Label>
+                          <Label>รหัสรายการ (itemCode)</Label>
                           <Input value={newTool.itemCode || ''} onChange={e => setNewTool({...newTool, itemCode: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>ประเภท (Type)</Label>
+                          <Label>ประเภท (itemType)</Label>
                           <Select onValueChange={v => setNewTool({...newTool, itemType: v as any})} value={newTool.itemType}>
                             <SelectTrigger>
                               <SelectValue />
@@ -498,7 +500,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                           </Select>
                         </div>
                         <div className="grid gap-2">
-                          <Label>จำนวนมาตรฐาน</Label>
+                          <Label>จำนวนเริ่มต้น (quantityDefault)</Label>
                           <Input type="number" value={newTool.quantityDefault || 1} onChange={e => setNewTool({...newTool, quantityDefault: parseInt(e.target.value)})} />
                         </div>
                         <div className="flex items-center space-x-2">
@@ -512,7 +514,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </div>
                       <DialogFooter>
                         <Button variant="outline" onClick={() => setIsAddToolOpen(false)}>ยกเลิก</Button>
-                        <Button onClick={handleAddTool}>เพิ่มรายการ</Button>
+                        <Button onClick={handleAddTool}>บันทึกรายการ</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
@@ -522,12 +524,11 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ชื่ออุปกรณ์</TableHead>
+                      <TableHead>อุปกรณ์ / เครื่องมือ</TableHead>
                       <TableHead>รหัส</TableHead>
                       <TableHead>ประเภท</TableHead>
                       <TableHead>จำนวน</TableHead>
                       <TableHead>สถานะ</TableHead>
-                      <TableHead>หมายเหตุ</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -539,7 +540,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="capitalize">{t.itemType}</TableCell>
                         <TableCell>{t.quantityDefault}</TableCell>
                         <TableCell>{t.allowed ? <Badge className="bg-green-500">Allowed</Badge> : <Badge variant="destructive">Blocked</Badge>}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{t.notes}</TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteReq('tool_requirements', t.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
@@ -547,7 +547,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     ))}
                     {!tools?.length && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-10 text-muted-foreground italic">ไม่มีรายการเกณฑ์อุปกรณ์</TableCell>
+                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลอุปกรณ์</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

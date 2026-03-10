@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,11 +25,14 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
 
 export default function PositionsPage() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   const positionsQuery = useMemoFirebase(() => {
     if (!firestore || !firebaseUser) return null;
@@ -53,24 +57,34 @@ export default function PositionsPage() {
     if (stored) setUser(JSON.parse(stored));
   }, []);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!firestore) return;
     const posRef = collection(firestore, 'positions');
-    addDocumentNonBlocking(posRef, {
-      ...newPosition,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    });
-    setIsCreateOpen(false);
-    setNewPosition({
-      positionName: '',
-      positionCode: '',
-      category: 'Offshore',
-      active: true,
-      description: '',
-      payrollBasis: 'Daily',
-      notes: ''
-    });
+    
+    try {
+      const docRef = await addDocumentNonBlocking(posRef, {
+        ...newPosition,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+      
+      setIsCreateOpen(false);
+      toast({
+        title: "สร้างตำแหน่งงานสำเร็จ",
+        description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด...",
+      });
+      
+      // Navigate to detail page after a short delay
+      if (docRef) {
+        router.push(`/positions/${docRef.id}`);
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "เกิดข้อผิดพลาด",
+        description: "ไม่สามารถสร้างตำแหน่งงานได้",
+      });
+    }
   };
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
@@ -149,7 +163,7 @@ export default function PositionsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate}>บันทึกตำแหน่ง</Button>
+                <Button onClick={handleCreate}>บันทึกและจัดการรายละเอียด</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
