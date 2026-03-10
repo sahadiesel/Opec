@@ -18,18 +18,28 @@ export default function UsersPage() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
-  const usersQuery = useMemoFirebase(() => {
-    // CRITICAL: Only run the query if authentication is verified (request.auth != null)
-    if (!firestore || !firebaseUser || !currentUser || currentUser.roleId !== 'system_admin') return null;
-    return collection(firestore, 'users');
-  }, [firestore, firebaseUser, currentUser]);
-
-  const { data: users, isLoading } = useCollection<User>(usersQuery as any);
-
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
+
+  const usersQuery = useMemoFirebase(() => {
+    // CRITICAL: Only run the query if authentication is verified AND role is system_admin
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    
+    // Defensive gating: only system_admin should query the full user list
+    if (currentUser.roleId !== 'system_admin') return null;
+    
+    return collection(firestore, 'users');
+  }, [firestore, isUserLoading, firebaseUser, currentUser]);
+
+  const { data: users, isLoading: isCollectionLoading } = useCollection<User>(usersQuery as any);
 
   const handleDelete = (id: string) => {
     if (!firestore) return;
@@ -38,11 +48,28 @@ export default function UsersPage() {
     }
   };
 
+  // Wait for auth resolution
   if (isUserLoading || !currentUser) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground animate-pulse">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        <div className="text-center space-y-4">
+          <ShieldCheck className="h-12 w-12 text-primary animate-pulse mx-auto" />
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
       </div>
+    );
+  }
+
+  // Security gate for unauthorized roles
+  if (currentUser.roleId !== 'system_admin') {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
+          <ShieldCheck className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Denied</h2>
+          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงหน้าจัดการผู้ใช้งานระบบ</p>
+        </div>
+      </AppShell>
     );
   }
 
@@ -93,7 +120,7 @@ export default function UsersPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {isLoading ? (
+            {isCollectionLoading ? (
               <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลผู้ใช้งาน...</div>
             ) : (
               <Table>
@@ -140,7 +167,7 @@ export default function UsersPage() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {!isLoading && (!users || users.length === 0) && (
+                  {!isCollectionLoading && (!users || users.length === 0) && (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลผู้ใช้งานระบบ</TableCell>
                     </TableRow>

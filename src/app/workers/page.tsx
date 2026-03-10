@@ -98,22 +98,13 @@ export default function WorkersPage() {
   };
 
   // Loading state
-  if (isUserLoading) {
+  if (isUserLoading || !currentUser) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center space-y-4">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
         </div>
-      </div>
-    );
-  }
-
-  // Not logged in or no permission
-  if (!currentUser) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-destructive">กรุณาเข้าสู่ระบบเพื่อดำเนินการต่อ</p>
       </div>
     );
   }
