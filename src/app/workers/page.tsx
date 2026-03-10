@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, CheckCircle2, AlertCircle, FileQuestion, MoreHorizontal, UserCheck, ShieldAlert, FileCheck, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { RoleType, Worker, ReadinessStatus } from '@/lib/types';
+import { Worker, ReadinessStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   DropdownMenu, 
@@ -17,18 +17,19 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 export default function WorkersPage() {
-  const [user, setUser] = useState<{ displayName: string; role: RoleType } | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !firebaseUser || !user) return null;
     return collection(firestore, 'workers');
-  }, [firestore]);
+  }, [firestore, firebaseUser, user]);
 
   const { data: workers, isLoading } = useCollection<Worker>(workersQuery as any);
 
@@ -73,7 +74,7 @@ export default function WorkersPage() {
     }
   };
 
-  if (!user) return null;
+  if (!user || isUserLoading) return null;
 
   return (
     <AppShell user={user} onLogout={() => {}}>

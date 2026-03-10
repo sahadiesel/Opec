@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, Sparkles, Trash2, Edit, ListChecks, HardHat, Hammer } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Position, RoleType } from '@/lib/types';
+import { Position, User } from '@/lib/types';
 import { 
   Dialog, 
   DialogContent, 
@@ -21,18 +21,19 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
-import { setDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 export default function PositionsPage() {
-  const [user, setUser] = useState<{ displayName: string; role: RoleType } | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
   const positionsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !firebaseUser || !user) return null;
     return collection(firestore, 'positions');
-  }, [firestore]);
+  }, [firestore, firebaseUser, user]);
 
   const { data: positions, isLoading } = useCollection<Position>(positionsQuery as any);
 
@@ -70,7 +71,7 @@ export default function PositionsPage() {
     }
   };
 
-  if (!user) return null;
+  if (!user || isUserLoading) return null;
 
   return (
     <AppShell user={user} onLogout={() => {}}>

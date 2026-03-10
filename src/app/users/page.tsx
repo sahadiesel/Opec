@@ -5,22 +5,23 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Shield, ShieldCheck, Mail, Clock, Trash2, UserCog } from 'lucide-react';
+import { Plus, Search, ShieldCheck, Mail, Clock, Trash2, UserCog } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, RoleType } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 
 export default function UsersPage() {
-  const [currentUser, setCurrentUser] = useState<{ displayName: string; role: RoleType } | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
   const usersQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !firebaseUser || !currentUser) return null;
     return collection(firestore, 'users');
-  }, [firestore]);
+  }, [firestore, firebaseUser, currentUser]);
 
   const { data: users, isLoading } = useCollection<User>(usersQuery as any);
 
@@ -36,7 +37,13 @@ export default function UsersPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (!currentUser || isUserLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-muted-foreground animate-pulse">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+      </div>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -109,7 +116,7 @@ export default function UsersPage() {
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 capitalize">
-                          {u.roleId.replace('_', ' ')}
+                          {(u.roleId || '').replace('_', ' ')}
                         </Badge>
                       </TableCell>
                       <TableCell>

@@ -6,13 +6,13 @@ import { SidebarNav } from './sidebar-nav';
 import { RoleType } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { LogOut, User as UserIcon } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 
 interface AppShellProps {
   children: React.ReactNode;
   user: {
     displayName: string;
-    role: RoleType;
+    roleId: RoleType;
   } | null;
   onLogout: () => void;
 }
@@ -23,7 +23,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <SidebarNav userRole={user.role} />
+        <SidebarNav userRole={user.roleId} />
         <SidebarInset>
           <header className="flex h-16 shrink-0 items-center justify-between border-b bg-card px-4 transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
@@ -34,7 +34,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             <div className="flex items-center gap-4">
               <div className="hidden md:flex flex-col items-end">
                 <span className="text-sm font-medium">{user.displayName}</span>
-                <span className="text-xs text-muted-foreground uppercase">{user.role.replace('_', ' ')}</span>
+                <span className="text-xs text-muted-foreground uppercase">{(user.roleId || '').replace('_', ' ')}</span>
               </div>
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="bg-primary text-primary-foreground">
