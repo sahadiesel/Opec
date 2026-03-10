@@ -195,29 +195,39 @@ export default function PositionsPage() {
                 </TableHeader>
                 <TableBody>
                   {positions?.map((pos) => (
-                    <TableRow key={pos.id} className="cursor-pointer hover:bg-muted/50 group" asChild>
-                      <Link href={`/positions/${pos.id}`}>
-                        <TableCell className="font-semibold">{pos.positionName}</TableCell>
-                        <TableCell className="font-mono text-xs">{pos.positionCode}</TableCell>
-                        <TableCell>{pos.category}</TableCell>
-                        <TableCell>{pos.payrollBasis}</TableCell>
-                        <TableCell>
-                          <Badge variant={pos.active ? 'default' : 'secondary'}>
-                            {pos.active ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={(e) => handleDelete(pos.id, e)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                          </div>
-                        </TableCell>
-                      </Link>
+                    <TableRow 
+                      key={pos.id} 
+                      className="cursor-pointer hover:bg-muted/50 group" 
+                      onClick={() => router.push(`/positions/${pos.id}`)}
+                    >
+                      <TableCell className="font-semibold">{pos.positionName}</TableCell>
+                      <TableCell className="font-mono text-xs">{pos.positionCode}</TableCell>
+                      <TableCell>{pos.category}</TableCell>
+                      <TableCell>{pos.payrollBasis}</TableCell>
+                      <TableCell>
+                        <Badge variant={pos.active ? 'default' : 'secondary'}>
+                          {pos.active ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-destructive" 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(pos.id, e);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
-                  {(!positions || positions.length === 0) && (
+                  {(!positions || positions.length === 0) && !isLoading && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงาน</TableCell>
                     </TableRow>
