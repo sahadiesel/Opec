@@ -32,6 +32,8 @@ export type AssignmentStatus =
   | 'cancelled'
   | 'replaced';
 
+export type ClientApprovalStatus = 'pending' | 'approved' | 'rejected' | 'replacement_requested';
+
 export interface User {
   id: string;
   email: string;
@@ -244,14 +246,17 @@ export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
-  poId?: string; // Denormalized for easier filtering
+  poId: string; 
   positionId: string;
   customerId: string;
+  projectName: string;
   startDate: number;
   endDate: number;
   status: AssignmentStatus;
+  clientApprovalStatus: ClientApprovalStatus;
   createdAt: number;
   updatedAt: number;
+  notes?: string;
   clientComments?: string;
   _path?: string;
 }
