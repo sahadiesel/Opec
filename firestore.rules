@@ -47,7 +47,7 @@ service cloud.firestore {
 
     // User profiles
     match /users {
-      // Allow listing users only for staff
+      // Explicitly allow list if staff
       allow list: if isStaff();
       match /{userId} {
         // Anyone signed in can get their own or others can be gotten by staff
@@ -125,16 +125,10 @@ service cloud.firestore {
     
     match /system/bootstrap { allow read: if true; }
 
-    // Collection Group support for global listing (Assignments, POs, etc.)
-    match /{path=**}/assignments/{asgnId} {
-      allow read: if isStaff();
-    }
-    match /{path=**}/purchase_orders/{poId} {
-      allow read: if isStaff();
-    }
-    match /{path=**}/po_lines/{lineId} {
-      allow read: if isStaff();
-    }
+    // Collection Group support for global listing
+    match /{path=**}/assignments/{asgnId} { allow read: if isStaff(); }
+    match /{path=**}/purchase_orders/{poId} { allow read: if isStaff(); }
+    match /{path=**}/po_lines/{lineId} { allow read: if isStaff(); }
 
     // Default deny
     match /{document=**} {

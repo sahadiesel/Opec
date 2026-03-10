@@ -30,15 +30,11 @@ export default function UsersPage() {
   }, []);
 
   const usersQuery = useMemoFirebase(() => {
-    // CRITICAL: Defensive gating to prevent permission errors
-    // 1. Wait for auth state to be resolved
+    // CRITICAL: Strict gating to prevent permission errors before auth is settled
     if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
     
-    // 2. Ensure UID in storage matches current Auth UID to prevent stale session leaks
-    if (firebaseUser.uid !== currentUser.id) return null;
-    
-    // 3. Only system_admin should query the full user list
-    if (currentUser.roleId !== 'system_admin') return null;
+    // Only query if IDs match and role is system_admin
+    if (firebaseUser.uid !== currentUser.id || currentUser.roleId !== 'system_admin') return null;
     
     return collection(firestore, 'users');
   }, [firestore, isUserLoading, firebaseUser, currentUser]);

@@ -31,23 +31,36 @@ export default function AssignmentsPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
+  }, []);
+
   const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
     return collectionGroup(firestore, 'assignments');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const poLinesQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
     return collectionGroup(firestore, 'po_lines');
-  }, [firestore, firebaseUser, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -55,11 +68,6 @@ export default function AssignmentsPage() {
   const [selectedPOLineId, setSelectedPOLineId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const handleCreateAssignment = async () => {
     if (!firestore || !selectedWorkerId || !selectedPOLineId || !startDate || !endDate) return;
@@ -137,7 +145,16 @@ export default function AssignmentsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center space-y-4">
+          <Clock className="h-12 w-12 text-primary animate-pulse mx-auto" />
+          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
