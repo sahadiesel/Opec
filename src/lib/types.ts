@@ -1,3 +1,9 @@
+
+/**
+ * OPEC OpsFlow - TypeScript Data Models
+ * Aligned with MASTER BLUEPRINT for OPEC Manpower Supply.
+ */
+
 export type RoleType = 
   | 'system_admin'
   | 'sales_officer'
@@ -7,75 +13,98 @@ export type RoleType =
   | 'store_officer'
   | 'finance_officer';
 
-export type ReadinessStatus = 'READY' | 'MISSING_CERTIFICATE' | 'MEDICAL_EXPIRED' | 'DOCUMENT_MISSING';
+export type ReadinessStatus = 
+  | 'READY' 
+  | 'MISSING_CERTIFICATE' 
+  | 'MEDICAL_EXPIRED' 
+  | 'DOCUMENT_MISSING';
+
+export type WorkerStatus = 'available' | 'assigned' | 'on_leave' | 'inactive';
 
 export interface User {
   id: string;
   email: string;
   displayName: string;
-  role: RoleType;
+  roleId: RoleType; // Blueprint maps these to collection-based roles, but keeping for direct profile link
   createdAt: number;
+  updatedAt: number;
+  lastLoginAt?: number;
+  isActive: boolean;
+}
+
+export interface Role {
+  id: string;
+  name: RoleType;
+  description: string;
+  permissions: string[];
 }
 
 export interface Position {
   id: string;
-  name: string; // e.g., Offshore Welder
-  description?: string;
-  department?: string;
-}
-
-export interface PositionRequirement {
-  id: string;
-  positionId: string;
-  type: 'certificate' | 'ppe' | 'tool' | 'medical';
   name: string;
+  code: string;
   description?: string;
+  isActive: boolean;
 }
 
 export interface Worker {
   id: string;
   firstName: string;
   lastName: string;
-  nationalId: string;
-  positionId: string;
-  status: 'available' | 'assigned' | 'inactive';
+  thaiNationalId: string;
+  dateOfBirth: number;
+  contactEmail?: string;
+  contactPhone: string;
+  currentPositionId: string;
+  workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
-  lastDrugTestDate?: number;
-  lastMedicalCheckDate?: number;
+  nationality: string;
+  gender: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface WorkerCertificate {
   id: string;
   workerId: string;
-  name: string;
+  certificateName: string;
+  issuingAuthority: string;
+  certificateNumber: string;
   issueDate: number;
   expiryDate: number;
-  fileUrl?: string;
+  documentUrl?: string;
+  isVerified: boolean;
 }
 
 export interface WorkerMedicalRecord {
   id: string;
   workerId: string;
-  checkDate: number;
+  medicalCheckType: string;
+  clinicName: string;
+  examinationDate: number;
   expiryDate: number;
-  result: 'pass' | 'fail';
-  notes?: string;
+  overallFitnessStatus: string;
+  documentUrl?: string;
+  isVerified: boolean;
 }
 
 export interface WorkerDrugTest {
   id: string;
   workerId: string;
   testDate: number;
-  result: 'positive' | 'negative';
+  testingFacility: string;
+  result: 'negative' | 'positive' | 'pending';
+  documentUrl?: string;
+  isVerified: boolean;
 }
 
 export interface AuditLog {
   id: string;
   userId: string;
-  userName: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE';
-  collection: string;
-  documentId: string;
+  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN';
+  entityType: string;
+  entityId: string;
   timestamp: number;
-  changes?: any;
+  details: string; // JSON string or text
+  ipAddress?: string;
 }
