@@ -4,14 +4,14 @@
  */
 
 export type RoleType = 
-  | 'system_admin'
-  | 'sales_officer'
-  | 'hr_manager'
-  | 'hr_officer'
-  | 'payroll_officer'
-  | 'store_officer'
-  | 'finance_officer'
-  | 'client';
+  | 'system_admin'     // P'Joe
+  | 'finance_officer'  // P'Joe
+  | 'sales_officer'    // Dom
+  | 'hr_manager'       // Nuch
+  | 'hr_officer'       // Ying
+  | 'payroll_officer'  // Koy
+  | 'store_officer'    // Nut
+  | 'client';          // Shared customer account
 
 export type ReadinessStatus = 
   | 'READY' 
@@ -40,10 +40,12 @@ export interface User {
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
-  // Shared Client Account fields
+  // Shared Client Account fields (Task Set 2)
   customerId?: string; 
   isSharedAccount?: boolean;
   linkedProjectIds?: string[];
+  nationalId?: string; // For staff setup
+  address?: string;    // For staff setup
 }
 
 export interface Position {
@@ -137,7 +139,6 @@ export interface Assignment {
   clientComments?: string;
   createdAt: number;
   updatedAt: number;
-  // Metadata for filtering
   customerId?: string;
 }
 
@@ -151,7 +152,7 @@ export interface Worker {
   dateOfBirth: number;
   contactPhone: string;
   currentPositionId: string;
-  secondaryPositionIds?: string[]; // Blueprint: multiple positions in profile
+  secondaryPositionIds?: string[]; 
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
   nationality: string;

@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ShieldCheck, Eye, FileText, CheckCircle2, XCircle } from 'lucide-react';
+import { ShieldCheck, Eye, FileText, CheckCircle2, XCircle, Users } from 'lucide-react';
 import { User, Assignment, Worker } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collectionGroup, collection, doc } from 'firebase/firestore';
@@ -58,7 +58,7 @@ export default function ClientPortalPage() {
       clientComments: reviewComment,
       updatedAt: Date.now()
     });
-    toast({ title: "อนุมัติผู้สมัครสำเร็จ", description: "แจ้งฝ่ายบุคคลเพื่อดำเนินการระดมพล (Mobilization) ต่อไป" });
+    toast({ title: "อนุมัติผู้สมัครสำเร็จ", description: "แจ้งฝ่ายบุคคลเพื่อดำเนินการระดมพลต่อไป" });
     setReviewComment('');
     setSelectedAssignment(null);
   };
@@ -66,56 +66,63 @@ export default function ClientPortalPage() {
   const handleReject = (asgn: Assignment) => {
     if (!firestore) return;
     updateDocumentNonBlocking(doc(firestore, 'assignments', asgn.id), {
-      status: 'cancelled',
+      status: 'replaced', // Blueprint rule for replacement request
       clientComments: reviewComment,
       updatedAt: Date.now()
     });
-    toast({ variant: "destructive", title: "ปฏิเสธผู้สมัคร", description: "ข้อมูลถูกส่งกลับไปให้ฝ่ายบุคคลจัดการใหม่" });
+    toast({ variant: "destructive", title: "ขอเปลี่ยนตัวผู้สมัคร", description: "ข้อมูลถูกส่งกลับไปให้ฝ่ายบุคคลจัดการใหม่" });
     setReviewComment('');
     setSelectedAssignment(null);
   };
 
   if (isUserLoading || !currentUser) return null;
 
+  // Task Set 2: Shared Client Account Support
+  // Filter by customerId from the shared account session
   const clientAssignments = assignments?.filter(a => 
     (currentUser.roleId === 'client' ? a.customerId === currentUser.customerId : true) &&
-    ['client_review', 'approved', 'active', 'replaced'].includes(a.status)
+    ['client_review', 'approved', 'active', 'replaced', 'mobilizing'].includes(a.status)
   ) || [];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6" /> Client Portal: การพิจารณาตัวบุคคล (Candidate Review)
-          </h1>
-          <p className="text-muted-foreground">ตรวจสอบประวัติ ใบรับรอง และอนุมัติคนงานเข้าปฏิบัติงานในโครงการ</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
+              <ShieldCheck className="h-6 w-6" /> Client Portal: การพิจารณาตัวบุคคล
+            </h1>
+            <p className="text-muted-foreground">Shared Account: {currentUser.displayName} | Customer ID: {currentUser.customerId || 'N/A'}</p>
+          </div>
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 gap-1">
+            <Users className="h-3 w-3" /> Shared Client Login
+          </Badge>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-3">
           <Card className="bg-blue-50/50 border-blue-100">
             <CardHeader className="pb-2">
-              <CardDescription className="text-blue-700">รอพิจารณา (Pending Review)</CardDescription>
+              <CardDescription className="text-blue-700">รอพิจารณา (Candidates)</CardDescription>
               <CardTitle className="text-2xl">{clientAssignments.filter(a => a.status === 'client_review').length}</CardTitle>
             </CardHeader>
           </Card>
           <Card className="bg-green-50/50 border-green-100">
             <CardHeader className="pb-2">
               <CardDescription className="text-green-700">อนุมัติแล้ว (Approved)</CardDescription>
-              <CardTitle className="text-2xl">{clientAssignments.filter(a => a.status === 'approved' || a.status === 'active').length}</CardTitle>
+              <CardTitle className="text-2xl">{clientAssignments.filter(a => ['approved', 'active', 'mobilizing'].includes(a.status)).length}</CardTitle>
             </CardHeader>
           </Card>
           <Card className="bg-slate-50/50 border-slate-100">
             <CardHeader className="pb-2">
-              <CardDescription className="text-slate-600">ประวัติการพิจารณา</CardDescription>
-              <CardTitle className="text-2xl">{clientAssignments.filter(a => ['replaced', 'cancelled'].includes(a.status)).length}</CardTitle>
+              <CardDescription className="text-slate-600">คำขอเปลี่ยนตัว</CardDescription>
+              <CardTitle className="text-2xl">{clientAssignments.filter(a => a.status === 'replaced').length}</CardTitle>
             </CardHeader>
           </Card>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>รายการผู้สมัคร (Candidates List)</CardTitle>
+            <CardTitle>รายการพิจารณาผู้สมัคร (Candidate Review)</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -127,7 +134,7 @@ export default function ClientPortalPage() {
                     <TableHead>คนงาน</TableHead>
                     <TableHead>ตำแหน่งงาน</TableHead>
                     <TableHead>สถานะ</TableHead>
-                    <TableHead>ใบรับรอง/ตรวจร่างกาย</TableHead>
+                    <TableHead>เอกสารตรวจสอบ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -139,7 +146,7 @@ export default function ClientPortalPage() {
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-semibold">{worker ? `${worker.firstName} ${worker.lastName}` : 'N/A'}</span>
-                            <span className="text-xs text-muted-foreground">OPEC Manpower ID: {asgn.workerId.substring(0,6)}</span>
+                            <span className="text-xs text-muted-foreground">ID: {asgn.workerId.substring(0,6)}</span>
                           </div>
                         </TableCell>
                         <TableCell>{asgn.positionId}</TableCell>
@@ -158,27 +165,27 @@ export default function ClientPortalPage() {
                           <Dialog>
                             <DialogTrigger asChild>
                               <Button size="sm" variant="ghost" className="gap-2" onClick={() => setSelectedAssignment(asgn)}>
-                                <Eye className="h-4 w-4" /> ดูรายละเอียด
+                                <Eye className="h-4 w-4" /> ดูประวัติ
                               </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-2xl">
                               <DialogHeader>
                                 <DialogTitle>พิจารณาคุณสมบัติคนงาน: {worker?.firstName} {worker?.lastName}</DialogTitle>
-                                <DialogDescription>ตรวจสอบเอกสารความพร้อมและระบุผลการพิจารณา</DialogDescription>
+                                <DialogDescription>ตรวจสอบข้อมูลและใบรับรองก่อนอนุมัติเข้าโครงการ</DialogDescription>
                               </DialogHeader>
                               
                               <div className="grid grid-cols-2 gap-6 py-4">
                                 <div className="space-y-4">
-                                  <h4 className="font-bold text-sm border-b pb-1">ข้อมูลพื้นฐาน</h4>
+                                  <h4 className="font-bold text-sm border-b pb-1">ข้อมูลผู้สมัคร</h4>
                                   <div className="text-sm space-y-1">
-                                    <p><span className="text-muted-foreground">ตำแหน่งงาน:</span> {asgn.positionId}</p>
-                                    <p><span className="text-muted-foreground">เพศ:</span> {worker?.gender}</p>
+                                    <p><span className="text-muted-foreground">ตำแหน่ง:</span> {asgn.positionId}</p>
                                     <p><span className="text-muted-foreground">สัญชาติ:</span> {worker?.nationality}</p>
-                                    <p><span className="text-muted-foreground">ความพร้อม:</span> <span className="text-green-600 font-bold">READY</span></p>
+                                    <p><span className="text-muted-foreground">เพศ:</span> {worker?.gender}</p>
+                                    <p><span className="text-muted-foreground">สถานะความพร้อม:</span> <span className="text-green-600 font-bold">READY</span></p>
                                   </div>
                                 </div>
                                 <div className="space-y-4">
-                                  <h4 className="font-bold text-sm border-b pb-1">เอกสารตรวจสอบ</h4>
+                                  <h4 className="font-bold text-sm border-b pb-1">ใบรับรองและตรวจร่างกาย</h4>
                                   <div className="space-y-2">
                                     <div className="p-2 border rounded-md flex items-center justify-between text-xs">
                                       <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> Basic Offshore Safety</span>
@@ -193,21 +200,25 @@ export default function ClientPortalPage() {
                               </div>
 
                               <div className="space-y-2">
-                                <Label>ความเห็นเพิ่มเติม (Optional)</Label>
+                                <Label>ความเห็น / คำร้องขอ (Optional)</Label>
                                 <Textarea 
-                                  placeholder="ระบุความเห็นหรือคำสั่งพิเศษ (เช่น ต้องการสอบสัมภาษณ์เพิ่มเติม)" 
+                                  placeholder="ระบุข้อความหากต้องการขอเปลี่ยนตัวหรือมีเงื่อนไขเพิ่มเติม" 
                                   value={reviewComment}
                                   onChange={(e) => setReviewComment(e.target.value)}
                                 />
                               </div>
 
                               <DialogFooter className="gap-2">
-                                <Button variant="outline" className="text-destructive gap-2 border-destructive" onClick={() => handleReject(asgn)}>
-                                  <XCircle className="h-4 w-4" /> ปฏิเสธ / ขอเปลี่ยนตัว
-                                </Button>
-                                <Button className="gap-2 bg-green-600 hover:bg-green-700" onClick={() => handleApprove(asgn)}>
-                                  <CheckCircle2 className="h-4 w-4" /> อนุมัติเข้าโครงการ
-                                </Button>
+                                {asgn.status === 'client_review' && (
+                                  <>
+                                    <Button variant="outline" className="text-destructive gap-2 border-destructive" onClick={() => handleReject(asgn)}>
+                                      <XCircle className="h-4 w-4" /> ขอเปลี่ยนตัว (Replace)
+                                    </Button>
+                                    <Button className="gap-2 bg-green-600 hover:bg-green-700" onClick={() => handleApprove(asgn)}>
+                                      <CheckCircle2 className="h-4 w-4" /> อนุมัติผู้สมัคร
+                                    </Button>
+                                  </>
+                                )}
                               </DialogFooter>
                             </DialogContent>
                           </Dialog>

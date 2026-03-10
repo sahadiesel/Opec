@@ -21,7 +21,9 @@ import {
   Users,
   CircleDollarSign,
   Clock,
-  UserSquare2
+  UserSquare2,
+  TrendingUp,
+  Warehouse
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -101,7 +103,7 @@ export default function Home() {
               <Briefcase className="h-8 w-8 text-primary" />
             </div>
             <CardTitle className="text-2xl">OPEC OpsFlow</CardTitle>
-            <CardDescription>เข้าสู่ระบบจัดการกำลังคน</CardDescription>
+            <CardDescription>ระบบจัดการกำลังคน OPEC Manpower</CardDescription>
           </CardHeader>
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
@@ -132,13 +134,23 @@ export default function Home() {
 
   const renderDashboard = () => {
     switch (user.roleId) {
-      case 'system_admin': return <AdminDashboard user={user} />;
-      case 'hr_manager': return <HRDashboard user={user} manager />;
-      case 'hr_officer': return <HRDashboard user={user} />;
-      case 'sales_officer': return <CommercialDashboard user={user} />;
-      case 'payroll_officer': return <PayrollDashboard user={user} />;
-      case 'client': return <ClientDashboard user={user} />;
-      default: return <DefaultDashboard user={user} />;
+      case 'system_admin':
+      case 'finance_officer':
+        return <ExecutiveDashboard user={user} />;
+      case 'sales_officer':
+        return <CommercialDashboard user={user} />;
+      case 'hr_manager':
+        return <HRManagerDashboard user={user} />;
+      case 'hr_officer':
+        return <HROperationsDashboard user={user} />;
+      case 'payroll_officer':
+        return <PayrollDashboard user={user} />;
+      case 'store_officer':
+        return <StoreDashboard user={user} />;
+      case 'client':
+        return <ClientDashboard user={user} />;
+      default:
+        return <DefaultDashboard user={user} />;
     }
   };
 
@@ -160,15 +172,15 @@ function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   );
 }
 
-function HRDashboard({ user, manager }: { user: User, manager?: boolean }) {
+function ExecutiveDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">HR {manager ? 'Manager' : 'Operations'} Dashboard</h1>
+      <h1 className="text-2xl font-bold text-primary">Executive Dashboard (Joe)</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="คนงานทั้งหมด" value="1,240" sub="รายชื่อในระบบ" icon={UserSquare2} colorClass="border-l-primary" />
-        <StatCard title="พร้อมปฏิบัติงาน" value="842" sub="READY status" icon={CheckCircle2} colorClass="border-l-green-500" />
-        <StatCard title="ใบรับรองหมดอายุ" value="42" sub="ต้องต่ออายุ" icon={FileWarning} colorClass="border-l-amber-500" />
-        <StatCard title="รอพิจารณา" value="15" sub="เสนอตัวบุคคล" icon={ShieldAlert} colorClass="border-l-blue-500" />
+        <StatCard title="รายได้รวม (Estimated)" value="฿12.4M" sub="เดือนปัจจุบัน" icon={CircleDollarSign} colorClass="border-l-primary" />
+        <StatCard title="กำไรขั้นต้น" value="฿3.2M" sub="25.8% Margin" icon={TrendingUp} colorClass="border-l-green-500" />
+        <StatCard title="คนงาน Active" value="842" sub="จากทั้งหมด 1,240" icon={Users} colorClass="border-l-blue-500" />
+        <StatCard title="Audit Alerts" value="0" sub="Critical Issues" icon={ShieldCheck} colorClass="border-l-slate-500" />
       </div>
     </div>
   );
@@ -177,12 +189,40 @@ function HRDashboard({ user, manager }: { user: User, manager?: boolean }) {
 function CommercialDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">Commercial Dashboard</h1>
+      <h1 className="text-2xl font-bold text-primary">Commercial Dashboard (Dom)</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="ลูกค้าทั้งหมด" value="48" sub="บริษัท" icon={Users} colorClass="border-l-primary" />
-        <StatCard title="สัญญาที่เปิดอยู่" value="12" sub="Main Contracts" icon={ClipboardList} colorClass="border-l-blue-500" />
+        <StatCard title="สัญญาหลัก Active" value="12" sub="Main Contracts" icon={ClipboardList} colorClass="border-l-blue-500" />
         <StatCard title="ใบสั่งซื้อรอดำเนินการ" value="24" sub="Pending POs" icon={ShoppingCart} colorClass="border-l-amber-500" />
-        <StatCard title="รายได้ประมาณการ" value="฿4.2M" sub="เดือนปัจจุบัน" icon={CircleDollarSign} colorClass="border-l-green-500" />
+        <StatCard title="งานรอส่งลูกค้า" value="8" sub="Proposed Assignments" icon={UserPlus} colorClass="border-l-secondary" />
+      </div>
+    </div>
+  );
+}
+
+function HRManagerDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">HR Manager Dashboard (Nuch)</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="คนงานทั้งหมด" value="1,240" sub="รายชื่อในระบบ" icon={UserSquare2} colorClass="border-l-primary" />
+        <StatCard title="ใบรับรองรอดำเนินการ" value="156" sub="เอกสารรอตรวจสอบ" icon={FileWarning} colorClass="border-l-amber-500" />
+        <StatCard title="ความพร้อมเฉลี่ย" value="82%" sub="READY status ratio" icon={ShieldCheck} colorClass="border-l-green-500" />
+        <StatCard title="แผนระดมพล" value="5" sub="Mobilization plans" icon={Clock} colorClass="border-l-blue-500" />
+      </div>
+    </div>
+  );
+}
+
+function HROperationsDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">HR Operations Dashboard (Ying)</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="พร้อมทำงาน" value="842" sub="READY status" icon={CheckCircle2} colorClass="border-l-green-500" />
+        <StatCard title="ใบรับรองหมดอายุ" value="42" sub="ต้องต่ออายุ" icon={FileWarning} colorClass="border-l-amber-500" />
+        <StatCard title="ตรวจร่างกายใกล้หมด" value="15" sub="ภายใน 30 วัน" icon={AlertTriangle} colorClass="border-l-destructive" />
+        <StatCard title="งานรอมอบหมาย" value="12" sub="New Assignments" icon={UserPlus} colorClass="border-l-blue-500" />
       </div>
     </div>
   );
@@ -191,12 +231,26 @@ function CommercialDashboard({ user }: { user: User }) {
 function PayrollDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">Payroll Dashboard</h1>
+      <h1 className="text-2xl font-bold text-primary">Payroll Dashboard (Koy)</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="จำนวนคนงานที่จ่ายเงิน" value="1,120" sub="รอบปัจจุบัน" icon={Users} colorClass="border-l-primary" />
-        <StatCard title="ไทม์ชีทที่รออนุมัติ" value="156" sub="รายการ" icon={Clock} colorClass="border-l-amber-500" />
+        <StatCard title="คนงานรอจ่ายเงิน" value="1,120" sub="รอบปัจจุบัน" icon={Users} colorClass="border-l-primary" />
+        <StatCard title="ไทม์ชีทค้าง" value="45" sub="รออนุมัติ" icon={Clock} colorClass="border-l-amber-500" />
         <StatCard title="งบประมาณจ่าย" value="฿8.4M" sub="รอบนี้" icon={CircleDollarSign} colorClass="border-l-destructive" />
         <StatCard title="จ่ายสำเร็จ" value="98%" sub="ความคืบหน้า" icon={CheckCircle2} colorClass="border-l-green-500" />
+      </div>
+    </div>
+  );
+}
+
+function StoreDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">Store Dashboard (Nut)</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="สต็อกชุด PPE" value="450" sub="หน่วย" icon={Warehouse} colorClass="border-l-primary" />
+        <StatCard title="รายการยืมอุปกรณ์" value="120" sub="Active loans" icon={Boxes} colorClass="border-l-blue-500" />
+        <StatCard title="ต้องเติมสต็อก" value="5" sub="Low stock items" icon={AlertTriangle} colorClass="border-l-amber-500" />
+        <StatCard title="เบิกจ่ายวันนี้" value="24" sub="รายการ" icon={CheckCircle2} colorClass="border-l-green-500" />
       </div>
     </div>
   );
@@ -207,23 +261,9 @@ function ClientDashboard({ user }: { user: User }) {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-primary">Client Portal Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <StatCard title="คนงานปฏิบัติงานอยู่" value="156" sub="Active on site" icon={UserPlus} colorClass="border-l-primary" />
-        <StatCard title="รอคุณพิจารณา" value="8" sub="Candidates for review" icon={ShieldAlert} colorClass="border-l-amber-500" />
-        <StatCard title="ใบสั่งซื้อทั้งหมด" value="5" sub="Active POs" icon={ShoppingCart} colorClass="border-l-blue-500" />
-      </div>
-    </div>
-  );
-}
-
-function AdminDashboard({ user }: { user: User }) {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">System Executive Dashboard</h1>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="สุขภาพระบบ" value="100%" sub="Healthy" icon={ShieldCheck} colorClass="border-l-green-500" />
-        <StatCard title="Staff Active" value="12" sub="เจ้าหน้าที่" icon={Users} colorClass="border-l-primary" />
-        <StatCard title="Audit Logs" value="4.2k" sub="รายการล่าสุด" icon={ClipboardList} colorClass="border-l-slate-500" />
-        <StatCard title="Alerts" value="0" sub="Critical Issues" icon={AlertTriangle} colorClass="border-l-green-500" />
+        <StatCard title="คนงานหน้างาน" value="156" sub="Active on site" icon={UserPlus} colorClass="border-l-primary" />
+        <StatCard title="รอพิจารณาตัวบุคคล" value="8" sub="Candidates for review" icon={ShieldAlert} colorClass="border-l-amber-500" />
+        <StatCard title="ใบสั่งซื้อ Active" value="5" sub="Current POs" icon={ShoppingCart} colorClass="border-l-blue-500" />
       </div>
     </div>
   );

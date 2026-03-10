@@ -15,7 +15,8 @@ import {
   Clock,
   Boxes,
   ShieldAlert,
-  FileText
+  FileText,
+  Warehouse
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -42,15 +43,15 @@ const navItems: NavItem[] = [
     title: 'แดชบอร์ด (Dashboard)', 
     href: '/', 
     icon: LayoutDashboard, 
-    roles: ['system_admin', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'finance_officer', 'client'] 
+    roles: ['system_admin', 'finance_officer', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'client'] 
   },
   { 
-    title: 'Client Portal (พิจารณาตัวบุคคล)', 
+    title: 'Client Portal', 
     href: '/client-portal', 
     icon: ShieldAlert, 
-    roles: ['client', 'system_admin', 'hr_manager'] 
+    roles: ['client', 'system_admin'] 
   },
-  // Commercial Module
+  // Commercial Module (Dom / Joe)
   { 
     title: 'ลูกค้า (Customers)', 
     href: '/customers', 
@@ -69,7 +70,7 @@ const navItems: NavItem[] = [
     icon: ShoppingCart, 
     roles: ['system_admin', 'sales_officer'] 
   },
-  // HR Module
+  // HR Module (Nuch / Ying)
   { 
     title: 'ตำแหน่งงาน (Positions)', 
     href: '/positions', 
@@ -88,7 +89,7 @@ const navItems: NavItem[] = [
     icon: UserPlus, 
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer'] 
   },
-  // Payroll & Finance
+  // Payroll & Finance (Joe / Koy)
   { 
     title: 'การจ่ายเงิน (Payroll)', 
     href: '/payroll', 
@@ -100,6 +101,13 @@ const navItems: NavItem[] = [
     href: '/timesheets', 
     icon: Clock, 
     roles: ['system_admin', 'payroll_officer', 'hr_officer'] 
+  },
+  // Store (Nut)
+  { 
+    title: 'คลังอุปกรณ์ (Store)', 
+    href: '/store', 
+    icon: Warehouse, 
+    roles: ['system_admin', 'store_officer'] 
   },
   // Admin
   { 
@@ -124,7 +132,7 @@ export function SidebarNav({ userRole }: { userRole: RoleType }) {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>เมนูตามสิทธิ์การใช้งาน</SidebarGroupLabel>
+          <SidebarGroupLabel>เมนูจัดการตามสิทธิ์</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {filteredNav.map((item) => (

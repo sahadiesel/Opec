@@ -2,16 +2,19 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "Staff user profiles including shared client accounts",
+      "description": "Staff user profiles and shared client accounts",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
-        "roleId": { "type": "string" },
-        "customerId": { "type": "string" },
-        "isSharedAccount": { "type": "boolean" },
-        "isActive": { "type": "boolean" }
+        "roleId": { "type": "string", "enum": ["system_admin", "finance_officer", "sales_officer", "hr_manager", "hr_officer", "payroll_officer", "store_officer", "client"] },
+        "customerId": { "type": "string", "description": "Mandatory for shared client accounts" },
+        "isSharedAccount": { "type": "boolean", "default": false },
+        "isActive": { "type": "boolean" },
+        "linkedProjectIds": { "type": "array", "items": { "type": "string" } },
+        "nationalId": { "type": "string" },
+        "address": { "type": "string" }
       }
     },
     "Worker": {
@@ -24,7 +27,9 @@
         "lastName": { "type": "string" },
         "thaiNationalId": { "type": "string" },
         "workerStatus": { "type": "string", "enum": ["available", "assigned", "on_leave", "inactive"] },
-        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] }
+        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] },
+        "currentPositionId": { "type": "string" },
+        "secondaryPositionIds": { "type": "array", "items": { "type": "string" } }
       }
     },
     "MainContract": {
