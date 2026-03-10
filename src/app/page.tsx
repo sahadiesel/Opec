@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RoleType, User } from '@/lib/types';
-import { Briefcase, UserSquare2, ShieldCheck, ClipboardList, Info } from 'lucide-react';
+import { Briefcase, UserSquare2, ShieldCheck, ClipboardList, Info, AlertTriangle, FileWarning, CheckCircle2 } from 'lucide-react';
 
 const MOCK_USERS: User[] = [
   { id: '1', email: 'admin@opec.com', displayName: 'System Admin', role: 'system_admin', createdAt: Date.now() },
@@ -21,7 +21,6 @@ export default function Home() {
   const [email, setEmail] = useState('');
 
   useEffect(() => {
-    // Simulate hydration check
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setUser(JSON.parse(stored));
@@ -62,9 +61,10 @@ export default function Home() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">อีเมลผู้ใช้งาน</Label>
-                <Input 
+                <input 
                   id="email" 
                   type="email" 
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   placeholder="name@opec.com" 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -73,7 +73,13 @@ export default function Home() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">รหัสผ่าน</Label>
-                <Input id="password" type="password" required defaultValue="password123" />
+                <input 
+                  id="password" 
+                  type="password" 
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  required 
+                  defaultValue="password123" 
+                />
               </div>
               <div className="bg-accent/50 p-3 rounded-md border border-accent flex gap-2">
                 <Info className="h-5 w-5 text-secondary shrink-0" />
@@ -95,49 +101,49 @@ export default function Home() {
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">แดชบอร์ดภาพรวม</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-primary">แดชบอร์ดภาพรวม (Overall Dashboard)</h1>
           <p className="text-muted-foreground mt-2">ยินดีต้อนรับกลับมา, {user.displayName} ระบบพร้อมสำหรับการจัดการกำลังคนวันนี้</p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="hover:shadow-md transition-shadow">
+          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-green-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">คนงานทั้งหมด</CardTitle>
-              <UserSquare2 className="h-4 w-4 text-secondary" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">1,284</div>
-              <p className="text-xs text-muted-foreground">+20.1% จากเดือนที่แล้ว</p>
-            </CardContent>
-          </Card>
-          <Card className="hover:shadow-md transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">คนงานพร้อมทำงาน</CardTitle>
-              <ShieldCheck className="h-4 w-4 text-green-500" />
+              <CardTitle className="text-sm font-medium">คนงานที่พร้อม (Workers Ready)</CardTitle>
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">842</div>
-              <p className="text-xs text-muted-foreground">พร้อมเข้าปฏิบัติงานทันที</p>
+              <p className="text-xs text-muted-foreground">สามารถเข้าปฏิบัติงานได้ทันที</p>
             </CardContent>
           </Card>
-          <Card className="hover:shadow-md transition-shadow">
+          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-amber-500">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">รอการตรวจสอบ (HR)</CardTitle>
-              <ClipboardList className="h-4 w-4 text-amber-500" />
+              <CardTitle className="text-sm font-medium">ขาดใบรับรอง (Missing Certs)</CardTitle>
+              <FileWarning className="h-4 w-4 text-amber-500" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">42</div>
-              <p className="text-xs text-muted-foreground">ใบรับรองรอการยืนยัน</p>
+              <p className="text-xs text-muted-foreground">คนงานที่ยังมีเอกสารไม่ครบ</p>
             </CardContent>
           </Card>
-          <Card className="hover:shadow-md transition-shadow">
+          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-destructive">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">สัญญาที่กำลังดำเนินอยู่</CardTitle>
-              <Briefcase className="h-4 w-4 text-primary" />
+              <CardTitle className="text-sm font-medium">การตรวจร่างกายหมดอายุ</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-destructive" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">12</div>
-              <p className="text-xs text-muted-foreground">สัญญาโครงการหลัก</p>
+              <div className="text-2xl font-bold">18</div>
+              <p className="text-xs text-muted-foreground">ต้องรีบดำเนินการตรวจร่างกาย</p>
+            </CardContent>
+          </Card>
+          <Card className="hover:shadow-md transition-shadow border-l-4 border-l-primary">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">งานที่กำลังมอบหมาย</CardTitle>
+              <ClipboardList className="h-4 w-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">156</div>
+              <p className="text-xs text-muted-foreground">จำนวนงานที่มอบหมาย (Active Assignments)</p>
             </CardContent>
           </Card>
         </div>
@@ -145,24 +151,34 @@ export default function Home() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
           <Card className="col-span-4">
             <CardHeader>
-              <CardTitle>สถานะความพร้อมคนงานรายสัปดาห์</CardTitle>
+              <CardTitle>ความพร้อมของคนงานรายโครงการ (Readiness Status)</CardTitle>
+              <CardDescription>แสดงสัดส่วนคนงานที่พร้อมปฏิบัติงานตามมาตรฐาน OPEC</CardDescription>
             </CardHeader>
-            <CardContent className="h-[300px] flex items-center justify-center border-2 border-dashed rounded-lg bg-muted/20">
-              <p className="text-muted-foreground">กราฟสถานะความพร้อม (Chart จะแสดงที่นี่ใน Phase 1B)</p>
+            <CardContent className="h-[300px] flex flex-col items-center justify-center border-2 border-dashed rounded-lg bg-muted/20 space-y-4">
+              <ShieldCheck className="h-12 w-12 text-primary opacity-20" />
+              <p className="text-muted-foreground">กราฟแสดงผลความพร้อมแบบเรียลไทม์ (Chart Visualization in Phase 1B)</p>
             </CardContent>
           </Card>
           <Card className="col-span-3">
             <CardHeader>
-              <CardTitle>รายการอัปเดตล่าสุด</CardTitle>
-              <CardDescription>ข้อมูลที่มีการเปลี่ยนแปลงล่าสุดในระบบ</CardDescription>
+              <CardTitle>รายการอัปเดตล่าสุด (Recent Updates)</CardTitle>
+              <CardDescription>กิจกรรมที่เกิดขึ้นล่าสุดในระบบ OpsFlow</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-8">
-                {[1, 2, 3, 4].map(i => (
-                  <div key={i} className="flex items-center">
-                    <div className="ml-4 space-y-1">
-                      <p className="text-sm font-medium leading-none">เพิ่มข้อมูลคนงานใหม่: สมชาย สายชล</p>
-                      <p className="text-xs text-muted-foreground">2 ชั่วโมงที่แล้ว โดย HR Officer</p>
+              <div className="space-y-6">
+                {[
+                  { user: 'HR Manager', action: 'อัปเดตใบรับรอง', target: 'สมชาย สายชล', time: '10 นาทีที่แล้ว' },
+                  { user: 'HR Officer', action: 'เพิ่มคนงานใหม่', target: 'สมนึก รักดี', time: '1 ชั่วโมงที่แล้ว' },
+                  { user: 'Admin', action: 'แก้ไขตำแหน่งงาน', target: 'Offshore Welder', time: '2 ชั่วโมงที่แล้ว' },
+                  { user: 'System', action: 'ตรวจสอบความพร้อม', target: 'Batch Job #89', time: '3 ชั่วโมงที่แล้ว' }
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div className="bg-primary/10 p-2 rounded-full">
+                      <Info className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium leading-none">{item.action}: {item.target}</p>
+                      <p className="text-xs text-muted-foreground">{item.time} โดย {item.user}</p>
                     </div>
                   </div>
                 ))}

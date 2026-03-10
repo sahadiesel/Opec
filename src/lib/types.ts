@@ -7,6 +7,8 @@ export type RoleType =
   | 'store_officer'
   | 'finance_officer';
 
+export type ReadinessStatus = 'READY' | 'MISSING_CERTIFICATE' | 'MEDICAL_EXPIRED' | 'DOCUMENT_MISSING';
+
 export interface User {
   id: string;
   email: string;
@@ -25,7 +27,7 @@ export interface Position {
 export interface PositionRequirement {
   id: string;
   positionId: string;
-  type: 'certificate' | 'ppe' | 'tool';
+  type: 'certificate' | 'ppe' | 'tool' | 'medical';
   name: string;
   description?: string;
 }
@@ -37,7 +39,7 @@ export interface Worker {
   nationalId: string;
   positionId: string;
   status: 'available' | 'assigned' | 'inactive';
-  readinessStatus: 'ready' | 'not_ready';
+  readinessStatus: ReadinessStatus;
   lastDrugTestDate?: number;
   lastMedicalCheckDate?: number;
 }

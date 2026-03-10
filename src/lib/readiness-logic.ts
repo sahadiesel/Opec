@@ -1,37 +1,43 @@
 import { dbService } from './db-service';
-import { PositionRequirement, WorkerCertificate, WorkerMedicalRecord, WorkerDrugTest } from './types';
+import { PositionRequirement, WorkerCertificate, WorkerMedicalRecord, WorkerDrugTest, ReadinessStatus } from './types';
 
-export async function checkWorkerReadiness(workerId: string, positionId: string): Promise<boolean> {
-  // Get position requirements
-  const reqs = await dbService.getByQuery<PositionRequirement>('position_requirements', 'positionId', positionId);
+/**
+ * Calculates the readiness status for a worker based on position requirements, 
+ * medical records, and drug tests.
+ */
+export async function calculateWorkerReadiness(workerId: string, positionId: string): Promise<ReadinessStatus> {
+  // 1. Get position requirements from specialized collections
+  const certReqs = await dbService.getByQuery<PositionRequirement>('position_certificate_requirements', 'positionId', positionId);
+  const ppeReqs = await dbService.getByQuery<PositionRequirement>('position_ppe_requirements', 'positionId', positionId);
   
-  // Get worker data
+  // 2. Get worker data
   const certs = await dbService.getByQuery<WorkerCertificate>('worker_certificates', 'workerId', workerId);
   const medicals = await dbService.getByQuery<WorkerMedicalRecord>('worker_medical_records', 'workerId', workerId);
   const drugs = await dbService.getByQuery<WorkerDrugTest>('worker_drug_tests', 'workerId', workerId);
 
-  // 1. Check Certificates
-  const certReqs = reqs.filter(r => r.type === 'certificate');
+  // A. Check Certificates
   for (const req of certReqs) {
     const hasValidCert = certs.some(c => 
-      c.name.toLowerCase() === req.name.toLowerCase() && 
+      c.name.toLowerCase().trim() === req.name.toLowerCase().trim() && 
       c.expiryDate > Date.now()
     );
-    if (!hasValidCert) return false;
+    if (!hasValidCert) return 'MISSING_CERTIFICATE';
   }
 
-  // 2. Check Medical (valid within 1 year for offshore)
+  // B. Check Medical (valid within 1 year or according to record)
   const latestMedical = medicals.sort((a, b) => b.checkDate - a.checkDate)[0];
-  if (!latestMedical || latestMedical.result !== 'pass' || latestMedical.expiryDate < Date.now()) {
-    return false;
+  if (!latestMedical) return 'MEDICAL_EXPIRED';
+  if (latestMedical.result !== 'pass' || latestMedical.expiryDate < Date.now()) {
+    return 'MEDICAL_EXPIRED';
   }
 
-  // 3. Check Drug Test (must be within last 6 months)
+  // C. Check Drug Test (must be within last 6 months)
   const latestDrug = drugs.sort((a, b) => b.testDate - a.testDate)[0];
   const sixMonthsAgo = Date.now() - (180 * 24 * 60 * 60 * 1000);
   if (!latestDrug || latestDrug.result !== 'negative' || latestDrug.testDate < sixMonthsAgo) {
-    return false;
+    return 'DOCUMENT_MISSING';
   }
 
-  return true;
+  // If all checks pass
+  return 'READY';
 }

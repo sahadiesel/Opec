@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
@@ -10,7 +12,13 @@ import {
   ShieldCheck,
   Package,
   CircleDollarSign,
-  ClipboardList
+  ClipboardList,
+  ShoppingCart,
+  Receipt,
+  Clock,
+  HardHat,
+  Tool,
+  Boxes
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { 
@@ -34,41 +42,102 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
+  // Dashboard for everyone
   { 
-    title: 'แดชบอร์ด', 
-    href: '/dashboard', 
+    title: 'แดชบอร์ด (Dashboard)', 
+    href: '/', 
     icon: LayoutDashboard, 
     roles: ['system_admin', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'finance_officer'] 
   },
+  // System Admin only
   { 
-    title: 'ผู้ใช้งานระบบ', 
+    title: 'ผู้ใช้งานระบบ (Users)', 
     href: '/users', 
     icon: ShieldCheck, 
     roles: ['system_admin'] 
   },
   { 
-    title: 'ตำแหน่งงาน', 
+    title: 'บันทึกการใช้งาน (Audit Logs)', 
+    href: '/audit-logs', 
+    icon: History, 
+    roles: ['system_admin'] 
+  },
+  // HR Manager & Officer
+  { 
+    title: 'ตำแหน่งงาน (Positions)', 
     href: '/positions', 
     icon: Briefcase, 
     roles: ['system_admin', 'hr_manager', 'sales_officer'] 
   },
   { 
-    title: 'ข้อมูลคนงาน', 
+    title: 'คนงาน (Workers)', 
     href: '/workers', 
     icon: UserSquare2, 
     roles: ['system_admin', 'hr_manager', 'hr_officer'] 
   },
   { 
-    title: 'ใบรับรอง/ตรวจร่างกาย', 
+    title: 'ใบรับรอง (Certificates)', 
     href: '/records', 
     icon: FileCheck, 
     roles: ['system_admin', 'hr_manager', 'hr_officer'] 
   },
+  // Sales Officer
   { 
-    title: 'บันทึกการใช้งาน', 
-    href: '/audit-logs', 
-    icon: History, 
-    roles: ['system_admin'] 
+    title: 'ลูกค้า (Customers)', 
+    href: '/customers', 
+    icon: Users, 
+    roles: ['system_admin', 'sales_officer'] 
+  },
+  { 
+    title: 'สัญญา (Contracts)', 
+    href: '/contracts', 
+    icon: ClipboardList, 
+    roles: ['system_admin', 'sales_officer'] 
+  },
+  { 
+    title: 'ใบสั่งซื้อ (Purchase Orders)', 
+    href: '/purchase-orders', 
+    icon: ShoppingCart, 
+    roles: ['system_admin', 'sales_officer'] 
+  },
+  // Payroll Officer
+  { 
+    title: 'การจ่ายเงิน (Payroll)', 
+    href: '/payroll', 
+    icon: CircleDollarSign, 
+    roles: ['system_admin', 'payroll_officer'] 
+  },
+  { 
+    title: 'ลงเวลา (Timesheets)', 
+    href: '/timesheets', 
+    icon: Clock, 
+    roles: ['system_admin', 'payroll_officer'] 
+  },
+  // Store Officer
+  { 
+    title: 'สต็อก PPE (PPE Stock)', 
+    href: '/ppe-stock', 
+    icon: HardHat, 
+    roles: ['system_admin', 'store_officer'] 
+  },
+  { 
+    title: 'อุปกรณ์ (Equipment)', 
+    href: '/equipment', 
+    icon: Boxes, 
+    roles: ['system_admin', 'store_officer'] 
+  },
+  // Finance Officer
+  { 
+    title: 'ใบเสนอราคา (Quotations)', 
+    href: '/quotations', 
+    icon: FileCheck, 
+    roles: ['system_admin', 'finance_officer'] 
+  },
+  { 
+    title: 'ใบแจ้งหนี้ (Invoices)', 
+    href: '/invoices', 
+    icon: Receipt, 
+    roles: ['system_admin', 'finance_officer'] 
   },
 ];
 
@@ -87,14 +156,14 @@ export function SidebarNav({ userRole }: { userRole: RoleType }) {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>เมนูหลัก</SidebarGroupLabel>
+          <SidebarGroupLabel>เมนูการใช้งาน (Main Menu)</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {filteredNav.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton asChild isActive={pathname === item.href} tooltip={item.title}>
                     <Link href={item.href}>
-                      <item.icon />
+                      <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
