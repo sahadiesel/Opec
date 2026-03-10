@@ -1,4 +1,3 @@
-
 /**
  * OPEC OpsFlow - TypeScript Data Models
  * Aligned with MASTER BLUEPRINT for OPEC Manpower Supply.
@@ -25,8 +24,8 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
-  address?: string;      // Added for Staff/Admin
-  nationalId?: string;   // Added for Staff/Admin
+  address?: string;
+  nationalId?: string;
   roleId: RoleType;
   createdAt: number;
   updatedAt: number;
@@ -48,6 +47,69 @@ export interface Position {
   description?: string;
   isActive: boolean;
 }
+
+// --- COMMERCIAL MODULE ---
+
+export interface Customer {
+  id: string;
+  name: string;
+  taxId: string;
+  address: string;
+  isActive: boolean;
+  createdAt: number;
+}
+
+export interface ContactPerson {
+  id: string;
+  customerId: string;
+  name: string;
+  position: string;
+  email: string;
+  phone: string;
+}
+
+export interface MainContract {
+  id: string;
+  customerId: string;
+  contractNumber: string;
+  title: string;
+  startDate: number;
+  endDate: number;
+  status: 'active' | 'expired' | 'pending';
+  createdAt: number;
+}
+
+export interface MainContractPositionRate {
+  id: string;
+  contractId: string;
+  positionId: string;
+  sellRate: number;
+  billingUnit: 'daily' | 'monthly' | 'hourly';
+}
+
+export interface PurchaseOrder {
+  id: string;
+  contractId: string;
+  poNumber: string;
+  title: string;
+  startDate: number;
+  endDate: number;
+  status: 'active' | 'closed' | 'pending';
+  createdAt: number;
+}
+
+export interface POLine {
+  id: string;
+  poId: string;
+  positionId: string;
+  quantity: number;
+  sellRateSnapshot: number;
+  costBaselineSnapshot: number;
+  billingUnitSnapshot: 'daily' | 'monthly' | 'hourly';
+  overtimeRuleSnapshot: string;
+}
+
+// --- HR & WORKFORCE ---
 
 export interface Worker {
   id: string;
@@ -107,6 +169,6 @@ export interface AuditLog {
   entityType: string;
   entityId: string;
   timestamp: number;
-  details: string; // JSON string or text
+  details: string;
   ipAddress?: string;
 }

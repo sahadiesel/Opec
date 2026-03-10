@@ -17,10 +17,8 @@ import {
   Receipt,
   Clock,
   HardHat,
-  Tool,
   Boxes
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { 
   Sidebar, 
   SidebarContent, 
@@ -42,14 +40,12 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  // Dashboard for everyone
   { 
     title: 'แดชบอร์ด (Dashboard)', 
     href: '/', 
     icon: LayoutDashboard, 
     roles: ['system_admin', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'finance_officer'] 
   },
-  // System Admin only
   { 
     title: 'ผู้ใช้งานระบบ (Users)', 
     href: '/users', 
@@ -62,7 +58,26 @@ const navItems: NavItem[] = [
     icon: History, 
     roles: ['system_admin'] 
   },
-  // HR Manager & Officer
+  // Commercial Module
+  { 
+    title: 'ลูกค้า (Customers)', 
+    href: '/customers', 
+    icon: Users, 
+    roles: ['system_admin', 'sales_officer'] 
+  },
+  { 
+    title: 'สัญญาหลัก (Main Contracts)', 
+    href: '/main-contracts', 
+    icon: ClipboardList, 
+    roles: ['system_admin', 'sales_officer'] 
+  },
+  { 
+    title: 'ใบสั่งซื้อ (Purchase Orders)', 
+    href: '/purchase-orders', 
+    icon: ShoppingCart, 
+    roles: ['system_admin', 'sales_officer'] 
+  },
+  // HR Module
   { 
     title: 'ตำแหน่งงาน (Positions)', 
     href: '/positions', 
@@ -75,32 +90,7 @@ const navItems: NavItem[] = [
     icon: UserSquare2, 
     roles: ['system_admin', 'hr_manager', 'hr_officer'] 
   },
-  { 
-    title: 'ใบรับรอง (Certificates)', 
-    href: '/records', 
-    icon: FileCheck, 
-    roles: ['system_admin', 'hr_manager', 'hr_officer'] 
-  },
-  // Sales Officer
-  { 
-    title: 'ลูกค้า (Customers)', 
-    href: '/customers', 
-    icon: Users, 
-    roles: ['system_admin', 'sales_officer'] 
-  },
-  { 
-    title: 'สัญญา (Contracts)', 
-    href: '/contracts', 
-    icon: ClipboardList, 
-    roles: ['system_admin', 'sales_officer'] 
-  },
-  { 
-    title: 'ใบสั่งซื้อ (Purchase Orders)', 
-    href: '/purchase-orders', 
-    icon: ShoppingCart, 
-    roles: ['system_admin', 'sales_officer'] 
-  },
-  // Payroll Officer
+  // Payroll Module
   { 
     title: 'การจ่ายเงิน (Payroll)', 
     href: '/payroll', 
@@ -113,7 +103,7 @@ const navItems: NavItem[] = [
     icon: Clock, 
     roles: ['system_admin', 'payroll_officer'] 
   },
-  // Store Officer
+  // Store Module
   { 
     title: 'สต็อก PPE (PPE Stock)', 
     href: '/ppe-stock', 
@@ -126,7 +116,7 @@ const navItems: NavItem[] = [
     icon: Boxes, 
     roles: ['system_admin', 'store_officer'] 
   },
-  // Finance Officer
+  // Finance Module
   { 
     title: 'ใบเสนอราคา (Quotations)', 
     href: '/quotations', 
@@ -143,7 +133,6 @@ const navItems: NavItem[] = [
 
 export function SidebarNav({ userRole }: { userRole: RoleType }) {
   const pathname = usePathname();
-
   const filteredNav = navItems.filter(item => item.roles.includes(userRole));
 
   return (

@@ -1,144 +1,91 @@
-
 {
   "entities": {
-    "User": {
-      "title": "User",
-      "description": "Represents a staff member (system user) with access to the OPEC OpsFlow system.",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "displayName": { "type": "string" },
-        "roleId": { "type": "string", "description": "Reference to the Role entity." },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" },
-        "lastLoginAt": { "type": "string", "format": "date-time" },
-        "isActive": { "type": "boolean" }
-      },
-      "required": ["id", "email", "roleId", "isActive"]
-    },
-    "Role": {
-      "title": "Role",
-      "description": "Defines system access permissions for staff.",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string", "enum": ["system_admin", "sales_officer", "hr_manager", "hr_officer", "payroll_officer", "store_officer", "finance_officer"] },
-        "description": { "type": "string" },
-        "permissions": { "type": "array", "items": { "type": "string" } }
-      },
-      "required": ["id", "name", "permissions"]
-    },
-    "Position": {
-      "title": "Position",
-      "description": "Job positions/skill sets available for manpower supply.",
+    "Customer": {
+      "title": "Customer",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "code": { "type": "string" },
-        "description": { "type": "string" },
+        "taxId": { "type": "string" },
+        "address": { "type": "string" },
         "isActive": { "type": "boolean" }
-      },
-      "required": ["id", "name", "code", "isActive"]
+      }
     },
-    "Worker": {
-      "title": "Worker",
-      "description": "A manpower resource available for assignment.",
+    "ContactPerson": {
+      "title": "ContactPerson",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "firstName": { "type": "string" },
-        "lastName": { "type": "string" },
-        "thaiNationalId": { "type": "string" },
-        "dateOfBirth": { "type": "string", "format": "date" },
-        "contactEmail": { "type": "string", "format": "email" },
-        "contactPhone": { "type": "string" },
-        "currentPositionId": { "type": "string" },
-        "workerStatus": { "type": "string", "enum": ["available", "assigned", "on_leave", "inactive"] },
-        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] },
-        "nationality": { "type": "string" },
-        "gender": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["id", "firstName", "lastName", "thaiNationalId", "currentPositionId", "workerStatus", "readinessStatus"]
+        "name": { "type": "string" },
+        "position": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" }
+      }
     },
-    "WorkerCertificate": {
-      "title": "WorkerCertificate",
+    "MainContract": {
+      "title": "MainContract",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "certificateName": { "type": "string" },
-        "issuingAuthority": { "type": "string" },
-        "certificateNumber": { "type": "string" },
-        "issueDate": { "type": "string", "format": "date" },
-        "expiryDate": { "type": "string", "format": "date" },
-        "documentUrl": { "type": "string" },
-        "isVerified": { "type": "boolean" }
-      },
-      "required": ["id", "workerId", "certificateName", "expiryDate"]
+        "contractNumber": { "type": "string" },
+        "title": { "type": "string" },
+        "startDate": { "type": "number" },
+        "endDate": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "expired", "pending"] }
+      }
     },
-    "WorkerMedicalRecord": {
-      "title": "WorkerMedicalRecord",
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "medicalCheckType": { "type": "string" },
-        "clinicName": { "type": "string" },
-        "examinationDate": { "type": "string", "format": "date" },
-        "expiryDate": { "type": "string", "format": "date" },
-        "overallFitnessStatus": { "type": "string" },
-        "documentUrl": { "type": "string" },
-        "isVerified": { "type": "boolean" }
-      },
-      "required": ["id", "workerId", "examinationDate", "expiryDate", "overallFitnessStatus"]
+        "poNumber": { "type": "string" },
+        "title": { "type": "string" },
+        "startDate": { "type": "number" },
+        "endDate": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "closed", "pending"] }
+      }
     },
-    "WorkerDrugTest": {
-      "title": "WorkerDrugTest",
+    "POLine": {
+      "title": "POLine",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "testDate": { "type": "string", "format": "date" },
-        "testingFacility": { "type": "string" },
-        "result": { "type": "string", "enum": ["negative", "positive", "pending"] },
-        "documentUrl": { "type": "string" },
-        "isVerified": { "type": "boolean" }
-      },
-      "required": ["id", "workerId", "testDate", "result"]
-    },
-    "AuditLog": {
-      "title": "AuditLog",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "actionType": { "type": "string", "enum": ["CREATE", "UPDATE", "DELETE", "LOGIN"] },
-        "entityType": { "type": "string" },
-        "entityId": { "type": "string" },
-        "timestamp": { "type": "string", "format": "date-time" },
-        "details": { "type": "string" },
-        "ipAddress": { "type": "string" }
-      },
-      "required": ["id", "userId", "actionType", "entityType", "timestamp"]
+        "positionId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "sellRateSnapshot": { "type": "number" },
+        "costBaselineSnapshot": { "type": "number" },
+        "billingUnitSnapshot": { "type": "string" }
+      }
     }
   },
   "auth": {
     "providers": ["password"]
   },
   "firestore": {
-    "structure": [
-      { "path": "/users/{userId}", "definition": { "entityName": "User", "schema": { "$ref": "#/backend/entities/User" }, "description": "Staff user profiles." } },
-      { "path": "/roles/{roleId}", "definition": { "entityName": "Role", "schema": { "$ref": "#/backend/entities/Role" }, "description": "System roles." } },
-      { "path": "/positions/{positionId}", "definition": { "entityName": "Position", "schema": { "$ref": "#/backend/entities/Position" }, "description": "Master list of job positions." } },
-      { "path": "/workers/{workerId}", "definition": { "entityName": "Worker", "schema": { "$ref": "#/backend/entities/Worker" }, "description": "Master list of workers." } },
-      { "path": "/workers/{workerId}/certificates/{certId}", "definition": { "entityName": "WorkerCertificate", "schema": { "$ref": "#/backend/entities/WorkerCertificate" }, "description": "Worker certificates." } },
-      { "path": "/workers/{workerId}/medical_records/{recordId}", "definition": { "entityName": "WorkerMedicalRecord", "schema": { "$ref": "#/backend/entities/WorkerMedicalRecord" }, "description": "Worker health checks." } },
-      { "path": "/workers/{workerId}/drug_tests/{testId}", "definition": { "entityName": "WorkerDrugTest", "schema": { "$ref": "#/backend/entities/WorkerDrugTest" }, "description": "Worker drug test results." } },
-      { "path": "/audit_logs/{logId}", "definition": { "entityName": "AuditLog", "schema": { "$ref": "#/backend/entities/AuditLog" }, "description": "System activity logs." } }
-    ]
+    "/customers/{customerId}": {
+      "schema": "#/backend/entities/Customer",
+      "description": "Master customer records"
+    },
+    "/customers/{customerId}/contacts/{contactId}": {
+      "schema": "#/backend/entities/ContactPerson",
+      "description": "Customer contact persons"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}": {
+      "schema": "#/backend/entities/MainContract",
+      "description": "Commercial master agreements"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
+      "schema": { "type": "object" },
+      "description": "Contract-specific position rates"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
+      "schema": "#/backend/entities/PurchaseOrder",
+      "description": "Purchase orders under a contract"
+    },
+    "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
+      "schema": "#/backend/entities/POLine",
+      "description": "Line items in a PO"
+    }
   }
 }

@@ -2,155 +2,62 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    /**
-     * OPEC OpsFlow Security Rules - Bootstrap Enhanced
-     */
-
-    // --- HELPER FUNCTIONS ---
-
-    function isSignedIn() {
-      return request.auth != null;
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { return exists(/databases/$(database)/documents/roles_system_admin/$(request.auth.uid)); }
+    function isSales() { return exists(/databases/$(database)/documents/roles_sales_officer/$(request.auth.uid)) || isAdmin(); }
+    function isHR() { 
+      return exists(/databases/$(database)/documents/roles_hr_manager/$(request.auth.uid)) || 
+             exists(/databases/$(database)/documents/roles_hr_officer/$(request.auth.uid)) || 
+             isAdmin(); 
     }
 
-    function isUser(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function hasRole(roleName) {
-      let roleDocRef = 'roles_' + roleName + '/' + request.auth.uid;
-      return isSignedIn() && exists(path('/databases/$(database)/documents/' + roleDocRef));
-    }
-
-    function isAdmin() {
-      return hasRole('system_admin');
-    }
-
-    function isHRManager() {
-      return hasRole('hr_manager');
-    }
-
-    function isHROfficer() {
-      return hasRole('hr_officer');
-    }
-
-    function isHR() {
-      return isHRManager() || isHROfficer() || isAdmin();
-    }
-
-    function isSales() {
-      return hasRole('sales_officer') || isAdmin();
-    }
-
-    function isPayroll() {
-      return hasRole('payroll_officer') || isAdmin();
-    }
-
-    function isStore() {
-      return hasRole('store_officer') || isAdmin();
-    }
-
-    // Bootstrap Helper: Checks if the system has been initialized
-    function isSystemBootstrapped() {
-      return exists(/databases/$(database)/documents/system/bootstrap);
-    }
-
-    // --- COLLECTION RULES ---
-
-    /**
-     * @description System configuration and bootstrap state.
-     */
     match /system/bootstrap {
       allow get: if true;
-      allow create: if !isSystemBootstrapped();
+      allow create: if !exists(/databases/$(database)/documents/system/bootstrap);
     }
 
-    /**
-     * @description Staff user profiles.
-     */
     match /users/{userId} {
-      allow get: if isSignedIn() && (isUser(userId) || isAdmin());
+      allow get: if isSignedIn();
       allow list: if isAdmin();
-      // Allow creation only during bootstrap or by an admin
-      allow create: if (!isSystemBootstrapped() && request.auth.uid == userId) || isAdmin();
-      allow update: if (isAdmin() || isUser(userId)) && resource != null;
-      allow delete: if isAdmin() && resource != null;
+      allow create: if (!exists(/databases/$(database)/documents/system/bootstrap) && request.auth.uid == userId) || isAdmin();
+      allow update: if isAdmin() || request.auth.uid == userId;
     }
 
-    /**
-     * @description DBAC Role Assignment collections.
-     */
-    match /{roleCollection}/{userId} {
-      allow get, list: if isSignedIn() || (!isSystemBootstrapped() && roleCollection == 'roles_system_admin');
-      
-      allow create: if 
-        (isAdmin() && (
-          roleCollection == 'roles_system_admin' ||
-          roleCollection == 'roles_sales_officer' ||
-          roleCollection == 'roles_hr_manager' ||
-          roleCollection == 'roles_hr_officer' ||
-          roleCollection == 'roles_payroll_officer' ||
-          roleCollection == 'roles_store_officer' ||
-          roleCollection == 'roles_finance_officer'
-        )) || 
-        (!isSystemBootstrapped() && roleCollection == 'roles_system_admin' && request.auth.uid == userId);
-
-      allow update, delete: if isAdmin() && (
-        roleCollection == 'roles_system_admin' ||
-        roleCollection == 'roles_sales_officer' ||
-        roleCollection == 'roles_hr_manager' ||
-        roleCollection == 'roles_hr_officer' ||
-        roleCollection == 'roles_payroll_officer' ||
-        roleCollection == 'roles_store_officer' ||
-        roleCollection == 'roles_finance_officer'
-      );
+    match /roles_system_admin/{userId} {
+      allow read: if isSignedIn();
+      allow create: if !exists(/databases/$(database)/documents/system/bootstrap) || isAdmin();
     }
 
-    /**
-     * @description Global audit logs.
-     */
+    match /positions/{posId} {
+      allow read: if isSignedIn();
+      allow write: if isHR();
+    }
+
+    match /workers/{workerId} {
+      allow read: if isSignedIn();
+      allow write: if isHR();
+      match /{allSub=**} { allow read: if isSignedIn(); allow write: if isHR(); }
+    }
+
+    match /customers/{customerId} {
+      allow read: if isSignedIn();
+      allow write: if isSales();
+      match /contacts/{contactId} { allow read: if isSignedIn(); allow write: if isSales(); }
+      match /main_contracts/{contractId} {
+        allow read: if isSignedIn();
+        allow write: if isSales();
+        match /position_rates/{rateId} { allow read: if isSignedIn(); allow write: if isSales(); }
+        match /purchase_orders/{poId} {
+          allow read: if isSignedIn();
+          allow write: if isSales();
+          match /po_lines/{lineId} { allow read: if isSignedIn(); allow write: if isSales(); }
+        }
+      }
+    }
+
     match /audit_logs/{logId} {
       allow get, list: if isAdmin();
       allow create: if isSignedIn();
-      allow update, delete: if false;
-    }
-
-    /**
-     * @description Master role definitions.
-     */
-    match /roles/{roleId} {
-      allow get, list: if isSignedIn();
-      allow create, update, delete: if isAdmin();
-    }
-
-    /**
-     * @description Master job position definitions.
-     */
-    match /positions/{positionId} {
-      allow get, list: if isHR() || isSales() || isStore();
-      allow create: if isHRManager() || isAdmin();
-      allow update, delete: if (isHRManager() || isAdmin()) && resource != null;
-
-      match /certificate_requirements/{reqId} { allow read: if isHR() || isSales(); allow write: if isHRManager() || isAdmin(); }
-      match /ppe_requirements/{reqId} { allow read: if isHR() || isSales() || isStore(); allow write: if isHRManager() || isStore() || isAdmin(); }
-      match /tool_requirements/{reqId} { allow read: if isHR() || isSales() || isStore(); allow write: if isHRManager() || isStore() || isAdmin(); }
-    }
-
-    /**
-     * @description Master Worker records.
-     */
-    match /workers/{workerId} {
-      allow get, list: if isHR() || isPayroll() || isStore() || isSales();
-      allow create: if isHR();
-      allow update, delete: if isHR() && resource != null;
-
-      match /certificates/{certId} { allow read: if isHR() || isPayroll() || isSales(); allow write: if isHR(); }
-      match /medical_records/{recordId} { allow read: if isHR() || isPayroll(); allow write: if isHR(); }
-      match /drug_tests/{testId} { allow read: if isHR() || isPayroll(); allow write: if isHR(); }
-    }
-
-    // --- DEFAULT DENY ALL ---
-    match /{document=**} {
-      allow read, write: if false;
     }
   }
 }
