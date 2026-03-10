@@ -3,23 +3,25 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, CheckCircle2, AlertCircle, FileQuestion, MoreHorizontal, UserCheck, ShieldAlert, FileCheck, Trash2 } from 'lucide-react';
+import { Plus, Search, CheckCircle2, AlertCircle, FileQuestion, MoreHorizontal, UserCheck, ShieldAlert, FileCheck, Trash2, Edit } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Worker, ReadinessStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuLabel, 
-  DropdownMenuSeparator, 
-  DropdownMenuTrigger 
-} from '@/components/ui/dropdown-menu';
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogFooter, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogTrigger 
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
-import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 
 export default function WorkersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -33,44 +35,53 @@ export default function WorkersPage() {
 
   const { data: workers, isLoading } = useCollection<Worker>(workersQuery as any);
 
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newWorker, setNewWorker] = useState({
+    firstName: '',
+    lastName: '',
+    thaiNationalId: '',
+    contactPhone: '',
+    currentPositionId: ''
+  });
+
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const getReadinessBadge = (status: ReadinessStatus) => {
-    switch (status) {
-      case 'READY':
-        return (
-          <div className="flex items-center text-green-600 gap-1.5 px-2 py-1 rounded-full bg-green-50 border border-green-200 text-xs font-bold">
-            <CheckCircle2 className="h-3.5 w-3.5" /> พร้อมทำงาน (READY)
-          </div>
-        );
-      case 'MISSING_CERTIFICATE':
-        return (
-          <div className="flex items-center text-amber-600 gap-1.5 px-2 py-1 rounded-full bg-amber-50 border border-amber-200 text-xs font-bold">
-            <ShieldAlert className="h-3.5 w-3.5" /> ขาดใบรับรอง (NO CERT)
-          </div>
-        );
-      case 'MEDICAL_EXPIRED':
-        return (
-          <div className="flex items-center text-destructive gap-1.5 px-2 py-1 rounded-full bg-red-50 border border-red-200 text-xs font-bold">
-            <AlertCircle className="h-3.5 w-3.5" /> ตรวจร่างกายหมดอายุ
-          </div>
-        );
-      case 'DOCUMENT_MISSING':
-        return (
-          <div className="flex items-center text-slate-600 gap-1.5 px-2 py-1 rounded-full bg-slate-50 border border-slate-200 text-xs font-bold">
-            <FileQuestion className="h-3.5 w-3.5" /> ขาดเอกสารสำคัญ
-          </div>
-        );
-    }
+  const handleCreate = () => {
+    if (!firestore) return;
+    const workerRef = collection(firestore, 'workers');
+    addDocumentNonBlocking(workerRef, {
+      ...newWorker,
+      workerStatus: 'available',
+      readinessStatus: 'DOCUMENT_MISSING',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      nationality: 'Thai',
+      gender: 'N/A'
+    });
+    setIsCreateOpen(false);
+    setNewWorker({ firstName: '', lastName: '', thaiNationalId: '', contactPhone: '', currentPositionId: '' });
   };
 
   const handleDelete = (id: string) => {
     if (!firestore) return;
     if (confirm('ยืนยันการลบข้อมูลคนงานนี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'workers', id));
+    }
+  };
+
+  const getReadinessBadge = (status: ReadinessStatus) => {
+    switch (status) {
+      case 'READY':
+        return <Badge className="bg-green-100 text-green-700 border-green-200"><CheckCircle2 className="h-3 w-3 mr-1" /> READY</Badge>;
+      case 'MISSING_CERTIFICATE':
+        return <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200"><ShieldAlert className="h-3 w-3 mr-1" /> NO CERT</Badge>;
+      case 'MEDICAL_EXPIRED':
+        return <Badge variant="destructive" className="bg-red-100 text-red-700 border-red-200"><AlertCircle className="h-3 w-3 mr-1" /> MED EXPIRED</Badge>;
+      default:
+        return <Badge variant="secondary"><FileQuestion className="h-3 w-3 mr-1" /> PENDING</Badge>;
     }
   };
 
@@ -84,23 +95,53 @@ export default function WorkersPage() {
             <h1 className="text-2xl font-bold tracking-tight text-primary">ทะเบียนคนงาน (Worker Directory)</h1>
             <p className="text-muted-foreground">จัดการข้อมูลและตรวจสอบความพร้อม (Readiness) รายบุคคล</p>
           </div>
-          <Button className="gap-2">
-            <Plus className="h-4 w-4" /> เพิ่มคนงานใหม่
-          </Button>
+          
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" /> เพิ่มคนงานใหม่
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>ลงทะเบียนคนงานใหม่</DialogTitle>
+                <DialogDescription>กรอกข้อมูลพื้นฐานเพื่อสร้างโปรไฟล์คนงานในระบบ</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="firstName">ชื่อ</Label>
+                    <Input id="firstName" value={newWorker.firstName} onChange={e => setNewWorker({...newWorker, firstName: e.target.value})} />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="lastName">นามสกุล</Label>
+                    <Input id="lastName" value={newWorker.lastName} onChange={e => setNewWorker({...newWorker, lastName: e.target.value})} />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="nid">เลขบัตรประชาชน</Label>
+                  <Input id="nid" value={newWorker.thaiNationalId} onChange={e => setNewWorker({...newWorker, thaiNationalId: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="pos">ตำแหน่งปัจจุบัน</Label>
+                  <Input id="pos" value={newWorker.currentPositionId} onChange={e => setNewWorker({...newWorker, currentPositionId: e.target.value})} />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
+                <Button onClick={handleCreate}>สร้างโปรไฟล์</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-4">
               <CardTitle>รายชื่อคนงานทั้งหมด</CardTitle>
-              <div className="flex items-center gap-2">
-                <div className="relative w-72">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input type="search" placeholder="ค้นหาชื่อหรือเลขประจำตัว..." className="pl-8" />
-                </div>
-                <Button variant="outline" className="gap-2">
-                  <UserCheck className="h-4 w-4" /> สแกนความพร้อม
-                </Button>
+              <div className="relative w-72">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input type="search" placeholder="ค้นหาชื่อหรือเลขประจำตัว..." className="pl-8" />
               </div>
             </div>
           </CardHeader>
@@ -115,59 +156,37 @@ export default function WorkersPage() {
                     <TableHead>ตำแหน่ง (Position)</TableHead>
                     <TableHead>สถานะงาน (Status)</TableHead>
                     <TableHead>ความพร้อม (Readiness)</TableHead>
-                    <TableHead className="text-right">การจัดการ</TableHead>
+                    <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {workers?.map((worker) => (
-                    <TableRow key={worker.id} className="group">
+                    <TableRow key={worker.id}>
                       <TableCell>
                         <div className="flex flex-col">
                           <span className="font-semibold">{worker.firstName} {worker.lastName}</span>
                           <span className="text-xs text-muted-foreground">{worker.thaiNationalId}</span>
                         </div>
                       </TableCell>
+                      <TableCell>{worker.currentPositionId}</TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="font-normal">
-                          {worker.currentPositionId}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={worker.workerStatus === 'available' ? 'default' : 'secondary'} className={worker.workerStatus === 'available' ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}>
-                          {worker.workerStatus === 'available' ? 'ว่าง (Available)' : 'ติดงาน (Assigned)'}
+                        <Badge variant={worker.workerStatus === 'available' ? 'default' : 'secondary'}>
+                          {worker.workerStatus.toUpperCase()}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         {getReadinessBadge(worker.readinessStatus)}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-56">
-                            <DropdownMenuLabel>เมนูจัดการคนงาน</DropdownMenuLabel>
-                            <DropdownMenuItem>ดูข้อมูลโปรไฟล์</DropdownMenuItem>
-                            <DropdownMenuItem>แก้ไขข้อมูลพื้นฐาน</DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="gap-2"><FileCheck className="h-4 w-4" /> จัดการใบรับรอง</DropdownMenuItem>
-                            <DropdownMenuItem className="gap-2"><ShieldAlert className="h-4 w-4" /> บันทึกการตรวจสุขภาพ</DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive gap-2" onClick={() => handleDelete(worker.id)}>
-                              <Trash2 className="h-4 w-4" /> ลบข้อมูล
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                      <TableCell className="text-right space-x-2">
+                        <Button variant="outline" size="sm" className="gap-2">
+                          <Edit className="h-4 w-4" /> ประวัติ & เอกสาร
+                        </Button>
+                        <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(worker.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
-                  {!isLoading && (!workers || workers.length === 0) && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลคนงาน</TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             )}

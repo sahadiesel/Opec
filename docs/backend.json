@@ -9,12 +9,20 @@
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "roleId": { "type": "string", "enum": ["system_admin", "finance_officer", "sales_officer", "hr_manager", "hr_officer", "payroll_officer", "store_officer", "client"] },
-        "customerId": { "type": "string", "description": "Mandatory for shared client accounts" },
-        "isSharedAccount": { "type": "boolean", "default": false },
-        "isActive": { "type": "boolean" },
-        "linkedProjectIds": { "type": "array", "items": { "type": "string" } },
-        "nationalId": { "type": "string" },
-        "address": { "type": "string" }
+        "customerId": { "type": "string" },
+        "isSharedAccount": { "type": "boolean" },
+        "isActive": { "type": "boolean" }
+      }
+    },
+    "Position": {
+      "title": "Position",
+      "description": "Job positions master",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "isActive": { "type": "boolean" }
       }
     },
     "Worker": {
@@ -26,21 +34,18 @@
         "firstName": { "type": "string" },
         "lastName": { "type": "string" },
         "thaiNationalId": { "type": "string" },
-        "workerStatus": { "type": "string", "enum": ["available", "assigned", "on_leave", "inactive"] },
-        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] },
-        "currentPositionId": { "type": "string" },
-        "secondaryPositionIds": { "type": "array", "items": { "type": "string" } }
+        "workerStatus": { "type": "string" },
+        "readinessStatus": { "type": "string" }
       }
     },
-    "MainContract": {
-      "title": "MainContract",
-      "description": "Master Commercial Agreement",
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer master records",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "contractNumber": { "type": "string" },
-        "title": { "type": "string" },
-        "status": { "type": "string", "enum": ["active", "expired", "pending"] }
+        "name": { "type": "string" },
+        "taxId": { "type": "string" }
       }
     }
   },
@@ -52,65 +57,69 @@
       "schema": "#/backend/entities/User",
       "description": "System staff and shared client accounts"
     },
-    "/roles_system_admin/{userId}": {
-      "schema": { "type": "object" },
-      "description": "System Admin role assignment"
-    },
     "/positions/{posId}": {
-      "schema": { "type": "object" },
-      "description": "Job positions master"
+      "schema": "#/backend/entities/Position",
+      "description": "Position master"
     },
-    "/positions/{posId}/requirements/{reqId}": {
+    "/positions/{posId}/certificate_requirements/{reqId}": {
       "schema": { "type": "object" },
-      "description": "Subcollection for position requirements"
+      "description": "Required certs for position"
+    },
+    "/positions/{posId}/ppe_requirements/{reqId}": {
+      "schema": { "type": "object" },
+      "description": "Required PPE for position"
+    },
+    "/positions/{posId}/tool_requirements/{reqId}": {
+      "schema": { "type": "object" },
+      "description": "Required tools for position"
     },
     "/workers/{workerId}": {
       "schema": "#/backend/entities/Worker",
-      "description": "Worker master records"
+      "description": "Worker master"
     },
     "/workers/{workerId}/certificates/{certId}": {
       "schema": { "type": "object" },
-      "description": "Worker certs subcollection"
+      "description": "Worker certificates"
     },
     "/workers/{workerId}/medical_records/{medId}": {
       "schema": { "type": "object" },
-      "description": "Worker medical checks subcollection"
+      "description": "Worker medical checks"
     },
     "/workers/{workerId}/drug_tests/{drugId}": {
       "schema": { "type": "object" },
-      "description": "Worker drug tests subcollection"
+      "description": "Worker drug tests"
+    },
+    "/workers/{workerId}/documents/{docId}": {
+      "schema": { "type": "object" },
+      "description": "Worker documents"
     },
     "/customers/{customerId}": {
-      "schema": { "type": "object" },
-      "description": "Customer master records"
+      "schema": "#/backend/entities/Customer",
+      "description": "Customer master"
     },
     "/customers/{customerId}/contacts/{contactId}": {
       "schema": { "type": "object" },
-      "description": "Customer contact persons subcollection"
+      "description": "Customer contacts"
     },
     "/customers/{customerId}/main_contracts/{contractId}": {
-      "schema": "#/backend/entities/MainContract",
-      "description": "Master agreements subcollection"
+      "schema": { "type": "object" },
+      "description": "Master agreements"
     },
     "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
       "schema": { "type": "object" },
-      "description": "Master rates subcollection"
+      "description": "Position billing rates"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
       "schema": { "type": "object" },
-      "description": "Purchase orders subcollection"
+      "description": "Purchase orders"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
       "schema": { "type": "object" },
-      "description": "PO lines with financial snapshots"
+      "description": "PO items/positions"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
       "schema": { "type": "object" },
-      "description": "Worker assignments subcollection"
-    },
-    "/audit_logs/{logId}": {
-      "schema": { "type": "object" },
-      "description": "Immutable system activity logs"
+      "description": "Worker assignments"
     }
   }
 }

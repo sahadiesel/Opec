@@ -1,43 +1,47 @@
-import { dbService } from './db-service';
-import { PositionRequirement, WorkerCertificate, WorkerMedicalRecord, WorkerDrugTest, ReadinessStatus } from './types';
+import { 
+  Worker, 
+  WorkerCertificate, 
+  WorkerMedicalRecord, 
+  WorkerDrugTest, 
+  PositionRequirement, 
+  ReadinessStatus 
+} from './types';
 
 /**
- * Calculates the readiness status for a worker based on position requirements, 
- * medical records, and drug tests.
+ * Calculates a worker's readiness status based on their records and position requirements.
  */
-export async function calculateWorkerReadiness(workerId: string, positionId: string): Promise<ReadinessStatus> {
-  // 1. Get position requirements from specialized collections
-  const certReqs = await dbService.getByQuery<PositionRequirement>('position_certificate_requirements', 'positionId', positionId);
-  const ppeReqs = await dbService.getByQuery<PositionRequirement>('position_ppe_requirements', 'positionId', positionId);
-  
-  // 2. Get worker data
-  const certs = await dbService.getByQuery<WorkerCertificate>('worker_certificates', 'workerId', workerId);
-  const medicals = await dbService.getByQuery<WorkerMedicalRecord>('worker_medical_records', 'workerId', workerId);
-  const drugs = await dbService.getByQuery<WorkerDrugTest>('worker_drug_tests', 'workerId', workerId);
+export function calculateWorkerReadiness(
+  worker: Worker,
+  certificates: WorkerCertificate[],
+  medicalRecords: WorkerMedicalRecord[],
+  drugTests: WorkerDrugTest[],
+  positionRequirements: PositionRequirement[]
+): ReadinessStatus {
+  const now = Date.now();
 
-  // A. Check Certificates
-  for (const req of certReqs) {
-    const hasValidCert = certs.some(c => 
-      c.name.toLowerCase().trim() === req.name.toLowerCase().trim() && 
-      c.expiryDate > Date.now()
+  // 1. Check Mandatory Certificates
+  const mandatoryCerts = positionRequirements.filter(r => r.type === 'certificate' && r.isMandatory);
+  for (const req of mandatoryCerts) {
+    const hasValidCert = certificates.some(c => 
+      c.certificateName.toLowerCase() === req.name.toLowerCase() && 
+      c.expiryDate > now && 
+      c.isVerified
     );
     if (!hasValidCert) return 'MISSING_CERTIFICATE';
   }
 
-  // B. Check Medical (valid within 1 year or according to record)
-  const latestMedical = medicals.sort((a, b) => b.checkDate - a.checkDate)[0];
-  if (!latestMedical) return 'MEDICAL_EXPIRED';
-  if (latestMedical.result !== 'pass' || latestMedical.expiryDate < Date.now()) {
+  // 2. Check Medical Records (valid for 1 year usually, but checking expiryDate field)
+  const latestMedical = medicalRecords.sort((a, b) => b.checkDate - a.checkDate)[0];
+  if (!latestMedical || latestMedical.expiryDate < now || latestMedical.result !== 'pass') {
     return 'MEDICAL_EXPIRED';
   }
 
-  // C. Check Drug Test (must be within last 6 months)
-  const latestDrug = drugs.sort((a, b) => b.testDate - a.testDate)[0];
-  const sixMonthsAgo = Date.now() - (180 * 24 * 60 * 60 * 1000);
-  if (!latestDrug || latestDrug.result !== 'negative' || latestDrug.testDate < sixMonthsAgo) {
-    return 'DOCUMENT_MISSING';
+  // 3. Check Drug Test (valid if within last 6 months usually, result must be negative)
+  const latestDrug = drugTests.sort((a, b) => b.testDate - a.testDate)[0];
+  const sixMonthsAgo = now - (180 * 24 * 60 * 60 * 1000);
+  if (!latestDrug || latestDrug.testDate < sixMonthsAgo || latestDrug.result !== 'negative') {
+    return 'DOCUMENT_MISSING'; // Using DOCUMENT_MISSING as a catch-all for missing/invalid drug/misc docs
   }
 
-  // If all checks pass
   return 'READY';
 }

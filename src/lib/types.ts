@@ -31,6 +31,12 @@ export type AssignmentStatus =
   | 'cancelled'
   | 'replaced';
 
+export type ClientApprovalStatus = 
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'replacement_requested';
+
 export interface User {
   id: string;
   email: string;
@@ -40,12 +46,11 @@ export interface User {
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
-  // Shared Client Account fields (Task Set 2)
   customerId?: string; 
   isSharedAccount?: boolean;
   linkedProjectIds?: string[];
-  nationalId?: string; // For staff setup
-  address?: string;    // For staff setup
+  nationalId?: string;
+  address?: string;
 }
 
 export interface Position {
@@ -59,7 +64,7 @@ export interface Position {
 export interface PositionRequirement {
   id: string;
   positionId: string;
-  type: 'certificate' | 'ppe' | 'tool' | 'medical';
+  type: 'certificate' | 'ppe' | 'tool';
   name: string;
   description?: string;
   isMandatory: boolean;
@@ -121,7 +126,6 @@ export interface POLine {
   poId: string;
   positionId: string;
   quantity: number;
-  // Financial Snapshots (Blueprint Rule #6)
   sellRateSnapshot: number;
   costBaselineSnapshot: number;
   billingUnitSnapshot: 'daily' | 'monthly' | 'hourly';
@@ -131,15 +135,18 @@ export interface POLine {
 export interface Assignment {
   id: string;
   workerId: string;
+  poId: string;
   poLineId: string;
   positionId: string;
+  customerId: string;
+  projectId?: string;
   startDate: number;
   endDate: number;
   status: AssignmentStatus;
+  clientApprovalStatus: ClientApprovalStatus;
   clientComments?: string;
   createdAt: number;
   updatedAt: number;
-  customerId?: string;
 }
 
 // --- HR & WORKFORCE ---
@@ -182,6 +189,14 @@ export interface WorkerDrugTest {
   workerId: string;
   testDate: number;
   result: 'negative' | 'positive';
+}
+
+export interface WorkerDocument {
+  id: string;
+  workerId: string;
+  name: string;
+  type: string;
+  uploadDate: number;
 }
 
 export interface AuditLog {
