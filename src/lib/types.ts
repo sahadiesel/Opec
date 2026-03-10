@@ -48,6 +48,16 @@ export interface User {
   address?: string;
 }
 
+export interface ClientUser {
+  id: string;
+  customerId: string;
+  email: string;
+  displayName: string;
+  isSharedAccount: boolean;
+  active: boolean;
+  createdAt: number;
+}
+
 export interface Position {
   id: string;
   positionName: string;

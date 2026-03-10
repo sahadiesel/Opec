@@ -32,6 +32,7 @@ service cloud.firestore {
     function isSystemAdmin() { return hasRole('system_admin'); }
     function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
     function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
+    function isClient() { return isSignedIn() && hasRole('client_user'); }
 
     // Top-level collections
     match /users/{userId} {
@@ -61,35 +62,51 @@ service cloud.firestore {
     match /customers {
       allow list: if isStaff();
       match /{customerId} {
-        allow get: if isStaff();
+        allow get: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
         allow write: if isSalesStaff();
-        match /{sub=**} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+        match /{sub=**} { 
+          allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
+          allow write: if isSalesStaff(); 
+        }
       }
     }
 
-    match /main_contracts {
+    match /client_users/{uid} {
+      allow get: if isStaff() || (isSignedIn() && request.auth.uid == uid);
       allow list: if isStaff();
+      allow write: if isStaff();
+    }
+
+    match /main_contracts {
+      allow list: if isStaff() || isClient();
       match /{id} {
-        allow get: if isStaff();
+        allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
         allow write: if isSalesStaff();
-        match /{sub=**} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+        match /{sub=**} { 
+          allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/main_contracts/$(id)).data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+          allow write: if isSalesStaff(); 
+        }
       }
     }
 
     match /purchase_orders {
-      allow list: if isStaff();
+      allow list: if isStaff() || isClient();
       match /{poId} {
-        allow get: if isStaff();
+        allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
         allow write: if isSalesStaff();
         match /po_lines/{lineId} {
-          allow read: if isStaff();
+          allow read: if isStaff() || isClient();
           allow write: if isSalesStaff();
           match /assignments/{asgnId} {
-            allow read: if isStaff();
+            allow read: if isStaff() || isClient();
             allow write: if isHRStaff();
           }
         }
       }
+    }
+
+    match /{path=**}/assignments/{asgnId} {
+      allow read: if isStaff() || isClient();
     }
 
     // Role verification documents
@@ -100,6 +117,7 @@ service cloud.firestore {
     match /roles_finance_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_payroll_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_store_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_client_user/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     
     match /system/bootstrap { allow read: if true; }
 

@@ -3,7 +3,7 @@
 import { useState, use, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,13 @@ import {
   Phone,
   Mail,
   Star,
-  ExternalLink
+  ExternalLink,
+  ShieldAlert,
+  KeyRound,
+  UserPlus,
+  UserMinus,
+  Lock,
+  Loader2
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -34,13 +40,16 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where } from 'firebase/firestore';
-import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { Customer, ContactPerson, MainContract, PurchaseOrder, User } from '@/lib/types';
+import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser, useAuth } from '@/firebase';
+import { doc, collection, query, where, limit, setDoc } from 'firebase/firestore';
+import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking, setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { Customer, ContactPerson, MainContract, PurchaseOrder, User, ClientUser } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import { initializeApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail } from 'firebase/auth';
+import { firebaseConfig } from '@/firebase/config';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -48,6 +57,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const auth = useAuth();
   const { toast } = useToast();
 
   const custRef = useMemoFirebase(() => (firestore ? doc(firestore, 'customers', id) : null), [firestore, id]);
@@ -56,7 +66,6 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const contactsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers', id, 'contact_persons') : null), [firestore, id]);
   const { data: contacts } = useCollection<ContactPerson>(contactsQuery as any);
 
-  // Summary Lists: Load contracts and POs linked to this customer from Top-level collections
   const contractsQuery = useMemoFirebase(() => {
     if (!firestore) return null;
     return query(collection(firestore, 'main_contracts'), where('customerId', '==', id));
@@ -69,11 +78,24 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }, [firestore, id]);
   const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
+  const clientUserQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'client_users'), where('customerId', '==', id), limit(1));
+  }, [firestore, id]);
+  const { data: clientUsers } = useCollection<ClientUser>(clientUserQuery as any);
+  const clientUser = clientUsers?.[0];
+
   const [isEditing, setIsEditing] = useState(false);
   const [editedCust, setEditedCust] = useState<Partial<Customer>>({});
 
   const [isAddContactOpen, setIsAddContactOpen] = useState(false);
   const [newContact, setNewContact] = useState<Partial<ContactPerson>>({ isPrimary: false });
+
+  // Client Account State
+  const [clientEmail, setClientEmail] = useState('');
+  const [clientPassword, setClientPassword] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [isCreatingClient, setIsCreatingClient] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -110,6 +132,77 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       deleteDocumentNonBlocking(doc(firestore, 'customers', id, 'contact_persons', contactId));
       toast({ title: "ลบข้อมูลสำเร็จ" });
     }
+  };
+
+  const handleCreateClientAccount = async () => {
+    if (!firestore || !auth || !clientEmail || !clientPassword || !clientName) return;
+    setIsCreatingClient(true);
+    
+    try {
+      // 1. Initialize secondary app to create user without logging out admin
+      const secondaryApp = getApps().find(a => a.name === 'client-creator') || initializeApp(firebaseConfig, 'client-creator');
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, clientEmail, clientPassword);
+      const uid = cred.user.uid;
+      await signOut(secondaryAuth);
+
+      // 2. Create documents
+      const now = Date.now();
+      
+      // client_users collection
+      setDocumentNonBlocking(doc(firestore, 'client_users', uid), {
+        id: uid,
+        customerId: id,
+        email: clientEmail,
+        displayName: clientName,
+        isSharedAccount: true,
+        active: true,
+        createdAt: now
+      }, { merge: true });
+
+      // standard users collection for login profile
+      setDocumentNonBlocking(doc(firestore, 'users', uid), {
+        id: uid,
+        email: clientEmail,
+        displayName: clientName,
+        roleId: 'client',
+        customerId: id,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now
+      }, { merge: true });
+
+      // role document for security rules check
+      setDocumentNonBlocking(doc(firestore, 'roles_client_user', uid), {
+        assignedAt: now
+      }, { merge: true });
+
+      toast({ title: "สร้างบัญชีลูกค้าสำเร็จ", description: `บัญชี ${clientEmail} พร้อมใช้งานแล้ว` });
+      setClientEmail('');
+      setClientPassword('');
+      setClientName('');
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: err.message });
+    } finally {
+      setIsCreatingClient(false);
+    }
+  };
+
+  const handleToggleClientStatus = (uid: string, currentStatus: boolean) => {
+    if (!firestore) return;
+    updateDocumentNonBlocking(doc(firestore, 'client_users', uid), { active: !currentStatus });
+    updateDocumentNonBlocking(doc(firestore, 'users', uid), { isActive: !currentStatus });
+    toast({ title: currentStatus ? "ปิดการใช้งานบัญชีแล้ว" : "เปิดการใช้งานบัญชีแล้ว" });
+  };
+
+  const handleResetClientPassword = (email: string) => {
+    if (!auth) return;
+    sendPasswordResetEmail(auth, email).then(() => {
+      toast({ title: "ส่งลิงก์รีเซ็ตรหัสผ่านแล้ว", description: `ลิงก์ถูกส่งไปที่ ${email}` });
+    }).catch(err => {
+      toast({ variant: "destructive", title: "Error", description: err.message });
+    });
   };
 
   if (isCustLoading || !customer || !currentUser) {
@@ -156,11 +249,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         </div>
 
         <Tabs defaultValue="info" className="w-full">
-          <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-5 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><Building2 className="h-4 w-4" /> ข้อมูลบริษัท</TabsTrigger>
             <TabsTrigger value="contacts" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> ผู้ติดต่อ</TabsTrigger>
             <TabsTrigger value="contracts" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> สัญญาหลัก</TabsTrigger>
-            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อลูกค้า (POs)</TabsTrigger>
+            <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อ (POs)</TabsTrigger>
+            <TabsTrigger value="client" className="gap-2 py-2 px-6"><ShieldAlert className="h-4 w-4" /> Client Login</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6 space-y-6">
@@ -332,7 +426,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   <CardDescription>รายการสัญญาซื้อขายกำลังคนหลัก (Master Agreements)</CardDescription>
                 </div>
                 <Button variant="outline" className="gap-2" asChild>
-                  <Link href="/main-contracts"><Plus className="h-4 w-4" /> สร้างสัญญาใหม่</Link>
+                  <Link href={`/main-contracts?customerId=${id}`}><Plus className="h-4 w-4" /> สร้างสัญญาใหม่</Link>
                 </Button>
               </CardHeader>
               <CardContent>
@@ -382,8 +476,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   <CardTitle>Customer POs (ใบสั่งซื้อจากลูกค้ารายนี้)</CardTitle>
                   <CardDescription>รายการจองโควต้ากำลังคนตามสัญญา</CardDescription>
                 </div>
-                <Button variant="outline" className="gap-2" onClick={() => router.push('/purchase-orders')}>
-                  <Plus className="h-4 w-4" /> สร้าง Customer PO
+                <Button variant="outline" className="gap-2" asChild>
+                  <Link href={`/purchase-orders?customerId=${id}`}><Plus className="h-4 w-4" /> สร้าง Customer PO</Link>
                 </Button>
               </CardHeader>
               <CardContent>
@@ -424,6 +518,131 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 </Table>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="client" className="mt-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="md:col-span-2">
+                <CardHeader>
+                  <CardTitle>การจัดการบัญชีลูกค้า (Client Portal Login)</CardTitle>
+                  <CardDescription>กำหนดบัญชีผู้ใช้งานสำหรับให้ลูกค้าเข้าดูระบบ Candidate และสถานะงาน</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {clientUser ? (
+                    <div className="space-y-6">
+                      <div className="p-4 border rounded-lg bg-muted/30 flex items-start justify-between">
+                        <div className="space-y-1">
+                          <h4 className="font-bold text-lg">{clientUser.displayName}</h4>
+                          <p className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Mail className="h-3.5 w-3.5" /> {clientUser.email}
+                          </p>
+                          <div className="flex gap-2 mt-2">
+                            <Badge variant={clientUser.active ? "default" : "destructive"}>
+                              {clientUser.active ? "สถานะ: พร้อมใช้งาน" : "สถานะ: ปิดใช้งาน"}
+                            </Badge>
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700">Shared Account</Badge>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="gap-2" 
+                            onClick={() => handleResetClientPassword(clientUser.email)}
+                          >
+                            <KeyRound className="h-4 w-4" /> รีเซ็ตรหัสผ่าน
+                          </Button>
+                          <Button 
+                            variant={clientUser.active ? "destructive" : "default"} 
+                            size="sm" 
+                            className="gap-2"
+                            onClick={() => handleToggleClientStatus(clientUser.id, clientUser.active)}
+                          >
+                            {clientUser.active ? <UserMinus className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                            {clientUser.active ? "ระงับการใช้งาน" : "เปิดการใช้งาน"}
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg flex gap-3">
+                        <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0" />
+                        <div className="text-xs text-amber-800 space-y-1">
+                          <p className="font-bold">นโยบายความปลอดภัย (Security Policy)</p>
+                          <p>บัญชีนี้มีสิทธิ์เข้าถึงข้อมูล Candidate และใบเซอร์ของคนงานที่ส่งให้พิจารณาเท่านั้น ไม่สามารถเข้าถึงข้อมูลต้นทุนหรือระบบฝ่ายบุคคลภายในได้</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>ชื่อแสดงผล (Display Name)</Label>
+                          <Input 
+                            placeholder="เช่น Shared Account - PTT Group" 
+                            value={clientName} 
+                            onChange={e => setClientName(e.target.value)} 
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>อีเมลเข้าใช้งาน (Email)</Label>
+                          <Input 
+                            type="email" 
+                            placeholder="client@company.com" 
+                            value={clientEmail} 
+                            onChange={e => setClientEmail(e.target.value)} 
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>กำหนดรหัสผ่านเบื้องต้น</Label>
+                          <Input 
+                            type="password" 
+                            placeholder="อย่างน้อย 6 ตัวอักษร" 
+                            value={clientPassword} 
+                            onChange={e => setClientPassword(e.target.value)} 
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end pt-4 border-t">
+                        <Button 
+                          className="gap-2" 
+                          onClick={handleCreateClientAccount}
+                          disabled={isCreatingClient || !clientEmail || !clientPassword || !clientName}
+                        >
+                          {isCreatingClient ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                          สร้างบัญชีผู้ใช้งานใหม่
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Client Portal Features</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-xs space-y-3">
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5 bg-green-100 p-1 rounded text-green-700"><Plus className="h-3 w-3" /></div>
+                      <p>พิจารณาตัวบุคคล (Candidate Review)</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5 bg-green-100 p-1 rounded text-green-700"><Plus className="h-3 w-3" /></div>
+                      <p>ตรวจสอบใบเซอร์และผลตรวจร่างกาย</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5 bg-green-100 p-1 rounded text-green-700"><Plus className="h-3 w-3" /></div>
+                      <p>แสดงความเห็นและขอเปลี่ยนตัวคนงาน</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5 bg-green-100 p-1 rounded text-green-700"><Plus className="h-3 w-3" /></div>
+                      <p>ดูประวัติการอนุมัติย้อนหลัง</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
