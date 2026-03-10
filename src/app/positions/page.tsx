@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, Edit, ListChecks, HardHat, Hammer, ChevronRight } from 'lucide-react';
+import { Plus, Search, Trash2, Edit, ChevronRight, Briefcase } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Position, RoleType, User } from '@/lib/types';
+import { Position, User } from '@/lib/types';
 import { 
   Dialog, 
   DialogContent, 
@@ -18,9 +19,9 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, addDoc } from 'firebase/firestore';
+import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 
@@ -30,14 +31,22 @@ export default function PositionsPage() {
   const firestore = useFirestore();
 
   const positionsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !user) return null;
+    if (!firestore || !firebaseUser) return null;
     return collection(firestore, 'positions');
-  }, [firestore, firebaseUser, user]);
+  }, [firestore, firebaseUser]);
 
   const { data: positions, isLoading } = useCollection<Position>(positionsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newPosition, setNewPosition] = useState({ name: '', code: '', description: '' });
+  const [newPosition, setNewPosition] = useState<Partial<Position>>({
+    positionName: '',
+    positionCode: '',
+    category: 'Offshore',
+    active: true,
+    description: '',
+    payrollBasis: 'Daily',
+    notes: ''
+  });
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -49,30 +58,41 @@ export default function PositionsPage() {
     const posRef = collection(firestore, 'positions');
     addDocumentNonBlocking(posRef, {
       ...newPosition,
-      isActive: true,
       createdAt: Date.now(),
       updatedAt: Date.now()
     });
     setIsCreateOpen(false);
-    setNewPosition({ name: '', code: '', description: '' });
+    setNewPosition({
+      positionName: '',
+      positionCode: '',
+      category: 'Offshore',
+      active: true,
+      description: '',
+      payrollBasis: 'Daily',
+      notes: ''
+    });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (!firestore) return;
     if (confirm('ยืนยันการลบตำแหน่งงานนี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'positions', id));
     }
   };
 
-  if (!user || isUserLoading) return null;
+  if (isUserLoading || !user) return null;
 
   return (
     <AppShell user={user} onLogout={() => {}}>
       <div className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary">เมทริกซ์ตำแหน่งงาน (Position Matrix)</h1>
-            <p className="text-muted-foreground">กำหนดเกณฑ์ความพร้อม มาตรฐานใบรับรอง PPE และอุปกรณ์สำหรับแต่ละตำแหน่ง</p>
+            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
+              <Briefcase className="h-6 w-6" /> เมทริกซ์ตำแหน่งงาน (Position Matrix)
+            </h1>
+            <p className="text-muted-foreground">กำหนดมาตรฐานเกณฑ์ความพร้อม PPE และอุปกรณ์สำหรับกำลังคน</p>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -81,19 +101,50 @@ export default function PositionsPage() {
                 <Plus className="h-4 w-4" /> เพิ่มตำแหน่งงานใหม่
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>สร้างตำแหน่งงานใหม่</DialogTitle>
                 <DialogDescription>ระบุข้อมูลพื้นฐานของตำแหน่งงานเพื่อนำไปกำหนดเกณฑ์มาตรฐาน</DialogDescription>
               </DialogHeader>
-              <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="name">ชื่อตำแหน่ง (Position Name)</Label>
-                  <Input id="name" value={newPosition.name} onChange={e => setNewPosition({...newPosition, name: e.target.value})} />
+                  <Input id="name" value={newPosition.positionName} onChange={e => setNewPosition({...newPosition, positionName: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="code">รหัสตำแหน่ง (Code)</Label>
-                  <Input id="code" value={newPosition.code} onChange={e => setNewPosition({...newPosition, code: e.target.value})} />
+                  <Input id="code" value={newPosition.positionCode} onChange={e => setNewPosition({...newPosition, positionCode: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>หมวดหมู่ (Category)</Label>
+                  <Select onValueChange={v => setNewPosition({...newPosition, category: v})} value={newPosition.category}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Offshore">Offshore</SelectItem>
+                      <SelectItem value="Onshore">Onshore</SelectItem>
+                      <SelectItem value="Technical">Technical</SelectItem>
+                      <SelectItem value="Administrative">Administrative</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>ฐานการจ่ายเงิน (Payroll Basis)</Label>
+                  <Select onValueChange={v => setNewPosition({...newPosition, payrollBasis: v as any})} value={newPosition.payrollBasis}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Daily">Daily</SelectItem>
+                      <SelectItem value="Monthly">Monthly</SelectItem>
+                      <SelectItem value="Hourly">Hourly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2 col-span-2">
+                  <Label htmlFor="desc">รายละเอียดงาน (Description)</Label>
+                  <Input id="desc" value={newPosition.description} onChange={e => setNewPosition({...newPosition, description: e.target.value})} />
                 </div>
               </div>
               <DialogFooter>
@@ -116,37 +167,48 @@ export default function PositionsPage() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลตำแหน่งงาน...</div>
+              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูล...</div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>ตำแหน่ง (Position)</TableHead>
                     <TableHead>รหัส (Code)</TableHead>
-                    <TableHead>สถานะ (Status)</TableHead>
-                    <TableHead className="text-right">จัดการ (Actions)</TableHead>
+                    <TableHead>หมวดหมู่</TableHead>
+                    <TableHead>ฐานการจ่าย</TableHead>
+                    <TableHead>สถานะ</TableHead>
+                    <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {positions?.map((pos) => (
-                    <TableRow key={pos.id}>
-                      <TableCell className="font-semibold">{pos.name}</TableCell>
-                      <TableCell>{pos.code}</TableCell>
-                      <TableCell>
-                        <Badge variant={pos.isActive ? 'default' : 'secondary'}>
-                          {pos.isActive ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Button variant="outline" size="sm" className="gap-2">
-                          <Edit className="h-4 w-4" /> เกณฑ์มาตรฐาน
-                        </Button>
-                        <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(pos.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
+                    <TableRow key={pos.id} className="cursor-pointer hover:bg-muted/50 group" asChild>
+                      <Link href={`/positions/${pos.id}`}>
+                        <TableCell className="font-semibold">{pos.positionName}</TableCell>
+                        <TableCell className="font-mono text-xs">{pos.positionCode}</TableCell>
+                        <TableCell>{pos.category}</TableCell>
+                        <TableCell>{pos.payrollBasis}</TableCell>
+                        <TableCell>
+                          <Badge variant={pos.active ? 'default' : 'secondary'}>
+                            {pos.active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button variant="ghost" size="icon" className="text-destructive" onClick={(e) => handleDelete(pos.id, e)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        </TableCell>
+                      </Link>
                     </TableRow>
                   ))}
+                  {(!positions || positions.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงาน</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}

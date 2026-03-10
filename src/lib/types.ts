@@ -4,14 +4,14 @@
  */
 
 export type RoleType = 
-  | 'system_admin'     // P'Joe
-  | 'finance_officer'  // P'Joe
-  | 'sales_officer'    // Dom
-  | 'hr_manager'       // Nuch
-  | 'hr_officer'       // Ying
-  | 'payroll_officer'  // Koy
-  | 'store_officer'    // Nut
-  | 'client';          // Shared customer account
+  | 'system_admin'
+  | 'finance_officer'
+  | 'sales_officer'
+  | 'hr_manager'
+  | 'hr_officer'
+  | 'payroll_officer'
+  | 'store_officer'
+  | 'client';
 
 export type ReadinessStatus = 
   | 'READY' 
@@ -55,19 +55,43 @@ export interface User {
 
 export interface Position {
   id: string;
-  name: string;
-  code: string;
-  description?: string;
-  isActive: boolean;
+  positionName: string;
+  positionCode: string;
+  category: string;
+  active: boolean;
+  description: string;
+  payrollBasis: 'Daily' | 'Monthly' | 'Hourly';
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
-export interface PositionRequirement {
+export interface PositionCertificateRequirement {
   id: string;
-  positionId: string;
-  type: 'certificate' | 'ppe' | 'tool';
-  name: string;
-  description?: string;
-  isMandatory: boolean;
+  certificateName: string;
+  certificateCode: string;
+  required: boolean;
+  validityMonths?: number;
+  notes?: string;
+}
+
+export interface PositionPPERequirement {
+  id: string;
+  itemName: string;
+  itemCode: string;
+  quantityDefault: number;
+  required: boolean;
+  notes?: string;
+}
+
+export interface PositionToolRequirement {
+  id: string;
+  itemName: string;
+  itemCode: string;
+  itemType: 'tool' | 'equipment' | 'consumable';
+  quantityDefault: number;
+  allowed: boolean;
+  notes?: string;
 }
 
 // --- COMMERCIAL MODULE ---
@@ -81,15 +105,6 @@ export interface Customer {
   createdAt: number;
 }
 
-export interface ContactPerson {
-  id: string;
-  customerId: string;
-  name: string;
-  position: string;
-  email: string;
-  phone: string;
-}
-
 export interface MainContract {
   id: string;
   customerId: string;
@@ -99,14 +114,6 @@ export interface MainContract {
   endDate: number;
   status: 'active' | 'expired' | 'pending';
   createdAt: number;
-}
-
-export interface MainContractPositionRate {
-  id: string;
-  contractId: string;
-  positionId: string;
-  sellRate: number;
-  billingUnit: 'daily' | 'monthly' | 'hourly';
 }
 
 export interface PurchaseOrder {
@@ -135,16 +142,11 @@ export interface POLine {
 export interface Assignment {
   id: string;
   workerId: string;
-  poId: string;
   poLineId: string;
   positionId: string;
-  customerId: string;
-  projectId?: string;
   startDate: number;
   endDate: number;
   status: AssignmentStatus;
-  clientApprovalStatus: ClientApprovalStatus;
-  clientComments?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -159,53 +161,10 @@ export interface Worker {
   dateOfBirth: number;
   contactPhone: string;
   currentPositionId: string;
-  secondaryPositionIds?: string[]; 
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
   nationality: string;
   gender: string;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface WorkerCertificate {
-  id: string;
-  workerId: string;
-  certificateName: string;
-  expiryDate: number;
-  isVerified: boolean;
-}
-
-export interface WorkerMedicalRecord {
-  id: string;
-  workerId: string;
-  checkDate: number;
-  expiryDate: number;
-  result: 'pass' | 'fail';
-}
-
-export interface WorkerDrugTest {
-  id: string;
-  workerId: string;
-  testDate: number;
-  result: 'negative' | 'positive';
-}
-
-export interface WorkerDocument {
-  id: string;
-  workerId: string;
-  name: string;
-  type: string;
-  uploadDate: number;
-}
-
-export interface AuditLog {
-  id: string;
-  userId: string;
-  userName: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'APPROVE' | 'REPLACE';
-  collection: string;
-  documentId: string;
-  timestamp: number;
-  changes?: any;
 }
