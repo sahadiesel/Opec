@@ -102,6 +102,7 @@ export interface WorkerCertificate {
   status: 'valid' | 'expired' | 'pending_renewal';
   fileUrl?: string;
   notes?: string;
+  _path: string;
 }
 
 export interface WorkerMedicalRecord {
@@ -113,6 +114,7 @@ export interface WorkerMedicalRecord {
   hospitalOrClinic: string;
   notes?: string;
   fileUrl?: string;
+  _path: string;
 }
 
 export interface WorkerDrugTest {
@@ -123,6 +125,7 @@ export interface WorkerDrugTest {
   laboratory: string;
   notes?: string;
   fileUrl?: string;
+  _path: string;
 }
 
 export interface WorkerDocument {
@@ -133,6 +136,7 @@ export interface WorkerDocument {
   expiryDate: number;
   fileUrl?: string;
   notes?: string;
+  _path: string;
 }
 
 // --- COMMERCIAL MODULE ---
@@ -140,10 +144,30 @@ export interface WorkerDocument {
 export interface Customer {
   id: string;
   name: string;
+  customerCode: string;
   taxId: string;
-  address: string;
+  registeredAddress: string;
+  billingAddress: string;
+  phone: string;
+  email: string;
+  billingTerms: string;
+  creditTerms: string;
   isActive: boolean;
+  notes: string;
   createdAt: number;
+  updatedAt: number;
+}
+
+export interface ContactPerson {
+  id: string;
+  name: string;
+  department: string;
+  role: string;
+  phone: string;
+  email: string;
+  isPrimary: boolean;
+  notes: string;
+  _path?: string;
 }
 
 export interface MainContract {
@@ -178,6 +202,7 @@ export interface POLine {
   costBaselineSnapshot: number;
   billingUnitSnapshot: 'daily' | 'monthly' | 'hourly';
   overtimeRuleSnapshot: string;
+  _path?: string;
 }
 
 export interface Assignment {

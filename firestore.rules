@@ -42,14 +42,18 @@ service cloud.firestore {
       return isSignedIn() && (isSystemAdmin() || isHRManager() || isHROfficer());
     }
 
+    function isSalesStaff() {
+      return isSignedIn() && (isSystemAdmin() || isSalesOfficer());
+    }
+
     // Collection Group support
     match /{path=**}/assignments/{asgnId} { 
       allow read: if isStaff() || (isSignedIn() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId); 
       allow write: if isStaff();
     }
-    match /{path=**}/purchase_orders/{poId} { allow read: if isStaff(); }
-    match /{path=**}/po_lines/{lineId} { allow read: if isStaff(); }
-    match /{path=**}/main_contracts/{id} { allow read: if isStaff(); }
+    match /{path=**}/purchase_orders/{poId} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+    match /{path=**}/main_contracts/{id} { allow read: if isStaff(); allow write: if isSalesStaff(); }
+    match /{path=**}/po_lines/{lineId} { allow read: if isStaff(); allow write: if isSalesStaff(); }
 
     // Users
     match /users/{userId} {
@@ -82,8 +86,8 @@ service cloud.firestore {
       allow list: if isStaff();
       match /{customerId} {
         allow get: if isStaff();
-        allow write: if isSystemAdmin() || isSalesOfficer();
-        match /{sub=**} { allow read, write: if isStaff(); }
+        allow write: if isSalesStaff();
+        match /{sub=**} { allow read: if isStaff(); allow write: if isSalesStaff(); }
       }
     }
 
