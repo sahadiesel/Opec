@@ -21,8 +21,8 @@ import {
   Building2,
   Phone,
   Mail,
-  MoreHorizontal,
-  Star
+  Star,
+  ExternalLink
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -40,9 +40,11 @@ import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlo
 import { Customer, ContactPerson, MainContract, PurchaseOrder, User } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -54,18 +56,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const contactsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers', id, 'contact_persons') : null), [firestore, id]);
   const { data: contacts } = useCollection<ContactPerson>(contactsQuery as any);
 
-  // Cross-reference: Load contracts and POs linked to this customer
+  // Summary Lists: Load contracts and POs linked to this customer from Top-level collections
   const contractsQuery = useMemoFirebase(() => {
     if (!firestore) return null;
-    // In our simplified logic, main_contracts might be under customers/{id}/main_contracts
-    return collection(firestore, 'customers', id, 'main_contracts');
+    return query(collection(firestore, 'main_contracts'), where('customerId', '==', id));
   }, [firestore, id]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
 
   const poQuery = useMemoFirebase(() => {
     if (!firestore) return null;
-    // Purchase orders might also be hierarchical or shared
-    return collection(firestore, 'customers', id, 'purchase_orders');
+    return query(collection(firestore, 'purchase_orders'), where('customerId', '==', id));
   }, [firestore, id]);
   const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
 
@@ -343,7 +343,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableHead>หัวข้อสัญญา</TableHead>
                       <TableHead>ระยะเวลา</TableHead>
                       <TableHead>สถานะ</TableHead>
-                      <TableHead className="text-right">ดูข้อมูล</TableHead>
+                      <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -358,7 +358,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           <Badge variant={contract.status === 'active' ? 'default' : 'secondary'}>{contract.status.toUpperCase()}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" asChild><Link href="/main-contracts"><ArrowLeft className="h-4 w-4 rotate-180" /></Link></Button>
+                          <Button variant="ghost" size="sm" className="gap-2" onClick={() => router.push(`/main-contracts/${contract.id}`)}>
+                            <ExternalLink className="h-4 w-4" /> ดูรายละเอียด
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -380,8 +382,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   <CardTitle>ใบสั่งซื้อ (Purchase Orders)</CardTitle>
                   <CardDescription>รายการจองโควต้ากำลังคนตามสัญญา</CardDescription>
                 </div>
-                <Button variant="outline" className="gap-2" asChild>
-                  <Link href="/purchase-orders"><Plus className="h-4 w-4" /> สร้างใบสั่งซื้อใหม่</Link>
+                <Button variant="outline" className="gap-2" onClick={() => router.push('/purchase-orders')}>
+                  <Plus className="h-4 w-4" /> จัดการใบสั่งซื้อ
                 </Button>
               </CardHeader>
               <CardContent>
@@ -392,7 +394,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableHead>รายละเอียด</TableHead>
                       <TableHead>ระยะเวลา</TableHead>
                       <TableHead>สถานะ</TableHead>
-                      <TableHead className="text-right">ดูข้อมูล</TableHead>
+                      <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -407,7 +409,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" asChild><Link href="/purchase-orders"><ArrowLeft className="h-4 w-4 rotate-180" /></Link></Button>
+                          <Button variant="ghost" size="sm" className="gap-2" onClick={() => router.push(`/purchase-orders/${po.id}`)}>
+                            <ExternalLink className="h-4 w-4" /> ดูรายละเอียด
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
