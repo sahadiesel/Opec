@@ -22,7 +22,7 @@ import {
   Users,
   Calendar,
   CheckCircle2,
-  Clock
+  AlertCircle
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -54,6 +54,8 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const poLinesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders', id, 'po_lines') : null), [firestore, id]);
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
 
+  // For assignments summary - fetch all assignments for this PO Line collection group if needed, 
+  // or fetch specific ones. Here we fetch group and filter.
   const assignmentsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser) return null;
     return collectionGroup(firestore, 'assignments');
@@ -81,8 +83,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const [isAddLineOpen, setIsAddLineOpen] = useState(false);
   const [newLine, setNewLine] = useState<Partial<POLine>>({ 
     quantity: 1,
-    startDate: po?.startDate || Date.now(),
-    endDate: po?.endDate || Date.now() + 2592000000
+    status: 'active'
   });
 
   useEffect(() => {
@@ -102,7 +103,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     
     const rate = rates?.find(r => r.positionId === newLine.positionId);
     if (!rate) {
-      toast({ variant: "destructive", title: "Error", description: "ไม่พบอัตราราคาสำหรับตำแหน่งนี้ในสัญญาที่เลือก" });
+      toast({ variant: "destructive", title: "Error", description: "ไม่พบอัตราราคาสำหรับตำแหน่งนี้ในสัญญาหลัก" });
       return;
     }
 
@@ -115,17 +116,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       sellRateSnapshot: rate.sellRate,
       costBaselineSnapshot: rate.costBaseline,
       billingUnitSnapshot: rate.billingUnit,
-      overtimeRuleSnapshot: rate.overtimeRule
+      overtimeRuleSnapshot: rate.overtimeRule,
+      status: 'active'
     });
     
     setIsAddLineOpen(false);
-    setNewLine({ quantity: 1 });
-    toast({ title: "เพิ่มรายการ PO Line สำเร็จ" });
+    setNewLine({ quantity: 1, status: 'active' });
+    toast({ title: "เพิ่ม PO Line สำเร็จ" });
   };
 
   const deleteLine = (lineId: string) => {
     if (!firestore) return;
-    if (confirm('ยืนยันการลบรายการนี้? การมอบหมายที่เกี่ยวข้องอาจได้รับผลกระทบ')) {
+    if (confirm('ยืนยันการลบรายการนี้? รายการมอบหมายที่เชื่อมโยงอยู่จะยังคงอยู่แต่จะเสียการอ้างอิง')) {
       deleteDocumentNonBlocking(doc(firestore, 'purchase_orders', id, 'po_lines', lineId));
     }
   };
@@ -159,7 +161,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             <p className="text-muted-foreground flex items-center gap-4 mt-1 text-sm">
               <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
               <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '...'}</span>
-              <span className="flex items-center gap-1 text-xs"><Briefcase className="h-3.5 w-3.5" /> โครงการ: {po.projectName || 'N/A'}</span>
             </p>
           </div>
           <div className="flex gap-2">
@@ -176,18 +177,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
         <Tabs defaultValue="lines" className="w-full">
           <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูล Customer PO</TabsTrigger>
-            <TabsTrigger value="lines" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> รายการสั่งจอง (PO Lines)</TabsTrigger>
-            <TabsTrigger value="assignments" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> การมอบหมายงาน</TabsTrigger>
+            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูล PO</TabsTrigger>
+            <TabsTrigger value="lines" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> PO Lines (จองโควต้า)</TabsTrigger>
+            <TabsTrigger value="assignments" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> Assignments (คนงาน)</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6">
             <Card>
-              <CardHeader><CardTitle>ข้อมูลพื้นฐาน Customer PO (Header Info)</CardTitle></CardHeader>
+              <CardHeader><CardTitle>รายละเอียด Customer PO (Header Info)</CardTitle></CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label>หัวข้อใบสั่งซื้อ (Title)</Label>
+                    <Label>หัวข้อ / ชื่อโครงการ</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedPO.title : po.title} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
                   </div>
                   <div className="space-y-2">
@@ -195,16 +196,16 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <Input disabled={!isEditing} value={isEditing ? editedPO.poCode : po.poCode} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
                   </div>
                   <div className="space-y-2">
-                    <Label>ชื่อโครงการ (Project Name)</Label>
+                    <Label>ชื่อโครงการเฉพาะ (Project Name)</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedPO.projectName : po.projectName} onChange={e => setEditedPO({...editedPO, projectName: e.target.value})} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>วันที่เริ่มงาน (ตาม PO)</Label>
+                      <Label>วันที่เริ่มงานตาม PO</Label>
                       <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.startDate || 0).toISOString().split('T')[0] : new Date(po.startDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, startDate: new Date(e.target.value).getTime()})} />
                     </div>
                     <div className="space-y-2">
-                      <Label>วันที่สิ้นสุดงาน</Label>
+                      <Label>วันที่สิ้นสุดงานตาม PO</Label>
                       <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.endDate || 0).toISOString().split('T')[0] : new Date(po.endDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, endDate: new Date(e.target.value).getTime()})} />
                     </div>
                   </div>
@@ -237,20 +238,20 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle>รายการจองโควต้ากำลังคน (PO Lines)</CardTitle>
-                  <CardDescription>ระบุจำนวนคนงานและอัตราราคาที่สั่งซื้อตามสัญญา</CardDescription>
+                  <CardDescription>กำหนดจำนวนคนงานรายตำแหน่งและบันทึกอัตราราคา Snapshot</CardDescription>
                 </div>
                 <Dialog open={isAddLineOpen} onOpenChange={setIsAddLineOpen}>
                   <DialogTrigger asChild>
-                    <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มรายการจอง</Button>
+                    <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มรายการจองตำแหน่ง</Button>
                   </DialogTrigger>
                   <DialogContent className="max-w-md">
                     <DialogHeader>
-                      <DialogTitle>เพิ่มรายการจองตำแหน่งงาน</DialogTitle>
+                      <DialogTitle>เพิ่มรายการจองกำลังคน</DialogTitle>
                       <DialogDescription>เลือกตำแหน่งงานจากสัญญาที่เกี่ยวข้องและระบุจำนวน</DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label>ตำแหน่งงาน (จากสัญญา)</Label>
+                        <Label>ตำแหน่งงาน (ที่ระบุในสัญญา)</Label>
                         <Select onValueChange={v => setNewLine({...newLine, positionId: v})} value={newLine.positionId}>
                           <SelectTrigger><SelectValue placeholder="เลือกตำแหน่งงาน..." /></SelectTrigger>
                           <SelectContent>
@@ -269,18 +270,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
-                          <Label>วันที่เริ่ม</Label>
+                          <Label>วันที่เริ่ม (รายบรรทัด)</Label>
                           <Input type="date" value={newLine.startDate ? new Date(newLine.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewLine({...newLine, startDate: new Date(e.target.value).getTime()})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>วันที่สิ้นสุด</Label>
+                          <Label>วันที่สิ้นสุด (รายบรรทัด)</Label>
                           <Input type="date" value={newLine.endDate ? new Date(newLine.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewLine({...newLine, endDate: new Date(e.target.value).getTime()})} />
                         </div>
                       </div>
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddLineOpen(false)}>ยกเลิก</Button>
-                      <Button onClick={handleAddLine} disabled={!newLine.positionId || !newLine.quantity}>เพิ่มรายการ</Button>
+                      <Button onClick={handleAddLine} disabled={!newLine.positionId || !newLine.quantity}>เพิ่มรายการจอง</Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -289,18 +290,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>ตำแหน่งงาน</TableHead>
-                      <TableHead>ความต้องการ</TableHead>
-                      <TableHead>มอบหมายแล้ว</TableHead>
-                      <TableHead>พื้นที่ว่าง (Slots)</TableHead>
-                      <TableHead>ราคาขาย (Sell)</TableHead>
+                      <TableHead>ตำแหน่งงาน (Position)</TableHead>
+                      <TableHead>โควต้า (Req)</TableHead>
+                      <TableHead>มอบหมายแล้ว (Asgn)</TableHead>
+                      <TableHead>คงเหลือ (Slots)</TableHead>
+                      <TableHead>ราคาขาย (Snapshot)</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {poLines?.map(line => {
                       const pos = allPositions?.find(p => p.id === line.positionId);
-                      const assignedCount = allAssignments?.filter(a => a.poLineId === line.id && ['approved', 'active', 'mobilizing'].includes(a.status)).length || 0;
+                      const assignedCount = poAssignments.filter(a => a.poLineId === line.id && ['approved', 'active', 'mobilizing'].includes(a.status)).length;
                       const remaining = line.quantity - assignedCount;
                       
                       return (
@@ -314,7 +315,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="font-bold">{line.quantity} อัตรา</TableCell>
+                          <TableCell className="font-bold">{line.quantity}</TableCell>
                           <TableCell>
                             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
                               {assignedCount} คน
@@ -322,12 +323,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           </TableCell>
                           <TableCell>
                             {remaining > 0 ? (
-                              <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100 border-amber-200">
+                              <Badge className="bg-amber-100 text-amber-700 border-amber-200">
                                 {remaining} ว่าง
                               </Badge>
                             ) : (
-                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-green-200">
-                                <CheckCircle2 className="h-3 w-3 mr-1" /> เต็มแล้ว
+                              <Badge className="bg-green-100 text-green-700 border-green-200">
+                                <CheckCircle2 className="h-3 w-3 mr-1" /> เต็ม
                               </Badge>
                             )}
                           </TableCell>
@@ -359,15 +360,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
           <TabsContent value="assignments" className="mt-6">
             <Card>
               <CardHeader>
-                <CardTitle>รายการคนงานที่ได้รับมอบหมาย (Assigned Workers)</CardTitle>
-                <CardDescription>แสดงรายชื่อคนงานทั้งหมดที่ทำงานภายใต้ใบสั่งซื้อโครงการนี้</CardDescription>
+                <CardTitle>รายชื่อคนงานที่ได้รับมอบหมาย (Project Assignments)</CardTitle>
+                <CardDescription>แสดงรายชื่อคนงานทั้งหมดที่ทำงานภายใต้ใบสั่งซื้อโครงการนี้ (รวบรวมจากทุก PO Lines)</CardDescription>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>คนงาน</TableHead>
-                      <TableHead>ตำแหน่ง</TableHead>
+                      <TableHead>ตำแหน่งงาน</TableHead>
                       <TableHead>ระยะเวลาทำงาน</TableHead>
                       <TableHead>สถานะ</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
@@ -398,7 +399,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             </TableCell>
                             <TableCell className="text-right">
                               <Button variant="ghost" size="sm" asChild>
-                                <Link href="/assignments">ดูในหน้าจัดการ</Link>
+                                <Link href="/assignments">จัดการการมอบหมาย</Link>
                               </Button>
                             </TableCell>
                           </TableRow>
@@ -407,7 +408,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     ) : (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">
-                          ยังไม่มีการมอบหมายคนงานใน PO นี้ (กรุณาไปที่เมนู 'การมอบหมาย' เพื่อเพิ่มคนงาน)
+                          ยังไม่มีการมอบหมายคนงานใน PO นี้ (กรุณาไปที่เมนู 'การมอบหมาย' เพื่อเพิ่มคนงานเข้า PO Lines)
                         </TableCell>
                       </TableRow>
                     )}

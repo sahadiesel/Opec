@@ -90,7 +90,7 @@ export default function CustomerPOsPage() {
       });
       
       setIsCreateOpen(false);
-      toast({ title: "สร้างใบสั่งซื้อสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด PO Lines..." });
+      toast({ title: "สร้างใบสั่งซื้อสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด Customer PO..." });
       
       if (docRef) {
         router.push(`/purchase-orders/${docRef.id}`);
@@ -119,7 +119,7 @@ export default function CustomerPOsPage() {
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
               <ShoppingCart className="h-6 w-6" /> ใบสั่งซื้อลูกค้า (Customer POs)
             </h1>
-            <p className="text-muted-foreground">จัดการใบสั่งซื้อและการจองโควต้ากำลังคน (Quota Booking)</p>
+            <p className="text-muted-foreground">จัดการใบสั่งซื้อกำลังคนจากลูกค้า (Client Issued POs)</p>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -131,16 +131,16 @@ export default function CustomerPOsPage() {
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>สร้างใบสั่งซื้อจากลูกค้าใหม่</DialogTitle>
-                <DialogDescription>เลือกคู่ค้าและสัญญาหลักที่อ้างอิงเพื่อจองโควต้ากำลังคน</DialogDescription>
+                <DialogDescription>เลือกคู่ค้าและสัญญาหลักเพื่อจองโควต้ากำลังคน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
                   <Label>หัวข้อใบสั่งซื้อ (Title)</Label>
-                  <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น สั่งจองกำลังคนรอบเดือน พ.ค. 2567" />
+                  <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น งานบำรุงรักษาโครงการปิโตรเคมี X" />
                 </div>
                 <div className="grid gap-2">
                   <Label>เลขที่ Customer PO (PO Code)</Label>
-                  <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-2024-001" />
+                  <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-2024-XXXX" />
                 </div>
                 <div className="grid gap-2">
                   <Label>ชื่อโครงการ (Project Name)</Label>
@@ -149,7 +149,7 @@ export default function CustomerPOsPage() {
                 <div className="grid gap-2">
                   <Label>ลูกค้า (Customer)</Label>
                   <Select onValueChange={v => setNewPO({...newPO, customerId: v, contractId: ''})} value={newPO.customerId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกบริษัท..." /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
                     <SelectContent>
                       {customers?.map(c => (
                         <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
@@ -169,15 +169,15 @@ export default function CustomerPOsPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label>วันที่เริ่มงาน</Label>
+                  <Label>วันที่เริ่มโครงการ</Label>
                   <Input type="date" value={newPO.startDate ? new Date(newPO.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, startDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>วันที่สิ้นสุดงาน</Label>
+                  <Label>วันที่สิ้นสุดโครงการ</Label>
                   <Input type="date" value={newPO.endDate ? new Date(newPO.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, endDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2 col-span-2">
-                  <Label>รายละเอียด</Label>
+                  <Label>รายละเอียดโครงการ</Label>
                   <Textarea value={newPO.description} onChange={e => setNewPO({...newPO, description: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
@@ -207,7 +207,7 @@ export default function CustomerPOsPage() {
               <CardTitle>รายการ Customer PO ทั้งหมด</CardTitle>
               <div className="relative w-72">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาเลขที่ PO หรือชื่อโครงการ..." className="pl-8" />
+                <Input type="search" placeholder="ค้นหาเลขที่ PO หรือลูกค้า..." className="pl-8" />
               </div>
             </div>
           </CardHeader>
@@ -219,8 +219,8 @@ export default function CustomerPOsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>เลขที่ PO</TableHead>
-                    <TableHead>ลูกค้า / สัญญา</TableHead>
-                    <TableHead>โครงการ</TableHead>
+                    <TableHead>ลูกค้า (Customer)</TableHead>
+                    <TableHead>สัญญาหลัก (Main Contract)</TableHead>
                     <TableHead>ระยะเวลา</TableHead>
                     <TableHead>สถานะ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
@@ -238,17 +238,15 @@ export default function CustomerPOsPage() {
                       >
                         <TableCell className="font-mono text-xs font-bold">{po.poCode}</TableCell>
                         <TableCell>
-                          <div className="flex flex-col text-xs">
-                            <span className="font-semibold text-sm">{customer?.name || 'N/A'}</span>
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              <FileText className="h-3 w-3" /> {contract?.contractNumber || 'No Contract'}
-                            </span>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                            {customer?.name || 'N/A'}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-sm">
-                            <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
-                            {po.projectName || '-'}
+                          <div className="flex items-center gap-2 text-xs">
+                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                            {contract?.contractNumber || 'No Contract'}
                           </div>
                         </TableCell>
                         <TableCell className="text-xs">

@@ -213,8 +213,7 @@ export interface PurchaseOrder {
   id: string;
   contractId: string;
   customerId: string;
-  poCode: string; // Mapping to poNumber but following requirement
-  poNumber?: string; 
+  poCode: string; 
   title: string;
   projectName?: string;
   description?: string;
@@ -237,6 +236,7 @@ export interface POLine {
   costBaselineSnapshot: number;
   billingUnitSnapshot: 'daily' | 'monthly' | 'hourly';
   overtimeRuleSnapshot: string;
+  status?: string;
   _path?: string;
 }
 
@@ -244,7 +244,7 @@ export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
-  poId?: string; // Denormalized for easier filtering in PO view
+  poId?: string; // Denormalized for easier filtering
   positionId: string;
   customerId: string;
   startDate: number;
