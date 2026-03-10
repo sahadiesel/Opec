@@ -42,7 +42,7 @@ service cloud.firestore {
       return isSignedIn() && (isSystemAdmin() || isHRManager() || isHROfficer());
     }
 
-    // Collection Group support - MUST be defined early or specifically
+    // Collection Group support
     match /{path=**}/assignments/{asgnId} { 
       allow read: if isStaff() || (isSignedIn() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId); 
       allow write: if isStaff();

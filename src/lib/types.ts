@@ -17,6 +17,7 @@ export type ReadinessStatus =
   | 'READY' 
   | 'MISSING_CERTIFICATE' 
   | 'MEDICAL_EXPIRED' 
+  | 'DRUG_TEST_EXPIRED'
   | 'DOCUMENT_MISSING';
 
 export type WorkerStatus = 'available' | 'assigned' | 'on_leave' | 'inactive';
@@ -88,6 +89,52 @@ export interface PositionToolRequirement {
   notes?: string;
 }
 
+// --- WORKER SUB-COLLECTIONS ---
+
+export interface WorkerCertificate {
+  id: string;
+  certificateName: string;
+  certificateCode: string;
+  certificateNo: string;
+  issuedBy: string;
+  issueDate: number;
+  expiryDate: number;
+  status: 'valid' | 'expired' | 'pending_renewal';
+  fileUrl?: string;
+  notes?: string;
+}
+
+export interface WorkerMedicalRecord {
+  id: string;
+  medicalType: string;
+  examDate: number;
+  expiryDate: number;
+  fitStatus: 'fit' | 'unfit' | 'fit_with_restrictions';
+  hospitalOrClinic: string;
+  notes?: string;
+  fileUrl?: string;
+}
+
+export interface WorkerDrugTest {
+  id: string;
+  testDate: number;
+  result: 'negative' | 'positive';
+  expiryDate: number;
+  laboratory: string;
+  notes?: string;
+  fileUrl?: string;
+}
+
+export interface WorkerDocument {
+  id: string;
+  documentType: 'passport' | 'id_card' | 'house_reg' | 'other';
+  documentNo: string;
+  issueDate: number;
+  expiryDate: number;
+  fileUrl?: string;
+  notes?: string;
+}
+
 // --- COMMERCIAL MODULE ---
 
 export interface Customer {
@@ -153,14 +200,21 @@ export interface Worker {
   id: string;
   firstName: string;
   lastName: string;
+  nickname?: string;
   thaiNationalId: string;
+  passportNo?: string;
   dateOfBirth: number;
   contactPhone: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  address?: string;
   currentPositionId: string;
+  secondaryPositionIds?: string[];
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
   nationality: string;
   gender: string;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
 }
