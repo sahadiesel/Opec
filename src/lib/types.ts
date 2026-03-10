@@ -1,6 +1,6 @@
 /**
  * OPEC OpsFlow - TypeScript Data Models
- * Aligned with MASTER BLUEPRINT for OPEC Manpower Supply.
+ * Strictly aligned with MASTER BLUEPRINT for OPEC Manpower Supply.
  */
 
 export type RoleType = 
@@ -31,13 +31,6 @@ export interface User {
   updatedAt: number;
   lastLoginAt?: number;
   isActive: boolean;
-}
-
-export interface Role {
-  id: string;
-  name: RoleType;
-  description: string;
-  permissions: string[];
 }
 
 export interface Position {

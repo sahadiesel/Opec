@@ -2,78 +2,115 @@
   "entities": {
     "User": {
       "title": "User",
+      "description": "Staff user profiles (Separate from Workers)",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
+        "address": { "type": "string" },
+        "nationalId": { "type": "string" },
         "roleId": { "type": "string" },
-        "isActive": { "type": "boolean" }
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
       }
     },
     "Position": {
       "title": "Position",
+      "description": "Standard job positions in the position matrix",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
         "code": { "type": "string" },
+        "description": { "type": "string" },
         "isActive": { "type": "boolean" }
+      }
+    },
+    "PositionRequirement": {
+      "title": "PositionRequirement",
+      "description": "Mandatory requirement for a position (Certificate, PPE, Tool, or Medical)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["certificate", "ppe", "tool", "medical"] },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "isMandatory": { "type": "boolean" }
       }
     },
     "Worker": {
       "title": "Worker",
+      "description": "Field worker personnel data",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "firstName": { "type": "string" },
         "lastName": { "type": "string" },
-        "workerStatus": { "type": "string" },
-        "readinessStatus": { "type": "string" }
+        "thaiNationalId": { "type": "string" },
+        "workerStatus": { "type": "string", "enum": ["available", "assigned", "on_leave", "inactive"] },
+        "readinessStatus": { "type": "string", "enum": ["READY", "MISSING_CERTIFICATE", "MEDICAL_EXPIRED", "DOCUMENT_MISSING"] },
+        "currentPositionId": { "type": "string" }
       }
     },
     "Customer": {
       "title": "Customer",
+      "description": "Client organization data",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "taxId": { "type": "string" }
+        "taxId": { "type": "string" },
+        "address": { "type": "string" }
       }
     },
     "MainContract": {
       "title": "MainContract",
+      "description": "Master Commercial Agreement",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "contractNumber": { "type": "string" },
-        "status": { "type": "string" }
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "expired", "pending"] }
       }
     },
     "PurchaseOrder": {
       "title": "PurchaseOrder",
+      "description": "Commercial Purchase Order tied to a Main Contract",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "poNumber": { "type": "string" }
+        "poNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "closed", "pending"] }
       }
     },
     "POLine": {
       "title": "POLine",
+      "description": "PO Line item with financial snapshots",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "quantity": { "type": "number" },
-        "positionId": { "type": "string" }
+        "positionId": { "type": "string" },
+        "sellRateSnapshot": { "type": "number" },
+        "costBaselineSnapshot": { "type": "number" },
+        "billingUnitSnapshot": { "type": "string", "enum": ["daily", "monthly", "hourly"] },
+        "overtimeRuleSnapshot": { "type": "string" }
       }
     },
     "Assignment": {
       "title": "Assignment",
+      "description": "Operational bridge between PO Line and Worker",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "workerId": { "type": "string" },
-        "status": { "type": "string" }
+        "poLineId": { "type": "string" },
+        "startDate": { "type": "number" },
+        "endDate": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed", "cancelled"] }
       }
     }
   },
@@ -93,9 +130,9 @@
       "schema": "#/backend/entities/Position",
       "description": "Standard job positions"
     },
-    "/positions/{posId}/certificate_requirements/{reqId}": {
-      "schema": { "type": "object" },
-      "description": "Mandatory certificates for position"
+    "/positions/{posId}/requirements/{reqId}": {
+      "schema": "#/backend/entities/PositionRequirement",
+      "description": "Mandatory matrix requirements for position"
     },
     "/workers/{workerId}": {
       "schema": "#/backend/entities/Worker",
@@ -103,15 +140,19 @@
     },
     "/workers/{workerId}/certificates/{certId}": {
       "schema": { "type": "object" },
-      "description": "Worker held certificates"
+      "description": "Worker certificates"
     },
     "/workers/{workerId}/medical_records/{medId}": {
       "schema": { "type": "object" },
-      "description": "Worker medical check history"
+      "description": "Worker medical checks"
     },
     "/workers/{workerId}/drug_tests/{drugId}": {
       "schema": { "type": "object" },
-      "description": "Worker drug test results"
+      "description": "Worker drug tests"
+    },
+    "/workers/{workerId}/documents/{docId}": {
+      "schema": { "type": "object" },
+      "description": "Worker documents"
     },
     "/customers/{customerId}": {
       "schema": "#/backend/entities/Customer",
@@ -119,7 +160,7 @@
     },
     "/customers/{customerId}/contacts/{contactId}": {
       "schema": { "type": "object" },
-      "description": "Customer contact persons"
+      "description": "Customer contacts"
     },
     "/customers/{customerId}/main_contracts/{contractId}": {
       "schema": "#/backend/entities/MainContract",
@@ -127,15 +168,15 @@
     },
     "/customers/{customerId}/main_contracts/{contractId}/position_rates/{rateId}": {
       "schema": { "type": "object" },
-      "description": "Agreed position rates"
+      "description": "Contract position rates"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}": {
       "schema": "#/backend/entities/PurchaseOrder",
-      "description": "Commercial purchase orders"
+      "description": "Purchase orders"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}": {
       "schema": "#/backend/entities/POLine",
-      "description": "PO line items with snapshots"
+      "description": "PO line items with cost/sell snapshots"
     },
     "/customers/{customerId}/main_contracts/{contractId}/purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}": {
       "schema": "#/backend/entities/Assignment",
