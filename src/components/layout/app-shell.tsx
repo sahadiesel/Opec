@@ -12,7 +12,7 @@ interface AppShellProps {
   children: React.ReactNode;
   user: {
     displayName: string;
-    roleId: RoleType;
+    roleIds: RoleType[];
   } | null;
   onLogout: () => void;
 }
@@ -20,10 +20,12 @@ interface AppShellProps {
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   if (!user) return <>{children}</>;
 
+  const roleDisplay = user.roleIds.map(r => r.replace('_', ' ')).join(', ');
+
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <SidebarNav userRole={user.roleId} />
+        <SidebarNav userRoles={user.roleIds} />
         <SidebarInset>
           <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
@@ -32,9 +34,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
               <h1 className="font-semibold text-foreground">ระบบจัดการกำลังคน (OpsFlow)</h1>
             </div>
             <div className="flex items-center gap-4">
-              <div className="hidden md:flex flex-col items-end">
-                <span className="text-sm font-medium">{user.displayName}</span>
-                <span className="text-xs text-muted-foreground uppercase">{(user.roleId || '').replace('_', ' ')}</span>
+              <div className="hidden md:flex flex-col items-end max-w-[200px]">
+                <span className="text-sm font-medium truncate w-full text-right">{user.displayName}</span>
+                <span className="text-[10px] text-muted-foreground uppercase truncate w-full text-right" title={roleDisplay}>
+                  {roleDisplay}
+                </span>
               </div>
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="bg-primary text-primary-foreground">

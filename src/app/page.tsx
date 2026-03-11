@@ -24,7 +24,8 @@ import {
   UserSquare2,
   TrendingUp,
   Warehouse,
-  Boxes
+  Boxes,
+  ShieldCheck as SafetyIcon
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -47,7 +48,18 @@ export default function Home() {
   useEffect(() => {
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        // Migration support: convert single roleId to roleIds array
+        if (parsed.roleId && !parsed.roleIds) {
+          parsed.roleIds = [parsed.roleId];
+        }
+        setUser(parsed);
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
 
     async function checkBootstrap() {
       if (!firestore) return;
@@ -70,8 +82,13 @@ export default function Home() {
       const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
       
       if (userDoc.exists()) {
-        const userData = userDoc.data() as User;
-        setUser(userData);
+        const userData = userDoc.data() as any;
+        // Migration check
+        if (userData.roleId && !userData.roleIds) {
+          userData.roleIds = [userData.roleId];
+        }
+        
+        setUser(userData as User);
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
         toast({ title: "เข้าสู่ระบบสำเร็จ" });
       } else {
@@ -134,25 +151,34 @@ export default function Home() {
   }
 
   const renderDashboard = () => {
-    switch (user.roleId) {
-      case 'system_admin':
-      case 'finance_officer':
-        return <ExecutiveDashboard user={user} />;
-      case 'sales_officer':
-        return <CommercialDashboard user={user} />;
-      case 'hr_manager':
-        return <HRManagerDashboard user={user} />;
-      case 'hr_officer':
-        return <HROperationsDashboard user={user} />;
-      case 'payroll_officer':
-        return <PayrollDashboard user={user} />;
-      case 'store_officer':
-        return <StoreDashboard user={user} />;
-      case 'client':
-        return <ClientDashboard user={user} />;
-      default:
-        return <DefaultDashboard user={user} />;
+    const roles = user.roleIds || [];
+    
+    if (roles.includes('system_admin') || roles.includes('finance_officer')) {
+      return <ExecutiveDashboard user={user} />;
     }
+    if (roles.includes('hr_manager')) {
+      return <HRManagerDashboard user={user} />;
+    }
+    if (roles.includes('hr_officer') || roles.includes('operations_officer')) {
+      return <HROperationsDashboard user={user} />;
+    }
+    if (roles.includes('sales_officer')) {
+      return <CommercialDashboard user={user} />;
+    }
+    if (roles.includes('safety_officer')) {
+      return <SafetyDashboard user={user} />;
+    }
+    if (roles.includes('payroll_officer')) {
+      return <PayrollDashboard user={user} />;
+    }
+    if (roles.includes('store_officer')) {
+      return <StoreDashboard user={user} />;
+    }
+    if (roles.includes('client') || roles.includes('client_user')) {
+      return <ClientDashboard user={user} />;
+    }
+    
+    return <DefaultDashboard user={user} />;
   };
 
   return <AppShell user={user} onLogout={handleLogout}>{renderDashboard()}</AppShell>;
@@ -176,7 +202,7 @@ function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
 function ExecutiveDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">Executive Dashboard (Joe)</h1>
+      <h1 className="text-2xl font-bold text-primary">Executive Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="รายได้รวม (Estimated)" value="฿12.4M" sub="เดือนปัจจุบัน" icon={CircleDollarSign} colorClass="border-l-primary" />
         <StatCard title="กำไรขั้นต้น" value="฿3.2M" sub="25.8% Margin" icon={TrendingUp} colorClass="border-l-green-500" />
@@ -190,7 +216,7 @@ function ExecutiveDashboard({ user }: { user: User }) {
 function CommercialDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">Commercial Dashboard (Dom)</h1>
+      <h1 className="text-2xl font-bold text-primary">Commercial Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="ลูกค้าทั้งหมด" value="48" sub="บริษัท" icon={Users} colorClass="border-l-primary" />
         <StatCard title="สัญญาหลัก Active" value="12" sub="Main Contracts" icon={ClipboardList} colorClass="border-l-blue-500" />
@@ -204,7 +230,7 @@ function CommercialDashboard({ user }: { user: User }) {
 function HRManagerDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">HR Manager Dashboard (Nuch)</h1>
+      <h1 className="text-2xl font-bold text-primary">HR Manager Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="คนงานทั้งหมด" value="1,240" sub="รายชื่อในระบบ" icon={UserSquare2} colorClass="border-l-primary" />
         <StatCard title="ใบรับรองรอดำเนินการ" value="156" sub="เอกสารรอตรวจสอบ" icon={FileWarning} colorClass="border-l-amber-500" />
@@ -218,7 +244,7 @@ function HRManagerDashboard({ user }: { user: User }) {
 function HROperationsDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">HR Operations Dashboard (Ying)</h1>
+      <h1 className="text-2xl font-bold text-primary">Operations Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="พร้อมทำงาน" value="842" sub="READY status" icon={CheckCircle2} colorClass="border-l-green-500" />
         <StatCard title="ใบรับรองหมดอายุ" value="42" sub="ต้องต่ออายุ" icon={FileWarning} colorClass="border-l-amber-500" />
@@ -229,10 +255,24 @@ function HROperationsDashboard({ user }: { user: User }) {
   );
 }
 
+function SafetyDashboard({ user }: { user: User }) {
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-bold text-primary">Safety & Compliance Dashboard</h1>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard title="ใบเซอร์ครบถ้วน" value="94%" sub="Compliance Rate" icon={SafetyIcon} colorClass="border-l-green-500" />
+        <StatCard title="รอตรวจสอบใบเซอร์" value="28" sub="Pending Review" icon={FileWarning} colorClass="border-l-amber-500" />
+        <StatCard title="คนงานหน้างาน" value="156" sub="Current Site Workers" icon={Users} colorClass="border-l-blue-500" />
+        <StatCard title="ความเสี่ยงสูง" value="2" sub="Expired Critical Docs" icon={AlertTriangle} colorClass="border-l-destructive" />
+      </div>
+    </div>
+  );
+}
+
 function PayrollDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">Payroll Dashboard (Koy)</h1>
+      <h1 className="text-2xl font-bold text-primary">Payroll Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="คนงานรอจ่ายเงิน" value="1,120" sub="รอบปัจจุบัน" icon={Users} colorClass="border-l-primary" />
         <StatCard title="ไทม์ชีทค้าง" value="45" sub="รออนุมัติ" icon={Clock} colorClass="border-l-amber-500" />
@@ -246,7 +286,7 @@ function PayrollDashboard({ user }: { user: User }) {
 function StoreDashboard({ user }: { user: User }) {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-primary">Store Dashboard (Nut)</h1>
+      <h1 className="text-2xl font-bold text-primary">Store Dashboard</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="สต็อกชุด PPE" value="450" sub="หน่วย" icon={Warehouse} colorClass="border-l-primary" />
         <StatCard title="รายการยืมอุปกรณ์" value="120" sub="Active loans" icon={Boxes} colorClass="border-l-blue-500" />

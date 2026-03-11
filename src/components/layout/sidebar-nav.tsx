@@ -16,7 +16,8 @@ import {
   Boxes,
   ShieldAlert,
   FileText,
-  Warehouse
+  Warehouse,
+  ShieldQuestion
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -43,15 +44,15 @@ const navItems: NavItem[] = [
     title: 'แดชบอร์ด (Dashboard)', 
     href: '/', 
     icon: LayoutDashboard, 
-    roles: ['system_admin', 'finance_officer', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'client'] 
+    roles: ['system_admin', 'finance_officer', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'client', 'client_user', 'operations_officer', 'safety_officer'] 
   },
   { 
     title: 'Client Portal', 
     href: '/client-portal', 
     icon: ShieldAlert, 
-    roles: ['client', 'system_admin'] 
+    roles: ['client', 'client_user', 'system_admin'] 
   },
-  // Commercial Module (Dom / Joe)
+  // Commercial Module
   { 
     title: 'ลูกค้า (Customers)', 
     href: '/customers', 
@@ -68,28 +69,28 @@ const navItems: NavItem[] = [
     title: 'ใบสั่งซื้อลูกค้า (Customer POs)', 
     href: '/purchase-orders', 
     icon: ShoppingCart, 
-    roles: ['system_admin', 'sales_officer'] 
+    roles: ['system_admin', 'sales_officer', 'operations_officer'] 
   },
-  // HR Module (Nuch / Ying)
+  // HR & Operations Module
   { 
     title: 'ตำแหน่งงาน (Positions)', 
     href: '/positions', 
     icon: Briefcase, 
-    roles: ['system_admin', 'hr_manager'] 
+    roles: ['system_admin', 'hr_manager', 'safety_officer'] 
   },
   { 
     title: 'คนงาน (Workers)', 
     href: '/workers', 
     icon: UserSquare2, 
-    roles: ['system_admin', 'hr_manager', 'hr_officer'] 
+    roles: ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer'] 
   },
   { 
     title: 'การมอบหมาย (Assignments)', 
     href: '/assignments', 
     icon: UserPlus, 
-    roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer'] 
+    roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer', 'operations_officer'] 
   },
-  // Payroll & Finance (Joe / Koy)
+  // Payroll & Finance
   { 
     title: 'การจ่ายเงิน (Payroll)', 
     href: '/payroll', 
@@ -100,14 +101,14 @@ const navItems: NavItem[] = [
     title: 'ลงเวลา (Timesheets)', 
     href: '/timesheets', 
     icon: Clock, 
-    roles: ['system_admin', 'payroll_officer', 'hr_officer'] 
+    roles: ['system_admin', 'payroll_officer', 'hr_officer', 'operations_officer'] 
   },
-  // Store (Nut)
+  // Store
   { 
     title: 'คลังอุปกรณ์ (Store)', 
     href: '/store', 
     icon: Warehouse, 
-    roles: ['system_admin', 'store_officer'] 
+    roles: ['system_admin', 'store_officer', 'operations_officer'] 
   },
   // Admin
   { 
@@ -118,9 +119,13 @@ const navItems: NavItem[] = [
   },
 ];
 
-export function SidebarNav({ userRole }: { userRole: RoleType }) {
+export function SidebarNav({ userRoles }: { userRoles: RoleType[] }) {
   const pathname = usePathname();
-  const filteredNav = navItems.filter(item => item.roles.includes(userRole));
+  
+  // Filter nav items based on the union of all assigned roles
+  const filteredNav = navItems.filter(item => 
+    item.roles.some(role => userRoles.includes(role))
+  );
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">

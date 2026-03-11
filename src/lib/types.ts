@@ -7,11 +7,14 @@ export type RoleType =
   | 'system_admin'
   | 'finance_officer'
   | 'sales_officer'
+  | 'safety_officer'
   | 'hr_manager'
   | 'hr_officer'
+  | 'operations_officer'
   | 'payroll_officer'
   | 'store_officer'
-  | 'client';
+  | 'client_user'
+  | 'client'; // Legacy support for 'client' role mapping
 
 export type ReadinessStatus = 
   | 'READY' 
@@ -38,7 +41,7 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
-  roleId: RoleType;
+  roleIds: RoleType[]; // Changed from roleId to roleIds for multi-role support
   isActive: boolean;
   createdAt: number;
   updatedAt: number;

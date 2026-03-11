@@ -69,14 +69,14 @@ export default function SetupAdminPage() {
       );
       const uid = userCredential.user.uid;
 
-      // 2. Create User Profile with requested fields
+      // 2. Create User Profile with multi-role support
       await setDoc(doc(firestore, 'users', uid), {
         id: uid,
         email: formData.email,
         displayName: formData.displayName,
         nationalId: formData.nationalId,
         address: formData.address,
-        roleId: 'system_admin',
+        roleIds: ['system_admin'], // Initialize with multi-role support
         createdAt: Date.now(),
         updatedAt: Date.now(),
         isActive: true,

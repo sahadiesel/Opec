@@ -5,6 +5,7 @@ service cloud.firestore {
     /**
      * OPEC Manpower Supply - Security Rules
      * Core Philosophy: Role-Based Access Control (RBAC) via DBAC.
+     * Supports multiple roles per user.
      */
 
     function isSignedIn() {
@@ -16,12 +17,14 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
 
-    // Combined Staff check
+    // Combined Staff check - allows any OPEC internal role
     function isStaff() {
       return isSignedIn() && (
         hasRole('system_admin') || 
         hasRole('hr_manager') || 
         hasRole('hr_officer') || 
+        hasRole('operations_officer') ||
+        hasRole('safety_officer') ||
         hasRole('sales_officer') || 
         hasRole('finance_officer') || 
         hasRole('payroll_officer') || 
@@ -32,7 +35,7 @@ service cloud.firestore {
     function isSystemAdmin() { return hasRole('system_admin'); }
     function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
     function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
-    function isClient() { return isSignedIn() && hasRole('client_user'); }
+    function isClient() { return isSignedIn() && (hasRole('client_user') || hasRole('client')); }
 
     // Top-level collections
     match /users/{userId} {
@@ -114,10 +117,13 @@ service cloud.firestore {
     match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_sales_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_safety_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_operations_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_finance_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_payroll_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_store_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     match /roles_client_user/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_client/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
     
     match /system/bootstrap { allow read: if true; }
 

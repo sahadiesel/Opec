@@ -22,7 +22,9 @@ export default function UsersPage() {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) {
       try {
-        setCurrentUser(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        if (parsed.roleId && !parsed.roleIds) parsed.roleIds = [parsed.roleId];
+        setCurrentUser(parsed);
       } catch (e) {
         console.error('Failed to parse user session', e);
       }
@@ -30,11 +32,10 @@ export default function UsersPage() {
   }, []);
 
   const usersQuery = useMemoFirebase(() => {
-    // CRITICAL: Strict gating to prevent permission errors before auth is settled
     if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
     
-    // Only query if IDs match and role is system_admin
-    if (firebaseUser.uid !== currentUser.id || currentUser.roleId !== 'system_admin') return null;
+    // Only query if IDs match and user has system_admin role
+    if (firebaseUser.uid !== currentUser.id || !currentUser.roleIds.includes('system_admin')) return null;
     
     return collection(firestore, 'users');
   }, [firestore, isUserLoading, firebaseUser, currentUser]);
@@ -48,7 +49,6 @@ export default function UsersPage() {
     }
   };
 
-  // Wait for auth resolution
   if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -60,8 +60,7 @@ export default function UsersPage() {
     );
   }
 
-  // Security gate for unauthorized roles
-  if (currentUser.roleId !== 'system_admin') {
+  if (!currentUser.roleIds.includes('system_admin')) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
@@ -91,20 +90,20 @@ export default function UsersPage() {
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
             <CardHeader className="pb-2">
+              <CardDescription>เจ้าหน้าที่ทั้งหมด</CardDescription>
+              <CardTitle className="text-2xl font-bold">{users?.length || 0}</CardTitle>
+            </CardHeader>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
               <CardDescription>แอดมินระบบ</CardDescription>
-              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.roleId === 'system_admin').length || 0}</CardTitle>
+              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.roleIds?.includes('system_admin') || (u as any).roleId === 'system_admin').length || 0}</CardTitle>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardDescription>ฝ่ายบุคคล (HR)</CardDescription>
-              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.roleId.includes('hr')).length || 0}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>ฝ่ายขาย (Sales)</CardDescription>
-              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.roleId === 'sales_officer').length || 0}</CardTitle>
+              <CardDescription>พนักงานออนไลน์</CardDescription>
+              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.isActive).length || 0}</CardTitle>
             </CardHeader>
           </Card>
         </div>
@@ -127,46 +126,53 @@ export default function UsersPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>เจ้าหน้าที่ (Staff)</TableHead>
-                    <TableHead>สิทธิ์การใช้งาน (Role)</TableHead>
+                    <TableHead>สิทธิ์การใช้งาน (Roles)</TableHead>
                     <TableHead>สถานะ (Status)</TableHead>
                     <TableHead>เข้าใช้งานล่าสุด</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users?.map((u) => (
-                    <TableRow key={u.id}>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-semibold">{u.displayName}</span>
-                          <span className="text-xs text-muted-foreground flex items-center gap-1"><Mail className="h-3 w-3" /> {u.email}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 capitalize">
-                          {(u.roleId || '').replace('_', ' ')}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {u.isActive ? (
-                          <span className="flex items-center gap-1 text-green-600 text-xs font-medium">
-                            <Clock className="h-3 w-3" /> ออนไลน์
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground text-xs font-medium">ปิดการใช้งาน</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('th-TH') : 'ไม่เคยเข้าใช้งาน'}
-                      </TableCell>
-                      <TableCell className="text-right space-x-2">
-                        <Button variant="ghost" size="icon"><UserCog className="h-4 w-4" /></Button>
-                        <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(u.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {users?.map((u) => {
+                    const roles = u.roleIds || [(u as any).roleId];
+                    return (
+                      <TableRow key={u.id}>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-semibold">{u.displayName}</span>
+                            <span className="text-xs text-muted-foreground flex items-center gap-1"><Mail className="h-3 w-3" /> {u.email}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {roles.map(role => (
+                              <Badge key={role} variant="outline" className="bg-primary/5 text-primary border-primary/20 capitalize text-[10px]">
+                                {(role || '').replace('_', ' ')}
+                              </Badge>
+                            ))}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {u.isActive ? (
+                            <span className="flex items-center gap-1 text-green-600 text-xs font-medium">
+                              <Clock className="h-3 w-3" /> ออนไลน์
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs font-medium">ปิดการใช้งาน</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('th-TH') : 'ไม่เคยเข้าใช้งาน'}
+                        </TableCell>
+                        <TableCell className="text-right space-x-2">
+                          <Button variant="ghost" size="icon"><UserCog className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(u.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {!isCollectionLoading && (!users || users.length === 0) && (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลผู้ใช้งานระบบ</TableCell>
