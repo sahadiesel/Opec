@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ClipboardList, ChevronRight, Building2 } from 'lucide-react';
+import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MainContract, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function MainContractsPage() {
   const router = useRouter();
@@ -101,38 +102,50 @@ export default function MainContractsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์การเข้าถึง...</p>
-        </div>
-      </div>
-    );
-  }
+  if (isUserLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <ClipboardList className="h-6 w-6" /> สัญญาหลัก (Main Contracts)
-            </h1>
-            <p className="text-muted-foreground">จัดการสัญญาซื้อขายหลักและอัตราราคาบริการ (Master Agreements)</p>
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* 1. Page Header & Description */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+            <ClipboardList className="h-8 w-8" /> สัญญาหลัก (Main Contracts)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            บริหารจัดการสัญญาซื้อขายหลัก (Master Agreements) อัตราราคาตามตำแหน่ง และเงื่อนไขทางการเงิน
+          </p>
+        </div>
+
+        {/* 2. Operational Notice */}
+        <Alert className="bg-primary/5 border-primary/20">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertTitle className="font-bold">การกำหนดอัตราราคา (Rate Management)</AlertTitle>
+          <AlertDescription>
+            กรุณาระบุราคาขาย (Sell Rate) และหน่วยการคิดเงิน (Billing Unit) ให้ถูกต้องตามเล่มสัญญา เพื่อการวางบิลที่แม่นยำ
+          </AlertDescription>
+        </Alert>
+
+        {/* 3. Action Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาเลขที่สัญญาหรือชื่อสัญญา..." className="pl-9" />
+            </div>
+            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" /> สร้างสัญญาหลักใหม่
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
+                <Plus className="h-5 w-5" /> สร้างสัญญาหลักใหม่ (New Main Contract)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>สร้างสัญญาหลักใหม่</DialogTitle>
-                <DialogDescription>ระบุข้อมูลพื้นฐานของสัญญาเพื่อนำไปกำหนดอัตราราคาตามตำแหน่ง</DialogDescription>
+                <DialogTitle>สร้างสัญญาหลักใหม่ (New Contract)</DialogTitle>
+                <DialogDescription>ระบุข้อมูลพื้นฐานของสัญญาเพื่อนำไปกำหนดอัตราราคาตามตำแหน่งในลำดับถัดไป</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
@@ -185,34 +198,26 @@ export default function MainContractsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} disabled={!newContract.title || !newContract.customerId || !newContract.contractNumber}>บันทึกและจัดการรายละเอียด</Button>
+                <Button onClick={handleCreate} disabled={!newContract.title || !newContract.customerId || !newContract.contractNumber}>บันทึกข้อมูล (Confirm)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle>รายการสัญญาหลัก</CardTitle>
-              <div className="relative w-72">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาเลขที่สัญญา..." className="pl-8" />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
+        {/* 4. Data Content */}
+        <Card className="shadow-lg border-none overflow-hidden">
+          <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลสัญญา...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลสัญญา (Loading Contracts)...</div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>รหัสสัญญา (Code)</TableHead>
-                    <TableHead>ชื่อสัญญา (Title)</TableHead>
-                    <TableHead>ลูกค้า</TableHead>
-                    <TableHead>ระยะเวลา</TableHead>
-                    <TableHead>สถานะ</TableHead>
+                    <TableHead className="font-bold">รหัสสัญญา (Code)</TableHead>
+                    <TableHead className="font-bold">ชื่อสัญญา (Contract Title)</TableHead>
+                    <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
+                    <TableHead className="font-bold">ระยะเวลา (Period)</TableHead>
+                    <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -229,7 +234,7 @@ export default function MainContractsPage() {
                         <TableCell className="font-semibold">{contract.title}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-xs">
-                            <Building2 className="h-3 w-3 text-muted-foreground" />
+                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
                             {customer?.name || 'N/A'}
                           </div>
                         </TableCell>
@@ -237,7 +242,7 @@ export default function MainContractsPage() {
                           {new Date(contract.startDate).toLocaleDateString('th-TH')} - {new Date(contract.endDate).toLocaleDateString('th-TH')}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={contract.status === 'active' ? 'default' : 'secondary'}>
+                          <Badge variant={contract.status === 'active' ? 'default' : 'secondary'} className={contract.status === 'active' ? 'bg-green-600' : ''}>
                             {contract.status.toUpperCase()}
                           </Badge>
                         </TableCell>
@@ -249,13 +254,45 @@ export default function MainContractsPage() {
                   })}
                   {!isLoading && (!contracts || contracts.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลสัญญาหลัก</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลสัญญาหลักในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             )}
           </CardContent>
+        </Card>
+
+        {/* 5. Next-Step Guidance */}
+        <Card className="bg-primary/5 border-primary/10">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
+                <div>
+                  <p className="font-bold">ตั้งค่าอัตราราคา (Position Rates)</p>
+                  <p className="text-muted-foreground text-xs">คลิกเข้าดูรายละเอียดเพื่อกำหนดราคาขายของแต่ละตำแหน่งตามสัญญา</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
+                <div>
+                  <p className="font-bold">ออกใบสั่งซื้อ (Customer POs)</p>
+                  <p className="text-muted-foreground text-xs">เมื่ออัตราราคาพร้อมแล้ว คุณสามารถสร้าง Customer PO เพื่อจองโควต้าคนงานได้</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="pt-0 justify-end">
+            <Button variant="link" className="gap-2" asChild>
+              <a href="/purchase-orders">ไปยังใบสั่งซื้อลูกค้า (Go to Customer POs) <ArrowRight className="h-4 w-4" /></a>
+            </Button>
+          </CardFooter>
         </Card>
       </div>
     </AppShell>

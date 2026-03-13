@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Building2, Trash2, ChevronRight, Filter } from 'lucide-react';
+import { Plus, Search, Building2, Trash2, ChevronRight, Filter, Info, ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Customer, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function CustomersPage() {
   const router = useRouter();
@@ -109,25 +110,46 @@ export default function CustomersPage() {
 
   return (
     <AppShell user={user} onLogout={() => {}}>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <Building2 className="h-6 w-6" /> ลูกค้า (Customer Management)
-            </h1>
-            <p className="text-muted-foreground">จัดการข้อมูลบริษัท คู่ค้า และผู้ติดต่อประสานงาน</p>
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* 1. Page Header & Description */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+            <Building2 className="h-8 w-8" /> ลูกค้า (Customers)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            บริหารจัดการฐานข้อมูลบริษัทคู่ค้า สัญญาหลัก และข้อมูลการติดต่อเพื่อการดำเนินงานเชิงพาณิชย์
+          </p>
+        </div>
+
+        {/* 2. Operational Notice */}
+        <Alert className="bg-primary/5 border-primary/20">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertTitle className="font-bold">นโยบายข้อมูลคู่ค้า (Commercial Data Policy)</AlertTitle>
+          <AlertDescription>
+            การแก้ไขรหัสลูกค้า (Customer Code) จะมีผลต่อการอ้างอิงในใบสั่งซื้อและรายงานทางการเงินทั้งหมด กรุณาตรวจสอบความถูกต้องก่อนบันทึก
+          </AlertDescription>
+        </Alert>
+
+        {/* 3. Action Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาชื่อบริษัทหรือรหัสลูกค้า..." className="pl-9" />
+            </div>
+            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" /> ลงทะเบียนลูกค้าใหม่
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md">
+                <Plus className="h-5 w-5" /> ลงทะเบียนลูกค้าใหม่ (New Registration)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>ลงทะเบียนลูกค้าใหม่</DialogTitle>
-                <DialogDescription>กรอกข้อมูลบริษัทเพื่อเริ่มต้นสร้างสัญญาและใบสั่งซื้อ</DialogDescription>
+                <DialogTitle>ลงทะเบียนลูกค้าใหม่ (New Customer)</DialogTitle>
+                <DialogDescription>กรอกข้อมูลบริษัทเพื่อเริ่มต้นสร้างสัญญาและใบสั่งซื้อในลำดับถัดไป</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
@@ -169,37 +191,26 @@ export default function CustomersPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate}>บันทึกและจัดการรายละเอียด</Button>
+                <Button onClick={handleCreate} className="bg-primary">บันทึกข้อมูล (Save Profile)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-4">
-              <CardTitle>รายชื่อลูกค้า</CardTitle>
-              <div className="flex gap-2">
-                <div className="relative w-72">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input type="search" placeholder="ค้นหาลูกค้า..." className="pl-8" />
-                </div>
-                <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
+        {/* 4. Data Content */}
+        <Card className="shadow-lg overflow-hidden border-none">
+          <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลลูกค้า...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลลูกค้า (Loading Customers)...</div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>รหัส</TableHead>
-                    <TableHead>ชื่อบริษัท</TableHead>
-                    <TableHead>Tax ID</TableHead>
-                    <TableHead>สถานะ</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
+                    <TableHead className="font-bold">รหัส (Code)</TableHead>
+                    <TableHead className="font-bold">ชื่อบริษัท (Company Name)</TableHead>
+                    <TableHead className="font-bold">Tax ID</TableHead>
+                    <TableHead className="font-bold">สถานะ (Status)</TableHead>
+                    <TableHead className="text-right font-bold">จัดการ (Action)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -209,11 +220,11 @@ export default function CustomersPage() {
                       className="cursor-pointer hover:bg-muted/50 group"
                       onClick={() => router.push(`/customers/${customer.id}`)}
                     >
-                      <TableCell className="font-mono text-xs">{customer.customerCode || customer.id.substring(0,6)}</TableCell>
+                      <TableCell className="font-mono text-xs font-bold text-primary">{customer.customerCode || customer.id.substring(0,6)}</TableCell>
                       <TableCell className="font-semibold">{customer.name}</TableCell>
                       <TableCell>{customer.taxId}</TableCell>
                       <TableCell>
-                        <Badge variant={customer.isActive ? 'default' : 'secondary'}>
+                        <Badge variant={customer.isActive ? 'default' : 'secondary'} className={customer.isActive ? 'bg-green-600' : ''}>
                           {customer.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </TableCell>
@@ -229,13 +240,45 @@ export default function CustomersPage() {
                   ))}
                   {(!customers || customers.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลลูกค้าในระบบ</TableCell>
+                      <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลลูกค้าในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             )}
           </CardContent>
+        </Card>
+
+        {/* 5. Next-Step Guidance */}
+        <Card className="bg-primary/5 border-primary/10">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
+                <div>
+                  <p className="font-bold">สร้างสัญญาหลัก (Main Contracts)</p>
+                  <p className="text-muted-foreground text-xs">หลังจากเพิ่มลูกค้า ให้สร้างสัญญาซื้อขายเพื่อระบุราคาบริการ</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
+                <div>
+                  <p className="font-bold">จัดการใบสั่งซื้อ (Customer POs)</p>
+                  <p className="text-muted-foreground text-xs">เปิดใบสั่งซื้อตามโควต้าพนักงานที่ตกลงกันในสัญญา</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="pt-0 justify-end">
+            <Button variant="link" className="gap-2" asChild>
+              <a href="/main-contracts">ไปยังเมนูสัญญาหลัก (Go to Main Contracts) <ArrowRight className="h-4 w-4" /></a>
+            </Button>
+          </CardFooter>
         </Card>
       </div>
     </AppShell>

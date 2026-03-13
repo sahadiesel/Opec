@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, ChevronRight, Briefcase } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Position, User } from '@/lib/types';
 import { 
@@ -26,6 +26,7 @@ import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function PositionsPage() {
   const router = useRouter();
@@ -99,25 +100,46 @@ export default function PositionsPage() {
 
   return (
     <AppShell user={user} onLogout={() => {}}>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <Briefcase className="h-6 w-6" /> เมทริกซ์ตำแหน่งงาน (Position Matrix)
-            </h1>
-            <p className="text-muted-foreground">กำหนดมาตรฐานเกณฑ์ความพร้อม PPE และอุปกรณ์สำหรับกำลังคน</p>
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* 1. Page Header & Description */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+            <Activity className="h-8 w-8" /> เมทริกซ์ตำแหน่งงาน (Positions)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            กำหนดมาตรฐานตำแหน่งงาน เกณฑ์ความพร้อม (Readiness), รายการใบเซอร์, PPE และอุปกรณ์ที่จำเป็น
+          </p>
+        </div>
+
+        {/* 2. Operational Notice */}
+        <Alert className="bg-primary/5 border-primary/20">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertTitle className="font-bold">เกณฑ์มาตรฐานความปลอดภัย (Compliance Standards)</AlertTitle>
+          <AlertDescription>
+            การกำหนดรายการใบเซอร์ที่ "บังคับ (Mandatory)" จะส่งผลโดยตรงต่อการคำนวณ Readiness Status ของคนงานทุกคนในตำแหน่งนั้น
+          </AlertDescription>
+        </Alert>
+
+        {/* 3. Action Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาชื่อตำแหน่งหรือรหัส..." className="pl-9" />
+            </div>
+            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" /> เพิ่มตำแหน่งงานใหม่
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
+                <Plus className="h-5 w-5" /> เพิ่มตำแหน่งงานใหม่ (New Position)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>สร้างตำแหน่งงานใหม่</DialogTitle>
-                <DialogDescription>ระบุข้อมูลพื้นฐานของตำแหน่งงานเพื่อนำไปกำหนดเกณฑ์มาตรฐาน</DialogDescription>
+                <DialogTitle>สร้างตำแหน่งงานใหม่ (New Position Entry)</DialogTitle>
+                <DialogDescription>ระบุข้อมูลพื้นฐานของตำแหน่งงานเพื่อนำไปกำหนดเกณฑ์มาตรฐานในขั้นตอนถัดไป</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2">
@@ -162,34 +184,26 @@ export default function PositionsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate}>บันทึกและจัดการรายละเอียด</Button>
+                <Button onClick={handleCreate} className="bg-primary">บันทึกและจัดการเกณฑ์มาตรฐาน (Save)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle>รายการตำแหน่งงาน</CardTitle>
-              <div className="relative w-72">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาตำแหน่ง..." className="pl-8" />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
+        {/* 4. Data Content */}
+        <Card className="shadow-lg border-none overflow-hidden">
+          <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูล...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลตำแหน่ง (Loading Positions)...</div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>ตำแหน่ง (Position)</TableHead>
-                    <TableHead>รหัส (Code)</TableHead>
-                    <TableHead>หมวดหมู่</TableHead>
-                    <TableHead>ฐานการจ่าย</TableHead>
-                    <TableHead>สถานะ</TableHead>
+                    <TableHead className="font-bold">ตำแหน่ง (Position Name)</TableHead>
+                    <TableHead className="font-bold">รหัส (Code)</TableHead>
+                    <TableHead className="font-bold">หมวดหมู่ (Category)</TableHead>
+                    <TableHead className="font-bold">ฐานการจ่าย (Payroll)</TableHead>
+                    <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -201,11 +215,11 @@ export default function PositionsPage() {
                       onClick={() => router.push(`/positions/${pos.id}`)}
                     >
                       <TableCell className="font-semibold">{pos.positionName}</TableCell>
-                      <TableCell className="font-mono text-xs">{pos.positionCode}</TableCell>
+                      <TableCell className="font-mono text-xs font-bold text-primary">{pos.positionCode}</TableCell>
                       <TableCell>{pos.category}</TableCell>
                       <TableCell>{pos.payrollBasis}</TableCell>
                       <TableCell>
-                        <Badge variant={pos.active ? 'default' : 'secondary'}>
+                        <Badge variant={pos.active ? 'default' : 'secondary'} className={pos.active ? 'bg-green-600' : ''}>
                           {pos.active ? 'Active' : 'Inactive'}
                         </Badge>
                       </TableCell>
@@ -229,13 +243,45 @@ export default function PositionsPage() {
                   ))}
                   {(!positions || positions.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงาน</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงานในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             )}
           </CardContent>
+        </Card>
+
+        {/* 5. Next-Step Guidance */}
+        <Card className="bg-primary/5 border-primary/10">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
+                <div>
+                  <p className="font-bold">ระบุเกณฑ์ความพร้อม (Readiness Matrix)</p>
+                  <p className="text-muted-foreground text-xs">คลิกที่ตำแหน่งงานเพื่อเพิ่มรายการใบเซอร์และ PPE ที่ต้องใช้</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
+                <div>
+                  <p className="font-bold">ตรวจสอบข้อมูลคนงาน (Workers)</p>
+                  <p className="text-muted-foreground text-xs">ระบบจะเปรียบเทียบใบเซอร์ของคนงานกับเกณฑ์ที่กำหนดไว้โดยอัตโนมัติ</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="pt-0 justify-end">
+            <Button variant="link" className="gap-2" asChild>
+              <a href="/workers">ไปยังทะเบียนคนงาน (Go to Workers) <ArrowRight className="h-4 w-4" /></a>
+            </Button>
+          </CardFooter>
         </Card>
       </div>
     </AppShell>

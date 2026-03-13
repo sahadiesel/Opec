@@ -6,7 +6,6 @@ import {
   LayoutDashboard, 
   Users, 
   Briefcase, 
-  UserSquare2, 
   ShieldCheck,
   ClipboardList,
   ShoppingCart,
@@ -17,7 +16,9 @@ import {
   ShieldAlert,
   FileText,
   Activity,
-  HardHat
+  HardHat,
+  Waves,
+  Truck
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -85,27 +86,39 @@ const navItems: NavItem[] = [
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer'] 
   },
   { 
+    title: 'กลุ่มการส่งตัว (Waves)', 
+    href: '/waves', 
+    icon: Waves, 
+    roles: ['system_admin', 'hr_manager', 'operations_officer'] 
+  },
+  { 
     title: 'การมอบหมายงาน (Assignments)', 
     href: '/assignments', 
     icon: UserPlus, 
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer', 'operations_officer'] 
   },
-  // Payroll & Finance
   { 
-    title: 'การจ่ายเงิน (Payroll)', 
-    href: '/payroll', 
-    icon: CircleDollarSign, 
-    roles: ['system_admin', 'payroll_officer', 'finance_officer'] 
+    title: 'การระดมพล (Mobilization)', 
+    href: '/mobilization', 
+    icon: Truck, 
+    roles: ['system_admin', 'operations_officer', 'hr_officer', 'safety_officer'] 
   },
+  // Payroll & Finance
   { 
     title: 'ลงเวลาทำงาน (Timesheets)', 
     href: '/timesheets', 
     icon: Clock, 
     roles: ['system_admin', 'payroll_officer', 'hr_officer', 'operations_officer'] 
   },
+  { 
+    title: 'การจ่ายเงิน (Payroll)', 
+    href: '/payroll', 
+    icon: CircleDollarSign, 
+    roles: ['system_admin', 'payroll_officer', 'finance_officer'] 
+  },
   // Store
   { 
-    title: 'คลังอุปกรณ์ (Store)', 
+    title: 'คลังอุปกรณ์ (Store / Inventory)', 
     href: '/store', 
     icon: Warehouse, 
     roles: ['system_admin', 'store_officer', 'operations_officer'] 

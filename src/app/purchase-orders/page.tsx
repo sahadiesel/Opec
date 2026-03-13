@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar } from 'lucide-react';
+import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PurchaseOrder, User, Customer, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function CustomerPOsPage() {
   const router = useRouter();
@@ -60,7 +61,7 @@ export default function CustomerPOsPage() {
   }, []);
 
   const poQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser || firebaseUser.uid !== currentUser.id) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
     return collection(firestore, 'purchase_orders');
   }, [firestore, firebaseUser, isUserLoading, currentUser]);
 
@@ -100,37 +101,49 @@ export default function CustomerPOsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center space-y-4">
-          <ShoppingCart className="h-12 w-12 text-primary animate-pulse mx-auto" />
-          <p className="text-muted-foreground">กำลังตรวจสอบสิทธิ์...</p>
-        </div>
-      </div>
-    );
-  }
+  if (isUserLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <ShoppingCart className="h-6 w-6" /> ใบสั่งซื้อลูกค้า (Customer POs)
-            </h1>
-            <p className="text-muted-foreground">จัดการใบสั่งซื้อกำลังคนจากลูกค้า (Client Issued POs)</p>
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* 1. Page Header & Description */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+            <ShoppingCart className="h-8 w-8" /> ใบสั่งซื้อลูกค้า (Customer POs)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            จัดการใบสั่งซื้อบริการกำลังคน (Client Issued POs) และโควต้าพนักงานรายโครงการ
+          </p>
+        </div>
+
+        {/* 2. Operational Notice */}
+        <Alert className="bg-primary/5 border-primary/20">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertTitle className="font-bold">การจองโควต้า (Quota Reservation)</AlertTitle>
+          <AlertDescription>
+            ใบสั่งซื้อจะทำหน้าที่จองโควต้าพนักงานตามตำแหน่งงานที่ระบุใน PO Lines กรุณาระบุจำนวน (Quantity) และระยะเวลาโครงการให้ชัดเจน
+          </AlertDescription>
+        </Alert>
+
+        {/* 3. Action Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาเลขที่ PO หรือชื่อโครงการ..." className="pl-9" />
+            </div>
+            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
+                <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New Customer PO)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>สร้างใบสั่งซื้อจากลูกค้าใหม่</DialogTitle>
+                <DialogTitle>สร้างใบสั่งซื้อจากลูกค้าใหม่ (New Customer PO)</DialogTitle>
                 <DialogDescription>เลือกคู่ค้าและสัญญาหลักเพื่อจองโควต้ากำลังคน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
@@ -193,36 +206,28 @@ export default function CustomerPOsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} disabled={!newPO.title || !newPO.customerId || !newPO.contractId || !newPO.poCode}>
-                  บันทึกและจัดการ PO Lines
+                <Button onClick={handleCreate} className="bg-primary" disabled={!newPO.title || !newPO.customerId || !newPO.contractId || !newPO.poCode}>
+                  ยืนยันและตั้งค่ารายการโควต้า (Confirm)
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle>รายการ Customer PO ทั้งหมด</CardTitle>
-              <div className="relative w-72">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาเลขที่ PO หรือลูกค้า..." className="pl-8" />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
+        {/* 4. Data Content */}
+        <Card className="shadow-lg border-none overflow-hidden">
+          <CardContent className="p-0">
             {isPOLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูล...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลใบสั่งซื้อ (Loading Customer POs)...</div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>เลขที่ PO</TableHead>
-                    <TableHead>ลูกค้า (Customer)</TableHead>
-                    <TableHead>สัญญาหลัก (Main Contract)</TableHead>
-                    <TableHead>ระยะเวลา</TableHead>
-                    <TableHead>สถานะ</TableHead>
+                    <TableHead className="font-bold">เลขที่ PO (Code)</TableHead>
+                    <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
+                    <TableHead className="font-bold">สัญญาหลัก (Main Contract)</TableHead>
+                    <TableHead className="font-bold">ระยะเวลา (Period)</TableHead>
+                    <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -236,7 +241,7 @@ export default function CustomerPOsPage() {
                         className="cursor-pointer hover:bg-muted/50 group"
                         onClick={() => router.push(`/purchase-orders/${po.id}`)}
                       >
-                        <TableCell className="font-mono text-xs font-bold">{po.poCode}</TableCell>
+                        <TableCell className="font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-sm">
                             <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
@@ -256,7 +261,7 @@ export default function CustomerPOsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>
+                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600' : ''}>
                             {po.status.toUpperCase()}
                           </Badge>
                         </TableCell>
@@ -268,13 +273,45 @@ export default function CustomerPOsPage() {
                   })}
                   {!isPOLoading && (!pos || pos.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อลูกค้า</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อลูกค้าในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             )}
           </CardContent>
+        </Card>
+
+        {/* 5. Next-Step Guidance */}
+        <Card className="bg-primary/5 border-primary/10">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
+                <div>
+                  <p className="font-bold">จัดการรายการโควต้า (PO Lines)</p>
+                  <p className="text-muted-foreground text-xs">ระบุตำแหน่งและจำนวนคนงานที่ลูกค้าสั่งจองในหน้ารายละเอียด PO</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
+                <div>
+                  <p className="font-bold">มอบหมายคนงาน (Assignments)</p>
+                  <p className="text-muted-foreground text-xs">ส่งรายชื่อคนงานเข้าสู่โควต้าตำแหน่งที่เปิดไว้เพื่อดำเนินการระดมพล</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="pt-0 justify-end">
+            <Button variant="link" className="gap-2" asChild>
+              <a href="/assignments">ไปยังเมนูการมอบหมาย (Go to Assignments) <ArrowRight className="h-4 w-4" /></a>
+            </Button>
+          </CardFooter>
         </Card>
       </div>
     </AppShell>

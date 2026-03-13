@@ -3,15 +3,16 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShieldCheck, Mail, Clock, Trash2, UserCog } from 'lucide-react';
+import { Plus, Search, ShieldCheck, Mail, Clock, Trash2, UserCog, Info, Filter, ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -33,10 +34,7 @@ export default function UsersPage() {
 
   const usersQuery = useMemoFirebase(() => {
     if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
-    
-    // Only query if IDs match and user has system_admin role
-    if (firebaseUser.uid !== currentUser.id || !currentUser.roleIds.includes('system_admin')) return null;
-    
+    if (firebaseUser.uid !== currentUser.id || !currentUser.roleIds?.includes('system_admin')) return null;
     return collection(firestore, 'users');
   }, [firestore, isUserLoading, firebaseUser, currentUser]);
 
@@ -60,7 +58,7 @@ export default function UsersPage() {
     );
   }
 
-  if (!currentUser.roleIds.includes('system_admin')) {
+  if (!currentUser.roleIds?.includes('system_admin')) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
@@ -74,67 +72,81 @@ export default function UsersPage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <ShieldCheck className="h-6 w-6" /> จัดการผู้ใช้งานระบบ (Staff Users)
-            </h1>
-            <p className="text-muted-foreground">บริหารจัดการสิทธิ์การเข้าถึงสำหรับเจ้าหน้าที่ OPEC</p>
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* 1. Page Header & Description */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
+            <ShieldCheck className="h-6 w-6" /> จัดการระบบ (System Admin)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            บริหารจัดการสิทธิ์การเข้าถึง บัญชีผู้ใช้งานเจ้าหน้าที่ และการกำหนดบทบาท (Multi-role Management)
+          </p>
+        </div>
+
+        {/* 2. Operational Notice */}
+        <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
+          <ShieldCheck className="h-4 w-4" />
+          <AlertTitle className="font-bold">การจัดการสิทธิ์ (Access Control)</AlertTitle>
+          <AlertDescription>
+            การแก้ไขสิทธิ์การใช้งาน (Roles) จะมีผลทันทีในการล็อกอินครั้งถัดไป กรุณาระมัดระวังการลบบัญชีผู้ใช้งานที่มีการใช้งานอยู่
+          </AlertDescription>
+        </Alert>
+
+        {/* 3. Action Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาชื่อหรืออีเมลเจ้าหน้าที่..." className="pl-9" />
+            </div>
+            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
-          <Button className="gap-2">
-            <Plus className="h-4 w-4" /> เพิ่มผู้ใช้งานใหม่
+          <Button className="gap-2 h-11 px-6 shadow-md">
+            <Plus className="h-4 w-4" /> เพิ่มผู้ใช้งานใหม่ (New Staff)
           </Button>
         </div>
 
+        {/* Statistics Summary */}
         <div className="grid gap-4 md:grid-cols-3">
-          <Card>
+          <Card className="shadow-sm border-l-4 border-l-blue-600">
             <CardHeader className="pb-2">
-              <CardDescription>เจ้าหน้าที่ทั้งหมด</CardDescription>
+              <CardDescription>เจ้าหน้าที่ทั้งหมด (Total Staff)</CardDescription>
               <CardTitle className="text-2xl font-bold">{users?.length || 0}</CardTitle>
             </CardHeader>
           </Card>
-          <Card>
+          <Card className="shadow-sm border-l-4 border-l-primary">
             <CardHeader className="pb-2">
-              <CardDescription>แอดมินระบบ</CardDescription>
-              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.roleIds?.includes('system_admin') || (u as any).roleId === 'system_admin').length || 0}</CardTitle>
+              <CardDescription>แอดมินระบบ (System Admins)</CardDescription>
+              <CardTitle className="text-2xl font-bold">{users?.filter(u => u.roleIds?.includes('system_admin')).length || 0}</CardTitle>
             </CardHeader>
           </Card>
-          <Card>
+          <Card className="shadow-sm border-l-4 border-l-green-600">
             <CardHeader className="pb-2">
-              <CardDescription>พนักงานออนไลน์</CardDescription>
+              <CardDescription>พนักงานออนไลน์ (Active Status)</CardDescription>
               <CardTitle className="text-2xl font-bold">{users?.filter(u => u.isActive).length || 0}</CardTitle>
             </CardHeader>
           </Card>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle>รายชื่อเจ้าหน้าที่</CardTitle>
-              <div className="relative w-72">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="ค้นหาชื่อหรืออีเมล..." className="pl-8" />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
+        {/* 4. Data Content */}
+        <Card className="shadow-lg border-none overflow-hidden">
+          <CardContent className="p-0">
             {isCollectionLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลดข้อมูลผู้ใช้งาน...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลผู้ใช้งาน...</div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>เจ้าหน้าที่ (Staff)</TableHead>
-                    <TableHead>สิทธิ์การใช้งาน (Roles)</TableHead>
-                    <TableHead>สถานะ (Status)</TableHead>
-                    <TableHead>เข้าใช้งานล่าสุด</TableHead>
+                    <TableHead className="font-bold">เจ้าหน้าที่ (Staff Name)</TableHead>
+                    <TableHead className="font-bold">สิทธิ์การใช้งาน (Roles)</TableHead>
+                    <TableHead className="font-bold">สถานะ (Status)</TableHead>
+                    <TableHead className="font-bold">เข้าใช้งานล่าสุด</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {users?.map((u) => {
-                    const roles = u.roleIds || [(u as any).roleId];
+                    const roles = u.roleIds || [];
                     return (
                       <TableRow key={u.id}>
                         <TableCell>
@@ -155,7 +167,7 @@ export default function UsersPage() {
                         <TableCell>
                           {u.isActive ? (
                             <span className="flex items-center gap-1 text-green-600 text-xs font-medium">
-                              <Clock className="h-3 w-3" /> ออนไลน์
+                              <div className="h-2 w-2 rounded-full bg-green-600" /> ออนไลน์
                             </span>
                           ) : (
                             <span className="text-muted-foreground text-xs font-medium">ปิดการใช้งาน</span>
@@ -165,7 +177,7 @@ export default function UsersPage() {
                           {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('th-TH') : 'ไม่เคยเข้าใช้งาน'}
                         </TableCell>
                         <TableCell className="text-right space-x-2">
-                          <Button variant="ghost" size="icon"><UserCog className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" className="hover:text-primary"><UserCog className="h-4 w-4" /></Button>
                           <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(u.id)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -175,12 +187,39 @@ export default function UsersPage() {
                   })}
                   {!isCollectionLoading && (!users || users.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบข้อมูลผู้ใช้งานระบบ</TableCell>
+                      <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลผู้ใช้งานระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             )}
+          </CardContent>
+        </Card>
+
+        {/* 5. Next-Step Guidance */}
+        <Card className="bg-primary/5 border-primary/10">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
+                <div>
+                  <p className="font-bold">ตรวจสอบบทบาทผู้ใช้ (Multi-role)</p>
+                  <p className="text-muted-foreground text-xs">คุณสามารถกำหนดให้เจ้าหน้าที่ 1 คนมีได้หลายสิทธิ์ เพื่อเข้าถึงโมดูลที่ต่างกัน</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
+                <div>
+                  <p className="font-bold">ความปลอดภัยของระบบ (Security)</p>
+                  <p className="text-muted-foreground text-xs">แนะนำให้ระงับการใช้งานเจ้าหน้าที่ที่ลาออกทันทีผ่านการปรับสถานะ Active เป็น Inactive</p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
