@@ -86,6 +86,8 @@ export interface User {
   linkedProjectIds?: string[];
   nationalId?: string;
   address?: string;
+  department?: string;
+  notes?: string;
 }
 
 export interface ClientUser {
