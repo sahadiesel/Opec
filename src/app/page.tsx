@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -6,6 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { User, MainContract, Worker, Assignment } from '@/lib/types';
 import { 
   Briefcase, 
@@ -21,21 +23,39 @@ import {
   ArrowRight,
   ShieldAlert,
   Info,
-  Loader2
+  Loader2,
+  KeyRound,
+  UserCheck
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, collection, collectionGroup } from 'firebase/firestore';
+import { signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc, setDoc, collection, collectionGroup } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isBootstrapped, setIsBootstrapped] = useState<boolean | null>(null);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Registration States
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regDisplayName, setRegDisplayName] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isRegDialogOpen, setIsRegDialogOpen] = useState(false);
 
   const firestore = useFirestore();
   const auth = useAuth();
@@ -80,15 +100,77 @@ export default function Home() {
       const cred = await signInWithEmailAndPassword(auth, email, password);
       const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
       if (userDoc.exists()) {
-        const userData = userDoc.data() as any;
-        if (!userData.roleIds) userData.roleIds = [userData.roleId];
-        setUser(userData as User);
+        const userData = userDoc.data() as User;
+        
+        if (!userData.isActive) {
+          toast({ 
+            variant: "destructive", 
+            title: "บัญชีรอนุมัติ (Pending Approval)", 
+            description: "บัญชีของคุณยังไม่ได้รับการอนุมัติการใช้งาน กรุณาติดต่อผู้ดูแลระบบ" 
+          });
+          setIsLoggingIn(false);
+          return;
+        }
+
+        if (!userData.roleIds) userData.roleIds = [(userData as any).roleId];
+        setUser(userData);
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
         toast({ title: "เข้าสู่ระบบสำเร็จ (Access Granted)" });
       }
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Login Failed", description: "Invalid credentials" });
+      toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
     } finally { setIsLoggingIn(false); }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณากรอกอีเมลในช่องด้านบนก่อนกดลืมรหัสผ่าน" });
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      toast({ title: "ส่งอีเมลสำเร็จ", description: "กรุณาตรวจสอบกล่องจดหมายของคุณเพื่อรีเซ็ตรหัสผ่าน" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: err.message });
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!regEmail || !regPassword || !regDisplayName) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+      return;
+    }
+    setIsRegistering(true);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
+      const uid = cred.user.uid;
+      
+      const now = Date.now();
+      const newUser: User = {
+        id: uid,
+        email: regEmail,
+        displayName: regDisplayName,
+        roleIds: [], // Start with no roles
+        isActive: false, // Must be approved by admin
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await setDoc(doc(firestore, 'users', uid), newUser);
+      
+      toast({ 
+        title: "ลงทะเบียนสำเร็จ", 
+        description: "บัญชีของคุณถูกสร้างแล้ว กรุณารอการอนุมัติสิทธิ์เข้าใช้งานจากผู้ดูแลระบบ" 
+      });
+      setIsRegDialogOpen(false);
+      setRegEmail('');
+      setRegPassword('');
+      setRegDisplayName('');
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Registration Failed", description: err.message });
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handleLogout = () => {
@@ -102,11 +184,8 @@ export default function Home() {
     const activeWorkers = workers?.filter(w => w.workerStatus === 'assigned').length || 0;
     const pendingItems = assignments?.filter(a => a.clientApprovalStatus === 'SUBMITTED').length || 0;
     
-    // Revenue logic: sum of sellRateSnapshot for ACTIVE deployments
     const revenue = assignments?.reduce((sum, a) => {
       if (a.deploymentStatus === 'ACTIVE') {
-        // Find sellRateSnapshot from PO Lines would be better, but for MVP we use the snapshot stored in assignment if any, 
-        // or just count active billing units. Let's assume sellRateSnapshot exists in assignment document based on current code.
         return sum + (Number((a as any).sellRateSnapshot) || 0);
       }
       return sum;
@@ -140,19 +219,69 @@ export default function Home() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">อีเมลใช้งาน (Email Address)</Label>
-                <input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" required />
+                <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">รหัสผ่าน (Password)</Label>
-                <input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" required />
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password">รหัสผ่าน (Password)</Label>
+                  <Button variant="link" type="button" onClick={handleForgotPassword} className="px-0 h-auto text-xs text-muted-foreground">ลืมรหัสผ่าน?</Button>
+                </div>
+                <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••••••" required />
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-3">
               <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg" disabled={isLoggingIn}>
+                {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
                 {isLoggingIn ? 'กำลังตรวจสอบสิทธิ์...' : 'เข้าสู่ระบบ (SIGN IN)'}
               </Button>
+              
+              <div className="relative w-full py-2">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">หรือ</span></div>
+              </div>
+
+              <Dialog open={isRegDialogOpen} onOpenChange={setIsRegDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="w-full h-11 font-semibold gap-2">
+                    <UserPlus className="h-4 w-4" /> ลงทะเบียนเข้าใช้งาน (Register)
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>ลงทะเบียนผู้ใช้งานใหม่</DialogTitle>
+                    <DialogDescription>ข้อมูลของคุณจะถูกส่งไปยังผู้ดูแลระบบเพื่อขออนุมัติสิทธิ์เข้าใช้งาน</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>ชื่อ-นามสกุลจริง</Label>
+                      <Input value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} placeholder="เช่น สมชาย สายชล" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>อีเมลพนักงาน</Label>
+                      <Input type="email" value={regEmail} onChange={e => setRegEmail(e.target.value)} placeholder="name@opec.com" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>กำหนดรหัสผ่าน</Label>
+                      <Input type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" />
+                    </div>
+                    <div className="bg-amber-50 p-3 rounded-md border border-amber-200 flex gap-2">
+                      <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                      <p className="text-[10px] text-amber-800">
+                        หลังจากลงทะเบียน บัญชีของคุณจะยังไม่สามารถใช้งานได้จนกว่าผู้ดูแลระบบจะทำการตรวจสอบและกำหนดสิทธิ์ (Roles) ให้กับคุณ
+                      </p>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button onClick={handleRegister} disabled={isRegistering} className="w-full font-bold">
+                      {isRegistering ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCheck className="h-4 w-4 mr-2" />}
+                      ยืนยันการลงทะเบียน
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
               {!isBootstrapped && (
-                <Button variant="outline" className="w-full gap-2 h-11" asChild>
+                <Button variant="outline" className="w-full gap-2 h-11 border-dashed border-primary/50 text-primary" asChild>
                   <Link href="/setup-admin"><ShieldCheck className="h-4 w-4" /> เริ่มต้นระบบครั้งแรก (Setup System)</Link>
                 </Button>
               )}
