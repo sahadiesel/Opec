@@ -4,12 +4,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     /**
-     * OPEC Manpower Supply - Firestore Security Rules
+     * OPEC Manpower Supply - Firestore Security Rules (Optimized)
      * 
-     * แนวคิดหลัก:
-     * - ใช้ DBAC (Database Access Control) เก็บ Role ในคอลเลกชันแยก roles_{role_name}/{uid}
-     * - Staff Access: สิทธิ์เข้าถึงข้อมูลเชิงลึกของระบบ
-     * - Client Access: สิทธิ์เข้าถึงเฉพาะ Candidate Review และงานที่เกี่ยวข้องกับตัวเอง
+     * ใช้โครงสร้าง DBAC (Database Access Control):
+     * - ข้อมูล Role เก็บที่ /roles_{role_id}/{uid}
+     * - รองรับ Multi-role และ System Admin Fallback
      */
 
     // =========================
@@ -24,29 +23,30 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // ตรวจสอบสิทธิ์ผ่าน DBAC Collections
+    // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท (ไม่ต้องใส่ roles_ นำหน้าตอนเรียกใช้)
     function hasRole(role) {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
 
-    // สิทธิ์สูงสุด (รวมถึง Fallback สำหรับผู้ติดตั้งระบบ)
+    // สิทธิ์สูงสุด (ตรวจสอบจาก doc roles_system_admin หรือจาก bootstrap)
     function isSystemAdmin() { 
       return hasRole('system_admin') || 
-             (isSignedIn() && exists(/databases/$(database)/documents/system/bootstrap) && get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid); 
+             (isSignedIn() && exists(/databases/$(database)/documents/system/bootstrap) && 
+              get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid); 
     }
 
-    // บทบาทแยกตามแผนก
+    // บทบาทหลัก
     function isHRManager() { return hasRole('hr_manager') || isSystemAdmin(); }
     function isHROfficer() { return hasRole('hr_officer') || isHRManager(); }
     function isSalesOfficer() { return hasRole('sales_officer') || isSystemAdmin(); }
     function isFinanceOfficer() { return hasRole('finance_officer') || isSystemAdmin(); }
-    function isPayrollOfficer() { return hasRole('payroll_officer') || isFinanceOfficer() || isHRManager(); }
+    function isPayrollOfficer() { return hasRole('payroll_officer') || isHRManager(); }
     function isStoreOfficer() { return hasRole('store_officer') || isSystemAdmin(); }
     function isOperationsOfficer() { return hasRole('operations_officer') || isSystemAdmin(); }
     function isSafetyOfficer() { return hasRole('safety_officer') || isSystemAdmin(); }
     function isClient() { return hasRole('client') || hasRole('client_user'); }
 
-    // กลุ่มเจ้าหน้าที่ทั่วไป (พนักงานออฟฟิศทั้งหมด)
+    // กลุ่มเจ้าหน้าที่ (Staff)
     function isStaff() {
       return isSystemAdmin() || 
              hasRole('hr_manager') || hasRole('hr_officer') || 
@@ -55,11 +55,9 @@ service cloud.firestore {
              hasRole('payroll_officer') || hasRole('store_officer');
     }
 
-    // ฟังก์ชันย่อยสำหรับแต่ละโมดูล
     function isHRStaff() { return isHRManager() || isHROfficer(); }
     function isCommercialStaff() { return isSalesOfficer() || isFinanceOfficer(); }
-    function isOpsStaff() { return isOperationsOfficer() || isHRStaff() || isSafetyOfficer(); }
-    function isInventoryStaff() { return isStoreOfficer() || isOperationsOfficer(); }
+    function isOpsStaff() { return isOperationsOfficer() || isHRStaff(); }
 
     // =========================
     // System / Bootstrap
@@ -95,63 +93,52 @@ service cloud.firestore {
     }
 
     // =========================
-    // Master Data: Positions
+    // Master Data
     // =========================
     
     match /positions/{positionId} {
       allow read: if isStaff();
       allow write: if isHRStaff() || isSafetyOfficer();
-      
       match /{sub=**} {
         allow read: if isStaff();
         allow write: if isHRStaff() || isSafetyOfficer();
       }
     }
 
-    // =========================
-    // Master Data: Workers
-    // =========================
-    
     match /workers/{workerId} {
-      allow read: if isStaff() || (isClient() && exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+      allow read: if isStaff() || isClient();
       allow write: if isHRStaff();
-      
       match /{sub=**} {
-        allow read: if isStaff() || (isClient() && exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+        allow read: if isStaff() || isClient();
         allow write: if isHRStaff();
       }
     }
 
-    // =========================
-    // Commercial: Customers & Contracts
-    // =========================
-    
     match /customers/{customerId} {
-      allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
+      allow read: if isStaff() || isClient();
       allow write: if isCommercialStaff();
-      
       match /{sub=**} {
-        allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
+        allow read: if isStaff() || isClient();
         allow write: if isCommercialStaff();
       }
     }
 
+    // =========================
+    // Commercial & Contracts
+    // =========================
+    
     match /main_contracts/{contractId} {
-      allow list: if isStaff();
-      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+      allow read: if isStaff() || isClient();
       allow write: if isCommercialStaff();
-      
       match /{sub=**} {
-        allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/main_contracts/$(contractId)).data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+        allow read: if isStaff() || isClient();
         allow write: if isCommercialStaff() || isHRManager();
       }
     }
 
     match /purchase_orders/{poId} {
-      allow list: if isStaff();
-      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+      allow read: if isStaff() || isClient();
       allow write: if isCommercialStaff();
-      
       match /{sub=**} {
         allow read: if isStaff() || isClient();
         allow write: if isCommercialStaff() || isHRStaff();
@@ -159,51 +146,45 @@ service cloud.firestore {
     }
 
     // =========================
-    // Operations: Waves, Assignments, Mobilization
+    // Operations & Store
     // =========================
     
     match /waves/{waveId} {
       allow read: if isStaff();
       allow write: if isOpsStaff();
-      
       match /{sub=**} {
         allow read: if isStaff();
         allow write: if isOpsStaff();
       }
     }
 
-    // สำหรับการเข้าถึงผ่านคอลเลกชันหลัก
     match /assignments/{asgnId} {
       allow read: if isStaff() || isClient();
       allow write: if isOpsStaff() || isHRStaff();
     }
 
-    // =========================
-    // Inventory: Store, PPE, Tools
-    // =========================
-    
     match /store_items/{itemId} {
       allow read: if isStaff();
-      allow write: if isInventoryStaff();
+      allow write: if isStoreOfficer() || isOperationsOfficer();
     }
 
     match /store_transactions/{txId} {
       allow read: if isStaff();
-      allow create: if isInventoryStaff();
+      allow create: if isStoreOfficer() || isOperationsOfficer();
     }
 
     match /store_issue_slips/{id} {
       allow read: if isStaff();
-      allow write: if isInventoryStaff();
+      allow write: if isStoreOfficer() || isOperationsOfficer();
     }
 
     match /store_return_slips/{id} {
       allow read: if isStaff();
-      allow write: if isInventoryStaff();
+      allow write: if isStoreOfficer() || isOperationsOfficer();
     }
 
     // =========================
-    // Finance: Payroll
+    // Finance & Payroll
     // =========================
     
     match /payroll_runs/{runId} {
@@ -211,7 +192,6 @@ service cloud.firestore {
       allow create: if isPayrollOfficer() || isHRManager();
       allow update: if isPayrollOfficer() || isFinanceOfficer();
       allow delete: if isSystemAdmin();
-      
       match /lines/{lineId} {
         allow read: if isPayrollOfficer() || isFinanceOfficer();
         allow write: if isPayrollOfficer() || isHRManager();
@@ -228,7 +208,7 @@ service cloud.firestore {
     }
 
     // =========================
-    // Collection Group Support (Critical)
+    // Collection Group Support
     // =========================
     
     match /{path=**}/assignments/{asgnId} {
@@ -239,11 +219,6 @@ service cloud.firestore {
     match /{path=**}/po_lines/{lineId} {
       allow read: if isStaff() || isClient();
       allow write: if isCommercialStaff();
-    }
-
-    match /{path=**}/position_rates/{rateId} {
-      allow read: if isStaff();
-      allow write: if isCommercialStaff() || isHRManager();
     }
 
     // =========================
