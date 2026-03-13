@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   Info,
   ArrowRight,
-  ShieldCheck
+  ShieldCheck,
+  Truck
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, AssignmentStatus, ClientApprovalStatus, PurchaseOrder, Customer, Position } from '@/lib/types';
@@ -42,7 +43,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
-import { Textarea } from '@/components/ui/textarea';
 
 export default function AssignmentsPage() {
   const router = useRouter();
@@ -132,7 +132,7 @@ export default function AssignmentsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        {/* 1. Page Header & Description */}
+        {/* Page Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <UserPlus className="h-8 w-8" /> การมอบหมายงาน (Assignments Management)
@@ -142,16 +142,16 @@ export default function AssignmentsPage() {
           </p>
         </div>
 
-        {/* 2. Compliance Warning Box */}
+        {/* Compliance Warning Box */}
         <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
           <ShieldCheck className="h-5 w-5 text-blue-600" />
           <AlertTitle className="font-bold text-lg text-blue-900">ระเบียบการมอบหมายงาน (Assignment & Deployment Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            ห้ามมอบหมายคนงานที่มีงานทับซ้อน (Work Overlap) ในช่วงเวลาเดียวกัน และคนงานต้องผ่านการตรวจสุขภาพหน้างาน (Medical Fit-for-Duty) ให้เรียบร้อยก่อนเปลี่ยนสถานะเป็น <b className="underline">ACTIVE</b> เพื่อเริ่มงานจริง
+            ห้ามมอบหมายคนงานที่มีงานทับซ้อน (Work Overlap) ในช่วงเวลาเดียวกัน และคนงานต้องผ่านการตรวจสอบความพร้อม (Readiness Checklist) ให้เรียบร้อยก่อนเริ่มระดมพล
           </AlertDescription>
         </Alert>
 
-        {/* 3. Action Bar */}
+        {/* Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
@@ -213,7 +213,7 @@ export default function AssignmentsPage() {
           </Dialog>
         </div>
 
-        {/* 4. Data Content */}
+        {/* Table Content */}
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isAssignmentsLoading ? (
@@ -222,7 +222,7 @@ export default function AssignmentsPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4">คนงาน & ตำแหน่ง (Staff & Position)</TableHead>
+                    <TableHead className="font-bold py-4">คนงาน & ตำแหน่ง</TableHead>
                     <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
                     <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
                     <TableHead className="font-bold">สถานะงาน</TableHead>
@@ -245,7 +245,7 @@ export default function AssignmentsPage() {
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-semibold text-sm">{asgn.projectName}</span>
-                            <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-tighter">PO ID: {asgn.poId.substring(0,8)}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono uppercase">PO ID: {asgn.poId.substring(0,8)}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -266,18 +266,13 @@ export default function AssignmentsPage() {
                       </TableRow>
                     );
                   })}
-                  {!isAssignmentsLoading && assignments?.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบรายการมอบหมายงานในระบบ</TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             )}
           </CardContent>
         </Card>
 
-        {/* 5. Next-Step Guidance */}
+        {/* Workflow Guidance */}
         <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
@@ -287,24 +282,24 @@ export default function AssignmentsPage() {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-blue-100 p-2 rounded text-blue-700 shadow-inner"><Send className="h-4 w-4" /></div>
+                <div className="bg-blue-100 p-2 rounded text-blue-700"><Send className="h-4 w-4" /></div>
                 <div>
-                  <p className="font-bold">ส่งพิจารณาตัวบุคคล (Client Candidate Review)</p>
-                  <p className="text-muted-foreground text-xs">หลังจากมอบหมาย ต้องอัปเดตสถานะเป็น Client Review เพื่อให้ลูกค้าเห็นประวัติใน Portal</p>
+                  <p className="font-bold">ส่งพิจารณาตัวบุคคล (Client Review)</p>
+                  <p className="text-muted-foreground text-xs">หลังการมอบหมาย ต้องส่งประวัติให้ลูกค้าพิจารณาผ่าน Portal ก่อนเข้าสู่ขั้นตอนระดมพล</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-amber-100 p-2 rounded text-amber-700 shadow-inner"><Clock className="h-4 w-4" /></div>
+                <div className="bg-amber-100 p-2 rounded text-amber-700"><Truck className="h-4 w-4" /></div>
                 <div>
-                  <p className="font-bold">เริ่มขั้นตอนระดมพล (Start Mobilization)</p>
-                  <p className="text-muted-foreground text-xs">เมื่อลูกค้าอนุมัติ (Approved) ให้ดำเนินการจัดเตรียมชุด PPE และอุปกรณ์ประจำตัวคนงาน</p>
+                  <p className="font-bold">เริ่มขั้นตอนระดมพล (Mobilization)</p>
+                  <p className="text-muted-foreground text-xs">เมื่อได้รับอนุมัติ ให้ดำเนินการตรวจสอบความพร้อมสุดท้ายและจัดเตรียมอุปกรณ์เดินทาง</p>
                 </div>
               </div>
             </div>
           </CardContent>
           <CardFooter className="pt-0 justify-end">
             <Button variant="link" className="gap-2 text-primary font-bold" asChild>
-              <a href="/mobilization">ไปยังเมนูการระดมพล (Go to Mobilization) <ArrowRight className="h-4 w-4" /></a>
+              <Link href="/mobilization">ไปยังเมนูการระดมพล (Go to Mobilization) <ArrowRight className="h-4 w-4" /></Link>
             </Button>
           </CardFooter>
         </Card>
