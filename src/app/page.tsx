@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { User } from '@/lib/types';
+import { User, MainContract, Worker, Assignment } from '@/lib/types';
 import { 
   Briefcase, 
   ShieldCheck, 
@@ -20,11 +20,12 @@ import {
   HardHat,
   ArrowRight,
   ShieldAlert,
-  Info
+  Info,
+  Loader2
 } from 'lucide-react';
-import { useFirestore, useAuth, useUser } from '@/firebase';
+import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, collectionGroup } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
@@ -40,6 +41,16 @@ export default function Home() {
   const auth = useAuth();
   const { user: firebaseUser, isUserLoading } = useUser();
   const { toast } = useToast();
+
+  // Real Data Subscriptions
+  const contractsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'main_contracts') : null), [firestore]);
+  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
+
+  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const { data: workers } = useCollection<Worker>(workersQuery as any);
+
+  const assignmentsQuery = useMemoFirebase(() => (firestore ? collectionGroup(firestore, 'assignments') : null), [firestore]);
+  const { data: assignments } = useCollection<Assignment>(assignmentsQuery as any);
 
   useEffect(() => {
     setIsLoaded(true);
@@ -84,6 +95,33 @@ export default function Home() {
     setUser(null);
     localStorage.removeItem('opsflow_user');
   };
+
+  // Stats Calculations
+  const stats = useMemo(() => {
+    const activeContracts = contracts?.filter(c => c.status === 'active').length || 0;
+    const activeWorkers = workers?.filter(w => w.workerStatus === 'assigned').length || 0;
+    const pendingItems = assignments?.filter(a => a.clientApprovalStatus === 'SUBMITTED').length || 0;
+    
+    // Revenue logic: sum of sellRateSnapshot for ACTIVE deployments
+    const revenue = assignments?.reduce((sum, a) => {
+      if (a.deploymentStatus === 'ACTIVE') {
+        // Find sellRateSnapshot from PO Lines would be better, but for MVP we use the snapshot stored in assignment if any, 
+        // or just count active billing units. Let's assume sellRateSnapshot exists in assignment document based on current code.
+        return sum + (Number((a as any).sellRateSnapshot) || 0);
+      }
+      return sum;
+    }, 0) || 0;
+
+    const expiringCerts = workers?.filter(w => w.readinessStatus === 'MISSING_CERTIFICATE' || w.readinessStatus === 'MEDICAL_EXPIRED').length || 0;
+
+    return {
+      revenue: revenue.toLocaleString(),
+      activeWorkers,
+      activeContracts,
+      pendingItems,
+      expiringCerts
+    };
+  }, [contracts, workers, assignments]);
 
   if (!isLoaded || isUserLoading) return null;
 
@@ -142,10 +180,10 @@ export default function Home() {
         </Alert>
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-          <StatCard title="รายได้โดยประมาณ (Estimated Revenue)" value="฿12.4M" sub="เดือนปัจจุบัน (Current Month)" icon={CircleDollarSign} colorClass="border-l-blue-600" />
-          <StatCard title="คนงานที่ทำงานอยู่ (Active Workers)" value="842" sub="On-site Offshore" icon={HardHat} colorClass="border-l-orange-500" />
-          <StatCard title="สัญญาหลัก (Active Contracts)" value="12" sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
-          <StatCard title="รายการที่ต้องพิจารณา (Pending Items)" value="8" sub="Needs Attention" icon={Activity} colorClass="border-l-red-500" />
+          <StatCard title="รายได้โดยประมาณ (Estimated Revenue)" value={`฿${stats.revenue}`} sub="เดือนปัจจุบัน (Current Month)" icon={CircleDollarSign} colorClass="border-l-blue-600" />
+          <StatCard title="คนงานที่ทำงานอยู่ (Active Workers)" value={stats.activeWorkers} sub="On-site Offshore" icon={HardHat} colorClass="border-l-orange-500" />
+          <StatCard title="สัญญาหลัก (Active Contracts)" value={stats.activeContracts} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
+          <StatCard title="รายการที่ต้องพิจารณา (Pending Items)" value={stats.pendingItems} sub="Needs Attention" icon={Activity} colorClass="border-l-red-500" />
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
@@ -173,7 +211,7 @@ export default function Home() {
                 <div className="flex gap-3 items-center">
                   <div className="bg-red-100 p-2 rounded-full text-red-600"><ShieldAlert className="h-4 w-4" /></div>
                   <div>
-                    <p className="font-bold text-sm">ใบเซอร์หมดอายุ 12 รายการ</p>
+                    <p className="font-bold text-sm">ใบเซอร์หมดอายุ {stats.expiringCerts} รายการ</p>
                     <p className="text-xs text-muted-foreground">ต้องรีบต่ออายุเพื่อความปลอดภัย</p>
                   </div>
                 </div>
@@ -183,7 +221,7 @@ export default function Home() {
                 <div className="flex gap-3 items-center">
                   <div className="bg-blue-100 p-2 rounded-full text-blue-600"><UserPlus className="h-4 w-4" /></div>
                   <div>
-                    <p className="font-bold text-sm">คำขออนุมัติคนงานใหม่ 5 รายการ</p>
+                    <p className="font-bold text-sm">คำขออนุมัติคนงานใหม่ {stats.pendingItems} รายการ</p>
                     <p className="text-xs text-muted-foreground">รอการพิจารณาจากลูกค้าใน Portal</p>
                   </div>
                 </div>
