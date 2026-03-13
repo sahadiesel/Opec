@@ -14,7 +14,7 @@ export type RoleType =
   | 'payroll_officer'
   | 'store_officer'
   | 'client_user'
-  | 'client'; // Legacy support for 'client' role mapping
+  | 'client'; 
 
 export type ReadinessStatus = 
   | 'READY' 
@@ -37,11 +37,19 @@ export type AssignmentStatus =
 
 export type ClientApprovalStatus = 'pending' | 'approved' | 'rejected' | 'replacement_requested';
 
+export type WaveStatus = 
+  | 'PLANNING'
+  | 'READY'
+  | 'MOBILIZING'
+  | 'ACTIVE'
+  | 'DEMOBILIZING'
+  | 'CLOSED';
+
 export interface User {
   id: string;
   email: string;
   displayName: string;
-  roleIds: RoleType[]; // Changed from roleId to roleIds for multi-role support
+  roleIds: RoleType[]; 
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
@@ -188,8 +196,8 @@ export interface ContactPerson {
 export interface MainContract {
   id: string;
   customerId: string;
-  contractNumber: string; // Used as Contract Code
-  title: string;          // Used as Contract Title
+  contractNumber: string; 
+  title: string;          
   projectId?: string;
   startDate: number;
   endDate: number;
@@ -245,11 +253,35 @@ export interface POLine {
   _path?: string;
 }
 
+export interface Wave {
+  id: string;
+  waveCode: string;
+  poId: string;
+  poLineId: string;
+  customerId: string;
+  projectName: string;
+  siteLocation: string;
+  startDate: string; // yyyy-mm-dd
+  endDate: string;   // yyyy-mm-dd
+  mobilizationDate: string; // yyyy-mm-dd
+  demobilizationDate: string; // yyyy-mm-dd
+  rotationPattern: string; // e.g., "28/28", "14/14"
+  plannedWorkers: number;
+  assignedWorkers: number;
+  status: WaveStatus;
+  notes: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
 export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
   poId: string; 
+  waveId?: string; // Linked to a specific wave
   positionId: string;
   customerId: string;
   projectName: string;
@@ -287,4 +319,15 @@ export interface Worker {
   notes?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface AuditLog {
+  id: string;
+  userId: string;
+  userName: string;
+  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'LOGOUT';
+  entityType: string;
+  entityId: string;
+  timestamp: number;
+  details?: string;
 }
