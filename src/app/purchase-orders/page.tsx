@@ -109,19 +109,19 @@ export default function CustomerPOsPage() {
         {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ShoppingCart className="h-8 w-8" /> ใบสั่งซื้อลูกค้า (Customer POs)
+            <ShoppingCart className="h-8 w-8" /> ใบสั่งซื้อลูกค้า (Customer POs Management)
           </h1>
           <p className="text-muted-foreground text-lg">
-            จัดการใบสั่งซื้อบริการกำลังคน (Client Issued POs) และโควต้าพนักงานรายโครงการ
+            จัดการใบสั่งซื้อบริการกำลังคน (Client Issued POs) โควต้าพนักงานรายตำแหน่ง และราคาสรุปรายโครงการ
           </p>
         </div>
 
-        {/* 2. Operational Notice */}
-        <Alert className="bg-primary/5 border-primary/20">
-          <Info className="h-4 w-4 text-primary" />
-          <AlertTitle className="font-bold">การจองโควต้า (Quota Reservation)</AlertTitle>
-          <AlertDescription>
-            ใบสั่งซื้อจะทำหน้าที่จองโควต้าพนักงานตามตำแหน่งงานที่ระบุใน PO Lines กรุณาระบุจำนวน (Quantity) และระยะเวลาโครงการให้ชัดเจน
+        {/* 2. Operational Notice Box */}
+        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
+          <Info className="h-5 w-5 text-primary" />
+          <AlertTitle className="font-bold text-lg">การจองโควต้าพนักงาน (Quota Reservation Policy)</AlertTitle>
+          <AlertDescription className="text-sm">
+            ใบสั่งซื้อจากลูกค้าจะทำหน้าที่จองโควต้าพนักงาน (Quota) ตามตำแหน่งงานที่ระบุใน <b>PO Lines</b> โดยราคาทั้งหมดจะถูก Snaphot มาจากสัญญาหลัก ณ วันที่บันทึกข้อมูลเพื่อความถูกต้องทางบัญชี
           </AlertDescription>
         </Alert>
 
@@ -130,39 +130,39 @@ export default function CustomerPOsPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่ PO หรือชื่อโครงการ..." className="pl-9" />
+              <Input placeholder="ค้นหาเลขที่ PO หรือ ชื่อโครงการ..." className="pl-9 h-11" />
             </div>
-            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
+            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
-                <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New Customer PO)
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold">
+                <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>สร้างใบสั่งซื้อจากลูกค้าใหม่ (New Customer PO)</DialogTitle>
-                <DialogDescription>เลือกคู่ค้าและสัญญาหลักเพื่อจองโควต้ากำลังคน</DialogDescription>
+                <DialogTitle>ลงทะเบียนใบสั่งซื้อใหม่ (New Customer PO Registration)</DialogTitle>
+                <DialogDescription>เลือกบริษัทคู่ค้าและสัญญาหลักที่เกี่ยวข้องเพื่อทำการจองโควต้าพนักงาน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
-                  <Label>หัวข้อใบสั่งซื้อ (Title)</Label>
-                  <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น งานบำรุงรักษาโครงการปิโตรเคมี X" />
+                  <Label>หัวข้อใบสั่งซื้อ (PO Subject/Title)</Label>
+                  <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น โครงการบำรุงรักษา Shutdown ประจำปี 2024" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>เลขที่ Customer PO (PO Code)</Label>
-                  <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-2024-XXXX" />
+                  <Label>เลขที่ใบสั่งซื้อของลูกค้า (Customer PO Code)</Label>
+                  <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-XXXXX-XXXX" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>ชื่อโครงการ (Project Name)</Label>
+                  <Label>ชื่อโครงการเฉพาะทาง (Project Name)</Label>
                   <Input value={newPO.projectName} onChange={e => setNewPO({...newPO, projectName: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
                   <Label>ลูกค้า (Customer)</Label>
                   <Select onValueChange={v => setNewPO({...newPO, customerId: v, contractId: ''})} value={newPO.customerId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
                     <SelectContent>
                       {customers?.map(c => (
                         <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
@@ -171,9 +171,9 @@ export default function CustomerPOsPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label>สัญญาหลักที่อ้างอิง (Main Contract)</Label>
+                  <Label>อ้างอิงสัญญาหลัก (Related Main Contract)</Label>
                   <Select onValueChange={v => setNewPO({...newPO, contractId: v})} value={newPO.contractId} disabled={!newPO.customerId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกสัญญาหลัก..." /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกสัญญาหลักที่อ้างอิง..." /></SelectTrigger>
                     <SelectContent>
                       {contracts?.map(c => (
                         <SelectItem key={c.id} value={c.id}>{c.contractNumber} - {c.title}</SelectItem>
@@ -182,32 +182,22 @@ export default function CustomerPOsPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label>วันที่เริ่มโครงการ</Label>
+                  <Label>วันที่เริ่มโครงการ (Start Date)</Label>
                   <Input type="date" value={newPO.startDate ? new Date(newPO.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, startDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>วันที่สิ้นสุดโครงการ</Label>
+                  <Label>วันที่สิ้นสุดโครงการ (End Date)</Label>
                   <Input type="date" value={newPO.endDate ? new Date(newPO.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, endDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2 col-span-2">
-                  <Label>รายละเอียดโครงการ</Label>
+                  <Label>รายละเอียดเพิ่มเติม</Label>
                   <Textarea value={newPO.description} onChange={e => setNewPO({...newPO, description: e.target.value})} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>สถานะ</Label>
-                  <Select onValueChange={v => setNewPO({...newPO, status: v as any})} value={newPO.status}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="active">Active</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary" disabled={!newPO.title || !newPO.customerId || !newPO.contractId || !newPO.poCode}>
-                  ยืนยันและตั้งค่ารายการโควต้า (Confirm)
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={!newPO.title || !newPO.customerId || !newPO.contractId || !newPO.poCode}>
+                  ยืนยันและไปจัดการรายการโควต้า (Confirm & Manage Lines)
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -223,38 +213,37 @@ export default function CustomerPOsPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold">เลขที่ PO (Code)</TableHead>
-                    <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
-                    <TableHead className="font-bold">สัญญาหลัก (Main Contract)</TableHead>
-                    <TableHead className="font-bold">ระยะเวลา (Period)</TableHead>
+                    <TableHead className="font-bold py-4">รหัส PO (Code)</TableHead>
+                    <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
+                    <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
+                    <TableHead className="font-bold">ระยะเวลาปฏิบัติงาน (Period)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
+                    <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pos?.map((po) => {
                     const customer = customers?.find(c => c.id === po.customerId);
-                    const contract = contracts?.find(c => c.id === po.contractId);
                     return (
                       <TableRow 
                         key={po.id} 
-                        className="cursor-pointer hover:bg-muted/50 group"
+                        className="cursor-pointer hover:bg-muted/50 group transition-all"
                         onClick={() => router.push(`/purchase-orders/${po.id}`)}
                       >
-                        <TableCell className="font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
+                        <TableCell className="py-4 font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-sm">
+                          <div className="flex items-center gap-2 text-sm text-primary font-bold">
                             <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
                             {customer?.name || 'N/A'}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-xs">
-                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                            {contract?.contractNumber || 'No Contract'}
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm text-primary">{po.title}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase">{po.projectName || 'General Project'}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-xs">
+                        <TableCell className="text-xs font-medium text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
@@ -265,7 +254,7 @@ export default function CustomerPOsPage() {
                             {po.status.toUpperCase()}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right pr-6">
                           <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
                         </TableCell>
                       </TableRow>
@@ -283,33 +272,33 @@ export default function CustomerPOsPage() {
         </Card>
 
         {/* 5. Next-Step Guidance */}
-        <Card className="bg-primary/5 border-primary/10">
+        <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
+              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Workflow Guidance)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
-                  <p className="font-bold">จัดการรายการโควต้า (PO Lines)</p>
-                  <p className="text-muted-foreground text-xs">ระบุตำแหน่งและจำนวนคนงานที่ลูกค้าสั่งจองในหน้ารายละเอียด PO</p>
+                  <p className="font-bold">ระบุรายการสั่งจอง (Manage PO Lines)</p>
+                  <p className="text-muted-foreground text-xs">คลิกเข้าดู PO เพื่อเพิ่มตำแหน่งงานและจำนวนคนงานที่ลูกค้าต้องการจองตัว (Required Quantity)</p>
                 </div>
               </div>
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">มอบหมายคนงาน (Assignments)</p>
-                  <p className="text-muted-foreground text-xs">ส่งรายชื่อคนงานเข้าสู่โควต้าตำแหน่งที่เปิดไว้เพื่อดำเนินการระดมพล</p>
+                  <p className="font-bold">มอบหมายคนงานรายบุคคล (Assign Workers)</p>
+                  <p className="text-muted-foreground text-xs">ไปที่ระบบ 'การมอบหมาย' เพื่อส่งรายชื่อคนงานที่พร้อม (Ready) เข้ามายังโควต้าที่เปิดไว้ในใบสั่งซื้อนี้</p>
                 </div>
               </div>
             </div>
           </CardContent>
           <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2" asChild>
-              <a href="/assignments">ไปยังเมนูการมอบหมาย (Go to Assignments) <ArrowRight className="h-4 w-4" /></a>
+            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
+              <a href="/assignments">ไปยังระบบการมอบหมายงาน (Assignments) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
         </Card>

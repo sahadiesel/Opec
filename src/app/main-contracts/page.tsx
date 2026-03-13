@@ -110,19 +110,19 @@ export default function MainContractsPage() {
         {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ClipboardList className="h-8 w-8" /> สัญญาหลัก (Main Contracts)
+            <ClipboardList className="h-8 w-8" /> สัญญาหลัก (Main Contracts Management)
           </h1>
           <p className="text-muted-foreground text-lg">
-            บริหารจัดการสัญญาซื้อขายหลัก (Master Agreements) อัตราราคาตามตำแหน่ง และเงื่อนไขทางการเงิน
+            บริหารจัดการสัญญาจ้างกำลังคนหลัก (Master Service Agreements) และกำหนดฐานราคากลางแยกตามตำแหน่งงาน
           </p>
         </div>
 
-        {/* 2. Operational Notice */}
-        <Alert className="bg-primary/5 border-primary/20">
-          <Info className="h-4 w-4 text-primary" />
-          <AlertTitle className="font-bold">การกำหนดอัตราราคา (Rate Management)</AlertTitle>
-          <AlertDescription>
-            กรุณาระบุราคาขาย (Sell Rate) และหน่วยการคิดเงิน (Billing Unit) ให้ถูกต้องตามเล่มสัญญา เพื่อการวางบิลที่แม่นยำ
+        {/* 2. Operational Notice Box */}
+        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
+          <Info className="h-5 w-5 text-primary" />
+          <AlertTitle className="font-bold text-lg">การจัดการราคากลาง (Rate Management Policy)</AlertTitle>
+          <AlertDescription className="text-sm">
+            ราคาขาย (Sell Rate) และต้นทุน (Cost) ที่กำหนดในสัญญาหลักจะถูกใช้เป็นฐานในการสร้าง <b>Customer PO</b> และคำนวณกำไรเบื้องต้น (GP) กรุณาตรวจสอบหน่วยการคิดเงิน (Billing Unit) ให้ถูกต้องตามเล่มสัญญา
           </AlertDescription>
         </Alert>
 
@@ -131,35 +131,35 @@ export default function MainContractsPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่สัญญาหรือชื่อสัญญา..." className="pl-9" />
+              <Input placeholder="ค้นหาเลขที่สัญญา หรือ ชื่อสัญญา..." className="pl-9 h-11" />
             </div>
-            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
+            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold">
                 <Plus className="h-5 w-5" /> สร้างสัญญาหลักใหม่ (New Main Contract)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>สร้างสัญญาหลักใหม่ (New Contract)</DialogTitle>
-                <DialogDescription>ระบุข้อมูลพื้นฐานของสัญญาเพื่อนำไปกำหนดอัตราราคาตามตำแหน่งในลำดับถัดไป</DialogDescription>
+                <DialogTitle>ลงทะเบียนสัญญาหลักใหม่ (New Contract Registration)</DialogTitle>
+                <DialogDescription>ระบุข้อมูลพื้นฐานของสัญญาเพื่อใช้เป็นฐานในการกำหนดราคารายตำแหน่งในลำดับถัดไป</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
                   <Label>ชื่อสัญญา (Contract Title)</Label>
-                  <Input value={newContract.title} onChange={e => setNewContract({...newContract, title: e.target.value})} placeholder="เช่น สัญญาจ้างกำลังคนโครงการประมูล X" />
+                  <Input value={newContract.title} onChange={e => setNewContract({...newContract, title: e.target.value})} placeholder="เช่น สัญญาจ้างกำลังคนโครงการบำรุงรักษาแท่น X" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>รหัสสัญญา (Contract Code)</Label>
-                  <Input value={newContract.contractNumber} onChange={e => setNewContract({...newContract, contractNumber: e.target.value})} placeholder="OPEC-MC-2024-001" />
+                  <Label>เลขที่สัญญา/รหัสสัญญา (Contract Code)</Label>
+                  <Input value={newContract.contractNumber} onChange={e => setNewContract({...newContract, contractNumber: e.target.value})} placeholder="OPEC-MC-2024-XXX" />
                 </div>
                 <div className="grid gap-2">
                   <Label>ลูกค้า (Customer)</Label>
                   <Select onValueChange={v => setNewContract({...newContract, customerId: v})} value={newContract.customerId}>
-                    <SelectTrigger><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทคู่สัญญา..." /></SelectTrigger>
                     <SelectContent>
                       {customers?.map(c => (
                         <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
@@ -176,9 +176,9 @@ export default function MainContractsPage() {
                   <Input type="date" value={newContract.endDate ? new Date(newContract.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewContract({...newContract, endDate: new Date(e.target.value).getTime()})} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>สกุลเงิน</Label>
+                  <Label>สกุลเงิน (Currency)</Label>
                   <Select onValueChange={v => setNewContract({...newContract, currency: v})} value={newContract.currency}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="THB">THB - Thai Baht</SelectItem>
                       <SelectItem value="USD">USD - US Dollar</SelectItem>
@@ -186,19 +186,19 @@ export default function MainContractsPage() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label>สถานะ</Label>
+                  <Label>สถานะการลงนาม</Label>
                   <Select onValueChange={v => setNewContract({...newContract, status: v as any})} value={newContract.status}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="pending">Pending (รอดำเนินการ)</SelectItem>
-                      <SelectItem value="active">Active (ใช้งาน)</SelectItem>
+                      <SelectItem value="active">Active (ลงนามแล้ว/ใช้งาน)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} disabled={!newContract.title || !newContract.customerId || !newContract.contractNumber}>บันทึกข้อมูล (Confirm)</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={!newContract.title || !newContract.customerId || !newContract.contractNumber}>สร้างสัญญาและจัดการอัตราราคา (Confirm)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -208,17 +208,17 @@ export default function MainContractsPage() {
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลสัญญา (Loading Contracts)...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลสัญญาหลัก (Loading Contracts)...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold">รหัสสัญญา (Code)</TableHead>
+                    <TableHead className="font-bold py-4">รหัสสัญญา (Contract Code)</TableHead>
                     <TableHead className="font-bold">ชื่อสัญญา (Contract Title)</TableHead>
-                    <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
-                    <TableHead className="font-bold">ระยะเวลา (Period)</TableHead>
+                    <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
+                    <TableHead className="font-bold">ระยะเวลา (Contract Period)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
+                    <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -227,18 +227,18 @@ export default function MainContractsPage() {
                     return (
                       <TableRow 
                         key={contract.id} 
-                        className="cursor-pointer hover:bg-muted/50 group"
+                        className="cursor-pointer hover:bg-muted/50 group transition-all"
                         onClick={() => router.push(`/main-contracts/${contract.id}`)}
                       >
-                        <TableCell className="font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
-                        <TableCell className="font-semibold">{contract.title}</TableCell>
+                        <TableCell className="py-4 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
+                        <TableCell className="font-bold text-base text-primary">{contract.title}</TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-xs">
-                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground font-medium">
+                            <Building2 className="h-3.5 w-3.5" />
                             {customer?.name || 'N/A'}
                           </div>
                         </TableCell>
-                        <TableCell className="text-xs">
+                        <TableCell className="text-xs font-medium text-muted-foreground">
                           {new Date(contract.startDate).toLocaleDateString('th-TH')} - {new Date(contract.endDate).toLocaleDateString('th-TH')}
                         </TableCell>
                         <TableCell>
@@ -246,7 +246,7 @@ export default function MainContractsPage() {
                             {contract.status.toUpperCase()}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right pr-6">
                           <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
                         </TableCell>
                       </TableRow>
@@ -264,33 +264,33 @@ export default function MainContractsPage() {
         </Card>
 
         {/* 5. Next-Step Guidance */}
-        <Card className="bg-primary/5 border-primary/10">
+        <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
+              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Workflow Guidance)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
-                  <p className="font-bold">ตั้งค่าอัตราราคา (Position Rates)</p>
-                  <p className="text-muted-foreground text-xs">คลิกเข้าดูรายละเอียดเพื่อกำหนดราคาขายของแต่ละตำแหน่งตามสัญญา</p>
+                  <p className="font-bold">ตั้งค่าอัตราราคาตามตำแหน่ง (Set Position Rates)</p>
+                  <p className="text-muted-foreground text-xs">คลิกเข้าดูสัญญาเพื่อระบุราคาขายแยกตามตำแหน่งงาน (Welder, Mechanic, etc.) ตามที่ระบุในสัญญา</p>
                 </div>
               </div>
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">ออกใบสั่งซื้อ (Customer POs)</p>
-                  <p className="text-muted-foreground text-xs">เมื่ออัตราราคาพร้อมแล้ว คุณสามารถสร้าง Customer PO เพื่อจองโควต้าคนงานได้</p>
+                  <p className="font-bold">ออกใบสั่งซื้ออ้างอิง (Link Customer POs)</p>
+                  <p className="text-muted-foreground text-xs">เมื่ออัตราราคาพร้อมแล้ว คุณสามารถสร้าง Customer PO เพื่อจองโควต้าคนงานภายใต้ราคาสัญญานี้ได้</p>
                 </div>
               </div>
             </div>
           </CardContent>
           <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2" asChild>
-              <a href="/purchase-orders">ไปยังใบสั่งซื้อลูกค้า (Go to Customer POs) <ArrowRight className="h-4 w-4" /></a>
+            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
+              <a href="/purchase-orders">ไปยังระบบใบสั่งซื้อลูกค้า (Customer POs) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
         </Card>

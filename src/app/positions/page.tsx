@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight, ShieldAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Position, User } from '@/lib/types';
 import { 
@@ -72,7 +72,7 @@ export default function PositionsPage() {
       setIsCreateOpen(false);
       toast({
         title: "สร้างตำแหน่งงานสำเร็จ",
-        description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด...",
+        description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียดและเกณฑ์มาตรฐาน...",
       });
       
       if (docRef) {
@@ -104,19 +104,19 @@ export default function PositionsPage() {
         {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <Activity className="h-8 w-8" /> เมทริกซ์ตำแหน่งงาน (Positions)
+            <Activity className="h-8 w-8" /> เมทริกซ์ตำแหน่งงาน (Positions Management)
           </h1>
           <p className="text-muted-foreground text-lg">
-            กำหนดมาตรฐานตำแหน่งงาน เกณฑ์ความพร้อม (Readiness), รายการใบเซอร์, PPE และอุปกรณ์ที่จำเป็น
+            กำหนดมาตรฐานตำแหน่งงาน เกณฑ์ความพร้อม (Readiness Matrix), รายการใบเซอร์บังคับ และอุปกรณ์ PPE ที่จำเป็น
           </p>
         </div>
 
-        {/* 2. Operational Notice */}
-        <Alert className="bg-primary/5 border-primary/20">
-          <Info className="h-4 w-4 text-primary" />
-          <AlertTitle className="font-bold">เกณฑ์มาตรฐานความปลอดภัย (Compliance Standards)</AlertTitle>
-          <AlertDescription>
-            การกำหนดรายการใบเซอร์ที่ "บังคับ (Mandatory)" จะส่งผลโดยตรงต่อการคำนวณ Readiness Status ของคนงานทุกคนในตำแหน่งนั้น
+        {/* 2. Compliance Warning Box */}
+        <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
+          <ShieldAlert className="h-5 w-5 text-amber-600" />
+          <AlertTitle className="font-bold text-lg text-amber-900">เกณฑ์มาตรฐานความพร้อม (Readiness Compliance Standard)</AlertTitle>
+          <AlertDescription className="text-sm">
+            การกำหนดรายการใบรับรองในสถานะ "<b>บังคับ (Mandatory)</b>" จะมีผลโดยตรงต่อการคำนวณ Readiness Status ของคนงานทุกคนภายใต้ตำแหน่งนั้น หากคนงานมีใบเซอร์ไม่ครบหรือหมดอายุ ระบบจะไม่อนุญาตให้ส่งตัวเข้าหน้างาน (Mobilization)
           </AlertDescription>
         </Alert>
 
@@ -125,15 +125,15 @@ export default function PositionsPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาชื่อตำแหน่งหรือรหัส..." className="pl-9" />
+              <Input placeholder="ค้นหาชื่อตำแหน่งหรือรหัสมาตรฐาน..." className="pl-9 h-11" />
             </div>
-            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
+            <Button variant="outline" size="icon" className="h-11 w-11"><Filter className="h-4 w-4" /></Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
-                <Plus className="h-5 w-5" /> เพิ่มตำแหน่งงานใหม่ (New Position)
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-semibold">
+                <Plus className="h-5 w-5" /> เพิ่มตำแหน่งงานมาตรฐาน (New Position)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
@@ -194,27 +194,32 @@ export default function PositionsPage() {
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลตำแหน่ง (Loading Positions)...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลเมทริกซ์ตำแหน่ง (Loading Matrix)...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold">ตำแหน่ง (Position Name)</TableHead>
+                    <TableHead className="font-bold py-4">ตำแหน่งงาน (Standard Position)</TableHead>
                     <TableHead className="font-bold">รหัส (Code)</TableHead>
                     <TableHead className="font-bold">หมวดหมู่ (Category)</TableHead>
                     <TableHead className="font-bold">ฐานการจ่าย (Payroll)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
+                    <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {positions?.map((pos) => (
                     <TableRow 
                       key={pos.id} 
-                      className="cursor-pointer hover:bg-muted/50 group" 
+                      className="cursor-pointer hover:bg-muted/50 group transition-all" 
                       onClick={() => router.push(`/positions/${pos.id}`)}
                     >
-                      <TableCell className="font-semibold">{pos.positionName}</TableCell>
+                      <TableCell className="py-4">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-base text-primary">{pos.positionName}</span>
+                          <span className="text-[10px] text-muted-foreground uppercase tracking-tight">Standard Matrix Entry</span>
+                        </div>
+                      </TableCell>
                       <TableCell className="font-mono text-xs font-bold text-primary">{pos.positionCode}</TableCell>
                       <TableCell>{pos.category}</TableCell>
                       <TableCell>{pos.payrollBasis}</TableCell>
@@ -223,12 +228,12 @@ export default function PositionsPage() {
                           {pos.active ? 'Active' : 'Inactive'}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right pr-6">
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="text-destructive" 
+                            className="text-destructive h-8 w-8" 
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDelete(pos.id, e);
@@ -243,7 +248,7 @@ export default function PositionsPage() {
                   ))}
                   {(!positions || positions.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงานในระบบ</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงานมาตรฐานในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -253,33 +258,33 @@ export default function PositionsPage() {
         </Card>
 
         {/* 5. Next-Step Guidance */}
-        <Card className="bg-primary/5 border-primary/10">
+        <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
+              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Workflow Guidance)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
-                  <p className="font-bold">ระบุเกณฑ์ความพร้อม (Readiness Matrix)</p>
-                  <p className="text-muted-foreground text-xs">คลิกที่ตำแหน่งงานเพื่อเพิ่มรายการใบเซอร์และ PPE ที่ต้องใช้</p>
+                  <p className="font-bold">ตั้งค่าเกณฑ์ความพร้อม (Define Readiness Criteria)</p>
+                  <p className="text-muted-foreground text-xs">คลิกที่ตำแหน่งงานเพื่อระบุรายการ "ใบเซอร์" และ "PPE" ที่คนงานในตำแหน่งนั้นต้องมีให้ครบถ้วน</p>
                 </div>
               </div>
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">ตรวจสอบข้อมูลคนงาน (Workers)</p>
-                  <p className="text-muted-foreground text-xs">ระบบจะเปรียบเทียบใบเซอร์ของคนงานกับเกณฑ์ที่กำหนดไว้โดยอัตโนมัติ</p>
+                  <p className="font-bold">ตรวจสอบฐานข้อมูลคนงาน (Sync Worker Data)</p>
+                  <p className="text-muted-foreground text-xs">หลังจากกำหนดเกณฑ์แล้ว ระบบจะทำการ Re-calculate สถานะความพร้อมของคนงานทุกคนโดยอัตโนมัติ</p>
                 </div>
               </div>
             </div>
           </CardContent>
           <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2" asChild>
-              <a href="/workers">ไปยังทะเบียนคนงาน (Go to Workers) <ArrowRight className="h-4 w-4" /></a>
+            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
+              <a href="/workers">ไปยังระบบจัดการคนงาน (Go to Workers) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
         </Card>

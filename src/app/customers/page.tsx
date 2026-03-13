@@ -114,19 +114,19 @@ export default function CustomersPage() {
         {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <Building2 className="h-8 w-8" /> ลูกค้า (Customers)
+            <Building2 className="h-8 w-8" /> ลูกค้า (Customers Directory)
           </h1>
           <p className="text-muted-foreground text-lg">
-            บริหารจัดการฐานข้อมูลบริษัทคู่ค้า สัญญาหลัก และข้อมูลการติดต่อเพื่อการดำเนินงานเชิงพาณิชย์
+            บริหารจัดการฐานข้อมูลบริษัทคู่ค้า ข้อมูลการติดต่อ และที่อยู่จดทะเบียนเพื่อการดำเนินงานเชิงพาณิชย์
           </p>
         </div>
 
-        {/* 2. Operational Notice */}
-        <Alert className="bg-primary/5 border-primary/20">
-          <Info className="h-4 w-4 text-primary" />
-          <AlertTitle className="font-bold">นโยบายข้อมูลคู่ค้า (Commercial Data Policy)</AlertTitle>
-          <AlertDescription>
-            การแก้ไขรหัสลูกค้า (Customer Code) จะมีผลต่อการอ้างอิงในใบสั่งซื้อและรายงานทางการเงินทั้งหมด กรุณาตรวจสอบความถูกต้องก่อนบันทึก
+        {/* 2. Operational Notice Box */}
+        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
+          <Info className="h-5 w-5 text-primary" />
+          <AlertTitle className="font-bold text-lg">นโยบายข้อมูลคู่ค้า (Commercial Data Policy)</AlertTitle>
+          <AlertDescription className="text-sm">
+            การแก้ไขรหัสลูกค้า (Customer Code) จะมีผลต่อการอ้างอิงในสัญญาหลัก (Main Contracts) และใบสั่งซื้อทั้งหมด กรุณาตรวจสอบความถูกต้องของเลขประจำตัวผู้เสียภาษี (Tax ID) เพื่อความถูกต้องของการวางบิล
           </AlertDescription>
         </Alert>
 
@@ -135,25 +135,25 @@ export default function CustomersPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาชื่อบริษัทหรือรหัสลูกค้า..." className="pl-9" />
+              <Input placeholder="ค้นหาชื่อบริษัทหรือรหัสคู่ค้า..." className="pl-9 h-11" />
             </div>
-            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
+            <Button variant="outline" className="h-11 px-4 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
                 <Plus className="h-5 w-5" /> ลงทะเบียนลูกค้าใหม่ (New Registration)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>ลงทะเบียนลูกค้าใหม่ (New Customer)</DialogTitle>
+                <DialogTitle>ลงทะเบียนลูกค้าใหม่ (New Customer Registration)</DialogTitle>
                 <DialogDescription>กรอกข้อมูลบริษัทเพื่อเริ่มต้นสร้างสัญญาและใบสั่งซื้อในลำดับถัดไป</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
-                  <Label>ชื่อบริษัท (Company Name)</Label>
+                  <Label>ชื่อบริษัท (Full Company Name)</Label>
                   <Input value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
@@ -169,7 +169,7 @@ export default function CustomersPage() {
                   <Input value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>อีเมลกลาง</Label>
+                  <Label>อีเมลกลาง (Company Email)</Label>
                   <Input value={newCustomer.email} onChange={e => setNewCustomer({...newCustomer, email: e.target.value})} />
                 </div>
                 <div className="grid gap-2 col-span-2">
@@ -180,25 +180,17 @@ export default function CustomersPage() {
                   <Label>ที่อยู่วางบิล (Billing Address)</Label>
                   <Textarea value={newCustomer.billingAddress} onChange={e => setNewCustomer({...newCustomer, billingAddress: e.target.value})} />
                 </div>
-                <div className="grid gap-2">
-                  <Label>เครดิตเทอม (Credit Terms)</Label>
-                  <Input value={newCustomer.creditTerms} onChange={e => setNewCustomer({...newCustomer, creditTerms: e.target.value})} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>เงื่อนไขวางบิล (Billing Terms)</Label>
-                  <Input value={newCustomer.billingTerms} onChange={e => setNewCustomer({...newCustomer, billingTerms: e.target.value})} />
-                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary">บันทึกข้อมูล (Save Profile)</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold">บันทึกข้อมูลลูกค้า (Save Profile)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
         {/* 4. Data Content */}
-        <Card className="shadow-lg overflow-hidden border-none">
+        <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลลูกค้า (Loading Customers)...</div>
@@ -206,31 +198,31 @@ export default function CustomersPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold">รหัส (Code)</TableHead>
+                    <TableHead className="font-bold py-4">รหัส (Code)</TableHead>
                     <TableHead className="font-bold">ชื่อบริษัท (Company Name)</TableHead>
                     <TableHead className="font-bold">Tax ID</TableHead>
                     <TableHead className="font-bold">สถานะ (Status)</TableHead>
-                    <TableHead className="text-right font-bold">จัดการ (Action)</TableHead>
+                    <TableHead className="text-right font-bold pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {customers?.map((customer) => (
                     <TableRow 
                       key={customer.id} 
-                      className="cursor-pointer hover:bg-muted/50 group"
+                      className="cursor-pointer hover:bg-muted/50 group transition-all"
                       onClick={() => router.push(`/customers/${customer.id}`)}
                     >
-                      <TableCell className="font-mono text-xs font-bold text-primary">{customer.customerCode || customer.id.substring(0,6)}</TableCell>
-                      <TableCell className="font-semibold">{customer.name}</TableCell>
-                      <TableCell>{customer.taxId}</TableCell>
+                      <TableCell className="py-4 font-mono text-xs font-bold text-primary">{customer.customerCode || customer.id.substring(0,6)}</TableCell>
+                      <TableCell className="font-bold text-base text-primary">{customer.name}</TableCell>
+                      <TableCell className="text-muted-foreground font-medium">{customer.taxId}</TableCell>
                       <TableCell>
                         <Badge variant={customer.isActive ? 'default' : 'secondary'} className={customer.isActive ? 'bg-green-600' : ''}>
                           {customer.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right pr-6">
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={(e) => handleDelete(customer.id, e)}>
+                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={(e) => handleDelete(customer.id, e)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                           <ChevronRight className="h-5 w-5 text-muted-foreground" />
@@ -250,33 +242,33 @@ export default function CustomersPage() {
         </Card>
 
         {/* 5. Next-Step Guidance */}
-        <Card className="bg-primary/5 border-primary/10">
+        <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
+              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Workflow Guidance)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
-                  <p className="font-bold">สร้างสัญญาหลัก (Main Contracts)</p>
-                  <p className="text-muted-foreground text-xs">หลังจากเพิ่มลูกค้า ให้สร้างสัญญาซื้อขายเพื่อระบุราคาบริการ</p>
+                  <p className="font-bold">สร้างสัญญาหลัก (Define Main Contracts)</p>
+                  <p className="text-muted-foreground text-xs">หลังจากเพิ่มลูกค้า ให้เริ่มสร้างสัญญาซื้อขาย (Master Agreement) เพื่อระบุราคากลางรายตำแหน่ง</p>
                 </div>
               </div>
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">จัดการใบสั่งซื้อ (Customer POs)</p>
-                  <p className="text-muted-foreground text-xs">เปิดใบสั่งซื้อตามโควต้าพนักงานที่ตกลงกันในสัญญา</p>
+                  <p className="font-bold">จัดการใบสั่งซื้อ (Receive Customer POs)</p>
+                  <p className="text-muted-foreground text-xs">เปิดใบสั่งซื้อเพื่อจองโควต้าพนักงานและบันทึกราคาสรุปสำหรับแต่ละโครงการ</p>
                 </div>
               </div>
             </div>
           </CardContent>
           <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2" asChild>
-              <a href="/main-contracts">ไปยังเมนูสัญญาหลัก (Go to Main Contracts) <ArrowRight className="h-4 w-4" /></a>
+            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
+              <a href="/main-contracts">ไปยังระบบสัญญาหลัก (Main Contracts) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
         </Card>

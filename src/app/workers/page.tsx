@@ -127,12 +127,12 @@ export default function WorkersPage() {
           </p>
         </div>
 
-        {/* 2. Warning / Important Notice */}
-        <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
-          <ShieldAlert className="h-4 w-4" />
-          <AlertTitle className="font-bold">ตรวจสอบความพร้อมก่อนส่งตัว (Compliance Check)</AlertTitle>
-          <AlertDescription>
-            กรุณาตรวจสอบว่าคนงานมีใบรับรองความปลอดภัย Offshore (BOSIET/FOET) และผลตรวจร่างกายที่ยังไม่หมดอายุ ก่อนดำเนินการมอบหมายงานเข้าสู่โครงการ
+        {/* 2. Compliance Warning Box */}
+        <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 shadow-sm">
+          <ShieldAlert className="h-5 w-5" />
+          <AlertTitle className="font-bold text-lg">การตรวจสอบความพร้อมก่อนส่งตัว (Compliance & Readiness Check)</AlertTitle>
+          <AlertDescription className="text-sm">
+            คนงานทุกคนที่จะถูกมอบหมายงาน (Assignment) จะต้องมีสถานะเป็น <b className="text-green-700 underline">READY</b> เท่านั้น ซึ่งหมายถึงมีใบรับรองความปลอดภัย (BOSIET/FOET) และผลตรวจร่างกายที่ยังไม่หมดอายุตามเกณฑ์มาตรฐานหน้างาน
           </AlertDescription>
         </Alert>
 
@@ -141,9 +141,9 @@ export default function WorkersPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามชื่อหรือเลขบัตรประชาชน..." className="pl-9" />
+              <Input placeholder="ค้นหาตามชื่อหรือเลขบัตรประชาชน..." className="pl-9 h-11" />
             </div>
-            <Button variant="outline" className="gap-2">
+            <Button variant="outline" className="gap-2 h-11">
               <Filter className="h-4 w-4" /> ตัวกรอง (Filter)
             </Button>
           </div>
@@ -155,7 +155,6 @@ export default function WorkersPage() {
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-w-3xl">
-                {/* Form implementation remains but updated styles... */}
                 <DialogHeader>
                   <DialogTitle>ลงทะเบียนคนงานใหม่ (Worker Registration)</DialogTitle>
                   <DialogDescription>กรอกข้อมูลพื้นฐานตามบัตรประชาชนและพาสปอร์ตเพื่อเริ่มบันทึกประวัติ</DialogDescription>
@@ -193,7 +192,7 @@ export default function WorkersPage() {
         </div>
 
         {/* 4. Data Content */}
-        <Card className="shadow-lg">
+        <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isCollectionLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลคนงาน (Loading Worker Data)...</div>
@@ -201,21 +200,21 @@ export default function WorkersPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold">คนงาน (Worker Name)</TableHead>
-                    <TableHead className="font-bold">ตำแหน่งงาน (Position)</TableHead>
-                    <TableHead className="font-bold">สถานะความพร้อม (Readiness Matrix)</TableHead>
+                    <TableHead className="font-bold py-4">คนงาน (Worker Name)</TableHead>
+                    <TableHead className="font-bold">ตำแหน่งหลัก (Primary Position)</TableHead>
+                    <TableHead className="font-bold">ความพร้อม (Readiness Matrix)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
-                    <TableHead className="text-right font-bold">การจัดการ (Action)</TableHead>
+                    <TableHead className="text-right font-bold pr-6">การจัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {workers?.map((worker) => {
                     const position = positions?.find(p => p.id === worker.currentPositionId);
                     return (
-                      <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group" onClick={() => router.push(`/workers/${worker.id}`)}>
-                        <TableCell>
+                      <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group transition-colors" onClick={() => router.push(`/workers/${worker.id}`)}>
+                        <TableCell className="py-4">
                           <div className="flex flex-col">
-                            <span className="font-bold text-base">{worker.firstName} {worker.lastName}</span>
+                            <span className="font-bold text-base text-primary">{worker.firstName} {worker.lastName}</span>
                             <span className="text-xs text-muted-foreground font-mono">{worker.thaiNationalId}</span>
                           </div>
                         </TableCell>
@@ -230,7 +229,7 @@ export default function WorkersPage() {
                             {worker.workerStatus.toUpperCase()}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" className="group-hover:text-primary transition-colors">
                             <ChevronRight className="h-5 w-5" />
                           </Button>
@@ -238,6 +237,11 @@ export default function WorkersPage() {
                       </TableRow>
                     );
                   })}
+                  {(!workers || workers.length === 0) && !isCollectionLoading && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานในระบบ</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}
@@ -245,40 +249,40 @@ export default function WorkersPage() {
         </Card>
 
         {/* 5. Next-Step Guidance */}
-        <Card className="bg-primary/5 border-primary/10">
+        <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            <CardTitle className="text-lg flex items-center gap-2 text-primary">
+              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Next-Step Guidance)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
-                  <p className="font-bold">อัปเดตใบรับรอง</p>
-                  <p className="text-muted-foreground text-xs">คลิกที่รายชื่อเพื่อเพิ่มใบเซอร์/ผลตรวจร่างกาย</p>
+                  <p className="font-bold">อัปเดตใบรับรอง (Update Certificates)</p>
+                  <p className="text-muted-foreground text-xs">คลิกที่คนงานเพื่อเพิ่มใบเซอร์ BOSIET หรือผลตรวจร่างกายที่ขาดหายไป</p>
                 </div>
               </div>
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">ตรวจสอบความพร้อม</p>
-                  <p className="text-muted-foreground text-xs">สถานะต้องเป็น READY ก่อนมอบหมายงาน</p>
+                  <p className="font-bold">ยืนยันสถานะความพร้อม (Validate Readiness)</p>
+                  <p className="text-muted-foreground text-xs">สถานะต้องเปลี่ยนเป็น READY ก่อนที่จะสามารถส่งตัวเข้ากลุ่มการส่งตัว (Waves) ได้</p>
                 </div>
               </div>
-              <div className="flex items-start gap-3 p-3 bg-white rounded-md border">
+              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">3</div>
                 <div>
-                  <p className="font-bold">การมอบหมายงาน</p>
-                  <p className="text-muted-foreground text-xs">ไปที่เมนู 'การมอบหมาย' เพื่อส่งตัวคนงาน</p>
+                  <p className="font-bold">การส่งตัวคนงาน (Staff Mobilization)</p>
+                  <p className="text-muted-foreground text-xs">ไปที่เมนู 'การมอบหมาย' เพื่อเชื่อมโยงคนงานที่พร้อมเข้ากับโครงการของลูกค้า</p>
                 </div>
               </div>
             </div>
           </CardContent>
           <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2" asChild>
-              <a href="/assignments">ไปยังเมนูการมอบหมาย (Go to Assignments) <ArrowRight className="h-4 w-4" /></a>
+            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
+              <a href="/assignments">ไปยังเมนูการมอบหมายงาน (Assignments) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
         </Card>
