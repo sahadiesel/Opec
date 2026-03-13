@@ -7,10 +7,13 @@ import { RoleType } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
+import { useFirestore } from '@/firebase';
+import { doc, updateDoc } from 'firebase/firestore';
 
 interface AppShellProps {
   children: React.ReactNode;
   user: {
+    id: string;
     displayName: string;
     roleIds?: RoleType[];
   } | null;
@@ -18,6 +21,22 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
+  const firestore = useFirestore();
+
+  const handleLogout = async () => {
+    if (user && firestore) {
+      try {
+        // Record logout time in Firestore
+        await updateDoc(doc(firestore, 'users', user.id), {
+          lastLogoutAt: Date.now()
+        });
+      } catch (error) {
+        console.error('Failed to log logout time', error);
+      }
+    }
+    onLogout();
+  };
+
   if (!user) return <>{children}</>;
 
   // Robust roles handling for multi-role transition
@@ -47,7 +66,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                   {user.displayName.charAt(0)}
                 </AvatarFallback>
               </Avatar>
-              <Button variant="ghost" size="icon" onClick={onLogout}>
+              <Button variant="ghost" size="icon" onClick={handleLogout}>
                 <LogOut className="h-5 w-5" />
               </Button>
             </div>

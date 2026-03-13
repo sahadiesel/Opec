@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -6,7 +5,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShieldCheck, Mail, Clock, Trash2, UserCog, Info, Filter, ArrowRight, ShieldAlert, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Plus, Search, ShieldCheck, Mail, Clock, Trash2, UserCog, Info, Filter, ArrowRight, ShieldAlert, CheckCircle2, XCircle, Loader2, User as UserIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, RoleType } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -97,7 +96,6 @@ export default function UsersPage() {
       });
 
       // Update Role Collections (DBAC)
-      // Logic: For each possible role, if it's in editedRoles, create the role doc. Otherwise, delete it.
       const batch = writeBatch(firestore);
       
       for (const role of AVAILABLE_ROLES) {
@@ -135,6 +133,12 @@ export default function UsersPage() {
     }
   };
 
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('opsflow_user');
+    window.location.href = '/';
+  };
+
   if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -148,7 +152,7 @@ export default function UsersPage() {
 
   if (!currentUser.roleIds?.includes('system_admin')) {
     return (
-      <AppShell user={currentUser} onLogout={() => {}}>
+      <AppShell user={currentUser} onLogout={handleLogout}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
           <ShieldCheck className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Denied (จำกัดสิทธิ์เข้าถึง)</h2>
@@ -159,14 +163,14 @@ export default function UsersPage() {
   }
 
   return (
-    <AppShell user={currentUser} onLogout={() => {}}>
+    <AppShell user={currentUser} onLogout={handleLogout}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <ShieldCheck className="h-8 w-8" /> จัดการระบบและสิทธิ์การใช้งาน (System Admin)
           </h1>
           <p className="text-muted-foreground text-lg">
-            บริหารจัดการสิทธิ์การเข้าถึง (Access Control) ของเจ้าหน้าที่แต่ละฝ่าย และการกำหนดบทบาทหน้าที่ (Multi-role Management)
+            บริหารจัดการสิทธิ์การเข้าถึง (Access Control) และตรวจสอบสถานะการใช้งานของพนักงาน
           </p>
         </div>
 
@@ -174,40 +178,9 @@ export default function UsersPage() {
           <ShieldAlert className="h-5 w-5 text-destructive" />
           <AlertTitle className="font-bold text-lg">การจัดการสิทธิ์ความปลอดภัย (Access Control Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            การแก้ไขสิทธิ์การใช้งาน (Roles) จะมีผลทันทีในการล็อกอินครั้งถัดไป กรุณาระมัดระวังการลบบัญชีผู้ใช้งานที่ยังมีความเกี่ยวข้องกับการลงเวลาทำงาน (Timesheets) หรือการอนุมัติในระบบ
+            การแก้ไขสิทธิ์การใช้งาน (Roles) จะมีผลทันทีในการล็อกอินครั้งถัดไป สถานะออนไลน์จะคำนวณจากเวลาล็อกอินล่าสุดเทียบกับการล็อกเอาท์
           </AlertDescription>
         </Alert>
-
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามชื่อ หรือ อีเมลเจ้าหน้าที่..." className="pl-9 h-11" />
-            </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card className="shadow-sm border-l-8 border-l-blue-600 bg-blue-50/20">
-            <CardHeader className="pb-2">
-              <CardDescription className="text-blue-700 font-bold uppercase tracking-wider">เจ้าหน้าที่ทั้งหมด (Total Staff)</CardDescription>
-              <CardTitle className="text-3xl font-black text-primary">{users?.length || 0}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card className="shadow-sm border-l-8 border-l-primary bg-primary/5">
-            <CardHeader className="pb-2">
-              <CardDescription className="text-primary font-bold uppercase tracking-wider">แอดมินระบบ (System Admins)</CardDescription>
-              <CardTitle className="text-3xl font-black text-primary">{users?.filter(u => u.roleIds?.includes('system_admin')).length || 0}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card className="shadow-sm border-l-8 border-l-green-600 bg-green-50/20">
-            <CardHeader className="pb-2">
-              <CardDescription className="text-green-700 font-bold uppercase tracking-wider">บัญชีที่เปิดใช้งาน (Active Status)</CardDescription>
-              <CardTitle className="text-3xl font-black text-primary">{users?.filter(u => u.isActive).length || 0}</CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
@@ -220,13 +193,15 @@ export default function UsersPage() {
                     <TableHead className="font-bold py-4 pl-6">เจ้าหน้าที่ (Staff Name)</TableHead>
                     <TableHead className="font-bold">สิทธิ์การใช้งาน (Current Roles)</TableHead>
                     <TableHead className="font-bold">สถานะ (Status)</TableHead>
-                    <TableHead className="font-bold">เข้าใช้งานล่าสุด (Last Login)</TableHead>
+                    <TableHead className="font-bold">กิจกรรมล่าสุด (Recent Activity)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {users?.map((u) => {
                     const roles = u.roleIds || [];
+                    const isOnline = u.lastLoginAt && (!u.lastLogoutAt || u.lastLoginAt > u.lastLogoutAt);
+                    
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 transition-all">
                         <TableCell className="py-4 pl-6">
@@ -245,18 +220,26 @@ export default function UsersPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {u.isActive ? (
-                            <span className="flex items-center gap-1.5 text-green-600 text-xs font-bold">
-                              <CheckCircle2 className="h-3 w-3" /> ออนไลน์ / ใช้งานได้
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1.5 text-muted-foreground text-xs font-bold uppercase tracking-tight">
-                              <XCircle className="h-3 w-3" /> ปิดการใช้งาน
-                            </span>
-                          )}
+                          <div className="flex flex-col gap-1">
+                            {isOnline ? (
+                              <span className="flex items-center gap-1.5 text-green-600 text-xs font-bold">
+                                <div className="h-2 w-2 rounded-full bg-green-600 animate-pulse" /> ออนไลน์
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1.5 text-muted-foreground text-xs font-bold">
+                                <div className="h-2 w-2 rounded-full bg-slate-300" /> ออฟไลน์
+                              </span>
+                            )}
+                            <Badge variant={u.isActive ? "default" : "secondary"} className="text-[9px] h-4 w-fit px-1">
+                              {u.isActive ? "บัญชีอนุมัติแล้ว" : "รอนุมัติ"}
+                            </Badge>
+                          </div>
                         </TableCell>
-                        <TableCell className="text-xs text-muted-foreground font-medium">
-                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('th-TH') : 'ไม่เคยเข้าใช้งาน'}
+                        <TableCell className="text-xs text-muted-foreground">
+                          <div className="space-y-1">
+                            <p className="flex items-center gap-1"><Clock className="h-3 w-3" /> Login: {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('th-TH') : 'ไม่เคยเข้าใช้งาน'}</p>
+                            <p className="flex items-center gap-1"><Clock className="h-3 w-3" /> Logout: {u.lastLogoutAt ? new Date(u.lastLogoutAt).toLocaleString('th-TH') : '-'}</p>
+                          </div>
                         </TableCell>
                         <TableCell className="text-right pr-6 space-x-2">
                           <Button 
@@ -338,32 +321,6 @@ export default function UsersPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        <Card className="bg-primary/5 border-primary/10 border-dashed">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
-              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Workflow Guidance)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
-                <div>
-                  <p className="font-bold">การอนุมัติผู้สมัครใหม่ (Approve New Users)</p>
-                  <p className="text-muted-foreground text-xs">พนักงานที่ลงทะเบียนเข้ามาจะมีสถานะ "ปิดการใช้งาน" โดยอัตโนมัติ Admin ต้องตรวจสอบและเปลี่ยนเป็น Active ก่อนใช้งาน</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
-                <div>
-                  <p className="font-bold">ความปลอดภัยของระบบ (Security Best Practices)</p>
-                  <p className="text-muted-foreground text-xs">ควรกำหนดสิทธิ์เฉพาะเท่าที่จำเป็น (Least Privilege) เพื่อลดความเสี่ยงในการเข้าถึงข้อมูลโครงการที่สำคัญ</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </AppShell>
   );

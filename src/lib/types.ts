@@ -80,6 +80,7 @@ export interface User {
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
+  lastLogoutAt?: number;
   customerId?: string; 
   isSharedAccount?: boolean;
   linkedProjectIds?: string[];
