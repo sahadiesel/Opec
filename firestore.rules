@@ -4,183 +4,252 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     /**
-     * OPEC Manpower Supply - Security Rules
-     * Core Philosophy: Role-Based Access Control (RBAC) via DBAC.
+     * OPEC Manpower Supply - Firestore Security Rules
+     * 
+     * แนวคิดหลัก:
+     * - ใช้ DBAC (Database Access Control) เก็บ Role ในคอลเลกชันแยก roles_{role_name}/{uid}
+     * - Staff Access: สิทธิ์เข้าถึงข้อมูลเชิงลึกของระบบ
+     * - Client Access: สิทธิ์เข้าถึงเฉพาะ Candidate Review และงานที่เกี่ยวข้องกับตัวเอง
      */
 
+    // =========================
+    // Helper Functions
+    // =========================
+    
     function isSignedIn() {
       return request.auth != null;
     }
 
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ตรวจสอบสิทธิ์ผ่าน DBAC Collections
     function hasRole(role) {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
 
-    function isStaff() {
-      return isSignedIn() && (
-        hasRole('system_admin') || 
-        hasRole('hr_manager') || 
-        hasRole('hr_officer') || 
-        hasRole('operations_officer') ||
-        hasRole('safety_officer') ||
-        hasRole('sales_officer') || 
-        hasRole('finance_officer') || 
-        hasRole('payroll_officer') || 
-        hasRole('store_officer')
-      );
-    }
-
-    // Safety fallback: The user who initialized the system is always an admin
+    // สิทธิ์สูงสุด (รวมถึง Fallback สำหรับผู้ติดตั้งระบบ)
     function isSystemAdmin() { 
       return hasRole('system_admin') || 
              (isSignedIn() && exists(/databases/$(database)/documents/system/bootstrap) && get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid); 
     }
+
+    // บทบาทแยกตามแผนก
+    function isHRManager() { return hasRole('hr_manager') || isSystemAdmin(); }
+    function isHROfficer() { return hasRole('hr_officer') || isHRManager(); }
+    function isSalesOfficer() { return hasRole('sales_officer') || isSystemAdmin(); }
+    function isFinanceOfficer() { return hasRole('finance_officer') || isSystemAdmin(); }
+    function isPayrollOfficer() { return hasRole('payroll_officer') || isFinanceOfficer() || isHRManager(); }
+    function isStoreOfficer() { return hasRole('store_officer') || isSystemAdmin(); }
+    function isOperationsOfficer() { return hasRole('operations_officer') || isSystemAdmin(); }
+    function isSafetyOfficer() { return hasRole('safety_officer') || isSystemAdmin(); }
+    function isClient() { return hasRole('client') || hasRole('client_user'); }
+
+    // กลุ่มเจ้าหน้าที่ทั่วไป (พนักงานออฟฟิศทั้งหมด)
+    function isStaff() {
+      return isSystemAdmin() || 
+             hasRole('hr_manager') || hasRole('hr_officer') || 
+             hasRole('operations_officer') || hasRole('safety_officer') ||
+             hasRole('sales_officer') || hasRole('finance_officer') || 
+             hasRole('payroll_officer') || hasRole('store_officer');
+    }
+
+    // ฟังก์ชันย่อยสำหรับแต่ละโมดูล
+    function isHRStaff() { return isHRManager() || isHROfficer(); }
+    function isCommercialStaff() { return isSalesOfficer() || isFinanceOfficer(); }
+    function isOpsStaff() { return isOperationsOfficer() || isHRStaff() || isSafetyOfficer(); }
+    function isInventoryStaff() { return isStoreOfficer() || isOperationsOfficer(); }
+
+    // =========================
+    // System / Bootstrap
+    // =========================
     
-    function isHRStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('hr_manager') || hasRole('hr_officer')); }
-    function isSalesStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('sales_officer')); }
-    function isOpsStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('operations_officer') || hasRole('hr_officer') || hasRole('hr_manager')); }
-    function isStoreStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('store_officer') || hasRole('operations_officer')); }
-    function isFinanceStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('finance_officer') || hasRole('payroll_officer')); }
-    function isClient() { return isSignedIn() && (hasRole('client_user') || hasRole('client')); }
-
-    match /users/{userId} {
-      allow get: if isStaff() || (isSignedIn() && request.auth.uid == userId);
-      allow list: if isStaff();
-      allow write: if isSystemAdmin() || (isSignedIn() && request.auth.uid == userId);
+    match /system/bootstrap {
+      allow read: if true;
+      allow write: if !exists(/databases/$(database)/documents/system/bootstrap);
     }
 
-    match /workers {
-      allow read: if isStaff();
-      match /{workerId} {
-        allow write: if isHRStaff();
-        match /{sub=**} { allow read: if isStaff(); allow write: if isHRStaff(); }
-      }
-    }
-
-    match /positions {
-      allow read: if isStaff();
-      match /{positionId} {
-        allow write: if isHRStaff();
-        match /{sub=**} { allow read: if isStaff(); allow write: if isHRStaff(); }
-      }
-    }
-
-    match /waves {
-      allow read: if isStaff();
-      match /{waveId} {
-        allow write: if isOpsStaff();
-        match /{sub=**} { 
-          allow read: if isStaff(); 
-          allow write: if isOpsStaff(); 
-        }
-      }
-    }
-
-    match /customers {
-      allow read: if isStaff();
-      match /{customerId} {
-        allow get: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
-        allow write: if isSalesStaff();
-        match /{sub=**} { 
-          allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
-          allow write: if isSalesStaff(); 
-        }
-      }
-    }
-
-    match /client_users/{uid} {
-      allow get: if isStaff() || (isSignedIn() && request.auth.uid == uid);
-      allow list: if isStaff();
-      allow write: if isStaff();
-    }
-
-    match /main_contracts {
-      allow list: if isStaff();
-      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
-      
-      match /{id} {
-        allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
-        allow write: if isSalesStaff();
-        match /{sub=**} { 
-          allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/main_contracts/$(id)).data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
-          allow write: if isSalesStaff(); 
-        }
-      }
-    }
-
-    match /purchase_orders {
-      allow list: if isStaff();
-      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
-      
-      match /{poId} {
-        allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
-        allow write: if isSalesStaff();
-        match /po_lines/{lineId} {
-          allow read: if isStaff() || isClient();
-          allow write: if isSalesStaff();
-          match /assignments/{asgnId} {
-            allow read: if isStaff() || isClient();
-            allow write: if isHRStaff();
-          }
-        }
-      }
-    }
-
-    match /{path=**}/assignments/{asgnId} {
-      allow read: if isStaff() || isClient();
-    }
-
-    // Store / Inventory Rules
-    match /store_items/{itemId} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff();
-    }
-    match /store_transactions/{txId} {
-      allow read: if isStaff();
-      allow create: if isStoreStaff();
-    }
-    match /store_issue_slips/{id} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff();
-      match /items/{lineId} { allow read: if isStaff(); allow write: if isStoreStaff(); }
-    }
-    match /store_return_slips/{id} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff();
-      match /items/{lineId} { allow read: if isStaff(); allow write: if isStoreStaff(); }
-    }
-
-    // Payroll Rules
-    match /payroll_runs {
-      allow read: if isStaff();
-      match /{runId} {
-        allow create: if isHRStaff() || isSystemAdmin();
-        allow update: if isHRStaff() || isSystemAdmin() || isFinanceStaff();
-        allow delete: if isSystemAdmin();
-        match /lines/{lineId} {
-          allow read: if isStaff();
-          allow write: if isHRStaff() || isSystemAdmin();
-        }
-      }
-    }
-
-    match /roles_hr_manager/{uid} { 
-      allow read: if isSignedIn() && request.auth.uid == uid; 
+    // =========================
+    // Role Management (DBAC)
+    // =========================
+    
+    match /roles_{roleName}/{uid} {
+      allow read: if isSignedIn();
       allow write: if isSystemAdmin();
     }
-    match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_sales_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_safety_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_operations_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_finance_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_payroll_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_store_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_client_user/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    match /roles_client/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
-    
-    match /system/bootstrap { allow read: if true; allow write: if !exists(/databases/$(database)/documents/system/bootstrap); }
 
+    // =========================
+    // Users & Staff Profiles
+    // =========================
+    
+    match /users/{userId} {
+      allow list: if isStaff();
+      allow get: if isStaff() || isSelf(userId);
+      allow write: if isSystemAdmin() || isSelf(userId);
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isSystemAdmin();
+      allow create: if isSignedIn();
+    }
+
+    // =========================
+    // Master Data: Positions
+    // =========================
+    
+    match /positions/{positionId} {
+      allow read: if isStaff();
+      allow write: if isHRStaff() || isSafetyOfficer();
+      
+      match /{sub=**} {
+        allow read: if isStaff();
+        allow write: if isHRStaff() || isSafetyOfficer();
+      }
+    }
+
+    // =========================
+    // Master Data: Workers
+    // =========================
+    
+    match /workers/{workerId} {
+      allow read: if isStaff() || (isClient() && exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+      allow write: if isHRStaff();
+      
+      match /{sub=**} {
+        allow read: if isStaff() || (isClient() && exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+        allow write: if isHRStaff();
+      }
+    }
+
+    // =========================
+    // Commercial: Customers & Contracts
+    // =========================
+    
+    match /customers/{customerId} {
+      allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
+      allow write: if isCommercialStaff();
+      
+      match /{sub=**} {
+        allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
+        allow write: if isCommercialStaff();
+      }
+    }
+
+    match /main_contracts/{contractId} {
+      allow list: if isStaff();
+      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+      allow write: if isCommercialStaff();
+      
+      match /{sub=**} {
+        allow read: if isStaff() || (isClient() && get(/databases/$(database)/documents/main_contracts/$(contractId)).data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+        allow write: if isCommercialStaff() || isHRManager();
+      }
+    }
+
+    match /purchase_orders/{poId} {
+      allow list: if isStaff();
+      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+      allow write: if isCommercialStaff();
+      
+      match /{sub=**} {
+        allow read: if isStaff() || isClient();
+        allow write: if isCommercialStaff() || isHRStaff();
+      }
+    }
+
+    // =========================
+    // Operations: Waves, Assignments, Mobilization
+    // =========================
+    
+    match /waves/{waveId} {
+      allow read: if isStaff();
+      allow write: if isOpsStaff();
+      
+      match /{sub=**} {
+        allow read: if isStaff();
+        allow write: if isOpsStaff();
+      }
+    }
+
+    // สำหรับการเข้าถึงผ่านคอลเลกชันหลัก
+    match /assignments/{asgnId} {
+      allow read: if isStaff() || isClient();
+      allow write: if isOpsStaff() || isHRStaff();
+    }
+
+    // =========================
+    // Inventory: Store, PPE, Tools
+    // =========================
+    
+    match /store_items/{itemId} {
+      allow read: if isStaff();
+      allow write: if isInventoryStaff();
+    }
+
+    match /store_transactions/{txId} {
+      allow read: if isStaff();
+      allow create: if isInventoryStaff();
+    }
+
+    match /store_issue_slips/{id} {
+      allow read: if isStaff();
+      allow write: if isInventoryStaff();
+    }
+
+    match /store_return_slips/{id} {
+      allow read: if isStaff();
+      allow write: if isInventoryStaff();
+    }
+
+    // =========================
+    // Finance: Payroll
+    // =========================
+    
+    match /payroll_runs/{runId} {
+      allow read: if isPayrollOfficer() || isFinanceOfficer();
+      allow create: if isPayrollOfficer() || isHRManager();
+      allow update: if isPayrollOfficer() || isFinanceOfficer();
+      allow delete: if isSystemAdmin();
+      
+      match /lines/{lineId} {
+        allow read: if isPayrollOfficer() || isFinanceOfficer();
+        allow write: if isPayrollOfficer() || isHRManager();
+      }
+    }
+
+    // =========================
+    // Client Portal
+    // =========================
+    
+    match /client_users/{uid} {
+      allow read: if isStaff() || isSelf(uid);
+      allow write: if isSystemAdmin() || isSalesOfficer();
+    }
+
+    // =========================
+    // Collection Group Support (Critical)
+    // =========================
+    
+    match /{path=**}/assignments/{asgnId} {
+      allow read: if isStaff() || isClient();
+      allow write: if isOpsStaff() || isHRStaff();
+    }
+
+    match /{path=**}/po_lines/{lineId} {
+      allow read: if isStaff() || isClient();
+      allow write: if isCommercialStaff();
+    }
+
+    match /{path=**}/position_rates/{rateId} {
+      allow read: if isStaff();
+      allow write: if isCommercialStaff() || isHRManager();
+    }
+
+    // =========================
+    // Default Deny
+    // =========================
+    
     match /{document=**} {
       allow read, write: if false;
     }
