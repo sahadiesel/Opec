@@ -30,12 +30,17 @@ service cloud.firestore {
       );
     }
 
-    function isSystemAdmin() { return hasRole('system_admin'); }
-    function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
-    function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
-    function isOpsStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('operations_officer') || hasRole('hr_officer') || hasRole('hr_manager')); }
-    function isStoreStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('store_officer') || hasRole('operations_officer')); }
-    function isFinanceStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('finance_officer') || hasRole('payroll_officer')); }
+    // Safety fallback: The user who initialized the system is always an admin
+    function isSystemAdmin() { 
+      return hasRole('system_admin') || 
+             (isSignedIn() && exists(/databases/$(database)/documents/system/bootstrap) && get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid); 
+    }
+    
+    function isHRStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('hr_manager') || hasRole('hr_officer')); }
+    function isSalesStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('sales_officer')); }
+    function isOpsStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('operations_officer') || hasRole('hr_officer') || hasRole('hr_manager')); }
+    function isStoreStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('store_officer') || hasRole('operations_officer')); }
+    function isFinanceStaff() { return isSignedIn() && (isSystemAdmin() || hasRole('finance_officer') || hasRole('payroll_officer')); }
     function isClient() { return isSignedIn() && (hasRole('client_user') || hasRole('client')); }
 
     match /users/{userId} {
@@ -90,8 +95,6 @@ service cloud.firestore {
     }
 
     match /main_contracts {
-      // List permission requires a query filter if using resource-based rules, 
-      // but here we allow staff to list all and restrict clients via app logic + granular get rules.
       allow list: if isStaff();
       allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
       
@@ -161,19 +164,22 @@ service cloud.firestore {
       }
     }
 
-    match /roles_hr_manager/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_sales_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_safety_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_operations_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_finance_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_payroll_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_store_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_client_user/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
-    match /roles_client/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
+    match /roles_hr_manager/{uid} { 
+      allow read: if isSignedIn() && request.auth.uid == uid; 
+      allow write: if isSystemAdmin();
+    }
+    match /roles_hr_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_system_admin/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_sales_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_safety_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_operations_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_finance_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_payroll_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_store_officer/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_client_user/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
+    match /roles_client/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; allow write: if isSystemAdmin(); }
     
-    match /system/bootstrap { allow read: if true; }
+    match /system/bootstrap { allow read: if true; allow write: if !exists(/databases/$(database)/documents/system/bootstrap); }
 
     match /{document=**} {
       allow read, write: if false;

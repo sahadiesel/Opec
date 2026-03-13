@@ -25,7 +25,8 @@ import {
   Info,
   Loader2,
   KeyRound,
-  UserCheck
+  UserCheck,
+  Settings2
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -319,11 +320,12 @@ export default function Home() {
                 </DialogContent>
               </Dialog>
 
-              {!isBootstrapped && (
-                <Button variant="outline" className="w-full gap-2 h-11 border-dashed border-primary/50 text-primary" asChild>
-                  <Link href="/setup-admin"><ShieldCheck className="h-4 w-4" /> เริ่มต้นระบบครั้งแรก (Setup System)</Link>
+              <div className="flex flex-col gap-2 w-full mt-4 border-t pt-4">
+                <p className="text-[10px] text-center text-muted-foreground uppercase font-bold tracking-widest">Maintenance Tools</p>
+                <Button variant="ghost" size="sm" className="w-full gap-2 text-xs opacity-50 hover:opacity-100" asChild>
+                  <Link href="/setup-admin"><Settings2 className="h-3 w-3" /> กู้คืนสิทธิ์บัญชี (Account Recovery)</Link>
                 </Button>
-              )}
+              </div>
             </CardFooter>
           </form>
         </Card>
