@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -55,6 +55,7 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -75,13 +76,20 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     }
   }, []);
 
+  const isAuthorized = useMemo(() => {
+    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
+  }, [currentUser]);
+
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [asgnPath, setAsgnPath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     async function findAssignment() {
-      if (!firestore) return;
+      if (!firestore || !isAuthorized) {
+        setIsLoading(false);
+        return;
+      }
       try {
         const q = query(collectionGroup(firestore, 'assignments'), where('id', '==', id), limit(1));
         const snap = await getDocs(q);
@@ -96,28 +104,28 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       }
     }
     findAssignment();
-  }, [firestore, id]);
+  }, [firestore, id, isAuthorized]);
 
-  const workerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId]);
+  const workerRef = useMemoFirebase(() => (firestore && assignment && isAuthorized ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId, isAuthorized]);
   const { data: worker } = useDoc<Worker>(workerRef as any);
 
-  const poRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'purchase_orders', assignment.poId) : null), [firestore, assignment?.poId]);
+  const poRef = useMemoFirebase(() => (firestore && assignment && isAuthorized ? doc(firestore, 'purchase_orders', assignment.poId) : null), [firestore, assignment?.poId, isAuthorized]);
   const { data: po } = useDoc<PurchaseOrder>(poRef as any);
 
-  const customerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId]);
+  const customerRef = useMemoFirebase(() => (firestore && assignment && isAuthorized ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId, isAuthorized]);
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
-  const positionRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId]);
+  const positionRef = useMemoFirebase(() => (firestore && assignment && isAuthorized ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId, isAuthorized]);
   const { data: position } = useDoc<Position>(positionRef as any);
 
-  const waveRef = useMemoFirebase(() => (firestore && assignment?.waveId ? doc(firestore, 'waves', assignment.waveId) : null), [firestore, assignment?.waveId]);
+  const waveRef = useMemoFirebase(() => (firestore && assignment?.waveId && isAuthorized ? doc(firestore, 'waves', assignment.waveId) : null), [firestore, assignment?.waveId, isAuthorized]);
   const { data: wave } = useDoc<Wave>(waveRef as any);
 
   // Overlap Detection
   const overlapsQuery = useMemoFirebase(() => {
-    if (!firestore || !assignment) return null;
+    if (!firestore || !assignment || !isAuthorized) return null;
     return query(collectionGroup(firestore, 'assignments'), where('workerId', '==', assignment.workerId));
-  }, [firestore, assignment?.workerId]);
+  }, [firestore, assignment?.workerId, isAuthorized]);
   const { data: otherAssignments } = useCollection<Assignment>(overlapsQuery as any);
 
   const handleUpdateStatus = (newStatus: DeploymentStatus) => {
@@ -138,6 +146,18 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
   if (isLoading || isUserLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Clock className="h-12 w-12 text-primary animate-pulse" /></div>;
+  }
+
+  if (!isAuthorized) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-muted-foreground opacity-50" />
+          <h2 className="text-xl font-bold">Access Pending (รอนุมัติสิทธิ์)</h2>
+          <p className="text-muted-foreground max-w-md">บัญชีของคุณยังไม่ได้รับอนุญาตให้เข้าถึงข้อมูลรายละเอียดการมอบหมายงาน</p>
+        </div>
+      </AppShell>
+    );
   }
 
   if (!assignment) {

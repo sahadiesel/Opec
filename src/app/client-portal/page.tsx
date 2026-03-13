@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -44,17 +44,21 @@ export default function ClientPortalPage() {
     }
   }, []);
 
+  const isAuthorized = useMemo(() => {
+    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
+  }, [currentUser]);
+
   const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
     return collectionGroup(firestore, 'assignments');
-  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser, isAuthorized]);
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser, isAuthorized]);
   
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
@@ -102,8 +106,8 @@ export default function ClientPortalPage() {
   // Task Set 2: Shared Client Account Support
   // Filter by customerId from the shared account session
   const clientAssignments = assignments?.filter(a => {
-    const isRelevantStatus = ['client_review', 'approved', 'active', 'replaced', 'mobilizing'].includes(a.status);
-    if (currentUser.roleId === 'client') {
+    const isRelevantStatus = ['client_review', 'approved', 'active', 'replaced', 'mobilizing'].includes(a.deploymentStatus || '');
+    if (currentUser.roleIds?.includes('client')) {
       return a.customerId === currentUser.customerId && isRelevantStatus;
     }
     return isRelevantStatus;
@@ -128,19 +132,19 @@ export default function ClientPortalPage() {
           <Card className="bg-blue-50/50 border-blue-100">
             <CardHeader className="pb-2">
               <CardDescription className="text-blue-700">รอพิจารณา (Candidates)</CardDescription>
-              <CardTitle className="text-2xl">{clientAssignments.filter(a => a.status === 'client_review').length}</CardTitle>
+              <CardTitle className="text-2xl">{clientAssignments.filter(a => a.deploymentStatus === 'CLIENT_SUBMITTED').length}</CardTitle>
             </CardHeader>
           </Card>
           <Card className="bg-green-50/50 border-green-100">
             <CardHeader className="pb-2">
               <CardDescription className="text-green-700">อนุมัติแล้ว (Approved)</CardDescription>
-              <CardTitle className="text-2xl">{clientAssignments.filter(a => ['approved', 'active', 'mobilizing'].includes(a.status)).length}</CardTitle>
+              <CardTitle className="text-2xl">{clientAssignments.filter(a => ['CLIENT_APPROVED', 'ACTIVE', 'MOBILIZING'].includes(a.deploymentStatus || '')).length}</CardTitle>
             </CardHeader>
           </Card>
           <Card className="bg-slate-50/50 border-slate-100">
             <CardHeader className="pb-2">
               <CardDescription className="text-slate-600">คำขอเปลี่ยนตัว</CardDescription>
-              <CardTitle className="text-2xl">{clientAssignments.filter(a => a.status === 'replaced').length}</CardTitle>
+              <CardTitle className="text-2xl">{clientAssignments.filter(a => a.clientApprovalStatus === 'REJECTED').length}</CardTitle>
             </CardHeader>
           </Card>
         </div>
@@ -176,8 +180,8 @@ export default function ClientPortalPage() {
                         </TableCell>
                         <TableCell>{asgn.positionId}</TableCell>
                         <TableCell>
-                          <Badge variant={asgn.status === 'client_review' ? 'secondary' : 'default'} className={asgn.status === 'client_review' ? 'bg-blue-100 text-blue-800' : ''}>
-                            {asgn.status.toUpperCase()}
+                          <Badge variant={asgn.deploymentStatus === 'CLIENT_SUBMITTED' ? 'secondary' : 'default'} className={asgn.deploymentStatus === 'CLIENT_SUBMITTED' ? 'bg-blue-100 text-blue-800' : ''}>
+                            {asgn.deploymentStatus?.toUpperCase() || 'UNKNOWN'}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -234,7 +238,7 @@ export default function ClientPortalPage() {
                               </div>
 
                               <DialogFooter className="gap-2">
-                                {asgn.status === 'client_review' && (
+                                {asgn.deploymentStatus === 'CLIENT_SUBMITTED' && (
                                   <>
                                     <Button variant="outline" className="text-destructive gap-2 border-destructive" onClick={() => handleReject(asgn)}>
                                       <XCircle className="h-4 w-4" /> ขอเปลี่ยนตัว (Replace)
