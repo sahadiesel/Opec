@@ -21,7 +21,10 @@ export type ReadinessStatus =
   | 'MISSING_CERTIFICATE' 
   | 'MEDICAL_EXPIRED' 
   | 'DRUG_TEST_EXPIRED'
-  | 'DOCUMENT_MISSING';
+  | 'DOCUMENT_MISSING'
+  | 'NOT_READY'
+  | 'PARTIAL'
+  | 'BLOCKED';
 
 export type WorkerStatus = 'available' | 'assigned' | 'on_leave' | 'inactive';
 
@@ -49,6 +52,13 @@ export type WaveStatus =
   | 'ACTIVE'
   | 'DEMOBILIZING'
   | 'CLOSED';
+
+export type MobilizationStatus = 
+  | 'PENDING'
+  | 'READY_TO_MOBILIZE'
+  | 'MOBILIZING'
+  | 'ACTIVE'
+  | 'FAILED_CHECK';
 
 export interface User {
   id: string;
@@ -301,7 +311,7 @@ export interface Assignment {
   poLineId: string;
   poId: string; 
   contractId?: string;
-  waveId: string; // Mandatory link to Wave
+  waveId: string; 
   positionId: string;
   customerId: string;
   projectName: string;
@@ -313,6 +323,10 @@ export interface Assignment {
   readinessSummary: ReadinessSummary;
   readinessUpdatedAt?: number;
   readinessUpdatedBy?: string;
+  mobilizationStatus?: MobilizationStatus;
+  mobilizationDate?: string;
+  confirmedAt?: number;
+  confirmedBy?: string;
   createdAt: number;
   updatedAt: number;
   notes?: string;
