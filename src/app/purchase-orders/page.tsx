@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -60,23 +60,32 @@ export default function CustomerPOsPage() {
     }
   }, []);
 
+  // Guard list queries
+  const isAuthorized = useMemo(() => {
+    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
+  }, [currentUser]);
+
+  const isStaff = useMemo(() => {
+    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
+  }, [currentUser]);
+
   const poQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
     return collection(firestore, 'purchase_orders');
-  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser, isAuthorized]);
 
   const { data: pos, isLoading: isPOLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
     return collection(firestore, 'customers');
-  }, [firestore, isUserLoading, firebaseUser]);
+  }, [firestore, isUserLoading, firebaseUser, isStaff]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !newPO.customerId) return null;
+    if (!firestore || !newPO.customerId || !isAuthorized) return null;
     return query(collection(firestore, 'main_contracts'), where('customerId', '==', newPO.customerId));
-  }, [firestore, newPO.customerId]);
+  }, [firestore, newPO.customerId, isAuthorized]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
 
   const handleCreate = async () => {
@@ -135,9 +144,9 @@ export default function CustomerPOsPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold">
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!isStaff}>
                 <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
               </Button>
             </DialogTrigger>

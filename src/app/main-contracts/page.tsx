@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -60,17 +60,26 @@ export default function MainContractsPage() {
     }
   }, []);
 
+  // Guard for list queries to prevent Permission Errors
+  const isAuthorized = useMemo(() => {
+    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
+  }, [currentUser]);
+
+  const isStaff = useMemo(() => {
+    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
+  }, [currentUser]);
+
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
     return collection(firestore, 'main_contracts');
-  }, [firestore, isUserLoading, firebaseUser, currentUser]);
+  }, [firestore, isUserLoading, firebaseUser, currentUser, isAuthorized]);
 
   const { data: contracts, isLoading } = useCollection<MainContract>(contractsQuery as any);
 
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !isStaff) return null;
     return collection(firestore, 'customers');
-  }, [firestore]);
+  }, [firestore, isStaff]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const handleCreate = async () => {

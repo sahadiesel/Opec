@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -49,19 +49,43 @@ export default function WavesPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
-  const wavesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'waves') : null), [firestore]);
+  // Guard list queries
+  const isStaff = useMemo(() => {
+    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
+  }, [currentUser]);
+
+  const wavesQuery = useMemoFirebase(() => {
+    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
+    return collection(firestore, 'waves');
+  }, [firestore, isUserLoading, firebaseUser, isStaff]);
+
   const { data: waves, isLoading: isWavesLoading } = useCollection<Wave>(wavesQuery as any);
 
-  const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || !isStaff) return null;
+    return collection(firestore, 'customers');
+  }, [firestore, isStaff]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const poQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders') : null), [firestore]);
+  const poQuery = useMemoFirebase(() => {
+    if (!firestore || !isStaff) return null;
+    return collection(firestore, 'purchase_orders');
+  }, [firestore, isStaff]);
   const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
-  const poLinesQuery = useMemoFirebase(() => (firestore ? collectionGroup(firestore, 'po_lines') : null), [firestore]);
+  const poLinesQuery = useMemoFirebase(() => {
+    if (!firestore || !isStaff) return null;
+    return collectionGroup(firestore, 'po_lines');
+  }, [firestore, isStaff]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -109,9 +133,9 @@ export default function WavesPage() {
     switch (status) {
       case 'PLANNING': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">PLANNING</Badge>;
       case 'READY': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">READY</Badge>;
-      case 'MOBILIZING': return <Badge variant="outline" className="bg-amber-50 text-amber-600 border-amber-200">MOBILIZING</Badge>;
+      case 'MOBILIZING': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">MOBILIZING</Badge>;
       case 'ACTIVE': return <Badge className="bg-green-600">ACTIVE</Badge>;
-      case 'DEMOBILIZING': return <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">DEMOBILIZING</Badge>;
+      case 'DEMOBILIZING': return <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">DEMOBILIZING</Badge>;
       case 'CLOSED': return <Badge variant="secondary">CLOSED</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
@@ -151,9 +175,9 @@ export default function WavesPage() {
             <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold">
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!isStaff}>
                 <Plus className="h-5 w-5" /> สร้างเวฟงานใหม่ (Create Wave)
               </Button>
             </DialogTrigger>

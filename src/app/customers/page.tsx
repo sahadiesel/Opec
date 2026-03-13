@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -34,13 +34,6 @@ export default function CustomersPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const customersQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser) return null;
-    return collection(firestore, 'customers');
-  }, [firestore, isUserLoading, firebaseUser]);
-
-  const { data: customers, isLoading } = useCollection<Customer>(customersQuery as any);
-
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({
     name: '',
@@ -66,6 +59,18 @@ export default function CustomersPage() {
       }
     }
   }, []);
+
+  // Guard for list queries
+  const isStaff = useMemo(() => {
+    return user?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
+  }, [user]);
+
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
+    return collection(firestore, 'customers');
+  }, [firestore, isUserLoading, firebaseUser, isStaff]);
+
+  const { data: customers, isLoading } = useCollection<Customer>(customersQuery as any);
 
   const handleCreate = async () => {
     if (!firestore) return;
@@ -140,9 +145,9 @@ export default function CustomersPage() {
             <Button variant="outline" className="h-11 px-4 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!isStaff}>
                 <Plus className="h-5 w-5" /> ลงทะเบียนลูกค้าใหม่ (New Registration)
               </Button>
             </DialogTrigger>
