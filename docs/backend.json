@@ -2,58 +2,25 @@
 {
   "entities": {
     "Position": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Position",
+      "description": "Represents a specific job role or position within OPEC Manpower Supply.",
       "type": "object",
-      "description": "Represents a specific job role or position within OPEC Manpower Supply, defining its core characteristics and requirements.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Position entity."
-        },
-        "positionName": {
-          "type": "string",
-          "description": "The official, human-readable name of the position (e.g., 'Welder', 'Rig Mechanic')."
-        },
-        "positionCode": {
-          "type": "string",
-          "description": "A unique alphanumeric code identifying the position."
-        },
-        "category": {
-          "type": "string",
-          "description": "The broader category to which the position belongs (e.g., 'Offshore', 'Onshore', 'Technical', 'Administrative')."
-        },
-        "active": {
-          "type": "boolean",
-          "description": "Indicates whether the position is currently active and can be assigned to workers."
-        },
-        "description": {
-          "type": "string",
-          "description": "A detailed description of the position's responsibilities, duties, and scope."
-        },
-        "payrollBasis": {
-          "type": "string",
-          "description": "The standard basis for calculating payroll for this position (e.g., 'Daily', 'Monthly', 'Hourly')."
-        },
-        "notes": {
-          "type": "string",
-          "description": "Any additional internal notes or remarks relevant to the position."
-        }
+        "id": { "type": "string" },
+        "positionName": { "type": "string" },
+        "positionCode": { "type": "string" },
+        "category": { "type": "string" },
+        "active": { "type": "boolean" },
+        "description": { "type": "string" },
+        "payrollBasis": { "type": "string" },
+        "notes": { "type": "string" }
       },
-      "required": [
-        "id",
-        "positionName",
-        "positionCode",
-        "category",
-        "active",
-        "payrollBasis"
-      ]
+      "required": ["id", "positionName", "positionCode", "category", "active", "payrollBasis"]
     },
     "Wave": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Wave",
-      "type": "object",
       "description": "Represents a deployment wave or rotation cycle for a group of workers.",
+      "type": "object",
       "properties": {
         "id": { "type": "string" },
         "waveCode": { "type": "string" },
@@ -69,192 +36,23 @@
         "rotationPattern": { "type": "string" },
         "plannedWorkers": { "type": "number" },
         "assignedWorkers": { "type": "number" },
-        "status": { "type": "string", "enum": ["PLANNING", "READY", "MOBILIZING", "ACTIVE", "DEMOBILIZING", "CLOSED"] },
+        "status": { "type": "string" },
         "notes": { "type": "string" }
       },
       "required": ["waveCode", "poId", "poLineId", "customerId", "startDate", "endDate", "status"]
-    },
-    "PositionCertificateRequirement": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "PositionCertificateRequirement",
-      "type": "object",
-      "description": "Defines a specific certificate requirement for a particular position. These are managed as subcollections under the Position entity.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Position Certificate Requirement."
-        },
-        "certificateName": {
-          "type": "string",
-          "description": "The name of the required certificate (e.g., 'BOSIET', 'First Aid')."
-        },
-        "certificateCode": {
-          "type": "string",
-          "description": "A unique alphanumeric code for the certificate type."
-        },
-        "required": {
-          "type": "boolean",
-          "description": "Indicates whether this certificate is strictly mandatory for the position."
-        },
-        "validityMonths": {
-          "type": "number",
-          "description": "The number of months the certificate is considered valid for this position. This field is optional."
-        },
-        "notes": {
-          "type": "string",
-          "description": "Any specific notes or additional context about this certificate requirement."
-        }
-      },
-      "required": [
-        "id",
-        "certificateName",
-        "certificateCode",
-        "required"
-      ]
-    },
-    "PositionPPERequirement": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "PositionPPERequirement",
-      "type": "object",
-      "description": "Defines a specific Personal Protective Equipment (PPE) requirement for a particular position. These are managed as subcollections under the Position entity.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Position PPE Requirement."
-        },
-        "itemName": {
-          "type": "string",
-          "description": "The name of the required PPE item (e.g., 'Safety Helmet', 'Coveralls')."
-        },
-        "itemCode": {
-          "type": "string",
-          "description": "A unique alphanumeric code for the PPE item type."
-        },
-        "quantityDefault": {
-          "type": "number",
-          "description": "The default quantity of this PPE item required for the position."
-        },
-        "required": {
-          "type": "boolean",
-          "description": "Indicates whether this PPE item is strictly mandatory for the position."
-        },
-        "notes": {
-          "type": "string",
-          "description": "Any specific notes or additional context about this PPE requirement."
-        }
-      },
-      "required": [
-        "id",
-        "itemName",
-        "itemCode",
-        "quantityDefault",
-        "required"
-      ]
-    },
-    "PositionToolRequirement": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "PositionToolRequirement",
-      "type": "object",
-      "description": "Defines an allowed tool or equipment item for a particular position. These are managed as subcollections under the Position entity.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Position Tool Requirement."
-        },
-        "itemName": {
-          "type": "string",
-          "description": "The name of the allowed tool or equipment item (e.g., 'Torque Wrench', 'Grinding Machine')."
-        },
-        "itemCode": {
-          "type": "string",
-          "description": "A unique alphanumeric code for the tool or equipment item type."
-        },
-        "itemType": {
-          "type": "string",
-          "description": "The classification of the item (e.g., 'tool', 'equipment', 'consumable')."
-        },
-        "quantityDefault": {
-          "type": "number",
-          "description": "The default quantity of this item that is allowed/expected for the position."
-        },
-        "allowed": {
-          "type": "boolean",
-          "description": "Indicates whether this tool/equipment is allowed for use by this position."
-        },
-        "notes": {
-          "type": "string",
-          "description": "Any specific notes or additional context about this tool/equipment allowance."
-        }
-      },
-      "required": [
-        "id",
-        "itemName",
-        "itemCode",
-        "itemType",
-        "quantityDefault",
-        "allowed"
-      ]
     }
   },
   "auth": {
-    "providers": [
-      "password",
-      "anonymous"
-    ]
+    "providers": ["password", "anonymous"]
   },
   "firestore": {
-    "structure": [
-      {
-        "path": "/positions/{positionId}",
-        "definition": {
-          "entityName": "Position",
-          "schema": {
-            "$ref": "#/backend/entities/Position"
-          },
-          "description": "Top-level collection for all job positions."
-        }
-      },
-      {
-        "path": "/waves/{waveId}",
-        "definition": {
-          "entityName": "Wave",
-          "schema": {
-            "$ref": "#/backend/entities/Wave"
-          },
-          "description": "Top-level collection for all deployment waves."
-        }
-      },
-      {
-        "path": "/positions/{positionId}/certificate_requirements/{reqId}",
-        "definition": {
-          "entityName": "PositionCertificateRequirement",
-          "schema": {
-            "$ref": "#/backend/entities/PositionCertificateRequirement"
-          },
-          "description": "Subcollection storing specific certificate requirements for a parent Position."
-        }
-      },
-      {
-        "path": "/positions/{positionId}/ppe_requirements/{reqId}",
-        "definition": {
-          "entityName": "PositionPPERequirement",
-          "schema": {
-            "$ref": "#/backend/entities/PositionPPERequirement"
-          },
-          "description": "Subcollection storing specific Personal Protective Equipment (PPE) requirements for a parent Position."
-        }
-      },
-      {
-        "path": "/positions/{positionId}/tool_requirements/{reqId}",
-        "definition": {
-          "entityName": "PositionToolRequirement",
-          "schema": {
-            "$ref": "#/backend/entities/PositionToolRequirement"
-          },
-          "description": "Subcollection storing allowed tools and equipment for a parent Position."
-        }
-      }
-    ],
-    "reasoning": "Standardized hierarchical structure for positions and top-level waves."
+    "/positions/{positionId}": {
+      "schema": { "$ref": "#/backend/entities/Position" },
+      "description": "Top-level collection for all job positions."
+    },
+    "/waves/{waveId}": {
+      "schema": { "$ref": "#/backend/entities/Wave" },
+      "description": "Top-level collection for all deployment waves."
+    }
   }
 }
