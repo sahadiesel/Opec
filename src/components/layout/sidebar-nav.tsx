@@ -13,11 +13,11 @@ import {
   UserPlus,
   CircleDollarSign,
   Clock,
-  Boxes,
+  Warehouse,
   ShieldAlert,
   FileText,
-  Warehouse,
-  ShieldQuestion
+  Activity,
+  HardHat
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -73,19 +73,19 @@ const navItems: NavItem[] = [
   },
   // HR & Operations Module
   { 
-    title: 'ตำแหน่งงาน (Positions)', 
+    title: 'เมทริกซ์ตำแหน่งงาน (Positions)', 
     href: '/positions', 
-    icon: Briefcase, 
+    icon: Activity, 
     roles: ['system_admin', 'hr_manager', 'safety_officer'] 
   },
   { 
-    title: 'คนงาน (Workers)', 
+    title: 'ทะเบียนคนงาน (Workers)', 
     href: '/workers', 
-    icon: UserSquare2, 
+    icon: HardHat, 
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer'] 
   },
   { 
-    title: 'การมอบหมาย (Assignments)', 
+    title: 'การมอบหมายงาน (Assignments)', 
     href: '/assignments', 
     icon: UserPlus, 
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer', 'operations_officer'] 
@@ -98,7 +98,7 @@ const navItems: NavItem[] = [
     roles: ['system_admin', 'payroll_officer', 'finance_officer'] 
   },
   { 
-    title: 'ลงเวลา (Timesheets)', 
+    title: 'ลงเวลาทำงาน (Timesheets)', 
     href: '/timesheets', 
     icon: Clock, 
     roles: ['system_admin', 'payroll_officer', 'hr_officer', 'operations_officer'] 
@@ -122,7 +122,6 @@ const navItems: NavItem[] = [
 export function SidebarNav({ userRoles }: { userRoles: RoleType[] }) {
   const pathname = usePathname();
   
-  // Filter nav items based on the union of all assigned roles
   const filteredNav = navItems.filter(item => 
     item.roles.some(role => userRoles.includes(role))
   );
@@ -131,13 +130,15 @@ export function SidebarNav({ userRoles }: { userRoles: RoleType[] }) {
     <Sidebar variant="sidebar" collapsible="icon">
       <SidebarHeader className="border-b p-4">
         <div className="flex items-center gap-2 font-bold text-primary">
-          <FileText className="h-6 w-6" />
+          <div className="bg-primary text-primary-foreground p-1 rounded">
+            <FileText className="h-5 w-5" />
+          </div>
           <span className="group-data-[collapsible=icon]:hidden">OPEC OpsFlow</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>เมนูจัดการตามสิทธิ์</SidebarGroupLabel>
+          <SidebarGroupLabel>เมนูจัดการ (Navigation)</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {filteredNav.map((item) => (

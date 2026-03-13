@@ -4,14 +4,30 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, UserPlus, MoreHorizontal, Briefcase, Send, Clock, CheckCircle2, Search, Filter, ChevronRight, Building2, Calendar } from 'lucide-react';
+import { 
+  Plus, 
+  UserPlus, 
+  Briefcase, 
+  Send, 
+  Clock, 
+  CheckCircle2, 
+  Search, 
+  Filter, 
+  ChevronRight, 
+  Building2, 
+  Calendar,
+  AlertTriangle,
+  Info,
+  ArrowRight
+} from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, AssignmentStatus, ClientApprovalStatus, PurchaseOrder, Customer, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collectionGroup, collection, doc, query, where } from 'firebase/firestore';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
   DialogContent, 
@@ -23,7 +39,7 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { setDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -36,16 +52,9 @@ export default function AssignmentsPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
+    if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  // Queries
   const assignmentsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser) return null;
     return collectionGroup(firestore, 'assignments');
@@ -53,39 +62,18 @@ export default function AssignmentsPage() {
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
 
-  const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
-    return collection(firestore, 'workers');
-  }, [firestore, firebaseUser]);
-  
+  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
-  const poLinesQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
-    return collectionGroup(firestore, 'po_lines');
-  }, [firestore, firebaseUser]);
-  
+  const poLinesQuery = useMemoFirebase(() => (firestore ? collectionGroup(firestore, 'po_lines') : null), [firestore]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
-  const customerPOsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
-    return collection(firestore, 'purchase_orders');
-  }, [firestore, firebaseUser]);
-  const { data: allPOs } = useCollection<PurchaseOrder>(customerPOsQuery as any);
+  const poQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders') : null), [firestore]);
+  const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
-  const customersQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
-    return collection(firestore, 'customers');
-  }, [firestore, firebaseUser]);
-  const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
-
-  const positionsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
-    return collection(firestore, 'positions');
-  }, [firestore, firebaseUser]);
+  const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
-  // Form State
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedPOLineId, setSelectedPOLineId] = useState('');
@@ -97,43 +85,11 @@ export default function AssignmentsPage() {
     if (!firestore || !selectedWorkerId || !selectedPOLineId || !startDate || !endDate) return;
 
     const poLine = allPOLines?.find(l => l.id === selectedPOLineId);
-    if (!poLine || !poLine._path) {
-      toast({ variant: "destructive", title: "Error", description: "ไม่พบข้อมูลรายการสั่งจอง" });
-      return;
-    }
+    if (!poLine || !poLine._path) return;
 
     const po = allPOs?.find(p => p.id === poLine.poId);
-    const worker = allWorkers?.find(w => w.id === selectedWorkerId);
+    if (!po) return;
 
-    if (!po || !worker) return;
-
-    // Validation: Quota check
-    const existingCount = assignments?.filter(a => 
-      a.poLineId === selectedPOLineId && 
-      ['approved', 'active', 'mobilizing', 'proposed', 'client_review'].includes(a.status)
-    ).length || 0;
-
-    if (existingCount >= poLine.quantity) {
-      toast({
-        variant: "destructive",
-        title: "โควต้าเต็ม (Quota Full)",
-        description: `โควต้าของตำแหน่งนี้คือ ${poLine.quantity} ซึ่งมีการจองเต็มแล้ว`,
-      });
-      return;
-    }
-
-    // Validation: Overlap check (Warn only for now)
-    const hasOverlap = assignments?.some(a => 
-      a.workerId === selectedWorkerId && 
-      ['active', 'mobilizing'].includes(a.status) &&
-      !(new Date(startDate).getTime() > a.endDate || new Date(endDate).getTime() < a.startDate)
-    );
-
-    if (hasOverlap) {
-      if (!confirm('คนงานรายนี้มีการมอบหมายงานที่ซ้อนทับช่วงเวลากันอยู่ ยืนยันการมอบหมายเพิ่มหรือไม่?')) return;
-    }
-
-    // Hierarchical path: purchase_orders/{poId}/po_lines/{lineId}/assignments/{asgnId}
     const assignmentsCollectionRef = collection(firestore, poLine._path, 'assignments');
     const newAssignmentRef = doc(assignmentsCollectionRef);
     
@@ -155,155 +111,119 @@ export default function AssignmentsPage() {
     };
 
     setDocumentNonBlocking(newAssignmentRef, newAssignment, { merge: true });
-    
-    toast({
-      title: "มอบหมายงานสำเร็จ",
-      description: `เสนอตัว ${worker.firstName} เข้าสู่โครงการ ${po.projectName || po.title}`,
-    });
-    
+    toast({ title: "มอบหมายงานสำเร็จ", description: `ส่งตัวเข้าสู่โครงการเรียบร้อยแล้ว` });
     setIsDialogOpen(false);
-    resetForm();
-  };
-
-  const resetForm = () => {
-    setSelectedWorkerId('');
-    setSelectedPOLineId('');
-    setStartDate('');
-    setEndDate('');
-    setNotes('');
   };
 
   const getStatusBadge = (status: AssignmentStatus) => {
     switch(status) {
-      case 'proposed': return <Badge variant="outline" className="bg-slate-100 text-slate-700">Proposed</Badge>;
-      case 'client_review': return <Badge variant="outline" className="bg-blue-100 text-blue-700 border-blue-200">Reviewing</Badge>;
-      case 'approved': return <Badge variant="outline" className="bg-green-100 text-green-700 border-green-200">Approved</Badge>;
-      case 'active': return <Badge className="bg-primary">Active</Badge>;
+      case 'proposed': return <Badge variant="outline">Proposed</Badge>;
+      case 'client_review': return <Badge variant="outline" className="bg-blue-50 text-blue-700">Reviewing</Badge>;
+      case 'active': return <Badge className="bg-green-600">Active</Badge>;
       case 'mobilizing': return <Badge variant="secondary" className="bg-amber-100 text-amber-700">Mobilizing</Badge>;
       case 'cancelled': return <Badge variant="destructive">Cancelled</Badge>;
-      case 'replaced': return <Badge variant="outline" className="bg-orange-50 text-orange-600">Replaced</Badge>;
-      case 'demobilized': return <Badge variant="outline">Demobilized</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
 
-  if (isUserLoading || !currentUser || (firebaseUser && firebaseUser.uid !== currentUser.id)) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Clock className="h-12 w-12 text-primary animate-pulse" />
-      </div>
-    );
-  }
+  if (isUserLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <UserPlus className="h-6 w-6" /> การมอบหมายและส่งพิจารณา (Assignments)
-            </h1>
-            <p className="text-muted-foreground">บริหารจัดการขั้นตอนการส่งตัวคนงานเข้าโครงการของลูกค้า</p>
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* 1. Header & Description */}
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+            <UserPlus className="h-8 w-8" /> การมอบหมายงาน (Assignments Management)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            เชื่อมโยงคนงานเข้ากับโครงการของลูกค้า จัดการกระบวนการ Mobilization และติดตามการอนุมัติรายบุคคล
+          </p>
+        </div>
+
+        {/* 2. Warning / Important Notice */}
+        <Alert className="bg-amber-50 border-amber-200 text-amber-800">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertTitle className="font-bold">เงื่อนไขการมอบหมาย (Assignment Policy)</AlertTitle>
+          <AlertDescription>
+            ห้ามมอบหมายคนงานที่มีงานทับซ้อนในช่วงเวลาเดียวกัน และคนงานต้องผ่านการตรวจร่างกาย (Medical Check) ให้เรียบร้อยก่อนเริ่มงานจริง
+          </AlertDescription>
+        </Alert>
+
+        {/* 3. Action Bar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาชื่อคนงานหรือโครงการ..." className="pl-9" />
+            </div>
+            <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
-          
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" /> สร้างการมอบหมายใหม่
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md">
+                <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (New Assignment)
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl overflow-y-auto max-h-[90vh]">
+            <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>สร้างการมอบหมาย (New Assignment)</DialogTitle>
-                <DialogDescription>เชื่อมต่อคนงานเข้ากับโควต้าตำแหน่งงานใน Customer PO</DialogDescription>
+                <DialogDescription>เลือกคนงานและเชื่อมต่อเข้ากับโควต้าตำแหน่งงานใน Customer PO</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
-                  <Label>เลือกรายการโควต้า (Customer PO Line)</Label>
-                  <Select onValueChange={setSelectedPOLineId} value={selectedPOLineId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="เลือกโควต้าตำแหน่งงาน..." />
-                    </SelectTrigger>
+                  <Label>เลือกโควต้าตำแหน่ง (Customer PO Line)</Label>
+                  <Select onValueChange={setSelectedPOLineId}>
+                    <SelectTrigger><SelectValue placeholder="เลือกรายการโควต้า..." /></SelectTrigger>
                     <SelectContent>
                       {allPOLines?.map(line => {
                         const po = allPOs?.find(p => p.id === line.poId);
                         const pos = allPositions?.find(p => p.id === line.positionId);
-                        const assigned = assignments?.filter(a => a.poLineId === line.id && ['active', 'mobilizing', 'proposed', 'client_review', 'approved'].includes(a.status)).length || 0;
-                        return (
-                          <SelectItem key={line.id} value={line.id} disabled={assigned >= line.quantity}>
-                            {po?.poCode} | {pos?.positionName} ({assigned}/{line.quantity})
-                          </SelectItem>
-                        );
+                        return <SelectItem key={line.id} value={line.id}>{po?.poCode} | {pos?.positionName}</SelectItem>;
                       })}
                     </SelectContent>
                   </Select>
                 </div>
-                
                 <div className="space-y-2 md:col-span-2">
-                  <Label>คนงาน (Workers - แนะนำสถานะ READY)</Label>
-                  <Select onValueChange={setSelectedWorkerId} value={selectedWorkerId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="เลือกคนงาน..." />
-                    </SelectTrigger>
+                  <Label>คนงาน (Worker Name)</Label>
+                  <Select onValueChange={setSelectedWorkerId}>
+                    <SelectTrigger><SelectValue placeholder="เลือกคนงาน..." /></SelectTrigger>
                     <SelectContent>
-                      {allWorkers?.map(worker => (
-                        <SelectItem key={worker.id} value={worker.id}>
-                          {worker.firstName} {worker.lastName} ({worker.readinessStatus})
-                        </SelectItem>
-                      ))}
+                      {allWorkers?.map(w => <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.readinessStatus})</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-
                 <div className="space-y-2">
-                  <Label>วันที่เริ่ม (Start Date)</Label>
+                  <Label>วันที่เริ่มงาน (Start Date)</Label>
                   <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่สิ้นสุด (End Date)</Label>
                   <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
                 </div>
-
-                <div className="space-y-2 md:col-span-2">
-                  <Label>หมายเหตุ (Internal Notes)</Label>
-                  <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="รายละเอียดเพิ่มเติม..." />
-                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreateAssignment} disabled={!selectedWorkerId || !selectedPOLineId || !startDate || !endDate}>
-                  สร้างรายการเสนอ
-                </Button>
+                <Button onClick={handleCreateAssignment} className="bg-primary">ยืนยันการมอบหมาย (Confirm)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3 border-b">
-            <div className="flex items-center justify-between">
-              <CardTitle>รายการการมอบหมายทั้งหมด</CardTitle>
-              <div className="flex gap-2">
-                <div className="relative w-64">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="ค้นหาคนงานหรือโครงการ..." className="pl-8" />
-                </div>
-                <Button variant="outline" size="icon"><Filter className="h-4 w-4" /></Button>
-              </div>
-            </div>
-          </CardHeader>
+        {/* 4. Data Content */}
+        <Card className="shadow-lg">
           <CardContent className="p-0">
             {isAssignmentsLoading ? (
-              <div className="py-20 text-center text-muted-foreground italic">กำลังโหลดข้อมูล...</div>
+              <div className="py-20 text-center text-muted-foreground italic">กำลังโหลดข้อมูลการมอบหมาย...</div>
             ) : (
               <Table>
-                <TableHeader className="bg-muted/30">
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>คนงาน & ตำแหน่ง</TableHead>
-                    <TableHead>โครงการ & ลูกค้า</TableHead>
-                    <TableHead>ช่วงเวลา</TableHead>
-                    <TableHead>สถานะงาน</TableHead>
-                    <TableHead>สถานะอนุมัติ</TableHead>
+                    <TableHead className="font-bold">คนงาน & ตำแหน่ง (Staff & Position)</TableHead>
+                    <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
+                    <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
+                    <TableHead className="font-bold">สถานะงาน</TableHead>
+                    <TableHead className="font-bold">สถานะอนุมัติ</TableHead>
                     <TableHead className="text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -311,54 +231,68 @@ export default function AssignmentsPage() {
                   {assignments?.map((asgn) => {
                     const worker = allWorkers?.find(w => w.id === asgn.workerId);
                     const pos = allPositions?.find(p => p.id === asgn.positionId);
-                    const customer = allCustomers?.find(c => c.id === asgn.customerId);
-                    const po = allPOs?.find(p => p.id === asgn.poId);
-                    
                     return (
-                      <TableRow key={asgn.id} className="group cursor-pointer hover:bg-muted/50" onClick={() => router.push(`/assignments/${asgn.id}`)}>
+                      <TableRow key={asgn.id} className="cursor-pointer hover:bg-muted/30 group" onClick={() => router.push(`/assignments/${asgn.id}`)}>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-semibold">{worker ? `${worker.firstName} ${worker.lastName}` : 'N/A'}</span>
-                            <span className="text-xs text-primary flex items-center gap-1"><Briefcase className="h-3 w-3" /> {pos?.positionName || asgn.positionId}</span>
+                            <span className="font-bold text-base">{worker?.firstName} {worker?.lastName}</span>
+                            <span className="text-xs text-primary flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {pos?.positionName}</span>
                           </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-medium text-xs">{asgn.projectName}</span>
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                              <Building2 className="h-2.5 w-2.5" /> {customer?.name || 'N/A'} 
-                              <span className="ml-1 text-primary">[{po?.poCode}]</span>
-                            </span>
+                            <span className="font-semibold text-xs">{asgn.projectName}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">PO: {asgn.poId.substring(0,8)}</span>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col text-[10px] text-muted-foreground">
-                            <span className="flex items-center gap-1"><Calendar className="h-2.5 w-2.5" /> เริ่ม: {new Date(asgn.startDate).toLocaleDateString('th-TH')}</span>
-                            <span>จบ: {new Date(asgn.endDate).toLocaleDateString('th-TH')}</span>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Calendar className="h-3 w-3" />
+                            {new Date(asgn.startDate).toLocaleDateString('th-TH')} - {new Date(asgn.endDate).toLocaleDateString('th-TH')}
                           </div>
                         </TableCell>
-                        <TableCell>
-                          {getStatusBadge(asgn.status)}
-                        </TableCell>
+                        <TableCell>{getStatusBadge(asgn.status)}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={asgn.clientApprovalStatus === 'approved' ? 'text-green-600 border-green-200' : ''}>
                             {asgn.clientApprovalStatus.toUpperCase()}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <Button variant="ghost" size="icon"><ChevronRight className="h-5 w-5" /></Button>
                         </TableCell>
                       </TableRow>
                     );
                   })}
-                  {(!assignments || assignments.length === 0) && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบรายการการมอบหมาย</TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             )}
+          </CardContent>
+        </Card>
+
+        {/* 5. Next-Step Guidance */}
+        <Card className="bg-primary/5 border-primary/10">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> ขั้นตอนถัดไป (Next Steps)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-blue-100 p-2 rounded text-blue-700"><Send className="h-4 w-4" /></div>
+                <div>
+                  <p className="font-bold">ส่งให้ลูกค้าพิจารณา (Client Review)</p>
+                  <p className="text-muted-foreground text-xs">หลังมอบหมาย ต้องเปลี่ยนสถานะเป็น Client Review เพื่อให้ลูกค้าเห็นใน Portal</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-3 bg-white rounded-md border shadow-sm">
+                <div className="bg-amber-100 p-2 rounded text-amber-700"><Clock className="h-4 w-4" /></div>
+                <div>
+                  <p className="font-bold">เริ่มขั้นตอนระดมพล (Mobilization)</p>
+                  <p className="text-muted-foreground text-xs">เมื่อได้รับอนุมัติ ให้ดำเนินการจัดเตรียมชุด PPE และอุปกรณ์ก่อนส่งเข้าหน้างาน</p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
