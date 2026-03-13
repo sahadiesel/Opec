@@ -35,6 +35,7 @@ service cloud.firestore {
     function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
     function isOpsStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('operations_officer') || hasRole('hr_officer') || hasRole('hr_manager')); }
     function isStoreStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('store_officer') || hasRole('operations_officer')); }
+    function isFinanceStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('finance_officer') || hasRole('payroll_officer')); }
     function isClient() { return isSignedIn() && (hasRole('client_user') || hasRole('client')); }
 
     match /users/{userId} {
@@ -138,6 +139,20 @@ service cloud.firestore {
       allow read: if isStaff();
       allow write: if isStoreStaff();
       match /items/{lineId} { allow read: if isStaff(); allow write: if isStoreStaff(); }
+    }
+
+    // Payroll Rules
+    match /payroll_runs {
+      allow read: if isStaff();
+      match /{runId} {
+        allow create: if isHRStaff() || isSystemAdmin();
+        allow update: if isHRStaff() || isSystemAdmin() || isFinanceStaff();
+        allow delete: if isSystemAdmin();
+        match /lines/{lineId} {
+          allow read: if isStaff();
+          allow write: if isHRStaff() || isSystemAdmin();
+        }
+      }
     }
 
     match /roles_hr_manager/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }

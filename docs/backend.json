@@ -40,6 +40,22 @@
         "notes": { "type": "string" }
       },
       "required": ["waveCode", "poId", "poLineId", "customerId", "startDate", "endDate", "status"]
+    },
+    "PayrollRun": {
+      "title": "Payroll Run",
+      "description": "Represents a batch calculation of worker payments for a specific period.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "payrollRunNo": { "type": "string" },
+        "payrollPeriodStart": { "type": "string", "format": "date" },
+        "payrollPeriodEnd": { "type": "string", "format": "date" },
+        "payrollType": { "type": "string", "enum": ["MONTHLY", "WAVE_BASED", "SPECIAL_RUN", "ADJUSTMENT"] },
+        "status": { "type": "string" },
+        "workerCount": { "type": "number" },
+        "grossAmount": { "type": "number" },
+        "netAmount": { "type": "number" }
+      }
     }
   },
   "auth": {
@@ -53,6 +69,14 @@
     "/waves/{waveId}": {
       "schema": { "$ref": "#/backend/entities/Wave" },
       "description": "Top-level collection for all deployment waves."
+    },
+    "/payroll_runs/{runId}": {
+      "schema": { "$ref": "#/backend/entities/PayrollRun" },
+      "description": "Top-level collection for payroll runs."
+    },
+    "/payroll_runs/{runId}/lines/{lineId}": {
+      "schema": { "type": "object" },
+      "description": "Individual payment lines for workers within a run."
     }
   }
 }

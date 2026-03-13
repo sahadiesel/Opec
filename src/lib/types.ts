@@ -60,6 +60,17 @@ export type MobilizationStatus =
   | 'ACTIVE'
   | 'FAILED_CHECK';
 
+export type PayrollRunStatus = 
+  | 'DRAFT'
+  | 'CALCULATED'
+  | 'HR_REVIEW'
+  | 'HR_APPROVED'
+  | 'FINANCE_APPROVED'
+  | 'LOCKED'
+  | 'CANCELLED';
+
+export type PayrollType = 'MONTHLY' | 'WAVE_BASED' | 'SPECIAL_RUN' | 'ADJUSTMENT';
+
 export interface User {
   id: string;
   email: string;
@@ -331,6 +342,66 @@ export interface Assignment {
   updatedAt: number;
   notes?: string;
   clientComments?: string;
+  _path?: string;
+}
+
+// --- PAYROLL MODULE ---
+
+export interface PayrollRun {
+  id: string;
+  payrollRunNo: string;
+  payrollPeriodStart: string; // yyyy-mm-dd
+  payrollPeriodEnd: string;   // yyyy-mm-dd
+  payrollType: PayrollType;
+  currency: string;
+  status: PayrollRunStatus;
+  workerCount: number;
+  grossAmount: number;
+  totalAllowance: number;
+  totalDeduction: number;
+  netAmount: number;
+  sourceTimesheetBatchIds: string[];
+  notes: string;
+  hrApprovedAt?: number;
+  hrApprovedBy?: string;
+  financeApprovedAt?: number;
+  financeApprovedBy?: string;
+  lockedAt?: number;
+  lockedBy?: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface PayrollLine {
+  id: string;
+  workerId: string;
+  assignmentId: string;
+  waveId: string;
+  positionId: string;
+  timesheetBatchId?: string;
+  sourceEntryRefs?: string[];
+  normalDays: number;
+  normalHours: number;
+  otHours15: number;
+  otHours20: number;
+  otHours30: number;
+  holidayHours: number;
+  standbyDays: number;
+  travelDays: number;
+  unpaidDays: number;
+  baseRateSnapshot: number;
+  otRateSnapshot: number;
+  allowanceSnapshot: number;
+  deductionSnapshot: number;
+  grossPay: number;
+  totalAllowance: number;
+  totalDeduction: number;
+  netPay: number;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
   _path?: string;
 }
 
