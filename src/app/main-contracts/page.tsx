@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -6,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter } from 'lucide-react';
+import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter, ShieldAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MainContract, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -60,19 +61,28 @@ export default function MainContractsPage() {
     }
   }, []);
 
-  // Guard for list queries to prevent Permission Errors
-  const isAuthorized = useMemo(() => {
-    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
-  }, [currentUser]);
-
+  // Determine user category
   const isStaff = useMemo(() => {
-    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
+    const staffRoles = ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer', 'sales_officer', 'finance_officer', 'payroll_officer', 'store_officer'];
+    return currentUser?.roleIds?.some(r => staffRoles.includes(r as any)) || false;
   }, [currentUser]);
 
+  const isClient = useMemo(() => {
+    return currentUser?.roleIds?.some(r => ['client', 'client_user'].includes(r as any)) || false;
+  }, [currentUser]);
+
+  // Guard: If client tries to access the master list, redirect to portal
+  useEffect(() => {
+    if (!isUserLoading && isClient && !isStaff) {
+      router.push('/client-portal');
+    }
+  }, [isClient, isStaff, isUserLoading, router]);
+
+  // Firestore Queries - Only initiate if staff to prevent permission errors on collection list
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isStaff) return null;
     return collection(firestore, 'main_contracts');
-  }, [firestore, isUserLoading, firebaseUser, currentUser, isAuthorized]);
+  }, [firestore, isUserLoading, firebaseUser, currentUser, isStaff]);
 
   const { data: contracts, isLoading } = useCollection<MainContract>(contractsQuery as any);
 
@@ -112,6 +122,21 @@ export default function MainContractsPage() {
   };
 
   if (isUserLoading || !currentUser) return null;
+
+  // If not staff, don't render the content (redirect handled by useEffect)
+  if (!isStaff && !isClient) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Pending (รอนุมัติสิทธิ์)</h2>
+          <p className="text-muted-foreground max-w-md">บัญชีของคุณยังไม่ได้รับสิทธิ์เข้าถึงข้อมูลเชิงพาณิชย์ กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดบทบาท (Roles)</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (isClient && !isStaff) return null; // Wait for redirect
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

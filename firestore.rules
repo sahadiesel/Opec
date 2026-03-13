@@ -90,7 +90,11 @@ service cloud.firestore {
     }
 
     match /main_contracts {
-      allow read: if isStaff() || isClient();
+      // List permission requires a query filter if using resource-based rules, 
+      // but here we allow staff to list all and restrict clients via app logic + granular get rules.
+      allow list: if isStaff();
+      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+      
       match /{id} {
         allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
         allow write: if isSalesStaff();
@@ -102,7 +106,9 @@ service cloud.firestore {
     }
 
     match /purchase_orders {
-      allow read: if isStaff() || isClient();
+      allow list: if isStaff();
+      allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
+      
       match /{poId} {
         allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
         allow write: if isSalesStaff();
