@@ -19,7 +19,8 @@ import {
   Activity,
   HardHat,
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  Info
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
