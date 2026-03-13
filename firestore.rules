@@ -44,34 +44,34 @@ service cloud.firestore {
     }
 
     match /workers {
-      allow list: if isStaff();
+      allow read: if isStaff();
       match /{workerId} {
-        allow get: if isStaff();
         allow write: if isHRStaff();
         match /{sub=**} { allow read: if isStaff(); allow write: if isHRStaff(); }
       }
     }
 
     match /positions {
-      allow list: if isStaff();
+      allow read: if isStaff();
       match /{positionId} {
-        allow get: if isStaff();
         allow write: if isHRStaff();
         match /{sub=**} { allow read: if isStaff(); allow write: if isHRStaff(); }
       }
     }
 
-    match /waves/{waveId} {
+    match /waves {
       allow read: if isStaff();
-      allow write: if isOpsStaff();
-      match /{sub=**} { 
-        allow read: if isStaff(); 
-        allow write: if isOpsStaff(); 
+      match /{waveId} {
+        allow write: if isOpsStaff();
+        match /{sub=**} { 
+          allow read: if isStaff(); 
+          allow write: if isOpsStaff(); 
+        }
       }
     }
 
     match /customers {
-      allow list: if isStaff();
+      allow read: if isStaff();
       match /{customerId} {
         allow get: if isStaff() || (isClient() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId == customerId);
         allow write: if isSalesStaff();
@@ -89,7 +89,7 @@ service cloud.firestore {
     }
 
     match /main_contracts {
-      allow list: if isStaff() || isClient();
+      allow read: if isStaff() || isClient();
       match /{id} {
         allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
         allow write: if isSalesStaff();
@@ -101,7 +101,7 @@ service cloud.firestore {
     }
 
     match /purchase_orders {
-      allow list: if isStaff() || isClient();
+      allow read: if isStaff() || isClient();
       match /{poId} {
         allow get: if isStaff() || (isClient() && resource.data.customerId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.customerId);
         allow write: if isSalesStaff();

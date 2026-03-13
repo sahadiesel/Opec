@@ -1,6 +1,7 @@
+
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -59,17 +60,21 @@ export default function WorkersPage() {
     }
   }, []);
 
+  const isStaff = useMemo(() => {
+    return currentUser?.roleIds?.some(r => ![ 'client', 'client_user' ].includes(r as any)) || false;
+  }, [currentUser]);
+
   const workersQuery = useMemoFirebase(() => {
-    if (isUserLoading || !firebaseUser || !firestore || !currentUser) return null;
+    if (isUserLoading || !firebaseUser || !firestore || !currentUser || !isStaff) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, isUserLoading, currentUser]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser, isStaff]);
 
   const { data: workers, isLoading: isCollectionLoading } = useCollection<Worker>(workersQuery as any);
 
   const positionsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
+    if (!firestore || !firebaseUser || !isStaff) return null;
     return collection(firestore, 'positions');
-  }, [firestore, firebaseUser]);
+  }, [firestore, firebaseUser, isStaff]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -113,6 +118,18 @@ export default function WorkersPage() {
   };
 
   if (isUserLoading || !currentUser) return null;
+
+  if (!isStaff) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Denied (จำกัดสิทธิ์เข้าถึง)</h2>
+          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

@@ -63,16 +63,6 @@ export default function Home() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const { toast } = useToast();
 
-  // Real Data Subscriptions
-  const contractsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'main_contracts') : null), [firestore]);
-  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
-
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
-  const { data: workers } = useCollection<Worker>(workersQuery as any);
-
-  const assignmentsQuery = useMemoFirebase(() => (firestore ? collectionGroup(firestore, 'assignments') : null), [firestore]);
-  const { data: assignments } = useCollection<Assignment>(assignmentsQuery as any);
-
   useEffect(() => {
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
@@ -93,6 +83,20 @@ export default function Home() {
     }
     checkBootstrap();
   }, [firestore]);
+
+  // Guard Real Data Subscriptions by User Role to prevent Permission Errors
+  const isStaff = useMemo(() => {
+    return user?.roleIds?.some(r => ![ 'client', 'client_user' ].includes(r as any)) || false;
+  }, [user]);
+
+  const contractsQuery = useMemoFirebase(() => (firestore && isStaff ? collection(firestore, 'main_contracts') : null), [firestore, isStaff]);
+  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
+
+  const workersQuery = useMemoFirebase(() => (firestore && isStaff ? collection(firestore, 'workers') : null), [firestore, isStaff]);
+  const { data: workers } = useCollection<Worker>(workersQuery as any);
+
+  const assignmentsQuery = useMemoFirebase(() => (firestore && isStaff ? collectionGroup(firestore, 'assignments') : null), [firestore, isStaff]);
+  const { data: assignments } = useCollection<Assignment>(assignmentsQuery as any);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -193,6 +197,10 @@ export default function Home() {
 
   // Stats Calculations
   const stats = useMemo(() => {
+    if (!isStaff || !contracts || !workers || !assignments) {
+      return { revenue: "0", activeWorkers: 0, activeContracts: 0, pendingItems: 0, expiringCerts: 0 };
+    }
+
     const activeContracts = contracts?.filter(c => c.status === 'active').length || 0;
     const activeWorkers = workers?.filter(w => w.workerStatus === 'assigned').length || 0;
     const pendingItems = assignments?.filter(a => a.clientApprovalStatus === 'SUBMITTED').length || 0;
@@ -213,7 +221,7 @@ export default function Home() {
       pendingItems,
       expiringCerts
     };
-  }, [contracts, workers, assignments]);
+  }, [contracts, workers, assignments, isStaff]);
 
   if (!isLoaded || isUserLoading) return null;
 
