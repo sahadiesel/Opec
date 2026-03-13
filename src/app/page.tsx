@@ -51,9 +51,11 @@ export default function Home() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        // Migration support: convert single roleId to roleIds array
+        // Migration support: ensure roleIds array exists
         if (parsed.roleId && !parsed.roleIds) {
           parsed.roleIds = [parsed.roleId];
+        } else if (!parsed.roleIds) {
+          parsed.roleIds = [];
         }
         setUser(parsed);
       } catch (e) {
@@ -83,9 +85,11 @@ export default function Home() {
       
       if (userDoc.exists()) {
         const userData = userDoc.data() as any;
-        // Migration check
+        // Ensure roleIds is set
         if (userData.roleId && !userData.roleIds) {
           userData.roleIds = [userData.roleId];
+        } else if (!userData.roleIds) {
+          userData.roleIds = [];
         }
         
         setUser(userData as User);
@@ -249,7 +253,7 @@ function HROperationsDashboard({ user }: { user: User }) {
         <StatCard title="พร้อมทำงาน" value="842" sub="READY status" icon={CheckCircle2} colorClass="border-l-green-500" />
         <StatCard title="ใบรับรองหมดอายุ" value="42" sub="ต้องต่ออายุ" icon={FileWarning} colorClass="border-l-amber-500" />
         <StatCard title="ตรวจร่างกายใกล้หมด" value="15" sub="ภายใน 30 วัน" icon={AlertTriangle} colorClass="border-l-destructive" />
-        <StatCard title="งานรอมอบหมาย" value="12" sub="New Assignments" icon={UserPlus} colorClass="border-l-blue-500" />
+        <StatCard title="งานรอมมอบหมาย" value="12" sub="New Assignments" icon={UserPlus} colorClass="border-l-blue-500" />
       </div>
     </div>
   );

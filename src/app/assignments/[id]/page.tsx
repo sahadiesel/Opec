@@ -20,7 +20,8 @@ import {
   Send,
   Truck,
   XCircle,
-  MoreHorizontal
+  MoreHorizontal,
+  ChevronRight
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collectionGroup, query, where, getDocs, limit } from 'firebase/firestore';
@@ -40,7 +41,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.roleId && !parsed.roleIds) parsed.roleIds = [parsed.roleId];
+        setCurrentUser(parsed);
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
   // Fetch Assignment (using collectionGroup because path is nested)

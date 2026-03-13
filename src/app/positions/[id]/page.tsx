@@ -74,7 +74,15 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed.roleId && !parsed.roleIds) parsed.roleIds = [parsed.roleId];
+        setCurrentUser(parsed);
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
   const handleSaveMaster = () => {
@@ -133,7 +141,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const handleGenerateAI = async (type: 'certificate' | 'ppe' | 'tool') => {
     if (!position) return;
-    setIsGenerating(true);
+    setIsGenerating(type as any); // Use simple loading state
     try {
       const result = await generatePositionRequirements({
         positionName: position.positionName,

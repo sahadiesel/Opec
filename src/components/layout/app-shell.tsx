@@ -12,7 +12,7 @@ interface AppShellProps {
   children: React.ReactNode;
   user: {
     displayName: string;
-    roleIds: RoleType[];
+    roleIds?: RoleType[];
   } | null;
   onLogout: () => void;
 }
@@ -20,12 +20,14 @@ interface AppShellProps {
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   if (!user) return <>{children}</>;
 
-  const roleDisplay = user.roleIds.map(r => r.replace('_', ' ')).join(', ');
+  // Robust roles handling for multi-role transition
+  const roles = user.roleIds || ((user as any).roleId ? [(user as any).roleId] : []);
+  const roleDisplay = roles.map(r => r.replace('_', ' ')).join(', ');
 
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <SidebarNav userRoles={user.roleIds} />
+        <SidebarNav userRoles={roles} />
         <SidebarInset>
           <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
