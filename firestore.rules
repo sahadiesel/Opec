@@ -36,7 +36,8 @@ service cloud.firestore {
     function isSystemAdmin() { return hasRole('system_admin'); }
     function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
     function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
-    function isOpsStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('operations_officer') || hasRole('hr_officer')); }
+    // Operations Staff includes those authorized to manage deployment cycles
+    function isOpsStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('operations_officer') || hasRole('hr_officer') || hasRole('hr_manager')); }
     function isClient() { return isSignedIn() && (hasRole('client_user') || hasRole('client')); }
 
     // Top-level collections
@@ -68,6 +69,10 @@ service cloud.firestore {
       allow read: if isStaff();
       match /{waveId} {
         allow write: if isOpsStaff();
+        match /{sub=**} { 
+          allow read: if isStaff(); 
+          allow write: if isOpsStaff(); 
+        }
       }
     }
 
