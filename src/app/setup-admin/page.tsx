@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -21,6 +22,7 @@ export default function SetupAdminPage() {
     displayName: '',
     email: '',
     password: '',
+    confirmPassword: '',
     nationalId: '',
     address: '',
   });
@@ -58,6 +60,16 @@ export default function SetupAdminPage() {
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firestore || !auth) return;
+
+    if (formData.password.length < 8) {
+      toast({ variant: "destructive", title: "รหัสผ่านสั้นเกินไป", description: "กรุณากำหนดรหัสผ่านอย่างน้อย 8 ตัวอักษร" });
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      toast({ variant: "destructive", title: "รหัสผ่านไม่ตรงกัน", description: "กรุณากรอกรหัสผ่านทั้งสองช่องให้ตรงกัน" });
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -189,19 +201,35 @@ export default function SetupAdminPage() {
                   required
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password" className="flex items-center gap-2">
-                  <Lock className="h-4 w-4" /> กำหนดรหัสผ่าน
-                </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="อย่างน้อย 6 ตัวอักษร"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  required
-                  minLength={6}
-                />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="password" className="flex items-center gap-2">
+                    <Lock className="h-4 w-4" /> กำหนดรหัสผ่าน
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="ขั้นต่ำ 8 ตัวอักษร"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    required
+                    minLength={8}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword" className="flex items-center gap-2">
+                    <Lock className="h-4 w-4" /> ยืนยันรหัสผ่าน
+                  </Label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    placeholder="กรอกรหัสอีกครั้ง"
+                    value={formData.confirmPassword}
+                    onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                    required
+                    minLength={8}
+                  />
+                </div>
               </div>
             </div>
             

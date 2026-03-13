@@ -53,6 +53,7 @@ export default function Home() {
   // Registration States
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [regDisplayName, setRegDisplayName] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [isRegDialogOpen, setIsRegDialogOpen] = useState(false);
@@ -136,10 +137,21 @@ export default function Home() {
   };
 
   const handleRegister = async () => {
-    if (!regEmail || !regPassword || !regDisplayName) {
+    if (!regEmail || !regPassword || !regConfirmPassword || !regDisplayName) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณากรอกข้อมูลให้ครบถ้วน" });
       return;
     }
+
+    if (regPassword.length < 8) {
+      toast({ variant: "destructive", title: "รหัสผ่านไม่ปลอดภัย", description: "รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร" });
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      toast({ variant: "destructive", title: "รหัสผ่านไม่ตรงกัน", description: "กรุณาตรวจสอบรหัสผ่านทั้งสองช่องให้ตรงกัน" });
+      return;
+    }
+
     setIsRegistering(true);
     try {
       const cred = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
@@ -165,6 +177,7 @@ export default function Home() {
       setIsRegDialogOpen(false);
       setRegEmail('');
       setRegPassword('');
+      setRegConfirmPassword('');
       setRegDisplayName('');
     } catch (err: any) {
       toast({ variant: "destructive", title: "Registration Failed", description: err.message });
@@ -246,7 +259,7 @@ export default function Home() {
                     <UserPlus className="h-4 w-4" /> ลงทะเบียนเข้าใช้งาน (Register)
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>ลงทะเบียนผู้ใช้งานใหม่</DialogTitle>
                     <DialogDescription>ข้อมูลของคุณจะถูกส่งไปยังผู้ดูแลระบบเพื่อขออนุมัติสิทธิ์เข้าใช้งาน</DialogDescription>
@@ -261,8 +274,12 @@ export default function Home() {
                       <Input type="email" value={regEmail} onChange={e => setRegEmail(e.target.value)} placeholder="name@opec.com" />
                     </div>
                     <div className="space-y-2">
-                      <Label>กำหนดรหัสผ่าน</Label>
-                      <Input type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" />
+                      <Label>กำหนดรหัสผ่าน (อย่างน้อย 8 ตัวอักษร)</Label>
+                      <Input type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} placeholder="••••••••" minLength={8} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>ยืนยันรหัสผ่านอีกครั้ง</Label>
+                      <Input type="password" value={regConfirmPassword} onChange={e => setRegConfirmPassword(e.target.value)} placeholder="••••••••" minLength={8} />
                     </div>
                     <div className="bg-amber-50 p-3 rounded-md border border-amber-200 flex gap-2">
                       <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
