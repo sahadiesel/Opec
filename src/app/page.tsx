@@ -71,6 +71,13 @@ export default function Home() {
         const parsed = JSON.parse(stored);
         if (parsed.roleId && !parsed.roleIds) parsed.roleIds = [parsed.roleId];
         setUser(parsed);
+        
+        // Update presence if user is already logged in
+        if (firestore && parsed.id) {
+          updateDoc(doc(firestore, 'users', parsed.id), {
+            lastLoginAt: Date.now()
+          }).catch(console.error);
+        }
       } catch (e) { console.error(e); }
     }
 

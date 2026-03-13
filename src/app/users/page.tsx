@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -200,7 +201,9 @@ export default function UsersPage() {
                 <TableBody>
                   {users?.map((u) => {
                     const roles = u.roleIds || [];
-                    const isOnline = u.lastLoginAt && (!u.lastLogoutAt || u.lastLoginAt > u.lastLogoutAt);
+                    const isSelf = firebaseUser?.uid === u.id;
+                    // Improved online detection: if it's the current user or login is after logout
+                    const isOnline = isSelf || (u.lastLoginAt && (!u.lastLogoutAt || u.lastLoginAt > u.lastLogoutAt));
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 transition-all">
