@@ -10,25 +10,22 @@ import {
   Plus, 
   UserPlus, 
   Briefcase, 
-  Send, 
-  Clock, 
-  CheckCircle2, 
   Search, 
   Filter, 
   ChevronRight, 
   Building2, 
   Calendar,
-  AlertTriangle,
-  Info,
-  ArrowRight,
   ShieldCheck,
-  Truck
+  Truck,
+  Waves,
+  AlertTriangle,
+  Info
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, POLine, User, AssignmentStatus, ClientApprovalStatus, PurchaseOrder, Customer, Position } from '@/lib/types';
+import { Assignment, Worker, POLine, User, DeploymentStatus, ClientApprovalStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collectionGroup, collection, doc, query, where } from 'firebase/firestore';
+import { collectionGroup, collection, doc, query, where, increment, updateDoc } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
@@ -63,6 +60,9 @@ export default function AssignmentsPage() {
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
 
+  const wavesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'waves') : null), [firestore]);
+  const { data: allWaves } = useCollection<Wave>(wavesQuery as any);
+
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
@@ -77,15 +77,21 @@ export default function AssignmentsPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
-  const [selectedPOLineId, setSelectedPOLineId] = useState('');
+  const [selectedWaveId, setSelectedWaveId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
 
   const handleCreateAssignment = async () => {
-    if (!firestore || !selectedWorkerId || !selectedPOLineId || !startDate || !endDate) return;
+    if (!firestore || !selectedWorkerId || !selectedWaveId || !startDate || !endDate) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุข้อมูลที่จำเป็นให้ครบถ้วน" });
+      return;
+    }
 
-    const poLine = allPOLines?.find(l => l.id === selectedPOLineId);
+    const wave = allWaves?.find(w => w.id === selectedWaveId);
+    if (!wave) return;
+
+    const poLine = allPOLines?.find(l => l.id === wave.poLineId);
     if (!poLine || !poLine._path) return;
 
     const po = allPOs?.find(p => p.id === poLine.poId);
@@ -97,32 +103,53 @@ export default function AssignmentsPage() {
     const newAssignment: Assignment = {
       id: newAssignmentRef.id,
       workerId: selectedWorkerId,
-      poLineId: selectedPOLineId,
+      poLineId: poLine.id,
       poId: po.id,
+      contractId: po.contractId,
+      waveId: selectedWaveId,
       positionId: poLine.positionId,
       customerId: po.customerId,
       projectName: po.projectName || po.title,
-      startDate: new Date(startDate).getTime(),
-      endDate: new Date(endDate).getTime(),
-      status: 'proposed',
-      clientApprovalStatus: 'pending',
+      startDate: startDate,
+      endDate: endDate,
+      deploymentStatus: 'DRAFT',
+      clientApprovalStatus: 'NOT_SUBMITTED',
+      readinessStatus: 'incomplete',
+      readinessSummary: {
+        passportValid: 'missing',
+        medicalValid: 'missing',
+        certificatesComplete: 'missing',
+        safetyTrainingComplete: 'missing',
+        fitToWork: 'missing',
+        ppeIssued: 'missing',
+        toolsIssued: 'missing',
+        overlapClear: 'missing',
+        clientApproved: 'missing'
+      },
       notes: notes,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
 
     setDocumentNonBlocking(newAssignmentRef, newAssignment, { merge: true });
-    toast({ title: "มอบหมายงานสำเร็จ", description: `ส่งตัวเข้าสู่โครงการเรียบร้อยแล้ว` });
+    
+    // Update wave assignedWorkers count
+    const waveRef = doc(firestore, 'waves', selectedWaveId);
+    updateDoc(waveRef, { assignedWorkers: increment(1), updatedAt: Date.now() });
+
+    toast({ title: "มอบหมายงานสำเร็จ", description: `คนงานถูกเพิ่มเข้าสู่ Wave เรียบร้อยแล้ว` });
     setIsDialogOpen(false);
   };
 
-  const getStatusBadge = (status: AssignmentStatus) => {
+  const getDeploymentStatusBadge = (status: DeploymentStatus) => {
     switch(status) {
-      case 'proposed': return <Badge variant="outline" className="border-blue-200 text-blue-700 bg-blue-50/50">Proposed</Badge>;
-      case 'client_review': return <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">Client Review</Badge>;
-      case 'active': return <Badge className="bg-green-600">Active Duty</Badge>;
-      case 'mobilizing': return <Badge variant="secondary" className="bg-amber-100 text-amber-700 border-amber-200">Mobilizing</Badge>;
-      case 'cancelled': return <Badge variant="destructive">Cancelled</Badge>;
+      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 uppercase font-bold">Draft</Badge>;
+      case 'READINESS_CHECK': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">Checking</Badge>;
+      case 'READY': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 uppercase font-bold">Ready</Badge>;
+      case 'MOBILIZING': return <Badge className="bg-blue-600 uppercase font-bold">Mobilizing</Badge>;
+      case 'ACTIVE': return <Badge className="bg-green-600 uppercase font-bold">Active Duty</Badge>;
+      case 'DEMOBILIZED': return <Badge variant="secondary" className="uppercase font-bold">Demob</Badge>;
+      case 'CLOSED': return <Badge variant="secondary" className="uppercase font-bold">Closed</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
@@ -135,19 +162,19 @@ export default function AssignmentsPage() {
         {/* Page Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <UserPlus className="h-8 w-8" /> การมอบหมายงาน (Assignments Management)
+            <UserPlus className="h-8 w-8" /> การมอบหมายงาน (Assignments)
           </h1>
           <p className="text-muted-foreground text-lg">
-            เชื่อมโยงคนงานที่พร้อมปฏิบัติงานเข้ากับโควต้าโครงการของลูกค้า จัดการสถานะการส่งตัว และการอนุมัติรายบุคคล
+            ใช้กำหนดว่า worker คนใดจะไปทำงานในตำแหน่งใด ภายใต้ Customer PO และ Wave ใด ระบบจะตรวจสอบความพร้อมก่อนอนุญาตให้ mobilize
           </p>
         </div>
 
         {/* Compliance Warning Box */}
-        <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
-          <ShieldCheck className="h-5 w-5 text-blue-600" />
-          <AlertTitle className="font-bold text-lg text-blue-900">ระเบียบการมอบหมายงาน (Assignment & Deployment Policy)</AlertTitle>
+        <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
+          <AlertTriangle className="h-5 w-5 text-amber-600" />
+          <AlertTitle className="font-bold text-lg text-amber-900">ระเบียบความพร้อมนอกชายฝั่ง (Offshore Readiness Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            ห้ามมอบหมายคนงานที่มีงานทับซ้อน (Work Overlap) ในช่วงเวลาเดียวกัน และคนงานต้องผ่านการตรวจสอบความพร้อม (Readiness Checklist) ให้เรียบร้อยก่อนเริ่มระดมพล
+            Worker จะไม่สามารถ Mobilize ได้ หาก passport, medical, certificate, PPE หรือเครื่องมือยังไม่พร้อมตามเกณฑ์ที่กำหนดใน Readiness Checklist
           </AlertDescription>
         </Alert>
 
@@ -156,7 +183,7 @@ export default function AssignmentsPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาคนงาน, โครงการ หรือรหัส PO..." className="pl-9 h-11" />
+              <Input placeholder="ค้นหาตามคนงาน, Wave หรือรหัส PO..." className="pl-9 h-11" />
             </div>
             <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
@@ -168,30 +195,29 @@ export default function AssignmentsPage() {
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>สร้างการมอบหมาย (New Assignment Entry)</DialogTitle>
-                <DialogDescription>เลือกคนงานและเชื่อมต่อเข้ากับโควต้าตำแหน่งงานใน Customer PO</DialogDescription>
+                <DialogTitle>สร้างการมอบหมายงาน (New Deployment Entry)</DialogTitle>
+                <DialogDescription>เลือกคนงานและเชื่อมต่อเข้ากับรอบการทำงาน (Wave) ของโครงการ</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
-                  <Label>เลือกโควต้าตำแหน่ง (Customer PO Line)</Label>
-                  <Select onValueChange={setSelectedPOLineId}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกรายการโควต้าคงเหลือ..." /></SelectTrigger>
+                  <Label>เลือกรอบการทำงาน (Active Wave)</Label>
+                  <Select onValueChange={setSelectedWaveId}>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." /></SelectTrigger>
                     <SelectContent>
-                      {allPOLines?.map(line => {
-                        const po = allPOs?.find(p => p.id === line.poId);
-                        const pos = allPositions?.find(p => p.id === line.positionId);
-                        return <SelectItem key={line.id} value={line.id}>{po?.poCode} | {pos?.positionName} (โควต้าว่าง)</SelectItem>;
+                      {allWaves?.filter(w => w.status !== 'CLOSED').map(wave => {
+                        const po = allPOs?.find(p => p.id === wave.poId);
+                        return <SelectItem key={wave.id} value={wave.id}>{wave.waveCode} | {wave.projectName} ({po?.poCode})</SelectItem>;
                       })}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label>คนงานที่มีความพร้อม (Worker Name - Ready Only)</Label>
+                  <Label>เลือกคนงานที่มีความพร้อม (Worker - Ready/Available)</Label>
                   <Select onValueChange={setSelectedWorkerId}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงานที่ READY..." /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
                     <SelectContent>
-                      {allWorkers?.filter(w => w.readinessStatus === 'READY').map(w => (
-                        <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} (Ready)</SelectItem>
+                      {allWorkers?.map(w => (
+                        <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.readinessStatus})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -207,7 +233,7 @@ export default function AssignmentsPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreateAssignment} className="bg-primary font-bold">ยืนยันการมอบหมาย (Confirm Assignment)</Button>
+                <Button onClick={handleCreateAssignment} className="bg-primary font-bold">ยืนยันการมอบหมาย (Confirm)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -223,10 +249,11 @@ export default function AssignmentsPage() {
                 <TableHeader className="bg-muted/50">
                   <TableRow>
                     <TableHead className="font-bold py-4">คนงาน & ตำแหน่ง</TableHead>
-                    <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
+                    <TableHead className="font-bold">Wave & โครงการ</TableHead>
                     <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
-                    <TableHead className="font-bold">สถานะงาน</TableHead>
+                    <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
                     <TableHead className="font-bold">การพิจารณา (Client)</TableHead>
+                    <TableHead className="font-bold">สถานะ Deployment</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -234,6 +261,8 @@ export default function AssignmentsPage() {
                   {assignments?.map((asgn) => {
                     const worker = allWorkers?.find(w => w.id === asgn.workerId);
                     const pos = allPositions?.find(p => p.id === asgn.positionId);
+                    const wave = allWaves?.find(w => w.id === asgn.waveId);
+                    
                     return (
                       <TableRow key={asgn.id} className="cursor-pointer hover:bg-muted/30 group transition-all" onClick={() => router.push(`/assignments/${asgn.id}`)}>
                         <TableCell className="py-4">
@@ -244,28 +273,38 @@ export default function AssignmentsPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-semibold text-sm">{asgn.projectName}</span>
-                            <span className="text-[10px] text-muted-foreground font-mono uppercase">PO ID: {asgn.poId.substring(0,8)}</span>
+                            <span className="font-bold text-sm text-primary flex items-center gap-1"><Waves className="h-3.5 w-3.5" /> {wave?.waveCode || 'N/A'}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono uppercase truncate max-w-[150px]">{asgn.projectName}</span>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-bold">
                             <Calendar className="h-3.5 w-3.5" />
-                            {new Date(asgn.startDate).toLocaleDateString('th-TH')} - {new Date(asgn.endDate).toLocaleDateString('th-TH')}
+                            {asgn.startDate} - {asgn.endDate}
                           </div>
                         </TableCell>
-                        <TableCell>{getStatusBadge(asgn.status)}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={asgn.clientApprovalStatus === 'approved' ? 'text-green-600 border-green-200 font-bold bg-green-50/50' : 'font-medium'}>
-                            {asgn.clientApprovalStatus.toUpperCase()}
+                          <Badge variant={asgn.readinessStatus === 'ready' ? 'default' : 'outline'} className={asgn.readinessStatus === 'ready' ? 'bg-green-600' : 'text-amber-600 border-amber-200'}>
+                            {asgn.readinessStatus.toUpperCase()}
                           </Badge>
                         </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={asgn.clientApprovalStatus === 'APPROVED' ? 'text-green-600 border-green-200 bg-green-50/50' : 'font-medium'}>
+                            {asgn.clientApprovalStatus.replace('_', ' ')}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{getDeploymentStatusBadge(asgn.deploymentStatus)}</TableCell>
                         <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
                         </TableCell>
                       </TableRow>
                     );
                   })}
+                  {(!assignments || assignments.length === 0) && !isAssignmentsLoading && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการการมอบหมายงานในขณะนี้</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}
@@ -276,32 +315,27 @@ export default function AssignmentsPage() {
         <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
-              <Info className="h-5 w-5" /> ขั้นตอนถัดไป (Process Workflow)
+              <Info className="h-5 w-5" /> แนวทางปฏิบัติ (Workflow Guidance)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-blue-100 p-2 rounded text-blue-700"><Send className="h-4 w-4" /></div>
+                <div className="bg-blue-100 p-2 rounded text-blue-700 font-bold">1</div>
                 <div>
-                  <p className="font-bold">ส่งพิจารณาตัวบุคคล (Client Review)</p>
-                  <p className="text-muted-foreground text-xs">หลังการมอบหมาย ต้องส่งประวัติให้ลูกค้าพิจารณาผ่าน Portal ก่อนเข้าสู่ขั้นตอนระดมพล</p>
+                  <p className="font-bold">ตรวจสอบความพร้อม (Readiness Check)</p>
+                  <p className="text-muted-foreground text-xs">หลังการมอบหมาย ต้องตรวจสอบใบเซอร์และผลตรวจร่างกายรายบุคคลให้ครบถ้วนในหน้ารายละเอียด</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-amber-100 p-2 rounded text-amber-700"><Truck className="h-4 w-4" /></div>
+                <div className="bg-green-100 p-2 rounded text-green-700 font-bold">2</div>
                 <div>
-                  <p className="font-bold">เริ่มขั้นตอนระดมพล (Mobilization)</p>
-                  <p className="text-muted-foreground text-xs">เมื่อได้รับอนุมัติ ให้ดำเนินการตรวจสอบความพร้อมสุดท้ายและจัดเตรียมอุปกรณ์เดินทาง</p>
+                  <p className="font-bold">เตรียมส่งตัว (Mobilization)</p>
+                  <p className="text-muted-foreground text-xs">เมื่อคนงานผ่าน Readiness Check และได้รับอนุมัติจากลูกค้า จึงจะเริ่มกระบวนการระดมพลได้</p>
                 </div>
               </div>
             </div>
           </CardContent>
-          <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
-              <Link href="/mobilization">ไปยังเมนูการระดมพล (Go to Mobilization) <ArrowRight className="h-4 w-4" /></Link>
-            </Button>
-          </CardFooter>
         </Card>
       </div>
     </AppShell>

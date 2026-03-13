@@ -25,17 +25,22 @@ export type ReadinessStatus =
 
 export type WorkerStatus = 'available' | 'assigned' | 'on_leave' | 'inactive';
 
-export type AssignmentStatus = 
-  | 'proposed'
-  | 'client_review'
-  | 'approved'
-  | 'mobilizing'
-  | 'active'
-  | 'demobilized'
-  | 'cancelled'
-  | 'replaced';
+export type DeploymentStatus = 
+  | 'DRAFT'
+  | 'READINESS_CHECK'
+  | 'READY'
+  | 'CLIENT_SUBMITTED'
+  | 'CLIENT_APPROVED'
+  | 'MOBILIZING'
+  | 'ACTIVE'
+  | 'DEMOBILIZED'
+  | 'CLOSED';
 
-export type ClientApprovalStatus = 'pending' | 'approved' | 'rejected' | 'replacement_requested';
+export type ClientApprovalStatus = 
+  | 'NOT_SUBMITTED'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'REJECTED';
 
 export type WaveStatus = 
   | 'PLANNING'
@@ -265,7 +270,7 @@ export interface Wave {
   endDate: string;   // yyyy-mm-dd
   mobilizationDate: string; // yyyy-mm-dd
   demobilizationDate: string; // yyyy-mm-dd
-  rotationPattern: string; // e.g., "28/28", "14/14"
+  rotationPattern: string; 
   plannedWorkers: number;
   assignedWorkers: number;
   status: WaveStatus;
@@ -276,19 +281,38 @@ export interface Wave {
   updatedBy: string;
 }
 
+export type ChecklistItemStatus = 'pass' | 'warning' | 'fail' | 'missing';
+
+export interface ReadinessSummary {
+  passportValid: ChecklistItemStatus;
+  medicalValid: ChecklistItemStatus;
+  certificatesComplete: ChecklistItemStatus;
+  safetyTrainingComplete: ChecklistItemStatus;
+  fitToWork: ChecklistItemStatus;
+  ppeIssued: ChecklistItemStatus;
+  toolsIssued: ChecklistItemStatus;
+  overlapClear: ChecklistItemStatus;
+  clientApproved: ChecklistItemStatus;
+}
+
 export interface Assignment {
   id: string;
   workerId: string;
   poLineId: string;
   poId: string; 
-  waveId?: string; // Linked to a specific wave
+  contractId?: string;
+  waveId: string; // Mandatory link to Wave
   positionId: string;
   customerId: string;
   projectName: string;
-  startDate: number;
-  endDate: number;
-  status: AssignmentStatus;
+  startDate: string; // yyyy-mm-dd
+  endDate: string;   // yyyy-mm-dd
+  deploymentStatus: DeploymentStatus;
   clientApprovalStatus: ClientApprovalStatus;
+  readinessStatus: 'incomplete' | 'ready';
+  readinessSummary: ReadinessSummary;
+  readinessUpdatedAt?: number;
+  readinessUpdatedBy?: string;
   createdAt: number;
   updatedAt: number;
   notes?: string;
