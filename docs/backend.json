@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "Position": {
@@ -47,6 +48,31 @@
         "active",
         "payrollBasis"
       ]
+    },
+    "Wave": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Wave",
+      "type": "object",
+      "description": "Represents a deployment wave or rotation cycle for a group of workers.",
+      "properties": {
+        "id": { "type": "string" },
+        "waveCode": { "type": "string" },
+        "poId": { "type": "string" },
+        "poLineId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "projectName": { "type": "string" },
+        "siteLocation": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "mobilizationDate": { "type": "string", "format": "date" },
+        "demobilizationDate": { "type": "string", "format": "date" },
+        "rotationPattern": { "type": "string" },
+        "plannedWorkers": { "type": "number" },
+        "assignedWorkers": { "type": "number" },
+        "status": { "type": "string", "enum": ["PLANNING", "READY", "MOBILIZING", "ACTIVE", "DEMOBILIZING", "CLOSED"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["waveCode", "poId", "poLineId", "customerId", "startDate", "endDate", "status"]
     },
     "PositionCertificateRequirement": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -185,7 +211,17 @@
           "schema": {
             "$ref": "#/backend/entities/Position"
           },
-          "description": "Top-level collection for all job positions. Each document stores core position attributes such as name, code, category, and general notes. Managed by HR/System Admin roles."
+          "description": "Top-level collection for all job positions."
+        }
+      },
+      {
+        "path": "/waves/{waveId}",
+        "definition": {
+          "entityName": "Wave",
+          "schema": {
+            "$ref": "#/backend/entities/Wave"
+          },
+          "description": "Top-level collection for all deployment waves."
         }
       },
       {
@@ -195,17 +231,7 @@
           "schema": {
             "$ref": "#/backend/entities/PositionCertificateRequirement"
           },
-          "description": "Subcollection storing specific certificate requirements for a parent Position. Each document details a certificate, its code, and mandatory status. Authorization for these documents is based on the user's role (e.g., HR Manager) relative to the parent position, not on any denormalized fields from the Position document itself.",
-          "params": [
-            {
-              "name": "positionId",
-              "description": "The unique identifier of the parent Position."
-            },
-            {
-              "name": "reqId",
-              "description": "The unique identifier for a specific certificate requirement."
-            }
-          ]
+          "description": "Subcollection storing specific certificate requirements for a parent Position."
         }
       },
       {
@@ -215,17 +241,7 @@
           "schema": {
             "$ref": "#/backend/entities/PositionPPERequirement"
           },
-          "description": "Subcollection storing specific Personal Protective Equipment (PPE) requirements for a parent Position. Each document details a PPE item, its code, default quantity, and mandatory status. Authorization for these documents is based on the user's role (e.g., HR Manager) relative to the parent position.",
-          "params": [
-            {
-              "name": "positionId",
-              "description": "The unique identifier of the parent Position."
-            },
-            {
-              "name": "reqId",
-              "description": "The unique identifier for a specific PPE requirement."
-            }
-          ]
+          "description": "Subcollection storing specific Personal Protective Equipment (PPE) requirements for a parent Position."
         }
       },
       {
@@ -235,20 +251,10 @@
           "schema": {
             "$ref": "#/backend/entities/PositionToolRequirement"
           },
-          "description": "Subcollection storing allowed tools and equipment for a parent Position. Each document details an item, its type, code, default quantity, and allowed status. Authorization for these documents is based on the user's role (e.g., HR Manager) relative to the parent position.",
-          "params": [
-            {
-              "name": "positionId",
-              "description": "The unique identifier of the parent Position."
-            },
-            {
-              "name": "reqId",
-              "description": "The unique identifier for a specific tool/equipment requirement."
-            }
-          ]
+          "description": "Subcollection storing allowed tools and equipment for a parent Position."
         }
       }
     ],
-    "reasoning": "The proposed Firestore structure for the Positions module follows the core design principles by utilizing a hierarchical subcollection model. The main `positions` collection stores the core attributes of each job position. Nested under each individual position document are three distinct subcollections: `certificate_requirements`, `ppe_requirements`, and `tool_requirements`. This design directly addresses the user's request for managing position-specific requirements.\n\n**Authorization Independence:** For the `Position` entity and its subcollections, authorization will primarily rely on the DBAC model (Database Access Control) where roles are stored in dedicated collections (e.g., `/roles_hr_manager/{uid}`). A user's UID will be checked against these role collections to determine if they have the necessary permissions (e.g., `hr_manager` or `system_admin`) to read or write to any `position` document or its associated requirements. This approach avoids hierarchical `get()` calls to parent documents for authorization purposes. Instead, authorization for subcollection documents depends on the user's global role, which is checked against a separate, non-hierarchical path, thus maintaining atomic operations and simplifying rules.\n\n**QAPs (Rules are not Filters):** This structure inherently supports Queryable Access Patterns. To list all positions, an authenticated user with the appropriate role can query the `/positions` collection directly, and the security rules will allow or deny access based on their role without needing to filter results. Similarly, to list all certificate requirements for a specific position (e.g., `positions/{positionId}/certificate_requirements`), the full path is provided, allowing security rules to grant access based on the user's role without requiring a `where` clause on an authorization field within the `certificate_requirements` documents themselves. The distinct segregation of `Position` data from its requirements into subcollections, coupled with role-based authorization, ensures that rules can be written clearly to grant blanket access to all documents within these collections for authorized roles, thereby avoiding filtering at the database level and maintaining QAP compliance. All documents within each subcollection (`certificate_requirements`, `ppe_requirements`, `tool_requirements`) share the same security posture – they are managed by specific staff roles for the parent position."
+    "reasoning": "Standardized hierarchical structure for positions and top-level waves."
   }
 }
