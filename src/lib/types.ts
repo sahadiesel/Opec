@@ -334,7 +334,72 @@ export interface Assignment {
   _path?: string;
 }
 
-// --- HR & WORKFORCE ---
+// --- STORE / INVENTORY ---
+
+export interface StoreItem {
+  id: string;
+  itemCode: string;
+  itemName: string;
+  category: string;
+  unit: string;
+  minimumStock: number;
+  currentStock: number;
+  isPPE: boolean;
+  isTool: boolean;
+  active: boolean;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TransactionType = 'RECEIVE' | 'ISSUE' | 'RETURN' | 'ADJUST' | 'TRANSFER' | 'DAMAGED' | 'LOST';
+
+export interface StoreTransaction {
+  id: string;
+  itemId: string;
+  transactionType: TransactionType;
+  quantity: number;
+  fromLocation?: string;
+  toLocation?: string;
+  workerId?: string;
+  assignmentId?: string;
+  waveId?: string;
+  referenceType?: string;
+  referenceId?: string;
+  transactionDate: string; // yyyy-mm-dd
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+export interface StoreIssueSlip {
+  id: string;
+  issueNo: string;
+  workerId: string;
+  assignmentId: string;
+  waveId: string;
+  positionId: string;
+  issueDate: string;
+  status: 'draft' | 'completed' | 'cancelled';
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+export interface StoreReturnSlip {
+  id: string;
+  returnNo: string;
+  workerId: string;
+  assignmentId: string;
+  waveId: string;
+  returnDate: string;
+  status: 'draft' | 'completed' | 'cancelled';
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+// --- WORKFORCE ---
 
 export interface Worker {
   id: string;

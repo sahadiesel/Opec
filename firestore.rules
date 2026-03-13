@@ -34,6 +34,7 @@ service cloud.firestore {
     function isHRStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('hr_manager') || hasRole('hr_officer')); }
     function isSalesStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('sales_officer')); }
     function isOpsStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('operations_officer') || hasRole('hr_officer') || hasRole('hr_manager')); }
+    function isStoreStaff() { return isSignedIn() && (hasRole('system_admin') || hasRole('store_officer') || hasRole('operations_officer')); }
     function isClient() { return isSignedIn() && (hasRole('client_user') || hasRole('client')); }
 
     match /users/{userId} {
@@ -60,7 +61,6 @@ service cloud.firestore {
       }
     }
 
-    // Standardized rules for the Waves collection
     match /waves/{waveId} {
       allow read: if isStaff();
       allow write: if isOpsStaff();
@@ -118,6 +118,26 @@ service cloud.firestore {
 
     match /{path=**}/assignments/{asgnId} {
       allow read: if isStaff() || isClient();
+    }
+
+    // Store / Inventory Rules
+    match /store_items/{itemId} {
+      allow read: if isStaff();
+      allow write: if isStoreStaff();
+    }
+    match /store_transactions/{txId} {
+      allow read: if isStaff();
+      allow create: if isStoreStaff();
+    }
+    match /store_issue_slips/{id} {
+      allow read: if isStaff();
+      allow write: if isStoreStaff();
+      match /items/{lineId} { allow read: if isStaff(); allow write: if isStoreStaff(); }
+    }
+    match /store_return_slips/{id} {
+      allow read: if isStaff();
+      allow write: if isStoreStaff();
+      match /items/{lineId} { allow read: if isStaff(); allow write: if isStoreStaff(); }
     }
 
     match /roles_hr_manager/{uid} { allow read: if isSignedIn() && request.auth.uid == uid; }
