@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, collectionGroup } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, collectionGroup, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -103,7 +103,9 @@ export default function Home() {
     setIsLoggingIn(true);
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
-      const userDoc = await getDoc(doc(firestore, 'users', cred.user.uid));
+      const userDocRef = doc(firestore, 'users', cred.user.uid);
+      const userDoc = await getDoc(userDocRef);
+      
       if (userDoc.exists()) {
         const userData = userDoc.data() as User;
         
@@ -116,6 +118,11 @@ export default function Home() {
           setIsLoggingIn(false);
           return;
         }
+
+        // Record last login
+        const now = Date.now();
+        await updateDoc(userDocRef, { lastLoginAt: now });
+        userData.lastLoginAt = now;
 
         if (!userData.roleIds) userData.roleIds = [(userData as any).roleId];
         setUser(userData);
