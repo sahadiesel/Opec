@@ -508,6 +508,61 @@ export interface AccountsReceivable {
   updatedAt: number;
 }
 
+// --- PURCHASING MODULE ---
+
+export type PurchaseType = 'CASH' | 'CREDIT';
+export type PurchaseStatus = 'DRAFT' | 'ISSUED' | 'COMPLETED' | 'CANCELLED';
+
+export interface Purchase {
+  id: string;
+  purchaseNo: string;
+  vendorId: string;
+  purchaseDate: string; 
+  purchaseType: PurchaseType;
+  amountBeforeTax: number;
+  vatAmount: number;
+  totalAmount: number;
+  storeReceiptStatus: 'PENDING' | 'RECEIVED';
+  paymentStatus: 'UNPAID' | 'PAID';
+  status: PurchaseStatus;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PurchaseLine {
+  id: string;
+  purchaseId: string;
+  itemDescription: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  createdAt: number;
+  _path?: string;
+}
+
+export type APBillStatus = 'RECEIVED' | 'VERIFIED' | 'APPROVED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
+
+export interface APBill {
+  id: string;
+  apBillNo: string;
+  vendorId: string;
+  supplierInvoiceNo: string;
+  billReceivedDate: string;
+  invoiceDate: string;
+  dueDate: string;
+  purchaseId?: string;
+  paymentTerms: string;
+  amountBeforeTax: number;
+  vatAmount: number;
+  totalAmount: number;
+  outstandingAmount: number;
+  status: APBillStatus;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- WORKER PAYROLL MODULE ---
 
 export interface PayrollRun {
@@ -660,6 +715,14 @@ export interface StoreIssueSlip {
   notes?: string;
   createdAt: number;
   createdBy: string;
+}
+
+export interface StoreIssueItem {
+  id: string;
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  unit: string;
 }
 
 export interface StoreIssueItem {

@@ -27,17 +27,14 @@ service cloud.firestore {
 
     // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท (DBAC)
     function hasRole(role) {
-      return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid)) ||
+        (role == 'system_admin' && exists(/databases/$(database)/documents/system/bootstrap) && 
+         get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid)
+      );
     }
 
-    // สิทธิ์สูงสุด (ตรวจสอบจาก doc roles_system_admin หรือจาก bootstrap)
-    function isSystemAdmin() { 
-      return hasRole('system_admin') || 
-             (isSignedIn() && exists(/databases/$(database)/documents/system/bootstrap) && 
-              get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid); 
-    }
-
-    // บทบาทหลัก
+    function isSystemAdmin() { return hasRole('system_admin'); }
     function isHRManager() { return hasRole('hr_manager') || isSystemAdmin(); }
     function isHROfficer() { return hasRole('hr_officer') || isHRManager(); }
     function isSalesOfficer() { return hasRole('sales_officer') || isSystemAdmin(); }
@@ -48,7 +45,6 @@ service cloud.firestore {
     function isSafetyOfficer() { return hasRole('safety_officer') || isSystemAdmin(); }
     function isClient() { return hasRole('client') || hasRole('client_user'); }
 
-    // กลุ่มเจ้าหน้าที่ (Staff)
     function isStaff() {
       return isSystemAdmin() || 
              hasRole('hr_manager') || hasRole('hr_officer') || 
@@ -61,6 +57,7 @@ service cloud.firestore {
     function isCommercialStaff() { return isSalesOfficer() || isFinanceOfficer(); }
     function isOpsStaff() { return isOperationsOfficer() || isHRStaff(); }
     function isFinanceStaff() { return isFinanceOfficer() || isHRManager() || isSystemAdmin(); }
+    function isStoreStaff() { return isStoreOfficer() || isOperationsOfficer(); }
 
     // =========================
     // System / Bootstrap
@@ -124,7 +121,7 @@ service cloud.firestore {
 
     match /vendors/{vendorId} {
       allow read: if isStaff();
-      allow write: if isStoreOfficer() || isFinanceOfficer();
+      allow write: if isStoreStaff() || isFinanceOfficer();
     }
 
     match /bank_accounts/{accountId} {
@@ -173,6 +170,24 @@ service cloud.firestore {
     }
 
     // =========================
+    // Purchasing & AP
+    // =========================
+
+    match /purchases/{purchaseId} {
+      allow read: if isFinanceStaff() || isStoreStaff();
+      allow write: if isFinanceStaff() || isStoreStaff();
+      match /lines/{lineId} {
+        allow read: if isFinanceStaff() || isStoreStaff();
+        allow write: if isFinanceStaff() || isStoreStaff();
+      }
+    }
+
+    match /ap_bills/{billId} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    // =========================
     // Operations & Store
     // =========================
     
@@ -192,22 +207,22 @@ service cloud.firestore {
 
     match /store_items/{itemId} {
       allow read: if isStaff();
-      allow write: if isStoreOfficer() || isOperationsOfficer();
+      allow write: if isStoreStaff();
     }
 
     match /store_transactions/{txId} {
       allow read: if isStaff();
-      allow create: if isStoreOfficer() || isOperationsOfficer();
+      allow create: if isStoreStaff();
     }
 
     match /store_issue_slips/{id} {
       allow read: if isStaff();
-      allow write: if isStoreOfficer() || isOperationsOfficer();
+      allow write: if isStoreStaff();
     }
 
     match /store_return_slips/{id} {
       allow read: if isStaff();
-      allow write: if isStoreOfficer() || isOperationsOfficer();
+      allow write: if isStoreStaff();
     }
 
     // =========================
@@ -257,15 +272,6 @@ service cloud.firestore {
     match /accounts_receivable/{arId} {
       allow read: if isFinanceStaff();
       allow write: if isFinanceStaff();
-    }
-
-    // =========================
-    // Client Portal
-    // =========================
-    
-    match /client_users/{uid} {
-      allow read: if isStaff() || isSelf(uid);
-      allow write: if isSystemAdmin() || isSalesOfficer();
     }
 
     // =========================
