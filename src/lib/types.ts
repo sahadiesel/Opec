@@ -382,6 +382,28 @@ export interface Vendor {
   updatedAt: number;
 }
 
+// --- BANK ACCOUNTS ---
+
+export type BankAccountType = 'CURRENT' | 'SAVINGS' | 'CASH';
+export type BankAccountStatus = 'ACTIVE' | 'INACTIVE';
+
+export interface BankAccount {
+  id: string;
+  accountCode: string;
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  branchName: string;
+  accountType: BankAccountType;
+  currency: string;
+  openingBalance: number;
+  currentBalance: number;
+  status: BankAccountStatus;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- WORKER PAYROLL MODULE ---
 
 export interface PayrollRun {

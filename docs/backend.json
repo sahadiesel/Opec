@@ -72,6 +72,23 @@
         "startDate": { "type": "string", "format": "date" },
         "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "RESIGNED"] }
       }
+    },
+    "BankAccount": {
+      "title": "Bank Account",
+      "description": "Corporate bank accounts used for payments and receipts.",
+      "type": "object",
+      "properties": {
+        "accountCode": { "type": "string" },
+        "bankName": { "type": "string" },
+        "accountName": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "branchName": { "type": "string" },
+        "accountType": { "type": "string", "enum": ["CURRENT", "SAVINGS", "CASH"] },
+        "currency": { "type": "string" },
+        "openingBalance": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] }
+      }
     }
   },
   "auth": {
@@ -93,6 +110,10 @@
     "/office_staff/{staffId}": {
       "schema": { "$ref": "#/backend/entities/OfficeStaff" },
       "description": "Registry for internal office employees."
+    },
+    "/bank_accounts/{accountId}": {
+      "schema": { "$ref": "#/backend/entities/BankAccount" },
+      "description": "Corporate bank accounts registry."
     }
   }
 }

@@ -75,7 +75,7 @@ const navGroups: NavGroup[] = [
       { title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity, roles: ['system_admin', 'hr_manager', 'safety_officer'] },
       { title: 'คนงาน (Workers)', href: '/workers', icon: HardHat, roles: ['system_admin', 'hr_manager', 'hr_officer', 'safety_officer'] },
       { title: 'พนักงานออฟฟิศ (Office Staff)', href: '/office-staff', icon: UserSearch, roles: ['system_admin', 'hr_manager'] },
-      { title: 'บัญชีธนาคาร (Bank Accounts)', href: '', icon: CreditCard, roles: ['system_admin', 'finance_officer'], isFuture: true },
+      { title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard, roles: ['system_admin', 'finance_officer'] },
     ]
   },
   {

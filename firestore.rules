@@ -124,6 +124,11 @@ service cloud.firestore {
       allow write: if isStoreOfficer() || isFinanceOfficer();
     }
 
+    match /bank_accounts/{accountId} {
+      allow read: if isStaff();
+      allow write: if isFinanceStaff();
+    }
+
     match /customers/{customerId} {
       allow read: if isStaff() || isClient();
       allow write: if isCommercialStaff();
