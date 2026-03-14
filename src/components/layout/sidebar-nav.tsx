@@ -20,12 +20,9 @@ import {
   Waves,
   Truck,
   Store,
-  UserCheck,
   CreditCard,
   Receipt,
-  CheckCircle2,
   Coins,
-  FileDown,
   ArrowUpRight,
   ArrowDownLeft,
   BookOpen,
@@ -45,94 +42,82 @@ import {
   SidebarMenuButton, 
   SidebarMenuItem 
 } from '@/components/ui/sidebar';
-import { RoleType } from '@/lib/types';
+import { DeptType, AccessLevel } from '@/lib/types';
+import { MenuKey, canSeeMenu } from '@/lib/auth-mapping';
 
 interface NavItem {
+  key: MenuKey;
   title: string;
   href: string;
   icon: any;
-  roles: RoleType[];
-  isFuture?: boolean;
 }
 
 interface NavGroup {
   label: string;
-  roles: RoleType[];
   items: NavItem[];
 }
 
 const navGroups: NavGroup[] = [
   {
     label: 'ภาพรวม (Overview)',
-    roles: ['system_admin', 'finance_officer', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'client', 'client_user', 'operations_officer', 'safety_officer'],
     items: [
-      { title: 'แดชบอร์ด (Dashboard)', href: '/', icon: LayoutDashboard, roles: ['system_admin', 'finance_officer', 'sales_officer', 'hr_manager', 'hr_officer', 'payroll_officer', 'store_officer', 'client', 'client_user', 'operations_officer', 'safety_officer'] },
+      { key: 'dashboard', title: 'แดชบอร์ด (Dashboard)', href: '/', icon: LayoutDashboard },
     ]
   },
   {
     label: 'งานขายและสัญญา (Commercial)',
-    roles: ['system_admin', 'sales_officer', 'finance_officer', 'operations_officer', 'store_officer'],
     items: [
-      { title: 'ลูกค้า (Customers)', href: '/customers', icon: Users, roles: ['system_admin', 'sales_officer'] },
-      { title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store, roles: ['system_admin', 'store_officer'] },
-      { title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList, roles: ['system_admin', 'sales_officer', 'finance_officer'] },
-      { title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart, roles: ['system_admin', 'sales_officer', 'operations_officer'] },
+      { key: 'customers', title: 'ลูกค้า (Customers)', href: '/customers', icon: Users },
+      { key: 'vendors', title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store },
+      { key: 'main_contracts', title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList },
+      { key: 'purchase_orders', title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart },
     ]
   },
   {
     label: 'บุคคลและเงินเดือน (HR & Payroll)',
-    roles: ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'finance_officer', 'safety_officer'],
     items: [
-      { title: 'ลงเวลาทำงาน (Timesheets)', href: '/timesheets', icon: Clock, roles: ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'operations_officer'] },
-      { title: 'จ่ายเงินคนงาน (Worker Payroll)', href: '/payroll', icon: CircleDollarSign, roles: ['system_admin', 'payroll_officer', 'hr_manager', 'finance_officer'] },
-      { title: 'เงินเดือนพนักงาน (Office Payroll)', href: '/office-payroll', icon: Coins, roles: ['system_admin', 'hr_manager', 'finance_officer'] },
-      { title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity, roles: ['system_admin', 'hr_manager', 'safety_officer'] },
-      { title: 'คนงาน (Workers)', href: '/workers', icon: HardHat, roles: ['system_admin', 'hr_manager', 'hr_officer', 'safety_officer'] },
-      { title: 'พนักงานออฟฟิศ (Office Staff)', href: '/office-staff', icon: UserSearch, roles: ['system_admin', 'hr_manager'] },
+      { key: 'timesheets', title: 'ลงเวลาทำงาน (Timesheets)', href: '/timesheets', icon: Clock },
+      { key: 'worker_payroll', title: 'จ่ายเงินคนงาน (Worker Payroll)', href: '/payroll', icon: CircleDollarSign },
+      { key: 'office_payroll', title: 'เงินเดือนพนักงาน (Office Payroll)', href: '/office-payroll', icon: Coins },
+      { key: 'positions', title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity },
+      { key: 'workers', title: 'คนงาน (Workers)', href: '/workers', icon: HardHat },
+      { key: 'office_staff', title: 'พนักงานออฟฟิศ (Office Staff)', href: '/office-staff', icon: UserSearch },
     ]
   },
   {
     label: 'งานปฏิบัติการ (Operations)',
-    roles: ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer', 'store_officer'],
     items: [
-      { title: 'กลุ่มการส่งตัว (Waves)', href: '/waves', icon: Waves, roles: ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer'] },
-      { title: 'การมอบหมายงาน (Assignments)', href: '/assignments', icon: UserPlus, roles: ['system_admin', 'hr_manager', 'hr_officer', 'sales_officer', 'operations_officer'] },
-      { title: 'การระดมพล (Mobilization)', href: '/mobilization', icon: Truck, roles: ['system_admin', 'operations_officer', 'hr_officer', 'safety_officer'] },
-      { title: 'การซื้อสินค้า/บริการ (Purchases)', href: '/purchases', icon: PackageSearch, roles: ['system_admin', 'finance_officer', 'store_officer'] },
-      { title: 'คลังอุปกรณ์ (Store / Inventory)', href: '/store', icon: Warehouse, roles: ['system_admin', 'store_officer', 'operations_officer'] },
+      { key: 'waves', title: 'กลุ่มการส่งตัว (Waves)', href: '/waves', icon: Waves },
+      { key: 'assignments', title: 'การมอบหมายงาน (Assignments)', href: '/assignments', icon: UserPlus },
+      { key: 'mobilization', title: 'การระดมพล (Mobilization)', href: '/mobilization', icon: Truck },
+      { key: 'purchases', title: 'การซื้อสินค้า/บริการ (Purchases)', href: '/purchases', icon: PackageSearch },
+      { key: 'store', title: 'คลังอุปกรณ์ (Store / Inventory)', href: '/store', icon: Warehouse },
     ]
   },
   {
     label: 'การเงินและบัญชี (Finance & Accounting)',
-    roles: ['system_admin', 'finance_officer', 'sales_officer'],
     items: [
-      { title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText, roles: ['system_admin', 'sales_officer', 'finance_officer'] },
-      { title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge, roles: ['system_admin', 'finance_officer', 'sales_officer'] },
-      { title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt, roles: ['system_admin', 'finance_officer'] },
-      { title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox, roles: ['system_admin', 'finance_officer'] },
-      { title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight, roles: ['system_admin', 'finance_officer'] },
-      { title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft, roles: ['system_admin', 'finance_officer'] },
-      { title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen, roles: ['system_admin', 'finance_officer'] },
-      { title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard, roles: ['system_admin', 'finance_officer'] },
+      { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
+      { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
+      { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
+      { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
+      { key: 'ar', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
+      { key: 'ap', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
+      { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
+      { key: 'bank_accounts', title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard },
     ]
   },
   {
     label: 'ผู้ดูแลระบบ (Administration)',
-    roles: ['system_admin', 'client', 'client_user'],
     items: [
-      { title: 'จัดการระบบ (System Admin)', href: '/users', icon: ShieldCheck, roles: ['system_admin'] },
-      { title: 'Client Portal', href: '/client-portal', icon: ShieldAlert, roles: ['client', 'client_user', 'system_admin'] },
+      { key: 'system_admin', title: 'จัดการระบบ (System Admin)', href: '/users', icon: ShieldCheck },
+      { key: 'client_portal', title: 'Client Portal', href: '/client-portal', icon: ShieldAlert },
     ]
   },
 ];
 
-export function SidebarNav({ userRoles }: { userRoles: RoleType[] }) {
+export function SidebarNav({ userDept, userLevel }: { userDept: DeptType; userLevel: AccessLevel }) {
   const pathname = usePathname();
-  
-  // Filter groups where the user has at least one role authorized for the group itself
-  const filteredGroups = navGroups.filter(group => 
-    group.roles.some(role => userRoles.includes(role))
-  );
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">
@@ -145,14 +130,12 @@ export function SidebarNav({ userRoles }: { userRoles: RoleType[] }) {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {filteredGroups.map((group) => {
-          // Filter items within the group based on user roles and existence of route
-          const filteredItems = group.items.filter(item => 
-            item.href !== '' && // Only show items with routes
-            item.roles.some(role => userRoles.includes(role))
+        {navGroups.map((group) => {
+          const visibleItems = group.items.filter(item => 
+            canSeeMenu(item.key, userDept, userLevel)
           );
 
-          if (filteredItems.length === 0) return null;
+          if (visibleItems.length === 0) return null;
 
           return (
             <SidebarGroup key={group.label}>
@@ -161,7 +144,7 @@ export function SidebarNav({ userRoles }: { userRoles: RoleType[] }) {
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {filteredItems.map((item) => (
+                  {visibleItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild isActive={pathname === item.href} tooltip={item.title}>
                         <Link href={item.href}>

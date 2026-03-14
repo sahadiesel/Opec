@@ -1,7 +1,9 @@
 /**
  * OPEC OpsFlow - Master TypeScript Data Models
- * Strictly aligned with MASTER BLUEPRINT for OPEC Manpower Supply.
  */
+
+export type DeptType = 'admin' | 'hr' | 'operations' | 'sales' | 'accounting' | 'store' | 'client';
+export type AccessLevel = 'viewer' | 'officer' | 'manager' | 'admin';
 
 export type RoleType = 
   | 'system_admin'
@@ -75,7 +77,9 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
-  roleIds: RoleType[]; 
+  department: DeptType;
+  level: AccessLevel;
+  roleIds: RoleType[]; // Legacy fallback for Security Rules
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
@@ -86,7 +90,6 @@ export interface User {
   linkedProjectIds?: string[];
   nationalId?: string;
   address?: string;
-  department?: string;
   notes?: string;
 }
 
@@ -141,8 +144,6 @@ export interface PositionToolRequirement {
   notes?: string;
 }
 
-// --- WORKER SUB-COLLECTIONS ---
-
 export interface WorkerCertificate {
   id: string;
   certificateName: string;
@@ -190,8 +191,6 @@ export interface WorkerDocument {
   notes?: string;
   _path: string;
 }
-
-// --- COMMERCIAL MODULE ---
 
 export interface Customer {
   id: string;
@@ -281,8 +280,6 @@ export interface POLine {
   status?: string;
   _path?: string;
 }
-
-// --- BILLING MODULE ---
 
 export type BillingNoteStatus = 'DRAFT' | 'ISSUED' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
 export type BillingNoteReferenceType = 'CONTRACT' | 'PO' | 'TIMESHEET' | 'SERVICE';
@@ -390,8 +387,6 @@ export interface Assignment {
   _path?: string;
 }
 
-// --- VENDORS ---
-
 export type VendorType = 
   | 'PPE_SUPPLIER'
   | 'TOOL_SUPPLIER'
@@ -424,8 +419,6 @@ export interface Vendor {
   updatedAt: number;
 }
 
-// --- BANK ACCOUNTS ---
-
 export type BankAccountType = 'CURRENT' | 'SAVINGS' | 'CASH';
 export type BankAccountStatus = 'ACTIVE' | 'INACTIVE';
 
@@ -445,8 +438,6 @@ export interface BankAccount {
   createdAt: number;
   updatedAt: number;
 }
-
-// --- FINANCE MODULES: TAX INVOICE & RECEIPTS ---
 
 export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
 export interface TaxInvoice {
@@ -544,8 +535,6 @@ export interface CashbookEntry {
   updatedAt: number;
 }
 
-// --- PURCHASING MODULE ---
-
 export type PurchaseType = 'CASH' | 'CREDIT';
 export type PurchaseStatus = 'DRAFT' | 'ISSUED' | 'COMPLETED' | 'CANCELLED';
 
@@ -598,8 +587,6 @@ export interface APBill {
   createdAt: number;
   updatedAt: number;
 }
-
-// --- WORKER PAYROLL MODULE ---
 
 export interface PayrollRun {
   id: string;
@@ -659,8 +646,6 @@ export interface PayrollLine {
   _path?: string;
 }
 
-// --- OFFICE PAYROLL MODULE ---
-
 export interface OfficePayrollRun {
   id: string;
   payrollRunNo: string;
@@ -700,8 +685,6 @@ export interface OfficePayrollLine {
   updatedAt: number;
   _path?: string;
 }
-
-// --- STORE / INVENTORY ---
 
 export interface StoreItem {
   id: string;
@@ -761,14 +744,6 @@ export interface StoreIssueItem {
   unit: string;
 }
 
-export interface StoreIssueItem {
-  id: string;
-  itemId: string;
-  itemName: string;
-  quantity: number;
-  unit: string;
-}
-
 export interface StoreReturnSlip {
   id: string;
   returnNo: string;
@@ -781,8 +756,6 @@ export interface StoreReturnSlip {
   createdAt: number;
   createdBy: string;
 }
-
-// --- OFFICE STAFF ---
 
 export type EmploymentType = 'FULL_TIME' | 'PART_TIME' | 'CONTRACT';
 export type StaffSalaryType = 'MONTHLY' | 'DAILY';
@@ -812,8 +785,6 @@ export interface OfficeStaff {
   updatedAt: number;
   updatedBy: string;
 }
-
-// --- WORKFORCE ---
 
 export interface Worker {
   id: string;
