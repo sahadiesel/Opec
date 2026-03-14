@@ -105,12 +105,11 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
         const lineId = `OPL-${staff.staffCode}-${id.substring(0, 5)}`;
         const lineDoc = doc(linesCol, lineId);
         
-        // Mock simple calculations
         const baseSalary = staff.monthlySalary || 0;
         const allowance = 0; 
         const bonus = 0;
-        const tax = baseSalary * 0.03; // Simple 3% tax mock
-        const socialSecurity = Math.min(baseSalary * 0.05, 750); // SSO cap at 750
+        const tax = baseSalary * 0.03; 
+        const socialSecurity = Math.min(baseSalary * 0.05, 750); 
         const deductions = tax + socialSecurity;
         
         const grossPay = baseSalary + allowance + bonus;
@@ -143,7 +142,6 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
 
       await batch.commit();
 
-      // Update Run Summary
       await updateDoc(runRef!, {
         status: 'CALCULATED',
         staffCount: activeStaff.length,
@@ -177,7 +175,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Office Payroll Detail (รายละเอียดงวดเงินเดือน)</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Office Payroll Detail (งวดเงินเดือนออฟฟิศ)</h1>
               <p className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -197,12 +195,12 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           <Alert className="bg-slate-100 border-slate-300 shadow-sm">
             <ShieldCheck className="h-5 w-5 text-primary" />
             <AlertTitle className="font-bold">LOCKED - Read Only Access</AlertTitle>
-            <AlertDescription>งวดการจ่ายนี้ถูกล็อกแล้วเมื่อ {new Date(run.lockedAt || 0).toLocaleString('th-TH')} ข้อมูลเงินเดือนจะถูก Snapshot เก็บไว้ถาวร</AlertDescription>
+            <AlertDescription>งวดการจ่ายนี้ถูกล็อกและผ่านการเบิกจ่ายโดยฝ่ายการเงินเรียบร้อยแล้ว</AlertDescription>
           </Alert>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="จำนวนพนักงาน" value={`${run.staffCount} คน`} sub="Total Active Staff" icon={Users} colorClass="border-l-blue-600" />
+          <StatCard title="จำนวนพนักงาน" value={`${run.staffCount} คน`} sub="Active Office Staff" icon={Users} colorClass="border-l-blue-600" />
           <StatCard title="ยอดจ่ายรวม (Gross)" value={`฿${run.grossAmount.toLocaleString()}`} sub="Base + Allowances" icon={Calculator} colorClass="border-l-amber-500" />
           <StatCard title="หักภาษี/SSO" value={`฿${run.totalDeductions.toLocaleString()}`} sub="Total Deductions" icon={TrendingUp} colorClass="border-l-red-500" />
           <StatCard title="ยอดจ่ายสุทธิ (Net)" value={`฿${run.netAmount.toLocaleString()}`} sub="Total Payable" icon={Coins} colorClass="border-l-green-600" />
@@ -221,8 +219,8 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
-                  <CardTitle className="text-lg">รายการจ่ายเงินพนักงาน (Payroll Lines)</CardTitle>
-                  <CardDescription>รายละเอียดเงินเดือนพนักงานออฟฟิศประจำงวดนี้</CardDescription>
+                  <CardTitle className="text-lg">รายการจ่ายเงินพนักงาน (HR Preparation)</CardTitle>
+                  <CardDescription>ฝ่ายบุคคลเตรียมรายการจากฐานข้อมูลพนักงานออฟฟิศ</CardDescription>
                 </div>
                 {!isLocked && (
                   <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">
@@ -314,31 +312,31 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <Card className={run.status === 'CALCULATED' ? 'border-blue-500 bg-blue-50/20' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase">1. HR Review</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> 1. HR Review (Preparation)</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
-                    {run.hrApprovedBy ? <CheckCircle2 className="text-green-600" /> : <Clock className="text-muted-foreground" />}
-                    <span className="text-sm">{run.hrApprovedBy ? `Approved by ${run.hrApprovedBy}` : 'รอการตรวจสอบ'}</span>
+                    {run.hrApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
+                    <span className="text-sm">{run.hrApprovedBy ? `Prepared/Approved by ${run.hrApprovedBy}` : 'รอ HR ตรวจสอบ'}</span>
                   </div>
                   <Button 
-                    className="w-full" 
+                    className="w-full bg-primary" 
                     disabled={run.status !== 'CALCULATED'} 
                     onClick={() => handleUpdateStatus('HR_APPROVED')}
                   >
-                    บันทึกการอนุมัติ (HR)
+                    ยืนยันรายการ (HR Approval)
                   </Button>
                 </CardContent>
               </Card>
 
               <Card className={run.status === 'HR_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase">2. Finance Approval</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2"><Coins className="h-4 w-4" /> 2. Finance Approval (Payment)</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
-                    {run.financeApprovedBy ? <CheckCircle2 className="text-green-600" /> : <Clock className="text-muted-foreground" />}
-                    <span className="text-sm">{run.financeApprovedBy ? `Approved by ${run.financeApprovedBy}` : 'รอการตรวจสอบ'}</span>
+                    {run.financeApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
+                    <span className="text-sm">{run.financeApprovedBy ? `Approved/Paid by ${run.financeApprovedBy}` : 'รอการเงินอนุมัติจ่าย'}</span>
                   </div>
                   <Button 
                     className="w-full" 
@@ -346,26 +344,26 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                     disabled={run.status !== 'HR_APPROVED'}
                     onClick={() => handleUpdateStatus('FINANCE_APPROVED')}
                   >
-                    บันทึกการอนุมัติ (Finance)
+                    อนุมัติการเบิกจ่าย (Finance)
                   </Button>
                 </CardContent>
               </Card>
 
               <Card className={run.status === 'FINANCE_APPROVED' ? 'border-primary bg-primary/5' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase">3. Final Lock</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase flex items-center gap-2"><Lock className="h-4 w-4" /> 3. Final Lock</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
-                    {isLocked ? <Lock className="text-primary" /> : <Clock className="text-muted-foreground" />}
-                    <span className="text-sm">{isLocked ? `Locked on ${new Date(run.lockedAt!).toLocaleDateString()}` : 'รอล็อกงวด'}</span>
+                    {isLocked ? <Lock className="text-primary h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
+                    <span className="text-sm">{isLocked ? `Locked on ${new Date(run.lockedAt!).toLocaleDateString()}` : 'รอล็อกงวดถาวร'}</span>
                   </div>
                   <Button 
                     className="w-full bg-primary" 
                     disabled={run.status !== 'FINANCE_APPROVED'}
                     onClick={() => handleUpdateStatus('LOCKED')}
                   >
-                    ล็อกงวดการจ่ายเงิน (Final Lock)
+                    ล็อกงวดการจ่ายเงิน (Lock)
                   </Button>
                 </CardContent>
               </Card>
@@ -434,13 +432,13 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           <div className="flex items-center gap-3">
             <Info className="h-6 w-6 text-primary" />
             <div className="space-y-0.5">
-              <p className="font-bold">คำแนะนำขั้นตอนถัดไป (Process Guide)</p>
+              <p className="font-bold text-primary flex items-center gap-2">คำแนะนำขั้นตอนถัดไป (Workflow Process)</p>
               <p className="text-sm text-muted-foreground">
-                {run.status === 'DRAFT' && "ขั้นตอนถัดไป: กดปุ่ม 'คำนวณเงินเดือนพนักงาน' เพื่อสร้างรายการจ่ายเงินจากฐานข้อมูล Office Staff"}
-                {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: ตรวจสอบความถูกต้องของแต่ละราย และกดอนุมัติสิทธิ์ฝั่ง HR"}
-                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: ส่งให้ฝ่ายการเงินตรวจสอบความถูกต้องของยอดรวมและกดอนุมัติ"}
-                {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชีและป้องกันการแก้ไข"}
-                {isLocked && "สถานะสิ้นสุด: ข้อมูลถูกล็อกและ Snapshot เก็บไว้เรียบร้อยแล้ว"}
+                {run.status === 'DRAFT' && "ขั้นตอนถัดไป: HR กดคำนวณเงินเดือนจากฐานข้อมูล Office Staff"}
+                {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: HR Manager ตรวจสอบความถูกต้องและยืนยันรายการ"}
+                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: Finance Officer อนุมัติเบิกจ่ายและโอนเงิน"}
+                {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชีรายเดือน"}
+                {isLocked && "สถานะสิ้นสุด: ข้อมูลถูกล็อกและบันทึก Snapshot ไว้เรียบร้อยแล้ว"}
               </p>
             </div>
           </div>

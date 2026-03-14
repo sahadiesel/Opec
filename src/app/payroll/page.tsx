@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -115,20 +114,29 @@ export default function PayrollPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <CircleDollarSign className="h-8 w-8" /> การจ่ายเงิน (Payroll Management)
+            <CircleDollarSign className="h-8 w-8" /> จ่ายเงินคนงาน (Worker Payroll)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้คำนวณและจัดการการจ่ายเงินให้คนงานจากข้อมูล Timesheet ที่อนุมัติแล้ว โดยผูกกับเงื่อนไขค่าจ้างรายบุคคล
+            ฝ่ายบุคคลจัดทำงวดการจ่ายเงินจาก Timesheet และส่งให้ฝ่ายการเงินดำเนินการเบิกจ่าย (HR Prepares -> Finance Pays)
           </p>
         </div>
 
-        <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
-          <AlertTriangle className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold text-lg">นโยบายการจ่ายเงิน (Payroll Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            Payroll ที่อนุมัติและล็อกแล้ว ต้องไม่ดึงอัตราใหม่จาก master ย้อนหลัง ควรยึด snapshot ของงวดนั้นเท่านั้น เพื่อความถูกต้องในการตรวจสอบบัญชี (Audit)
-          </AlertDescription>
-        </Alert>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
+            <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <AlertTitle className="font-bold">นโยบายการจ่ายเงิน (Payroll Policy)</AlertTitle>
+            <AlertDescription className="text-xs">
+              Payroll ที่ล็อกแล้วไม่สามารถแก้ไขได้ ข้อมูลถูกเก็บเป็น Snapshot เพื่อความถูกต้องในการตรวจสอบบัญชี (Audit)
+            </AlertDescription>
+          </Alert>
+          <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
+            <Info className="h-5 w-5 text-blue-600" />
+            <AlertTitle className="font-bold">สายงานรับผิดชอบ (Responsibility)</AlertTitle>
+            <AlertDescription className="text-xs">
+              เตรียมข้อมูลโดย HR Officer -> ตรวจสอบโดย HR Manager -> เบิกจ่ายโดย Finance Officer
+            </AlertDescription>
+          </Alert>
+        </div>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
@@ -142,13 +150,13 @@ export default function PayrollPage() {
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
-                <Plus className="h-5 w-5" /> สร้างงวดการจ่ายเงิน (New Payroll Run)
+                <Plus className="h-5 w-5" /> สร้างงวดการจ่ายเงิน (New Payroll)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
               <DialogHeader>
-                <DialogTitle>สร้างงวดการจ่ายเงินใหม่ (New Payroll Entry)</DialogTitle>
-                <DialogDescription>ระบุช่วงเวลาและประเภทการจ่ายเงิน ระบบจะเตรียมดึงข้อมูล Timesheet ในขั้นตอนถัดไป</DialogDescription>
+                <DialogTitle>สร้างงวดการจ่ายเงินใหม่ (Worker Payroll Entry)</DialogTitle>
+                <DialogDescription>ระบุช่วงเวลาและประเภทการจ่ายเงิน ระบบจะดึงข้อมูล Timesheet ที่อนุมัติแล้วมาคำนวณ</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
@@ -197,7 +205,7 @@ export default function PayrollPage() {
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-20 text-center text-muted-foreground animate-pulse">กำลังโหลดข้อมูลการจ่ายเงิน...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลการจ่ายเงิน...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">
@@ -244,32 +252,6 @@ export default function PayrollPage() {
                 </TableBody>
               </Table>
             )}
-          </CardContent>
-        </Card>
-
-        <Card className="bg-primary/5 border-primary/10 border-dashed">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
-              <Info className="h-5 w-5" /> แนวทางปฏิบัติ (Workflow Guidance)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-blue-100 p-2 rounded text-blue-700 font-bold">1</div>
-                <div>
-                  <p className="font-bold">ดึงข้อมูล Timesheet (Data Ingestion)</p>
-                  <p className="text-muted-foreground text-xs">หลังสร้างงวด ระบบจะดึงเฉพาะ Timesheet ที่มีสถานะ 'APPROVED' และอยู่ในช่วงวันที่เลือกมาคำนวณ</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-green-100 p-2 rounded text-green-700 font-bold">2</div>
-                <div>
-                  <p className="font-bold">การอนุมัติและล็อก (Approval & Locking)</p>
-                  <p className="text-muted-foreground text-xs">งวดงานที่ผ่านการอนุมัติจาก Finance และถูก LOCKED แล้วจะไม่สามารถแก้ไขได้ เพื่อความปลอดภัยทางบัญชี</p>
-                </div>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>

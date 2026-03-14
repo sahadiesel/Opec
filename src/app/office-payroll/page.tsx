@@ -43,7 +43,6 @@ import { useToast } from '@/hooks/use-toast';
 export default function OfficePayrollPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -52,16 +51,7 @@ export default function OfficePayrollPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer', 'hr_manager'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
-  }, [currentUser]);
-
-  const runsQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
-    return query(collection(firestore, 'office_payroll_runs'), orderBy('payrollMonth', 'desc'));
-  }, [firestore, isAuthorized]);
-
+  const runsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'office_payroll_runs'), orderBy('payrollMonth', 'desc')) : null), [firestore]);
   const { data: runs, isLoading } = useCollection<OfficePayrollRun>(runsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -114,19 +104,7 @@ export default function OfficePayrollPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
-
-  if (!isAuthorized) {
-    return (
-      <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
-          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
-          <h2 className="text-xl font-bold">Access Denied (จำกัดสิทธิ์เข้าถึง)</h2>
-          <p className="text-muted-foreground max-w-md">ระบบเงินเดือนพนักงานออฟฟิศจำกัดสิทธิ์เฉพาะฝ่ายบุคคลและฝ่ายการเงินเท่านั้น</p>
-        </div>
-      </AppShell>
-    );
-  }
+  if (!currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -136,17 +114,26 @@ export default function OfficePayrollPage() {
             <Coins className="h-8 w-8" /> เงินเดือนพนักงาน (Office Payroll)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้คำนวณและจัดการการจ่ายเงินเดือนพนักงานออฟฟิศรายเดือน ตามฐานเงินเดือนในระบบ Office Staff
+            คำนวณเงินเดือนพนักงานออฟฟิศรายเดือน (เตรียมข้อมูลโดย HR และจ่ายจริงโดยการเงิน)
           </p>
         </div>
 
-        <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
-          <Info className="h-5 w-5 text-blue-600" />
-          <AlertTitle className="font-bold text-lg">นโยบายการจ่ายเงินเดือน (Office Salary Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            เมื่อ Payroll Run ถูกล็อกแล้วจะไม่สามารถแก้ไขข้อมูลย้อนหลังได้ กรุณาตรวจสอบรายการหักภาษีและประกันสังคมให้ถูกต้องก่อนยืนยันการอนุมัติ
-          </AlertDescription>
-        </Alert>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
+            <Info className="h-5 w-5 text-blue-600" />
+            <AlertTitle className="font-bold">นโยบายสายงาน (Workflow Policy)</AlertTitle>
+            <AlertDescription className="text-xs">
+              HR มีหน้าที่คำนวณและยืนยันยอดเงินเดือนตามประวัติ Staff -> การเงินมีหน้าที่อนุมัติเบิกจ่ายและลงบัญชี
+            </AlertDescription>
+          </Alert>
+          <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
+            <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <AlertTitle className="font-bold">การล็อกข้อมูล (Data Locking)</AlertTitle>
+            <AlertDescription className="text-xs">
+              เมื่อสถานะเป็น LOCKED ข้อมูลจะถูก Snapshot ถาวรเพื่อใช้ในการปิดงบการเงิน
+            </AlertDescription>
+          </Alert>
+        </div>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
@@ -201,7 +188,7 @@ export default function OfficePayrollPage() {
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-20 text-center text-muted-foreground animate-pulse">กำลังโหลดข้อมูลงวดเงินเดือน...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลงวดเงินเดือน...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">

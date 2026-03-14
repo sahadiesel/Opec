@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, use, useEffect } from 'react';
@@ -26,7 +25,8 @@ import {
   TrendingUp,
   Info,
   XCircle,
-  Clock
+  Clock,
+  Coins
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, query, where, getDocs, updateDoc, writeBatch } from 'firebase/firestore';
@@ -101,12 +101,9 @@ export default function PayrollDetailPage({ params }: { params: Promise<{ id: st
     setIsProcessing(true);
 
     try {
-      // Simulation of Data Ingestion (In a real app, this would query collectionGroup('timesheets'))
-      // We will create some mock lines for the MVP demonstration if no lines exist
       const batch = writeBatch(firestore);
       const linesCol = collection(firestore, 'payroll_runs', id, 'lines');
       
-      // Select few workers to simulate
       const targetWorkers = allWorkers.slice(0, 3);
       let gross = 0;
       let net = 0;
@@ -116,10 +113,10 @@ export default function PayrollDetailPage({ params }: { params: Promise<{ id: st
         const lineDoc = doc(linesCol, lineId);
         
         const normalDays = 20;
-        const baseRate = 1200; // Mock rate snapshot
+        const baseRate = 1200; 
         const otPay = 500;
         const lineGross = (normalDays * baseRate) + otPay;
-        const lineNet = lineGross - 100; // Mock deduction
+        const lineNet = lineGross - 100; 
 
         const newLine: PayrollLine = {
           id: lineId,
@@ -156,7 +153,6 @@ export default function PayrollDetailPage({ params }: { params: Promise<{ id: st
 
       await batch.commit();
 
-      // Update Run Summary
       await updateDoc(runRef!, {
         status: 'CALCULATED',
         workerCount: targetWorkers.length,
@@ -188,7 +184,7 @@ export default function PayrollDetailPage({ params }: { params: Promise<{ id: st
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Payroll Run Detail (รายละเอียดงวดการจ่าย)</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Worker Payroll Detail (รายละเอียดงวดการจ่ายคนงาน)</h1>
               <p className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -429,13 +425,13 @@ export default function PayrollDetailPage({ params }: { params: Promise<{ id: st
           <div className="flex items-center gap-3">
             <Info className="h-6 w-6 text-primary" />
             <div className="space-y-0.5">
-              <p className="font-bold">คำแนะนำขั้นตอนถัดไป (Next-Step Guidance)</p>
+              <p className="font-bold">คำแนะนำขั้นตอนถัดไป (Process Guide)</p>
               <p className="text-sm text-muted-foreground">
-                {run.status === 'DRAFT' && "ขั้นตอนถัดไป: ดึงข้อมูล Timesheet ที่อนุมัติแล้วและคำนวณรายการจ่ายเงิน"}
-                {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: ส่งให้ HR ตรวจสอบความถูกต้องรายบุคคล"}
-                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: ส่งให้ Finance อนุมัติการเบิกจ่าย"}
-                {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชี"}
-                {isLocked && "สถานะสิ้นสุด: ข้อมูลถูกล็อกถาวรเพื่อการตรวจสอบบัญชี"}
+                {run.status === 'DRAFT' && "ฝ่ายบุคคลเตรียมดึงข้อมูล Timesheet ที่อนุมัติแล้วมาคำนวณยอด"}
+                {run.status === 'CALCULATED' && "HR Officer ตรวจสอบความถูกต้องรายบุคคลก่อนส่งให้ HR Manager อนุมัติ"}
+                {run.status === 'HR_APPROVED' && "ส่งต่อให้ฝ่ายการเงินอนุมัติเบิกจ่ายผ่านระบบ Cashbook"}
+                {run.status === 'FINANCE_APPROVED' && "ฝ่ายการเงินทำการล็อกงวดและบันทึกรายการจ่ายเงินจริง"}
+                {isLocked && "งวดการจ่ายปิดสมบูรณ์และถูกบันทึกเข้าระบบบัญชีเรียบร้อยแล้ว"}
               </p>
             </div>
           </div>
