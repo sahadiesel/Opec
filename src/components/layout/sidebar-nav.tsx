@@ -84,7 +84,7 @@ const navGroups: NavGroup[] = [
     items: [
       { title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList, roles: ['system_admin', 'sales_officer', 'finance_officer'] },
       { title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart, roles: ['system_admin', 'sales_officer', 'operations_officer'] },
-      { title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '', icon: FileText, roles: ['system_admin', 'sales_officer', 'finance_officer'], isFuture: true },
+      { title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText, roles: ['system_admin', 'sales_officer', 'finance_officer'] },
       { title: 'ใบกำกับภาษี (Tax Invoices)', href: '', icon: Receipt, roles: ['system_admin', 'sales_officer', 'finance_officer'], isFuture: true },
       { title: 'ใบเสร็จรับเงิน (Receipts)', href: '', icon: CheckCircle2, roles: ['system_admin', 'sales_officer', 'finance_officer'], isFuture: true },
     ]

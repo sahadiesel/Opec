@@ -282,6 +282,48 @@ export interface POLine {
   _path?: string;
 }
 
+// --- BILLING MODULE ---
+
+export type BillingNoteStatus = 'DRAFT' | 'ISSUED' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
+export type BillingNoteReferenceType = 'CONTRACT' | 'PO' | 'TIMESHEET' | 'SERVICE';
+
+export interface BillingNote {
+  id: string;
+  billingNoteNo: string;
+  customerId: string;
+  contractId?: string;
+  poId?: string;
+  billingPeriodStart: string; // yyyy-mm-dd
+  billingPeriodEnd: string;   // yyyy-mm-dd
+  billingDate: string;        // yyyy-mm-dd
+  dueDate: string;            // yyyy-mm-dd
+  currency: string;
+  amountBeforeTax: number;
+  vatAmount: number;
+  withholdingTaxAmount: number;
+  netAmount: number;
+  status: BillingNoteStatus;
+  notes: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface BillingNoteLine {
+  id: string;
+  billingNoteId: string;
+  description: string;
+  referenceType: BillingNoteReferenceType;
+  referenceId?: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  createdAt: number;
+  updatedAt: number;
+  _path?: string;
+}
+
 export interface Wave {
   id: string;
   waveCode: string;

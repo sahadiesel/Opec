@@ -3,11 +3,14 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     /**
-     * OPEC Manpower Supply - Firestore Security Rules (Optimized)
+     * OPEC Manpower Supply - Firestore Security Rules
      * 
-     * ใช้โครงสร้าง DBAC (Database Access Control):
-     * - ข้อมูล Role เก็บที่ /roles_{role_id}/{uid}
-     * - รองรับ Multi-role และ System Admin Fallback
+     * แนวคิดหลัก:
+     * - ใช้ DBAC / RBAC โดยเก็บ role เป็น document ตาม collection: 
+     *   roles_system_admin/{uid}, roles_hr_manager/{uid}, ...
+     * - แยก Staff/Users ออกจาก Workers ชัดเจน
+     * - ใช้ document-level match paths ให้รองรับ get/list/query ได้ถูกต้อง
+     * - เปิดเฉพาะเส้นทางที่ต้องใช้จริง และปิดทุกอย่างที่เหลือ
      */
 
     // =========================
@@ -22,7 +25,7 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท
+    // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท (DBAC)
     function hasRole(role) {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
@@ -160,6 +163,15 @@ service cloud.firestore {
       }
     }
 
+    match /billing_notes/{noteId} {
+      allow read: if isStaff() || isClient();
+      allow write: if isCommercialStaff() || isFinanceStaff();
+      match /lines/{lineId} {
+        allow read: if isStaff() || isClient();
+        allow write: if isCommercialStaff() || isFinanceStaff();
+      }
+    }
+
     // =========================
     // Operations & Store
     // =========================
@@ -240,6 +252,11 @@ service cloud.firestore {
     match /{path=**}/assignments/{asgnId} {
       allow read: if isStaff() || isClient();
       allow write: if isOpsStaff() || isHRStaff();
+    }
+
+    match /{path=**}/purchase_orders/{poId} {
+      allow read: if isStaff() || isClient();
+      allow write: if isCommercialStaff();
     }
 
     match /{path=**}/po_lines/{lineId} {
