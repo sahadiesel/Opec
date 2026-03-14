@@ -29,7 +29,8 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   BookOpen,
-  UserSearch
+  UserSearch,
+  FileBadge
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -85,8 +86,6 @@ const navGroups: NavGroup[] = [
       { title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList, roles: ['system_admin', 'sales_officer', 'finance_officer'] },
       { title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart, roles: ['system_admin', 'sales_officer', 'operations_officer'] },
       { title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText, roles: ['system_admin', 'sales_officer', 'finance_officer'] },
-      { title: 'ใบกำกับภาษี (Tax Invoices)', href: '', icon: Receipt, roles: ['system_admin', 'sales_officer', 'finance_officer'], isFuture: true },
-      { title: 'ใบเสร็จรับเงิน (Receipts)', href: '', icon: CheckCircle2, roles: ['system_admin', 'sales_officer', 'finance_officer'], isFuture: true },
     ]
   },
   {
@@ -106,8 +105,10 @@ const navGroups: NavGroup[] = [
     items: [
       { title: 'จ่ายเงินคนงาน (Worker Payroll)', href: '/payroll', icon: CircleDollarSign, roles: ['system_admin', 'payroll_officer', 'finance_officer', 'hr_manager'] },
       { title: 'เงินเดือนพนักงาน (Office Payroll)', href: '/office-payroll', icon: Coins, roles: ['system_admin', 'hr_manager', 'finance_officer'] },
+      { title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge, roles: ['system_admin', 'finance_officer', 'sales_officer'] },
+      { title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt, roles: ['system_admin', 'finance_officer'] },
+      { title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight, roles: ['system_admin', 'finance_officer'] },
       { title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '', icon: FileDown, roles: ['system_admin', 'finance_officer', 'store_officer'], isFuture: true },
-      { title: 'ลูกหนี้การค้า (AR)', href: '', icon: ArrowUpRight, roles: ['system_admin', 'finance_officer'], isFuture: true },
       { title: 'เจ้าหนี้การค้า (AP)', href: '', icon: ArrowDownLeft, roles: ['system_admin', 'finance_officer'], isFuture: true },
       { title: 'รายรับรายจ่าย (Cashbook)', href: '', icon: BookOpen, roles: ['system_admin', 'finance_officer'], isFuture: true },
     ]

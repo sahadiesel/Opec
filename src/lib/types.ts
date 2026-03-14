@@ -446,6 +446,68 @@ export interface BankAccount {
   updatedAt: number;
 }
 
+// --- FINANCE MODULES: TAX INVOICE & RECEIPTS ---
+
+export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+export interface TaxInvoice {
+  id: string;
+  taxInvoiceNo: string;
+  customerId: string;
+  billingNoteId: string;
+  issueDate: string; // yyyy-mm-dd
+  currency: string;
+  taxableAmount: number;
+  vatAmount: number;
+  withholdingTaxAmount: number;
+  totalAmount: number;
+  status: TaxInvoiceStatus;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ReceiptStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+export type PaymentMethod = 'CASH' | 'TRANSFER' | 'CHEQUE' | 'OTHER';
+export interface Receipt {
+  id: string;
+  receiptNo: string;
+  customerId: string;
+  receiptDate: string; // yyyy-mm-dd
+  paymentMethod: PaymentMethod;
+  bankAccountId: string;
+  receivedAmount: number;
+  status: ReceiptStatus;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ReceiptAllocation {
+  id: string;
+  receiptId: string;
+  taxInvoiceId: string;
+  amountAllocated: number;
+  createdAt: number;
+  _path?: string;
+}
+
+export type ARStatus = 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
+export interface AccountsReceivable {
+  id: string;
+  customerId: string;
+  referenceType: 'TAX_INVOICE' | 'CREDIT_NOTE';
+  referenceId: string;
+  documentNo: string;
+  issueDate: string;
+  dueDate: string;
+  debitAmount: number;
+  creditAmount: number;
+  outstandingAmount: number;
+  status: ARStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- WORKER PAYROLL MODULE ---
 
 export interface PayrollRun {

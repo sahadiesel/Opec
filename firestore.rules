@@ -237,6 +237,29 @@ service cloud.firestore {
     }
 
     // =========================
+    // Billing & AR
+    // =========================
+
+    match /tax_invoices/{invoiceId} {
+      allow read: if isFinanceStaff() || isSalesOfficer();
+      allow write: if isFinanceStaff();
+    }
+
+    match /receipts/{receiptId} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+      match /allocations/{allocId} {
+        allow read: if isFinanceStaff();
+        allow write: if isFinanceStaff();
+      }
+    }
+
+    match /accounts_receivable/{arId} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    // =========================
     // Client Portal
     // =========================
     
