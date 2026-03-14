@@ -117,7 +117,7 @@ export default function PayrollPage() {
             <CircleDollarSign className="h-8 w-8" /> จ่ายเงินคนงาน (Worker Payroll)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ฝ่ายบุคคลจัดทำงวดการจ่ายเงินจาก Timesheet และส่งให้ฝ่ายการเงินดำเนินการเบิกจ่าย (HR Prepares -> Finance Pays)
+            ฝ่ายบุคคลจัดทำงวดการจ่ายเงินจาก Timesheet และส่งให้ฝ่ายการเงินดำเนินการเบิกจ่าย (HR Prepares → Finance Pays)
           </p>
         </div>
 
@@ -133,7 +133,7 @@ export default function PayrollPage() {
             <Info className="h-5 w-5 text-blue-600" />
             <AlertTitle className="font-bold">สายงานรับผิดชอบ (Responsibility)</AlertTitle>
             <AlertDescription className="text-xs">
-              เตรียมข้อมูลโดย HR Officer -> ตรวจสอบโดย HR Manager -> เบิกจ่ายโดย Finance Officer
+              เตรียมข้อมูลโดย HR Officer → ตรวจสอบโดย HR Manager → เบิกจ่ายโดย Finance Officer
             </AlertDescription>
           </Alert>
         </div>
@@ -144,7 +144,7 @@ export default function PayrollPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="ค้นหาเลขที่งวดการจ่าย..." className="pl-9 h-11" />
             </div>
-            <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

@@ -123,7 +123,7 @@ export default function OfficePayrollPage() {
             <Info className="h-5 w-5 text-blue-600" />
             <AlertTitle className="font-bold">นโยบายสายงาน (Workflow Policy)</AlertTitle>
             <AlertDescription className="text-xs">
-              HR มีหน้าที่คำนวณและยืนยันยอดเงินเดือนตามประวัติ Staff -> การเงินมีหน้าที่อนุมัติเบิกจ่ายและลงบัญชี
+              HR มีหน้าที่คำนวณและยืนยันยอดเงินเดือนตามประวัติ Staff → การเงินมีหน้าที่อนุมัติเบิกจ่ายและลงบัญชี
             </AlertDescription>
           </Alert>
           <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
@@ -188,7 +188,7 @@ export default function OfficePayrollPage() {
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลงวดเงินเดือน...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลข้อมูลงวดเงินเดือน...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">
