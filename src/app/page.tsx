@@ -285,7 +285,7 @@ export default function Home() {
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Operations Dashboard)</h1>
           <p className="text-muted-foreground text-lg">
-            {user.department === 'client' ? `Customer Portal: ${user.displayName}` : `Department: ${user.department.toUpperCase()} | Access: ${user.level.toUpperCase()}`}
+            {user.department === 'client' ? `Customer Portal: ${user.displayName}` : `Department: ${user.department?.toUpperCase() || 'N/A'} | Access: ${user.level?.toUpperCase() || 'N/A'}`}
           </p>
         </div>
 
