@@ -3,7 +3,7 @@
  * Centralized mapping from Department + Access Level to Menu Visibility and Roles.
  */
 
-import { DeptType, AccessLevel, RoleType } from './types';
+import { DeptType, AccessLevel, RoleType, User } from './types';
 
 export type MenuKey = 
   | 'dashboard'
@@ -46,6 +46,44 @@ const LevelOrder: Record<AccessLevel, number> = {
 export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): boolean {
   return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
 }
+
+/**
+ * NEW: Authorization Helpers for App Code
+ * Supports both new Dept/Level model and legacy roleIds for migration.
+ */
+
+export const isAdmin = (user: User | null) => 
+  user?.department === 'admin' && user?.level === 'admin' || user?.roleIds?.includes('system_admin');
+
+export const isHRViewer = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'hr' && hasLevel(user.level, 'viewer')) || user?.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
+
+export const isHROfficerOrHigher = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'hr' && hasLevel(user.level, 'officer')) || user?.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
+
+export const isHRManager = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'hr' && hasLevel(user.level, 'manager')) || user?.roleIds?.includes('hr_manager');
+
+export const isSalesOfficerOrHigher = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'sales' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('sales_officer');
+
+export const isOperationsOfficerOrHigher = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'operations' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('operations_officer');
+
+export const isStoreOfficerOrHigher = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'store' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('store_officer');
+
+export const isAccountingViewer = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'accounting' && hasLevel(user.level, 'viewer')) || user?.roleIds?.includes('finance_officer');
+
+export const isAccountingOfficerOrHigher = (user: User | null) => 
+  isAdmin(user) || (user?.department === 'accounting' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('finance_officer');
+
+export const isClientUser = (user: User | null) => 
+  user?.department === 'client' || user?.roleIds?.some(r => ['client', 'client_user'].includes(r));
+
+export const sameCustomer = (user: User | null, recordCustomerId: string) => 
+  isAdmin(user) || (isClientUser(user) && user?.customerId === recordCustomerId);
 
 /**
  * Maps Dept + Level to legacy roleIds for Firestore Security Rules
