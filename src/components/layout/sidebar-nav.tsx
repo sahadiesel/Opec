@@ -71,7 +71,7 @@ const navGroups: NavGroup[] = [
     roles: ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer', 'sales_officer', 'store_officer'],
     items: [
       { title: 'ลูกค้า (Customers)', href: '/customers', icon: Users, roles: ['system_admin', 'sales_officer'] },
-      { title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '', icon: Store, roles: ['system_admin', 'store_officer'], isFuture: true },
+      { title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store, roles: ['system_admin', 'store_officer'] },
       { title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity, roles: ['system_admin', 'hr_manager', 'safety_officer'] },
       { title: 'คนงาน (Workers)', href: '/workers', icon: HardHat, roles: ['system_admin', 'hr_manager', 'hr_officer', 'safety_officer'] },
       { title: 'พนักงานออฟฟิศ (Office Staff)', href: '/office-staff', icon: UserSearch, roles: ['system_admin', 'hr_manager'] },

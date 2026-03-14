@@ -348,6 +348,40 @@ export interface Assignment {
   _path?: string;
 }
 
+// --- VENDORS ---
+
+export type VendorType = 
+  | 'PPE_SUPPLIER'
+  | 'TOOL_SUPPLIER'
+  | 'SERVICE_PROVIDER'
+  | 'TRANSPORT'
+  | 'ACCOMMODATION'
+  | 'OFFICE_EXPENSE'
+  | 'GENERAL_SUPPLIER';
+
+export interface Vendor {
+  id: string;
+  vendorCode: string;
+  vendorName: string;
+  vendorType: VendorType;
+  taxId: string;
+  branchNo: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  address: string;
+  paymentTerms: string;
+  creditDays: number;
+  defaultCurrency: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  bankName: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- WORKER PAYROLL MODULE ---
 
 export interface PayrollRun {
@@ -500,6 +534,14 @@ export interface StoreIssueSlip {
   notes?: string;
   createdAt: number;
   createdBy: string;
+}
+
+export interface StoreIssueItem {
+  id: string;
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  unit: string;
 }
 
 export interface StoreReturnSlip {

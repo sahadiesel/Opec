@@ -1,0 +1,284 @@
+'use client';
+
+import { useState, use, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { AppShell } from '@/components/layout/app-shell';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
+import { 
+  ArrowLeft, 
+  Save, 
+  Loader2, 
+  Building2,
+  CreditCard,
+  Phone,
+  Mail,
+  MapPin,
+  Briefcase,
+  History,
+  ShieldCheck,
+  Building
+} from 'lucide-react';
+import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
+import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
+import { Vendor, VendorType, User } from '@/lib/types';
+import { useToast } from '@/hooks/use-toast';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import Link from 'next/link';
+
+export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const isNew = id === 'new';
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const firestore = useFirestore();
+  const { toast } = useToast();
+
+  const vendorRef = useMemoFirebase(() => (firestore && !isNew ? doc(firestore, 'vendors', id) : null), [firestore, id, isNew]);
+  const { data: vendorData, isLoading: isVendorLoading } = useDoc<Vendor>(vendorRef as any);
+
+  const [formData, setFormData] = useState<Partial<Vendor>>({
+    vendorCode: '',
+    vendorName: '',
+    vendorType: 'GENERAL_SUPPLIER',
+    taxId: '',
+    branchNo: '00000',
+    contactName: '',
+    phone: '',
+    email: '',
+    address: '',
+    paymentTerms: 'Credit',
+    creditDays: 30,
+    defaultCurrency: 'THB',
+    bankAccountName: '',
+    bankAccountNumber: '',
+    bankName: '',
+    status: 'ACTIVE',
+    notes: ''
+  });
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
+  useEffect(() => {
+    if (vendorData) {
+      setFormData(vendorData);
+    }
+  }, [vendorData]);
+
+  const handleSave = async () => {
+    if (!firestore || !currentUser) return;
+    if (!formData.vendorName || !formData.vendorCode) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรหัสคู่ค้าและชื่อบริษัท" });
+      return;
+    }
+
+    setIsSubmitting(true);
+    const now = Date.now();
+    
+    try {
+      if (isNew) {
+        const newRef = doc(collection(firestore, 'vendors'));
+        await setDoc(newRef, {
+          ...formData,
+          id: newRef.id,
+          createdAt: now,
+          updatedAt: now
+        });
+        toast({ title: "เพิ่มคู่ค้าสำเร็จ" });
+        router.push('/vendors');
+      } else {
+        await updateDoc(vendorRef!, {
+          ...formData,
+          updatedAt: now
+        });
+        toast({ title: "อัปเดตข้อมูลสำเร็จ" });
+        router.back();
+      }
+    } catch (e) {
+      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isNew && isVendorLoading) {
+    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="animate-spin h-12 w-12 text-primary" /></div>;
+  }
+
+  return (
+    <AppShell user={currentUser} onLogout={() => {}}>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => router.back()}>
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                {isNew ? 'ลงทะเบียนคู่ค้าใหม่ (Add New Vendor)' : `แก้ไขข้อมูลคู่ค้า: ${formData.vendorName}`}
+              </h1>
+              <p className="text-sm text-muted-foreground">ทะเบียนประวัติคู่ค้าและผู้ขายเพื่อระบบจัดซื้อและคลังสินค้า</p>
+            </div>
+          </div>
+          <Button className="gap-2 px-8 font-bold shadow-lg bg-primary" onClick={handleSave} disabled={isSubmitting}>
+            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {isNew ? 'บันทึกคู่ค้าใหม่' : 'บันทึกการเปลี่ยนแปลง'}
+          </Button>
+        </div>
+
+        <Tabs defaultValue="basic" className="w-full">
+          <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
+            <TabsTrigger value="basic" className="gap-2 py-2 px-6"><Building2 className="h-4 w-4" /> ข้อมูลบริษัท</TabsTrigger>
+            <TabsTrigger value="financial" className="gap-2 py-2 px-6"><CreditCard className="h-4 w-4" /> ข้อมูลการเงิน</TabsTrigger>
+            <TabsTrigger value="notes" className="gap-2 py-2 px-6"><ShieldCheck className="h-4 w-4" /> อื่น ๆ</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="basic" className="mt-6">
+            <Card>
+              <CardHeader><CardTitle>ข้อมูลพื้นฐานและประเภทธุรกิจ (Company Profile)</CardTitle></CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-2">
+                    <Label>รหัสคู่ค้า (Vendor Code)</Label>
+                    <Input value={formData.vendorCode} onChange={e => setFormData({...formData, vendorCode: e.target.value})} placeholder=" เช่น VEND-001" />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>ชื่อบริษัท / ร้านค้า (Vendor Name)</Label>
+                    <Input value={formData.vendorName} onChange={e => setFormData({...formData, vendorName: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>ประเภทคู่ค้า (Vendor Type)</Label>
+                    <Select onValueChange={(v: VendorType) => setFormData({...formData, vendorType: v})} value={formData.vendorType}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="PPE_SUPPLIER">PPE Supplier</SelectItem>
+                        <SelectItem value="TOOL_SUPPLIER">Tool Supplier</SelectItem>
+                        <SelectItem value="SERVICE_PROVIDER">Service Provider</SelectItem>
+                        <SelectItem value="TRANSPORT">Transport / Logistics</SelectItem>
+                        <SelectItem value="ACCOMMODATION">Accommodation</SelectItem>
+                        <SelectItem value="OFFICE_EXPENSE">Office Expense</SelectItem>
+                        <SelectItem value="GENERAL_SUPPLIER">General Supplier</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>เลขประจำตัวผู้เสียภาษี (Tax ID)</Label>
+                    <Input value={formData.taxId} onChange={e => setFormData({...formData, taxId: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>รหัสสาขา (Branch No.)</Label>
+                    <Input value={formData.branchNo} onChange={e => setFormData({...formData, branchNo: e.target.value})} placeholder="00000" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>ชื่อผู้ติดต่อ (Contact Name)</Label>
+                    <Input value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>เบอร์โทรศัพท์ (Phone)</Label>
+                    <Input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>อีเมล (Email)</Label>
+                    <Input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>สถานะ</Label>
+                    <Select onValueChange={(v: 'ACTIVE' | 'INACTIVE') => setFormData({...formData, status: v})} value={formData.status}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ACTIVE">ACTIVE</SelectItem>
+                        <SelectItem value="INACTIVE">INACTIVE</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>ที่อยู่ (Address)</Label>
+                  <Textarea value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="min-h-[100px]" />
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="financial" className="mt-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader><CardTitle>เงื่อนไขการชำระเงิน (Payment Terms)</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>รูปแบบการชำระเงิน</Label>
+                    <Input value={formData.paymentTerms} onChange={e => setFormData({...formData, paymentTerms: e.target.value})} placeholder="เช่น Credit, Cash, Transfer" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>จำนวนวันเครดิต (Credit Days)</Label>
+                    <Input type="number" value={formData.creditDays} onChange={e => setFormData({...formData, creditDays: parseInt(e.target.value)})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>สกุลเงินหลัก (Default Currency)</Label>
+                    <Select onValueChange={v => setFormData({...formData, defaultCurrency: v})} value={formData.defaultCurrency}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="THB">THB - Thai Baht</SelectItem>
+                        <SelectItem value="USD">USD - US Dollar</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle>บัญชีธนาคาร (Bank Details)</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>ชื่อธนาคาร (Bank Name)</Label>
+                    <Input value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} placeholder="เช่น กสิกรไทย, ไทยพาณิชย์" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>ชื่อบัญชี (Account Name)</Label>
+                    <Input value={formData.bankAccountName} onChange={e => setFormData({...formData, bankAccountName: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>เลขที่บัญชี (Account Number)</Label>
+                    <Input value={formData.bankAccountNumber} onChange={e => setFormData({...formData, bankAccountNumber: e.target.value})} placeholder="000-0-00000-0" />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="notes" className="mt-6">
+            <Card>
+              <CardHeader><CardTitle>บันทึกเพิ่มเติม (Additional Notes)</CardTitle></CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-2">
+                  <Label>หมายเหตุภายใน</Label>
+                  <Textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="min-h-[150px]" placeholder="ระบุข้อมูลเพิ่มเติมเกี่ยวกับคู่ค้า เช่น บริการที่โดดเด่น หรือเงื่อนไขพิเศษ" />
+                </div>
+
+                <div className="p-4 border rounded-lg bg-muted/30 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-sm">
+                    <History className="h-4 w-4 text-primary" /> ประวัติการทำรายการ
+                  </div>
+                  <div className="text-xs space-y-1">
+                    <p><span className="text-muted-foreground">สร้างเมื่อ:</span> {vendorData?.createdAt ? new Date(vendorData.createdAt).toLocaleString('th-TH') : '-'}</p>
+                    <p><span className="text-muted-foreground">อัปเดตล่าสุด:</span> {vendorData?.updatedAt ? new Date(vendorData.updatedAt).toLocaleString('th-TH') : '-'}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </AppShell>
+  );
+}

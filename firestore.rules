@@ -22,7 +22,7 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท (ไม่ต้องใส่ roles_ นำหน้าตอนเรียกใช้)
+    // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท
     function hasRole(role) {
       return isSignedIn() && exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid));
     }
@@ -117,6 +117,11 @@ service cloud.firestore {
     match /office_staff/{staffId} {
       allow read: if isStaff();
       allow write: if isHRStaff();
+    }
+
+    match /vendors/{vendorId} {
+      allow read: if isStaff();
+      allow write: if isStoreOfficer() || isFinanceOfficer();
     }
 
     match /customers/{customerId} {
