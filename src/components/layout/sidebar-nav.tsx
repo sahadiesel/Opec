@@ -112,8 +112,8 @@ const navGroups: NavGroup[] = [
       { title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge, roles: ['system_admin', 'finance_officer', 'sales_officer'] },
       { title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt, roles: ['system_admin', 'finance_officer'] },
       { title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight, roles: ['system_admin', 'finance_officer'] },
-      { title: 'เจ้าหนี้การค้า (AP)', href: '', icon: ArrowDownLeft, roles: ['system_admin', 'finance_officer'], isFuture: true },
-      { title: 'รายรับรายจ่าย (Cashbook)', href: '', icon: BookOpen, roles: ['system_admin', 'finance_officer'], isFuture: true },
+      { title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft, roles: ['system_admin', 'finance_officer'] },
+      { title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen, roles: ['system_admin', 'finance_officer'] },
     ]
   },
   {

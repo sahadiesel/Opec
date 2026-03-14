@@ -508,6 +508,42 @@ export interface AccountsReceivable {
   updatedAt: number;
 }
 
+export type APStatus = 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
+export interface AccountsPayable {
+  id: string;
+  vendorId: string;
+  referenceType: 'AP_BILL' | 'OTHER';
+  referenceId: string;
+  documentNo: string;
+  billDate: string;
+  dueDate: string;
+  debitAmount: number;
+  creditAmount: number;
+  outstandingAmount: number;
+  status: APStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CashbookEntry {
+  id: string;
+  entryDate: string; // yyyy-mm-dd
+  entryType: 'PAYROLL' | 'SUPPLIER_PAYMENT' | 'CUSTOMER_RECEIPT' | 'OFFICE_EXPENSE' | 'OTHER';
+  category: string;
+  description: string;
+  amount: number;
+  direction: 'IN' | 'OUT';
+  paymentMethod: PaymentMethod;
+  bankAccountId: string;
+  referenceType?: string;
+  referenceId?: string;
+  counterpartyType?: 'VENDOR' | 'CUSTOMER' | 'STAFF' | 'OTHER';
+  counterpartyId?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- PURCHASING MODULE ---
 
 export type PurchaseType = 'CASH' | 'CREDIT';
