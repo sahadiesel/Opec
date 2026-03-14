@@ -33,16 +33,6 @@ export type MenuKey =
   | 'system_admin'
   | 'client_portal';
 
-export interface MenuConfig {
-  group: string;
-  title: string;
-  href: string;
-  icon: any;
-  allowedDepts: DeptType[];
-  minLevel: AccessLevel;
-  customCheck?: (dept: DeptType, level: AccessLevel) => boolean;
-}
-
 /**
  * Level hierarchy for comparison
  */
@@ -96,32 +86,43 @@ export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
 
 /**
  * Visibility and Access Rules per Menu
+ * Note: Grouping in sidebar is different from functional ownership.
  */
 export const MENU_PERMISSIONS: Record<MenuKey, { depts: DeptType[]; minLevel: AccessLevel; readOnlyDepts?: DeptType[] }> = {
   dashboard: { depts: ['admin', 'hr', 'operations', 'sales', 'accounting', 'store', 'client'], minLevel: 'viewer' },
-  customers: { depts: ['admin', 'sales', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
-  vendors: { depts: ['admin', 'store', 'accounting', 'sales'], minLevel: 'officer', readOnlyDepts: ['sales'] },
+  
+  // Commercial
+  customers: { depts: ['admin', 'sales', 'accounting', 'operations'], minLevel: 'viewer', readOnlyDepts: ['accounting', 'operations'] },
   main_contracts: { depts: ['admin', 'sales', 'accounting', 'hr'], minLevel: 'officer', readOnlyDepts: ['accounting', 'hr'] },
   purchase_orders: { depts: ['admin', 'sales', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
-  timesheets: { depts: ['admin', 'hr', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
+  
+  // HR & Payroll
+  timesheets: { depts: ['admin', 'hr', 'operations'], minLevel: 'officer' },
   worker_payroll: { depts: ['admin', 'hr', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
   office_payroll: { depts: ['admin', 'hr', 'accounting'], minLevel: 'manager', readOnlyDepts: ['accounting'] },
   positions: { depts: ['admin', 'hr', 'operations'], minLevel: 'officer', readOnlyDepts: ['operations'] },
   workers: { depts: ['admin', 'hr', 'operations'], minLevel: 'officer', readOnlyDepts: ['operations'] },
   office_staff: { depts: ['admin', 'hr'], minLevel: 'officer' },
+  
+  // Operations
   waves: { depts: ['admin', 'operations', 'hr'], minLevel: 'officer', readOnlyDepts: ['hr'] },
   assignments: { depts: ['admin', 'operations', 'hr', 'sales'], minLevel: 'officer', readOnlyDepts: ['sales'] },
   mobilization: { depts: ['admin', 'operations', 'hr'], minLevel: 'officer' },
+  vendors: { depts: ['admin', 'store', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
   purchases: { depts: ['admin', 'store', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
-  store: { depts: ['admin', 'store', 'operations'], minLevel: 'officer' },
+  store: { depts: ['admin', 'store', 'operations', 'hr'], minLevel: 'viewer', readOnlyDepts: ['operations', 'hr'] },
+  
+  // Finance & Accounting
   billing_notes: { depts: ['admin', 'accounting', 'sales'], minLevel: 'officer', readOnlyDepts: ['sales'] },
   tax_invoices: { depts: ['admin', 'accounting'], minLevel: 'officer' },
   receipts: { depts: ['admin', 'accounting'], minLevel: 'officer' },
-  ap_bills: { depts: ['admin', 'accounting'], minLevel: 'officer' },
-  ar: { depts: ['admin', 'accounting'], minLevel: 'officer' },
-  ap: { depts: ['admin', 'accounting'], minLevel: 'officer' },
+  ap_bills: { depts: ['admin', 'accounting', 'store'], minLevel: 'officer', readOnlyDepts: ['store'] },
+  ar: { depts: ['admin', 'accounting'], minLevel: 'viewer' },
+  ap: { depts: ['admin', 'accounting'], minLevel: 'viewer' },
   cashbook: { depts: ['admin', 'accounting'], minLevel: 'officer' },
   bank_accounts: { depts: ['admin', 'accounting'], minLevel: 'officer' },
+  
+  // Administration
   system_admin: { depts: ['admin'], minLevel: 'admin' },
   client_portal: { depts: ['admin', 'client'], minLevel: 'viewer' }
 };
@@ -130,6 +131,10 @@ export function canSeeMenu(menu: MenuKey, dept: DeptType, level: AccessLevel): b
   if (dept === 'admin' && level === 'admin') return true;
   const config = MENU_PERMISSIONS[menu];
   if (!config) return false;
+  
+  // Specific restricted access for Office Payroll (HR Manager only)
+  if (menu === 'office_payroll' && dept === 'hr' && level === 'officer') return false;
+  
   return config.depts.includes(dept) && hasLevel(level, config.minLevel);
 }
 
@@ -138,5 +143,10 @@ export function canWriteMenu(menu: MenuKey, dept: DeptType, level: AccessLevel):
   const config = MENU_PERMISSIONS[menu];
   if (!config) return false;
   if (config.readOnlyDepts?.includes(dept)) return false;
-  return config.depts.includes(dept) && hasLevel(level, config.minLevel);
+  
+  // Functional Write rules
+  if (menu === 'office_payroll' && dept === 'accounting') return false; // Accounting only pays, HR prepares
+  if (menu === 'worker_payroll' && dept === 'accounting') return false;
+  
+  return config.depts.includes(dept) && hasLevel(level, 'officer');
 }

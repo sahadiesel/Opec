@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { 
   LayoutDashboard, 
   Users, 
-  Briefcase, 
   ShieldCheck,
   ClipboardList,
   ShoppingCart,
@@ -68,7 +67,6 @@ const navGroups: NavGroup[] = [
     label: 'งานขายและสัญญา (Commercial)',
     items: [
       { key: 'customers', title: 'ลูกค้า (Customers)', href: '/customers', icon: Users },
-      { key: 'vendors', title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store },
       { key: 'main_contracts', title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList },
       { key: 'purchase_orders', title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart },
     ]
@@ -90,6 +88,7 @@ const navGroups: NavGroup[] = [
       { key: 'waves', title: 'กลุ่มการส่งตัว (Waves)', href: '/waves', icon: Waves },
       { key: 'assignments', title: 'การมอบหมายงาน (Assignments)', href: '/assignments', icon: UserPlus },
       { key: 'mobilization', title: 'การระดมพล (Mobilization)', href: '/mobilization', icon: Truck },
+      { key: 'vendors', title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store },
       { key: 'purchases', title: 'การซื้อสินค้า/บริการ (Purchases)', href: '/purchases', icon: PackageSearch },
       { key: 'store', title: 'คลังอุปกรณ์ (Store / Inventory)', href: '/store', icon: Warehouse },
     ]
@@ -126,13 +125,13 @@ export function SidebarNav({ userDept, userLevel }: { userDept: DeptType; userLe
           <div className="bg-primary text-primary-foreground p-1 rounded">
             <FileText className="h-5 w-5" />
           </div>
-          <span className="group-data-[collapsible=icon]:hidden">OPEC OpsFlow</span>
+          <span className="group-data-[collapsible=icon]:hidden text-lg tracking-tight">OPEC OpsFlow</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
         {navGroups.map((group) => {
           const visibleItems = group.items.filter(item => 
-            canSeeMenu(item.key, userDept, userLevel)
+            canSeeMenu(item.key, userDept || 'hr', userLevel || 'viewer')
           );
 
           if (visibleItems.length === 0) return null;

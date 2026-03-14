@@ -5,7 +5,22 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, ShieldCheck, Mail, Trash2, UserCog, Filter, ShieldAlert, CheckCircle2, XCircle, Loader2, Sparkles, Building2, Briefcase } from 'lucide-react';
+import { 
+  Search, 
+  ShieldCheck, 
+  Mail, 
+  Trash2, 
+  UserCog, 
+  Filter, 
+  ShieldAlert, 
+  CheckCircle2, 
+  XCircle, 
+  Loader2, 
+  Sparkles, 
+  Building2, 
+  Briefcase,
+  AlertTriangle
+} from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -46,12 +61,13 @@ const LEVELS: { id: AccessLevel; label: string; desc: string }[] = [
 ];
 
 const ORG_PRESETS = [
-  { name: 'พี่โจ้ (Admin/Finance)', dept: 'admin', level: 'admin' },
+  { name: 'พี่โจ้ (System Admin)', dept: 'admin', level: 'admin' },
   { name: 'นุช (HR Manager)', dept: 'hr', level: 'manager' },
   { name: 'หญิง (HR Officer)', dept: 'hr', level: 'officer' },
-  { name: 'โดม (Sales Officer)', dept: 'sales', level: 'officer' },
   { name: 'ก้อย (HR Officer)', dept: 'hr', level: 'officer' },
+  { name: 'โดม (Sales Officer)', dept: 'sales', level: 'officer' },
   { name: 'ณัฐ (Store Officer)', dept: 'store', level: 'officer' },
+  { name: 'Accounting Team', dept: 'accounting', level: 'officer' },
 ];
 
 export default function UsersPage() {
@@ -147,12 +163,20 @@ export default function UsersPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งานและสิทธิ์ (User Auth Management)
+            <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งานและสิทธิ์ (Access Control)
           </h1>
           <p className="text-muted-foreground text-lg">
-            กำหนดแผนกและระดับการเข้าถึงข้อมูลตามผังองค์กร
+            กำหนดแผนก (Department) และระดับการเข้าถึงข้อมูล (Level) ตามผังองค์กร
           </p>
         </div>
+
+        <Alert className="bg-primary/5 border-primary/20">
+          <Sparkles className="h-5 w-5 text-primary" />
+          <AlertTitle className="font-bold">Authorization Logic Updated</AlertTitle>
+          <AlertDescription className="text-sm">
+            ระบบใช้โมเดล Department + Level เพื่อความโปร่งใส สิทธิ์การเขียนข้อมูลจะถูกจำกัดเฉพาะระดับ Officer ขึ้นไปตามหน้าที่ของแผนกนั้นๆ
+          </AlertDescription>
+        </Alert>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
@@ -171,7 +195,7 @@ export default function UsersPage() {
                 </TableHeader>
                 <TableBody>
                   {users?.map((u) => (
-                    <TableRow key={u.id} className="hover:bg-muted/30 transition-all">
+                    <TableRow key={u.id} className="hover:bg-muted/30 transition-all group">
                       <TableCell className="py-4 pl-6">
                         <div className="flex flex-col">
                           <span className="font-bold text-base text-primary">{u.displayName}</span>
@@ -189,7 +213,7 @@ export default function UsersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={u.isActive ? "default" : "secondary"}>
+                        <Badge variant={u.isActive ? "default" : "secondary"} className={u.isActive ? "bg-green-600" : ""}>
                           {u.isActive ? "Active" : "Pending"}
                         </Badge>
                       </TableCell>
@@ -232,7 +256,7 @@ export default function UsersPage() {
                   <div className="space-y-2">
                     <Label>แผนก (Department)</Label>
                     <Select value={editedDept} onValueChange={(v: DeptType) => setEditedDept(v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {DEPARTMENTS.map(d => <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>)}
                       </SelectContent>
@@ -242,12 +266,12 @@ export default function UsersPage() {
                   <div className="space-y-2">
                     <Label>ระดับสิทธิ์ (Level)</Label>
                     <Select value={editedLevel} onValueChange={(v: AccessLevel) => setEditedLevel(v)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {LEVELS.map(l => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    <p className="text-[10px] text-muted-foreground italic">
+                    <p className="text-[10px] text-muted-foreground italic mt-1 leading-relaxed">
                       {LEVELS.find(l => l.id === editedLevel)?.desc}
                     </p>
                   </div>
@@ -260,7 +284,7 @@ export default function UsersPage() {
 
                 <div className="space-y-2">
                   <Label className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                    <Sparkles className="h-3 w-3 text-amber-500" /> Presets แนะนำ
+                    <Sparkles className="h-3 w-3 text-amber-500" /> Presets องค์กร
                   </Label>
                   <div className="grid grid-cols-1 gap-1.5">
                     {ORG_PRESETS.map(p => (
@@ -277,28 +301,28 @@ export default function UsersPage() {
                 {(editedDept === 'admin' && editedLevel === 'admin') && (
                   <Alert variant="destructive" className="bg-amber-50 border-amber-200">
                     <ShieldAlert className="h-4 w-4 text-amber-600" />
-                    <AlertTitle className="text-xs font-bold">Privileged Access Warning</AlertTitle>
+                    <AlertTitle className="text-xs font-bold uppercase">Privileged Access Warning</AlertTitle>
                     <AlertDescription className="text-[10px]">
-                      สิทธิ์ Admin/Admin สามารถเข้าถึงและแก้ไขข้อมูลได้ทุกส่วนในระบบ รวมถึงการลบข้อมูลถาวร
+                      สิทธิ์ System Admin สามารถเข้าถึงและแก้ไขข้อมูลได้ทุกส่วนในระบบ รวมถึงการลบข้อมูลถาวร
                     </AlertDescription>
                   </Alert>
                 )}
 
                 <div className="space-y-4">
                   <Label className="text-sm font-bold flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" /> สรุปการเข้าถึงเมนู (Menu Access Matrix)
+                    <CheckCircle2 className="h-4 w-4 text-green-600" /> สรุปการเข้าถึงเมนู (Menu Matrix)
                   </Label>
                   
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-3 border rounded bg-slate-50 space-y-2">
-                      <p className="text-xs font-bold border-b pb-1">Commercial & Ops</p>
+                      <p className="text-xs font-bold border-b pb-1 text-primary">Commercial & Ops</p>
                       <AccessIndicator label="Customers" active={canSeeMenu('customers', editedDept, editedLevel)} />
                       <AccessIndicator label="PO / Contracts" active={canSeeMenu('main_contracts', editedDept, editedLevel)} />
                       <AccessIndicator label="Waves / Assignments" active={canSeeMenu('waves', editedDept, editedLevel)} />
                       <AccessIndicator label="Store / Inventory" active={canSeeMenu('store', editedDept, editedLevel)} />
                     </div>
                     <div className="p-3 border rounded bg-slate-50 space-y-2">
-                      <p className="text-xs font-bold border-b pb-1">HR & Finance</p>
+                      <p className="text-xs font-bold border-b pb-1 text-primary">HR & Finance</p>
                       <AccessIndicator label="Payroll preparation" active={canSeeMenu('worker_payroll', editedDept, editedLevel)} />
                       <AccessIndicator label="Staff / Workers" active={canSeeMenu('workers', editedDept, editedLevel)} />
                       <AccessIndicator label="Tax / Billing / Receipts" active={canSeeMenu('tax_invoices', editedDept, editedLevel)} />
@@ -307,10 +331,16 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                <div className="p-4 bg-primary/5 rounded-lg border-dashed border-2 border-primary/20">
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    <b>Business Logic Note:</b> ระบบ OPEC จะทำการแมพสิทธิ์ (Legacy Roles) อัตโนมัติเพื่อให้สอดคล้องกับ Security Rules ของฐานข้อมูล เพื่อความเสถียรในการทำงานข้ามแผนก
-                  </p>
+                <div className="p-4 bg-blue-50/50 rounded-lg border-dashed border-2 border-blue-200">
+                  <div className="flex gap-2 mb-2">
+                    <Info className="h-4 w-4 text-blue-600" />
+                    <p className="text-xs font-bold text-blue-800">Business Logic Summary</p>
+                  </div>
+                  <ul className="text-[10px] text-blue-700 list-disc pl-4 space-y-1">
+                    <li><b>Payroll Preparation:</b> แผนก HR เตรียมและอนุมัติ แผนก Accounting ดูข้อมูลได้เพื่อโอนเงิน</li>
+                    <li><b>Commercial Access:</b> แผนก Sales ดูข้อมูลลูกค้าและ PO ได้ แต่ Accounting เป็นผู้ออก Billing Notes</li>
+                    <li><b>Operations Logic:</b> แผนก Operations จัดการ Wave และ Mobilization แผนก HR ตรวจสอบความพร้อม</li>
+                  </ul>
                 </div>
               </div>
             </div>
@@ -318,7 +348,7 @@ export default function UsersPage() {
             <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4">
               <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
               <Button onClick={handleSaveUser} disabled={isSaving} className="bg-primary font-bold shadow-md">
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                 บันทึกการตั้งค่าสิทธิ์
               </Button>
             </DialogFooter>
@@ -331,7 +361,7 @@ export default function UsersPage() {
 
 function AccessIndicator({ label, active }: { label: string; active: boolean }) {
   return (
-    <div className={`flex items-center justify-between text-[10px] ${active ? 'text-primary' : 'text-muted-foreground/40'}`}>
+    <div className={`flex items-center justify-between text-[10px] ${active ? 'text-primary font-medium' : 'text-muted-foreground/40'}`}>
       <span>{label}</span>
       {active ? <CheckCircle2 className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3" />}
     </div>
