@@ -1,4 +1,3 @@
-
 'use client';
 
 import Link from 'next/link';
@@ -29,7 +28,8 @@ import {
   FileDown,
   ArrowUpRight,
   ArrowDownLeft,
-  BookOpen
+  BookOpen,
+  UserSearch
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -74,7 +74,7 @@ const navGroups: NavGroup[] = [
       { title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '', icon: Store, roles: ['system_admin', 'store_officer'], isFuture: true },
       { title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity, roles: ['system_admin', 'hr_manager', 'safety_officer'] },
       { title: 'คนงาน (Workers)', href: '/workers', icon: HardHat, roles: ['system_admin', 'hr_manager', 'hr_officer', 'safety_officer'] },
-      { title: 'พนักงานออฟฟิศ (Office Staff)', href: '', icon: UserCheck, roles: ['system_admin', 'hr_manager'], isFuture: true },
+      { title: 'พนักงานออฟฟิศ (Office Staff)', href: '/office-staff', icon: UserSearch, roles: ['system_admin', 'hr_manager'] },
       { title: 'บัญชีธนาคาร (Bank Accounts)', href: '', icon: CreditCard, roles: ['system_admin', 'finance_officer'], isFuture: true },
     ]
   },

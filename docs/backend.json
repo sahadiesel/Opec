@@ -1,4 +1,3 @@
-
 {
   "entities": {
     "Position": {
@@ -56,6 +55,23 @@
         "grossAmount": { "type": "number" },
         "netAmount": { "type": "number" }
       }
+    },
+    "OfficeStaff": {
+      "title": "Office Staff",
+      "description": "Internal company employees (office staff), separate from offshore manpower workers.",
+      "type": "object",
+      "properties": {
+        "staffCode": { "type": "string" },
+        "fullName": { "type": "string" },
+        "nickname": { "type": "string" },
+        "department": { "type": "string" },
+        "positionTitle": { "type": "string" },
+        "employmentType": { "type": "string", "enum": ["FULL_TIME", "PART_TIME", "CONTRACT"] },
+        "salaryType": { "type": "string", "enum": ["MONTHLY", "DAILY"] },
+        "monthlySalary": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "RESIGNED"] }
+      }
     }
   },
   "auth": {
@@ -74,9 +90,9 @@
       "schema": { "$ref": "#/backend/entities/PayrollRun" },
       "description": "Top-level collection for payroll runs."
     },
-    "/payroll_runs/{runId}/lines/{lineId}": {
-      "schema": { "type": "object" },
-      "description": "Individual payment lines for workers within a run."
+    "/office_staff/{staffId}": {
+      "schema": { "$ref": "#/backend/entities/OfficeStaff" },
+      "description": "Registry for internal office employees."
     }
   }
 }

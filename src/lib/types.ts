@@ -473,6 +473,37 @@ export interface StoreReturnSlip {
   createdBy: string;
 }
 
+// --- OFFICE STAFF ---
+
+export type EmploymentType = 'FULL_TIME' | 'PART_TIME' | 'CONTRACT';
+export type StaffSalaryType = 'MONTHLY' | 'DAILY';
+export type StaffStatus = 'ACTIVE' | 'INACTIVE' | 'RESIGNED';
+
+export interface OfficeStaff {
+  id: string;
+  staffCode: string;
+  fullName: string;
+  nickname: string;
+  department: string;
+  positionTitle: string;
+  employmentType: EmploymentType;
+  salaryType: StaffSalaryType;
+  monthlySalary: number;
+  startDate: string; // yyyy-mm-dd
+  bankAccountName: string;
+  bankAccountNumber: string;
+  bankName: string;
+  taxId: string;
+  socialSecurityNo: string;
+  linkedUserId?: string;
+  status: StaffStatus;
+  notes: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
 // --- WORKFORCE ---
 
 export interface Worker {
