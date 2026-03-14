@@ -105,7 +105,7 @@ const navGroups: NavGroup[] = [
     roles: ['system_admin', 'finance_officer', 'payroll_officer', 'hr_manager'],
     items: [
       { title: 'จ่ายเงินคนงาน (Worker Payroll)', href: '/payroll', icon: CircleDollarSign, roles: ['system_admin', 'payroll_officer', 'finance_officer', 'hr_manager'] },
-      { title: 'เงินเดือนพนักงาน (Office Payroll)', href: '', icon: Coins, roles: ['system_admin', 'hr_manager', 'finance_officer'], isFuture: true },
+      { title: 'เงินเดือนพนักงาน (Office Payroll)', href: '/office-payroll', icon: Coins, roles: ['system_admin', 'hr_manager', 'finance_officer'] },
       { title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '', icon: FileDown, roles: ['system_admin', 'finance_officer', 'store_officer'], isFuture: true },
       { title: 'ลูกหนี้การค้า (AR)', href: '', icon: ArrowUpRight, roles: ['system_admin', 'finance_officer'], isFuture: true },
       { title: 'เจ้าหนี้การค้า (AP)', href: '', icon: ArrowDownLeft, roles: ['system_admin', 'finance_officer'], isFuture: true },

@@ -57,6 +57,7 @@ service cloud.firestore {
     function isHRStaff() { return isHRManager() || isHROfficer(); }
     function isCommercialStaff() { return isSalesOfficer() || isFinanceOfficer(); }
     function isOpsStaff() { return isOperationsOfficer() || isHRStaff(); }
+    function isFinanceStaff() { return isFinanceOfficer() || isHRManager() || isSystemAdmin(); }
 
     // =========================
     // System / Bootstrap
@@ -199,6 +200,17 @@ service cloud.firestore {
       match /lines/{lineId} {
         allow read: if isPayrollOfficer() || isFinanceOfficer();
         allow write: if isPayrollOfficer() || isHRManager();
+      }
+    }
+
+    match /office_payroll_runs/{runId} {
+      allow read: if isFinanceStaff();
+      allow create: if isFinanceStaff();
+      allow update: if isFinanceStaff();
+      allow delete: if isSystemAdmin();
+      match /lines/{lineId} {
+        allow read: if isFinanceStaff();
+        allow write: if isFinanceStaff();
       }
     }
 

@@ -348,7 +348,7 @@ export interface Assignment {
   _path?: string;
 }
 
-// --- PAYROLL MODULE ---
+// --- WORKER PAYROLL MODULE ---
 
 export interface PayrollRun {
   id: string;
@@ -403,6 +403,48 @@ export interface PayrollLine {
   totalDeduction: number;
   netPay: number;
   notes: string;
+  createdAt: number;
+  updatedAt: number;
+  _path?: string;
+}
+
+// --- OFFICE PAYROLL MODULE ---
+
+export interface OfficePayrollRun {
+  id: string;
+  payrollRunNo: string;
+  payrollMonth: string; // yyyy-mm
+  payrollPeriodStart: string; // yyyy-mm-dd
+  payrollPeriodEnd: string;   // yyyy-mm-dd
+  status: PayrollRunStatus;
+  staffCount: number;
+  grossAmount: number;
+  netAmount: number;
+  totalAllowances: number;
+  totalDeductions: number;
+  notes: string;
+  hrApprovedBy?: string;
+  financeApprovedBy?: string;
+  lockedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface OfficePayrollLine {
+  id: string;
+  staffId: string;
+  staffName: string;
+  department: string;
+  positionTitle: string;
+  baseSalary: number;
+  allowance: number;
+  bonus: number;
+  deductions: number;
+  tax: number;
+  socialSecurity: number;
+  grossPay: number;
+  netPay: number;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
   _path?: string;
