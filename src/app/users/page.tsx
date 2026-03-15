@@ -478,4 +478,5 @@ function AccessIndicator({ label, active }: { label: string; active: boolean }) 
       <span>{label}</span>
       {active ? <CheckCircle2 className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3" />}
     </div>
+  );
 }
