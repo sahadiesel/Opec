@@ -22,7 +22,7 @@ import {
   Settings2,
   Info
 } from 'lucide-react';
-import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc, collection, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -59,26 +59,39 @@ export default function Home() {
   
   const { can, isLoading: isPermLoading } = usePermissions(user);
 
+  // Sync state with latest Firestore document
+  const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
+  const { data: latestUserDoc } = useDoc<User>(userDocRef as any);
+
   useEffect(() => {
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
     if (stored) {
       try {
-        const parsed = JSON.parse(stored);
-        setUser(parsed);
-        if (firestore && parsed.id) {
-          updateDoc(doc(firestore, 'users', parsed.id), { lastLoginAt: Date.now() }).catch(() => {});
-        }
+        setUser(JSON.parse(stored));
       } catch (e) { console.error(e); }
     }
-  }, [firestore]);
+  }, []);
+
+  useEffect(() => {
+    if (latestUserDoc) {
+      setUser(latestUserDoc);
+      localStorage.setItem('opsflow_user', JSON.stringify(latestUserDoc));
+    }
+  }, [latestUserDoc]);
 
   const { dept } = useMemo(() => inferDeptAndLevel(user), [user]);
   
-  // Defensive queries - only fetch if user is fully recognized as staff
+  // Defensive queries - only fetch if user is fully recognized as staff and has roles synced
   const isInternalAuthorized = useMemo(() => {
     if (!user || !user.isActive || user.approvalStatus !== 'ACTIVE') return false;
-    return dept !== 'client';
+    if (dept === 'client') return false;
+    
+    // Ensure the user has roles assigned in the document (required by security rules)
+    const hasRoles = user.roleIds && user.roleIds.length > 0;
+    const hasProfile = !!user.permissionProfileKey;
+    
+    return hasRoles || hasProfile;
   }, [user, dept]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'main_contracts') : null), [firestore, isInternalAuthorized]);
@@ -220,6 +233,7 @@ export default function Home() {
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Pending</h2>
           <p className="text-muted-foreground">บัญชีของคุณยังไม่ได้รับการกำหนดโปรไฟล์การเข้าถึง กรุณาติดต่อแอดมิน</p>
+          <Button variant="outline" asChild><Link href="/setup-admin">Repair My Access</Link></Button>
         </div>
       </AppShell>
     );

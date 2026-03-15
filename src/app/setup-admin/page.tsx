@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { getLegacyRoles } from '@/lib/auth-mapping';
 
 export default function SetupAdminPage() {
   const [isChecking, setIsChecking] = useState(true);
@@ -126,31 +127,43 @@ export default function SetupAdminPage() {
     setIsSubmitting(true);
     try {
       const now = Date.now();
-      const isSystemAdmin = repairRole === 'system_admin';
       
+      let dept: any = 'admin';
+      let level: any = 'admin';
+      
+      if (repairRole.startsWith('hr_')) {
+        dept = 'hr';
+        level = repairRole.includes('manager') ? 'manager' : 'officer';
+      } else if (repairRole.startsWith('finance')) {
+        dept = 'accounting';
+        level = 'officer';
+      }
+
+      const legacyRoles = getLegacyRoles(dept, level);
+      const profileKey = `${dept}_${level}`;
+
       const repairData: any = {
         id: repairUid,
-        roleIds: [repairRole],
+        department: dept,
+        level: level,
+        roleIds: legacyRoles,
+        permissionProfileKey: profileKey,
         isActive: true,
         approvalStatus: 'ACTIVE',
         updatedAt: now
       };
 
-      if (isSystemAdmin) {
-        repairData.department = 'admin';
-        repairData.level = 'admin';
-        repairData.permissionProfileKey = 'admin_admin';
-      } else if (repairRole.startsWith('hr_')) {
-        repairData.department = 'hr';
-        repairData.level = repairRole.includes('manager') ? 'manager' : 'officer';
-        repairData.permissionProfileKey = `${repairData.department}_${repairData.level}`;
+      // Set directly to firestore to fix rules access immediately
+      await setDoc(doc(firestore, 'users', repairUid), repairData, { merge: true });
+      
+      // Also sync to legacy role collection if needed for certain rules
+      if (repairRole === 'system_admin') {
+        await setDoc(doc(firestore, 'roles_system_admin', repairUid), { assignedAt: now }, { merge: true });
       }
 
-      await setDoc(doc(firestore, 'users', repairUid), repairData, { merge: true });
-      await setDoc(doc(firestore, `roles_${repairRole}`, repairUid), { assignedAt: now }, { merge: true });
-
-      toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว` });
+      toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว กรุณา Login ใหม่อีกครั้ง` });
       localStorage.removeItem('opsflow_user');
+      setTimeout(() => router.push('/'), 2000);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error.message });
     } finally {
