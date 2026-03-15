@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -9,22 +9,20 @@ import {
   Search, 
   Plus, 
   Trash2, 
-  ShieldAlert, 
   Briefcase,
   Waves,
-  HardHat,
   CheckCircle2,
   Info,
   Loader2,
   PackageMinus,
   Inbox,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  PackageOpen
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, doc, query, where, getDocs, updateDoc, increment, writeBatch } from 'firebase/firestore';
 import { StoreItem, Worker, Assignment, Wave, Position, User as AppUser, PositionPPERequirement, PositionToolRequirement } from '@/lib/types';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
@@ -74,7 +72,7 @@ export default function IssueItemsPage() {
   const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
   const { data: storeItems } = useCollection<StoreItem>(itemsQuery as any);
 
-  // Position Requirements
+  // Position Requirements State
   const [posPPE, setPosPPE] = useState<PositionPPERequirement[]>([]);
   const [posTools, setPosTools] = useState<PositionToolRequirement[]>([]);
 
@@ -103,7 +101,7 @@ export default function IssueItemsPage() {
       toast({ 
         variant: "destructive", 
         title: "ไม่อนุญาตให้เบิก (Unauthorized Item)", 
-        description: `อุปกรณ์รายการนี้ไม่ได้กำหนดไว้ในมาตรฐานของตำแหน่ง ${position?.positionName}` 
+        description: `อุปกรณ์รายการนี้ไม่ได้กำหนดไว้ในมาตรฐานของตำแหน่ง ${position?.positionName || 'N/A'}` 
       });
       return;
     }
@@ -127,7 +125,7 @@ export default function IssueItemsPage() {
 
   const handleConfirmIssue = async () => {
     if (!firestore || !activeAsgn || !currentUser || issueList.length === 0) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกคนงาน งาน และรายการเบิกให้ครบถ้วน" });
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุคนงาน งาน และรายการที่ต้องการเบิกให้ครบถ้วน" });
       return;
     }
 
@@ -216,14 +214,14 @@ export default function IssueItemsPage() {
 
         <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
           <AlertTriangle className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold">นโยบายการเบิกอุปกรณ์ (Compliance Warning)</AlertTitle>
+          <AlertTitle className="font-bold uppercase tracking-wider">นโยบายการเบิกอุปกรณ์ (Compliance Warning)</AlertTitle>
           <AlertDescription className="text-sm">
             ระบบจะอนุญาตให้เบิกเฉพาะอุปกรณ์ที่กำหนดไว้ใน <b>Position Requirement</b> เท่านั้น เพื่อควบคุมต้นทุนและมาตรฐานความปลอดภัย
           </AlertDescription>
         </Alert>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* LEFT: Selection Area */}
+          {/* LEFT: Context & Catalog */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="shadow-md">
               <CardHeader className="border-b bg-muted/20">
@@ -282,15 +280,15 @@ export default function IssueItemsPage() {
                 <CardHeader className="border-b bg-muted/20 flex flex-row items-center justify-between">
                   <div>
                     <CardTitle className="text-lg">รายการอุปกรณ์ที่อนุญาต (Authorized Items)</CardTitle>
-                    <CardDescription>แสดงเฉพาะรายการที่ตรงตามเกณฑ์มาตรฐานของตำแหน่งงาน</CardDescription>
+                    <CardDescription>กรองเฉพาะรายการที่ตรงตามเกณฑ์ของตำแหน่ง <b>{position?.positionName}</b></CardDescription>
                   </div>
-                  <Badge variant="outline" className="bg-white">Total: {storeItems?.length || 0} items</Badge>
+                  <Badge variant="outline" className="bg-white">Requirement Items</Badge>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="p-4 border-b">
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input placeholder="ค้นหาตามชื่อ หรือ รหัสอุปกรณ์..." className="pl-9 h-11" />
+                      <Input placeholder="ค้นหาอุปกรณ์ในแคตตาล็อก..." className="pl-9 h-11" />
                     </div>
                   </div>
                   <div className="max-h-[400px] overflow-y-auto">
@@ -329,7 +327,7 @@ export default function IssueItemsPage() {
                                 disabled={item.currentStock <= 0}
                                 onClick={() => handleAddToList(item)}
                               >
-                                <Plus className="h-3 w-3" /> เพิ่ม
+                                <Plus className="h-3 w-3" /> เพิ่มเข้าใบเบิก
                               </Button>
                             </TableCell>
                           </TableRow>
@@ -351,7 +349,7 @@ export default function IssueItemsPage() {
             )}
           </div>
 
-          {/* RIGHT: Confirmation Area */}
+          {/* RIGHT: Confirmation & Issue List */}
           <div className="space-y-6">
             <Card className="border-primary/20 shadow-xl overflow-hidden">
               <CardHeader className="bg-primary text-primary-foreground pb-6">
@@ -456,7 +454,7 @@ export default function IssueItemsPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-[10px] text-muted-foreground leading-relaxed">
-                ขณะนี้คุณกำลังเบิกอุปกรณ์ภายใต้ข้อกำหนดของตำแหน่ง <b>{position?.positionName}</b> 
+                ขณะนี้คุณกำลังเบิกอุปกรณ์ภายใต้ข้อกำหนดของตำแหน่ง <b>{position?.positionName || '...'}</b> 
                 ระบบได้กรองเฉพาะ PPE ({posPPE.length}) และ เครื่องมือ ({posTools.length}) ที่มีสิทธิ์เบิกได้ตามสัญญา
               </CardContent>
             </Card>
