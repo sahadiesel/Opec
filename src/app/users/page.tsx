@@ -19,7 +19,9 @@ import {
   Sparkles, 
   Building2, 
   Briefcase,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCcw,
+  Info
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel } from '@/lib/types';
@@ -41,7 +43,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MenuKey, canSeeMenu, getLegacyRoles } from '@/lib/auth-mapping';
+import { MenuKey, canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdmin } from '@/lib/auth-mapping';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'บริหาร / ระบบ (Admin)' },
@@ -60,14 +62,13 @@ const LEVELS: { id: AccessLevel; label: string; desc: string }[] = [
   { id: 'admin', label: 'Admin (ผู้ดูแลระบบ)', desc: 'สิทธิ์สูงสุด จัดการสิทธิ์ผู้อื่นและตั้งค่าระบบได้' },
 ];
 
-const ORG_PRESETS = [
-  { name: 'พี่โจ้ (System Admin)', dept: 'admin', level: 'admin' },
-  { name: 'นุช (HR Manager)', dept: 'hr', level: 'manager' },
-  { name: 'หญิง (HR Officer)', dept: 'hr', level: 'officer' },
-  { name: 'ก้อย (HR Officer)', dept: 'hr', level: 'officer' },
-  { name: 'โดม (Sales Officer)', dept: 'sales', level: 'officer' },
-  { name: 'ณัฐ (Store Officer)', dept: 'store', level: 'officer' },
-  { name: 'Accounting Team', dept: 'accounting', level: 'officer' },
+const STAFF_PRESETS = [
+  { name: 'พี่โจ้ (Admin)', dept: 'admin', level: 'admin' },
+  { name: 'นุช (HR Mgr)', dept: 'hr', level: 'manager' },
+  { name: 'หญิง (HR Off)', dept: 'hr', level: 'officer' },
+  { name: 'โดม (Sales Off)', dept: 'sales', level: 'officer' },
+  { name: 'ก้อย (HR Off)', dept: 'hr', level: 'officer' },
+  { name: 'ณัฐ (Store Off)', dept: 'store', level: 'officer' },
 ];
 
 export default function UsersPage() {
@@ -89,17 +90,20 @@ export default function UsersPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
+  const isUserAdmin = isAdmin(currentUser);
+
   const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser || currentUser.department !== 'admin') return null;
+    if (!firestore || !currentUser || !isUserAdmin) return null;
     return collection(firestore, 'users');
-  }, [firestore, currentUser]);
+  }, [firestore, currentUser, isUserAdmin]);
 
   const { data: users, isLoading: isCollectionLoading } = useCollection<User>(usersQuery as any);
 
   const handleEditUser = (user: User) => {
+    const { dept, level } = inferDeptAndLevel(user);
     setSelectedUser(user);
-    setEditedDept(user.department || 'hr');
-    setEditedLevel(user.level || 'viewer');
+    setEditedDept(dept);
+    setEditedLevel(level);
     setIsActive(user.isActive);
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
@@ -115,7 +119,7 @@ export default function UsersPage() {
       
       const batch = writeBatch(firestore);
       
-      // Update User Doc
+      // Update User Doc with new schema
       batch.update(userRef, {
         department: editedDept,
         level: editedLevel,
@@ -125,8 +129,7 @@ export default function UsersPage() {
         updatedAt: Date.now()
       });
 
-      // Update Role Collections (Legacy DBAC Sync)
-      // This ensures existing firestore.rules still work
+      // Update Legacy Role Collections (DBAC)
       const allLegacyRoles: any[] = ['system_admin', 'hr_manager', 'hr_officer', 'finance_officer', 'operations_officer', 'sales_officer', 'store_officer', 'payroll_officer', 'client'];
       
       for (const role of allLegacyRoles) {
@@ -156,7 +159,27 @@ export default function UsersPage() {
     }
   };
 
+  const handleQuickMigrate = (user: User) => {
+    const { dept, level } = inferDeptAndLevel(user);
+    handleEditUser(user);
+    setEditedDept(dept);
+    setEditedLevel(level);
+    toast({ title: "Suggesting Migration", description: `Inferred: ${dept}/${level}` });
+  };
+
   if (isUserLoading || !currentUser) return null;
+
+  if (!isUserAdmin) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Restricted</h2>
+          <p className="text-muted-foreground">Only System Administrators can manage users.</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -166,15 +189,15 @@ export default function UsersPage() {
             <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งานและสิทธิ์ (Access Control)
           </h1>
           <p className="text-muted-foreground text-lg">
-            กำหนดแผนก (Department) และระดับการเข้าถึงข้อมูล (Level) ตามผังองค์กร
+            บริหารจัดการสิทธิ์เข้าถึงตามแผนก (Department) และระดับ (Access Level)
           </p>
         </div>
 
         <Alert className="bg-primary/5 border-primary/20">
-          <Sparkles className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold">Authorization Logic Updated</AlertTitle>
+          <Info className="h-5 w-5 text-primary" />
+          <AlertTitle className="font-bold">Migration Safety Mode Active</AlertTitle>
           <AlertDescription className="text-sm">
-            ระบบใช้โมเดล Department + Level เพื่อความโปร่งใส สิทธิ์การเขียนข้อมูลจะถูกจำกัดเฉพาะระดับ Officer ขึ้นไปตามหน้าที่ของแผนกนั้นๆ
+            ระบบรองรับทั้งโมเดล Department/Level ใหม่ และบทบาท legacy เดิม หากพบผู้ใช้งานที่ยังไม่ได้ย้ายสิทธิ์ กรุณากดแก้ไขเพื่อทำการ Migration
           </AlertDescription>
         </Alert>
 
@@ -194,41 +217,51 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users?.map((u) => (
-                    <TableRow key={u.id} className="hover:bg-muted/30 transition-all group">
-                      <TableCell className="py-4 pl-6">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-base text-primary">{u.displayName}</span>
-                          <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium"><Mail className="h-3 w-3" /> {u.email}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="capitalize">
-                          <Building2 className="h-3 w-3 mr-1" /> {u.department || 'Not Assigned'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={u.level === 'admin' ? 'default' : 'secondary'} className="capitalize">
-                          <Briefcase className="h-3 w-3 mr-1" /> {u.level || 'None'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={u.isActive ? "default" : "secondary"} className={u.isActive ? "bg-green-600" : ""}>
-                          {u.isActive ? "Active" : "Pending"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right pr-6 space-x-2">
-                        <Button variant="ghost" size="icon" onClick={() => handleEditUser(u)}>
-                          <UserCog className="h-4 w-4" />
-                        </Button>
-                        {currentUser.id !== u.id && (
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(u.id)}>
-                            <Trash2 className="h-4 w-4" />
+                  {users?.map((u) => {
+                    const isLegacy = !u.department || !u.level;
+                    const { dept, level } = inferDeptAndLevel(u);
+                    
+                    return (
+                      <TableRow key={u.id} className="hover:bg-muted/30 transition-all group">
+                        <TableCell className="py-4 pl-6">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-base text-primary">{u.displayName}</span>
+                            <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium"><Mail className="h-3 w-3" /> {u.email}</span>
+                            {isLegacy && (
+                              <Badge variant="outline" className="w-fit mt-1 text-[9px] bg-amber-50 text-amber-700 border-amber-200">
+                                <RefreshCcw className="h-2 w-2 mr-1 animate-spin" /> Legacy Role Only / ยังไม่ได้ย้ายสิทธิ์
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={isLegacy ? "secondary" : "outline"} className="capitalize">
+                            <Building2 className="h-3 w-3 mr-1" /> {isLegacy ? `Inferred: ${dept}` : u.department}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={u.level === 'admin' ? 'default' : 'secondary'} className="capitalize">
+                            <Briefcase className="h-3 w-3 mr-1" /> {isLegacy ? `Inferred: ${level}` : u.level}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={u.isActive ? "default" : "secondary"} className={u.isActive ? "bg-green-600" : ""}>
+                            {u.isActive ? "Active" : "Pending"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right pr-6 space-x-2">
+                          <Button variant="ghost" size="icon" onClick={() => handleEditUser(u)}>
+                            <UserCog className="h-4 w-4" />
                           </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          {currentUser.id !== u.id && (
+                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(u.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
@@ -245,7 +278,6 @@ export default function UsersPage() {
             </DialogHeader>
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-4">
-              {/* Left Panel: Basic Controls */}
               <div className="space-y-6">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
@@ -278,7 +310,7 @@ export default function UsersPage() {
 
                   <div className="space-y-2">
                     <Label>หมายเหตุ</Label>
-                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุตำแหน่งจริงหรือหน้าที่รับผิดชอบ..." className="min-h-[80px]" />
+                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุหน้าที่รับผิดชอบ..." className="min-h-[80px]" />
                   </div>
                 </div>
 
@@ -286,9 +318,9 @@ export default function UsersPage() {
                   <Label className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
                     <Sparkles className="h-3 w-3 text-amber-500" /> Presets องค์กร
                   </Label>
-                  <div className="grid grid-cols-1 gap-1.5">
-                    {ORG_PRESETS.map(p => (
-                      <Button key={p.name} variant="outline" size="sm" className="justify-start text-[10px] h-8" onClick={() => { setEditedDept(p.dept as any); setEditedLevel(p.level as any); }}>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {STAFF_PRESETS.map(p => (
+                      <Button key={p.name} variant="outline" size="sm" className="justify-start text-[9px] h-8 px-2" onClick={() => { setEditedDept(p.dept as any); setEditedLevel(p.level as any); }}>
                         {p.name}
                       </Button>
                     ))}
@@ -296,16 +328,22 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {/* Right Panel: Access Preview */}
               <div className="md:col-span-2 space-y-6 border-l pl-6">
-                {(editedDept === 'admin' && editedLevel === 'admin') && (
-                  <Alert variant="destructive" className="bg-amber-50 border-amber-200">
-                    <ShieldAlert className="h-4 w-4 text-amber-600" />
-                    <AlertTitle className="text-xs font-bold uppercase">Privileged Access Warning</AlertTitle>
-                    <AlertDescription className="text-[10px]">
-                      สิทธิ์ System Admin สามารถเข้าถึงและแก้ไขข้อมูลได้ทุกส่วนในระบบ รวมถึงการลบข้อมูลถาวร
-                    </AlertDescription>
-                  </Alert>
+                {selectedUser?.roleIds && selectedUser.roleIds.length > 0 && (
+                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
+                    <div className="flex gap-2 items-center mb-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <p className="text-xs font-bold text-amber-800 uppercase">Legacy Access Detected</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedUser.roleIds.map(r => (
+                        <Badge key={r} variant="secondary" className="text-[9px]">{r}</Badge>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-amber-700 mt-2 italic">
+                      เมื่อกดบันทึก ระบบจะย้ายสิทธิ์ผู้ใช้งานมายัง Department/Level ใหม่ และทำ Snapshot roles เพื่อรองรับ Firestore Rules
+                    </p>
+                  </div>
                 )}
 
                 <div className="space-y-4">
@@ -337,9 +375,9 @@ export default function UsersPage() {
                     <p className="text-xs font-bold text-blue-800">Business Logic Summary</p>
                   </div>
                   <ul className="text-[10px] text-blue-700 list-disc pl-4 space-y-1">
-                    <li><b>Payroll Preparation:</b> แผนก HR เตรียมและอนุมัติ แผนก Accounting ดูข้อมูลได้เพื่อโอนเงิน</li>
-                    <li><b>Commercial Access:</b> แผนก Sales ดูข้อมูลลูกค้าและ PO ได้ แต่ Accounting เป็นผู้ออก Billing Notes</li>
-                    <li><b>Operations Logic:</b> แผนก Operations จัดการ Wave และ Mobilization แผนก HR ตรวจสอบความพร้อม</li>
+                    <li><b>Payroll:</b> HR เตรียมและอนุมัติ แผนก Finance ดูข้อมูลได้เพื่อโอนเงิน</li>
+                    <li><b>Commercial:</b> Sales ดูข้อมูลลูกค้าและ PO ได้ แต่ Finance เป็นผู้ออก Billing Notes</li>
+                    <li><b>Operations:</b> จัดการ Wave และ Mobilization แผนก HR ตรวจสอบความพร้อม</li>
                   </ul>
                 </div>
               </div>
@@ -349,7 +387,7 @@ export default function UsersPage() {
               <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
               <Button onClick={handleSaveUser} disabled={isSaving} className="bg-primary font-bold shadow-md">
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                บันทึกการตั้งค่าสิทธิ์
+                บันทึกสิทธิ์และ Migration
               </Button>
             </DialogFooter>
           </DialogContent>

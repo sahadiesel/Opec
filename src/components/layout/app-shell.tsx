@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
 import { useFirestore } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
+import { inferDeptAndLevel } from '@/lib/auth-mapping';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -34,13 +35,14 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   if (!user) return <>{children}</>;
 
-  const deptDisplay = user.department?.toUpperCase() || 'NO DEPT';
-  const levelDisplay = user.level?.toUpperCase() || 'NO LEVEL';
+  const { dept, level } = inferDeptAndLevel(user);
+  const deptDisplay = dept.toUpperCase();
+  const levelDisplay = level.toUpperCase();
 
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <SidebarNav userDept={user.department} userLevel={user.level} />
+        <SidebarNav userDept={dept} userLevel={level} />
         <SidebarInset>
           <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">

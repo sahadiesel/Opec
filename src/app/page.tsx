@@ -41,6 +41,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { inferDeptAndLevel, isAdmin } from '@/lib/auth-mapping';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -69,8 +70,6 @@ export default function Home() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        // Normalize role structure if needed
-        if (parsed.roleId && !parsed.roleIds) parsed.roleIds = [parsed.roleId];
         setUser(parsed);
         
         // Update presence
@@ -94,7 +93,9 @@ export default function Home() {
 
   // Authorization Guard for Dashboard Data
   const isInternalStaff = useMemo(() => {
-    return user && user.department !== 'client';
+    if (!user) return false;
+    const { dept } = inferDeptAndLevel(user);
+    return dept !== 'client';
   }, [user]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'main_contracts') : null), [firestore, isInternalStaff]);
@@ -125,11 +126,6 @@ export default function Home() {
           });
           setIsLoggingIn(false);
           return;
-        }
-
-        // Migration helper: ensure roleIds exists
-        if (!userData.roleIds) {
-          userData.roleIds = [(userData as any).roleId || 'hr_officer'];
         }
 
         await updateDoc(userDocRef, { lastLoginAt: Date.now() });
@@ -167,8 +163,8 @@ export default function Home() {
         id: uid,
         email: regEmail,
         displayName: regDisplayName,
-        department: 'hr', // Default
-        level: 'viewer',  // Default
+        department: 'hr', 
+        level: 'viewer',  
         roleIds: [], 
         isActive: false,
         createdAt: now,
@@ -279,17 +275,19 @@ export default function Home() {
     pendingApprovals: assignments?.filter(a => a.clientApprovalStatus === 'SUBMITTED').length || 0
   };
 
+  const { dept, level } = inferDeptAndLevel(user);
+
   return (
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Operations Dashboard)</h1>
           <p className="text-muted-foreground text-lg">
-            {user.department === 'client' ? `Customer Portal: ${user.displayName}` : `Department: ${user.department?.toUpperCase() || 'N/A'} | Access: ${user.level?.toUpperCase() || 'N/A'}`}
+            {dept === 'client' ? `Customer Portal: ${user.displayName}` : `Department: ${dept.toUpperCase()} | Access: ${level.toUpperCase()}`}
           </p>
         </div>
 
-        {user.department === 'client' ? (
+        {dept === 'client' ? (
           <Alert className="bg-blue-50 border-blue-200">
             <Info className="h-4 w-4 text-blue-600" />
             <AlertTitle className="font-bold">Welcome to Client Portal</AlertTitle>

@@ -43,44 +43,115 @@ const LevelOrder: Record<AccessLevel, number> = {
   admin: 3
 };
 
+/**
+ * Legacy Role to Dept/Level Mapping for Migration
+ */
+export const LEGACY_ROLE_MAP: Record<string, { dept: DeptType; level: AccessLevel }> = {
+  system_admin: { dept: 'admin', level: 'admin' },
+  hr_manager: { dept: 'hr', level: 'manager' },
+  hr_officer: { dept: 'hr', level: 'officer' },
+  payroll_officer: { dept: 'hr', level: 'officer' },
+  sales_officer: { dept: 'sales', level: 'officer' },
+  finance_officer: { dept: 'accounting', level: 'officer' },
+  store_officer: { dept: 'store', level: 'officer' },
+  operations_officer: { dept: 'operations', level: 'officer' },
+  client_user: { dept: 'client', level: 'viewer' },
+  client: { dept: 'client', level: 'viewer' }
+};
+
+/**
+ * Infers Dept and Level from legacy roleIds if new fields are missing
+ */
+export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
+  if (!user) return { dept: 'hr', level: 'viewer' };
+  
+  // Use existing if available
+  if (user.department && user.level) {
+    return { dept: user.department, level: user.level };
+  }
+
+  // Fallback to roleIds
+  const roles = user.roleIds || [];
+  if (roles.includes('system_admin')) return { dept: 'admin', level: 'admin' };
+  if (roles.includes('hr_manager')) return { dept: 'hr', level: 'manager' };
+  if (roles.includes('hr_officer')) return { dept: 'hr', level: 'officer' };
+  if (roles.includes('finance_officer')) return { dept: 'accounting', level: 'officer' };
+  if (roles.includes('sales_officer')) return { dept: 'sales', level: 'officer' };
+  if (roles.includes('store_officer')) return { dept: 'store', level: 'officer' };
+  if (roles.includes('operations_officer')) return { dept: 'operations', level: 'officer' };
+  if (roles.includes('client') || roles.includes('client_user')) return { dept: 'client', level: 'viewer' };
+
+  return { dept: 'hr', level: 'viewer' };
+}
+
 export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): boolean {
   return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
 }
 
 /**
- * NEW: Authorization Helpers for App Code
+ * Authorization Helpers for App Code
  * Supports both new Dept/Level model and legacy roleIds for migration.
  */
 
-export const isAdmin = (user: User | null) => 
-  user?.department === 'admin' && user?.level === 'admin' || user?.roleIds?.includes('system_admin');
+export const isAdmin = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return (dept === 'admin' && level === 'admin') || user.roleIds?.includes('system_admin');
+};
 
-export const isHRViewer = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'hr' && hasLevel(user.level, 'viewer')) || user?.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
+export const isHRViewer = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'hr' && hasLevel(level, 'viewer')) || user.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
+};
 
-export const isHROfficerOrHigher = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'hr' && hasLevel(user.level, 'officer')) || user?.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
+export const isHROfficerOrHigher = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'hr' && hasLevel(level, 'officer')) || user.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
+};
 
-export const isHRManager = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'hr' && hasLevel(user.level, 'manager')) || user?.roleIds?.includes('hr_manager');
+export const isHRManager = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'hr' && hasLevel(level, 'manager')) || user.roleIds?.includes('hr_manager');
+};
 
-export const isSalesOfficerOrHigher = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'sales' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('sales_officer');
+export const isSalesOfficerOrHigher = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'sales' && hasLevel(level, 'officer')) || user.roleIds?.includes('sales_officer');
+};
 
-export const isOperationsOfficerOrHigher = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'operations' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('operations_officer');
+export const isOperationsOfficerOrHigher = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'operations' && hasLevel(level, 'officer')) || user.roleIds?.includes('operations_officer');
+};
 
-export const isStoreOfficerOrHigher = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'store' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('store_officer');
+export const isStoreOfficerOrHigher = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'store' && hasLevel(level, 'officer')) || user.roleIds?.includes('store_officer');
+};
 
-export const isAccountingViewer = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'accounting' && hasLevel(user.level, 'viewer')) || user?.roleIds?.includes('finance_officer');
+export const isAccountingViewer = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'accounting' && hasLevel(level, 'viewer')) || user.roleIds?.includes('finance_officer');
+};
 
-export const isAccountingOfficerOrHigher = (user: User | null) => 
-  isAdmin(user) || (user?.department === 'accounting' && hasLevel(user.level, 'officer')) || user?.roleIds?.includes('finance_officer');
+export const isAccountingOfficerOrHigher = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return isAdmin(user) || (dept === 'accounting' && hasLevel(level, 'officer')) || user.roleIds?.includes('finance_officer');
+};
 
-export const isClientUser = (user: User | null) => 
-  user?.department === 'client' || user?.roleIds?.some(r => ['client', 'client_user'].includes(r));
+export const isClientUser = (user: User | null) => {
+  if (!user) return false;
+  const { dept } = inferDeptAndLevel(user);
+  return dept === 'client' || user.roleIds?.some(r => ['client', 'client_user'].includes(r));
+};
 
 export const sameCustomer = (user: User | null, recordCustomerId: string) => 
   isAdmin(user) || (isClientUser(user) && user?.customerId === recordCustomerId);
