@@ -23,7 +23,8 @@ import {
   TrendingDown,
   ArrowRight,
   ClipboardList,
-  CheckCircle2
+  CheckCircle2,
+  BookOpen
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
@@ -118,7 +119,7 @@ export default function StoreDashboardPage() {
         </div>
 
         {/* Action Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <QuickActionCard 
             title="เบิกอุปกรณ์" 
             sub="Issue to Worker" 
@@ -142,17 +143,24 @@ export default function StoreDashboardPage() {
           />
           <QuickActionCard 
             title="ตัดของออก" 
-            sub="Write-off / Scrapped" 
+            sub="Write-off Stock" 
             href="/store/writeoff" 
             icon={Trash2} 
             color="bg-destructive" 
+          />
+          <QuickActionCard 
+            title="สมุดบัญชีสินค้า" 
+            sub="Inventory Ledger" 
+            href="/store/ledger" 
+            icon={BookOpen} 
+            color="bg-slate-700" 
           />
           <QuickActionCard 
             title="ทะเบียนอุปกรณ์" 
             sub="Master Catalog" 
             href="/store/items" 
             icon={ClipboardList} 
-            color="bg-slate-600" 
+            color="bg-slate-500" 
           />
         </div>
 
@@ -331,6 +339,11 @@ export default function StoreDashboardPage() {
                   </TableBody>
                 </Table>
               </CardContent>
+              <CardFooter className="bg-muted/10 border-t flex justify-center py-4">
+                <Button variant="link" className="gap-2" asChild>
+                  <Link href="/store/ledger">ดูประวัติทั้งหมด (Inventory Ledger) <ArrowRight className="h-4 w-4" /></Link>
+                </Button>
+              </CardFooter>
             </Card>
           </TabsContent>
 
