@@ -3,13 +3,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Search, 
   ShieldCheck, 
   Mail, 
-  Trash2, 
   UserCog, 
   Filter, 
   ShieldAlert, 
@@ -19,11 +18,9 @@ import {
   Sparkles, 
   Building2, 
   Briefcase,
-  AlertTriangle,
   RefreshCcw,
   Info,
   UserCheck,
-  UserX,
   Lock,
   Clock,
   Save,
@@ -33,7 +30,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel, ApprovalStatus } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, updateDoc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -45,6 +42,17 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { 
   DropdownMenu, 
   DropdownMenuContent, 
   DropdownMenuItem, 
@@ -54,7 +62,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser, getMigratedUserFields } from '@/lib/auth-mapping';
+import { getLegacyRoles, inferDeptAndLevel, isAdminUser, getMigratedUserFields, canSeeMenu } from '@/lib/auth-mapping';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'บริหาร / ระบบ (Admin)' },
@@ -160,24 +168,33 @@ export default function UsersPage() {
   const handleBulkMigration = async () => {
     if (!firestore || !users || !isUserAdmin) return;
     setIsMigrating(true);
-    let count = 0;
+    let migratedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
 
     try {
       for (const u of users) {
-        // Only migrate if essential fields are missing
-        if (!u.department || !u.level || !u.approvalStatus) {
-          const migratedFields = getMigratedUserFields(u);
-          const userRef = doc(firestore, 'users', u.id);
-          await updateDoc(userRef, migratedFields);
-          count++;
+        try {
+          // Only migrate if essential fields are missing
+          if (!u.department || !u.level || !u.approvalStatus) {
+            const migratedFields = getMigratedUserFields(u);
+            const userRef = doc(firestore, 'users', u.id);
+            await updateDoc(userRef, migratedFields);
+            migratedCount++;
+          } else {
+            skippedCount++;
+          }
+        } catch (e) {
+          console.error(`Failed to migrate user ${u.id}:`, e);
+          failedCount++;
         }
       }
       toast({ 
-        title: "ย้ายข้อมูลสำเร็จ", 
-        description: `ปรับปรุงข้อมูลพนักงานทั้งหมด ${count} รายเข้าสู่ระบบใหม่เรียบร้อยแล้ว` 
+        title: "Migration Complete", 
+        description: `Successfully migrated: ${migratedCount}, Skipped: ${skippedCount}, Failed: ${failedCount}` 
       });
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Migration Failed", description: err.message });
+      toast({ variant: "destructive", title: "Migration Error", description: err.message });
     } finally {
       setIsMigrating(false);
     }
@@ -227,15 +244,32 @@ export default function UsersPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button 
-              variant="outline" 
-              className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
-              onClick={handleBulkMigration}
-              disabled={isMigrating}
-            >
-              {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-              ย้ายข้อมูลสิทธิ์ (Run Migration)
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
+                  disabled={isMigrating}
+                >
+                  {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                  Migrate User Access Fields
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Run Access Field Migration?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will backfill all existing user documents with the new Department and Level authorization fields based on their legacy roles. No data will be overwritten if already present.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleBulkMigration} className="bg-amber-600 hover:bg-amber-700">
+                    Confirm Migration
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
 
@@ -294,12 +328,8 @@ export default function UsersPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEditUser(u)}>
-                                ดู
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleEditUser(u)}>
-                                แก้ไข
-                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditUser(u)}>ดู</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditUser(u)}>แก้ไข</DropdownMenuItem>
                               {currentUser.id !== u.id && (
                                 <DropdownMenuItem 
                                   className="text-destructive focus:text-destructive"
