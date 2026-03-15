@@ -148,6 +148,17 @@ service cloud.firestore {
       allow create: if isStoreStaff();
     }
 
+    match /store_issue_slips/{id} {
+      allow get, list: if isSignedIn() && (isStoreStaff() || isOperationsStaff() || isHRStaff());
+      allow create: if isStoreStaff();
+      allow update: if isStoreStaff();
+      
+      match /items/{itemId} {
+        allow get, list: if isSignedIn() && (isStoreStaff() || isOperationsStaff() || isHRStaff());
+        allow create, update: if isStoreStaff();
+      }
+    }
+
     match /billing_notes/{id} {
       allow get, list: if isFinanceStaff() || isSalesStaff();
       allow write: if isFinanceStaff() || isSalesStaff();
