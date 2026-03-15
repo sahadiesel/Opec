@@ -8,16 +8,13 @@ import {
   ArrowLeft, 
   Plus, 
   Trash2, 
-  Save, 
-  Trash, 
   FileText, 
   AlertTriangle, 
   CheckCircle2, 
   Info, 
   Loader2,
   Search,
-  User,
-  Calendar,
+  Trash,
   AlertCircle
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -76,7 +73,7 @@ export default function StoreWriteOffPage() {
     if (stored) {
       const parsed = JSON.parse(stored);
       setCurrentUser(parsed);
-      setPerformedBy(parsed.displayName);
+      setPerformedBy(parsed.displayName || 'Staff');
     }
   }, []);
 
@@ -210,7 +207,7 @@ export default function StoreWriteOffPage() {
           <div className="lg:col-span-3 space-y-6">
             <Card className="shadow-md">
               <CardHeader className="bg-destructive/5 border-b border-destructive/10">
-                <CardTitle className="text-lg flex items-center gap-2">
+                <CardTitle className="text-lg flex items-center gap-2 text-destructive">
                   <FileText className="h-5 w-5 text-destructive" /> ข้อมูลการตัดจ่าย (Write-off Context)
                 </CardTitle>
               </CardHeader>
@@ -341,7 +338,7 @@ export default function StoreWriteOffPage() {
                   <span className="font-bold">{lines.reduce((sum, l) => sum + l.quantity, 0)} ชิ้น</span>
                 </div>
                 <div className="p-3 bg-destructive/5 rounded border border-destructive/10 text-[10px] text-destructive leading-relaxed font-medium">
-                  <ShieldAlert className="h-3 w-3 inline mr-1" /> 
+                  <AlertCircle className="h-3 w-3 inline mr-1" /> 
                   เมื่อกดยืนยัน จำนวนสินค้าในคลังจะลดลงทันทีเพื่อความถูกต้องของสต็อก ณ ปัจจุบัน
                 </div>
 
@@ -360,7 +357,7 @@ export default function StoreWriteOffPage() {
                       <AlertDialogTitle>ยืนยันการตัดของออกจากคลัง?</AlertDialogTitle>
                       <AlertDialogDescription>
                         คุณกำลังจะตัดอุปกรณ์จำนวน {lines.length} รายการ ออกจากระบบเนื่องจากสาเหตุ "{reason}" 
-                        รายการนี้จะถูกบันทึกในประวัติถาวรและไม่สามารถยกเลิกได้
+                        รายการนี้จะถูกบันทึกในประวัติถาวรและไม่สามารถย้อนคืนได้โดยอัตโนมัติ
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

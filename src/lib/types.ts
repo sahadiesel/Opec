@@ -722,6 +722,23 @@ export interface StoreTransaction {
   createdBy: string;
 }
 
+export interface StoreWriteOff {
+  id: string;
+  writeoffNo: string;
+  writeoffDate: string;
+  reason: string;
+  reasonNote: string;
+  performedBy: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+export interface StoreWriteOffItem {
+  id: string;
+  itemId: string;
+  quantity: number;
+}
+
 export interface StoreIssueSlip {
   id: string;
   issueNo: string;
