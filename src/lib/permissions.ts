@@ -40,10 +40,10 @@ export type ModuleKey =
 /**
  * Default Permission Templates
  */
-const FULL_ACCESS: ModulePermission = { view: true, create: true, edit: true, delete: true, approve: true };
-const OFFICER_ACCESS: ModulePermission = { view: true, create: true, edit: true, delete: false, approve: false };
-const READ_ONLY: ModulePermission = { view: true, create: false, edit: false, delete: false, approve: false };
-const NO_ACCESS: ModulePermission = { view: false, create: false, edit: false, delete: false, approve: false };
+export const FULL_ACCESS: ModulePermission = { view: true, create: true, edit: true, delete: true, approve: true };
+export const OFFICER_ACCESS: ModulePermission = { view: true, create: true, edit: true, delete: false, approve: false };
+export const READ_ONLY: ModulePermission = { view: true, create: false, edit: false, delete: false, approve: false };
+export const NO_ACCESS: ModulePermission = { view: false, create: false, edit: false, delete: false, approve: false };
 
 /**
  * Baseline Permission Profile Definitions
@@ -172,7 +172,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   ];
 }
 
-const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
+export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
   overview_dashboard: NO_ACCESS,
   customers: NO_ACCESS,
   main_contracts: NO_ACCESS,
@@ -209,24 +209,36 @@ export function getPermissions(
   moduleKey: ModuleKey, 
   profile?: PermissionProfile | null
 ): ModulePermission {
-  if (!user || !user.isActive || user.approvalStatus !== 'ACTIVE') return NO_ACCESS;
+  if (!user || !user.isActive) return NO_ACCESS;
 
-  // 1. Full Admin Override
+  // 1. Full Admin Override - High Priority Bypass
+  // Never block users with system_admin roles or admin/admin context
   if (isAdminUser(user)) {
     return FULL_ACCESS;
   }
 
-  // 2. Profile-based check (Primary)
+  // 2. Others must be approved to access anything
+  if (user.approvalStatus !== 'ACTIVE') {
+    return NO_ACCESS;
+  }
+
+  // 3. Profile-based check (Primary)
   if (profile && profile.isActive && profile.permissions?.[moduleKey]) {
     return profile.permissions[moduleKey];
   }
 
-  // 3. Temporary Legacy Fallback logic while migrating
+  // 4. Temporary Legacy Fallback logic while migrating
+  // This allows some level of fallback for users without a profile doc yet
   const { dept, level } = inferDeptAndLevel(user);
-  const isOfficer = level === 'officer' || level === 'manager' || level === 'admin';
   
   if (moduleKey === 'overview_dashboard') return READ_ONLY;
   
+  // Basic fallback based on dept/level for non-admins if profile doc is missing
+  if (dept === 'hr' && ['workers', 'positions', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (dept === 'store' && ['store_inventory', 'vendors'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (dept === 'accounting' && ['cashbook', 'billing_notes'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (dept === 'client' && moduleKey === 'client_portal') return READ_ONLY;
+
   return NO_ACCESS;
 }
 

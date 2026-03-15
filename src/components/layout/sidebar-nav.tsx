@@ -31,7 +31,8 @@ import {
   Inbox,
   LockKeyhole,
   Grid,
-  SearchCheck
+  SearchCheck,
+  Settings
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -46,6 +47,7 @@ import {
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
 import { ModuleKey, canView } from '@/lib/permissions';
+import { isAdminUser } from '@/lib/auth-mapping';
 
 interface NavItem {
   key: ModuleKey;
@@ -123,28 +125,33 @@ const navGroups: NavGroup[] = [
 
 export function SidebarNav({ user, profile }: { user: User; profile?: PermissionProfile | null }) {
   const pathname = usePathname();
+  const isAdmin = isAdminUser(user);
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">
       <SidebarHeader className="border-b p-4 bg-primary text-primary-foreground">
-        <div className="flex items-center gap-2 font-bold">
-          <div className="bg-white text-primary p-1 rounded">
-            <FileText className="h-5 w-5" />
+        <div className="flex items-center gap-3 font-bold">
+          <div className="bg-white text-primary p-1.5 rounded shadow-sm">
+            <Settings className="h-5 w-5" />
           </div>
-          <span className="group-data-[collapsible=icon]:hidden text-lg tracking-tight">OPEC OpsFlow</span>
+          <div className="flex flex-col group-data-[collapsible=icon]:hidden overflow-hidden">
+            <span className="text-lg tracking-tight truncate leading-tight">OPEC OpsFlow</span>
+            <span className="text-[8px] opacity-60 uppercase tracking-widest font-black truncate">Platform v2.0</span>
+          </div>
         </div>
       </SidebarHeader>
-      <SidebarContent className="py-2">
+      <SidebarContent className="py-4">
         {navGroups.map((group) => {
+          // If user is admin, they see everything immediately
           const visibleItems = group.items.filter(item => 
-            canView(user, item.key, profile)
+            isAdmin || canView(user, item.key, profile)
           );
 
           if (visibleItems.length === 0) return null;
 
           return (
             <SidebarGroup key={group.label} className="py-2">
-              <SidebarGroupLabel className="px-4 text-[10px] uppercase tracking-widest font-black text-muted-foreground/50">
+              <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
                 {group.label}
               </SidebarGroupLabel>
               <SidebarGroupContent>
@@ -155,11 +162,11 @@ export function SidebarNav({ user, profile }: { user: User; profile?: Permission
                         asChild 
                         isActive={pathname === item.href} 
                         tooltip={item.title}
-                        className="transition-all duration-200"
+                        className={`transition-all duration-200 ${pathname === item.href ? 'font-bold' : ''}`}
                       >
                         <Link href={item.href}>
-                          <item.icon className="h-4 w-4" />
-                          <span className="font-medium">{item.title}</span>
+                          <item.icon className={`h-4 w-4 ${pathname === item.href ? 'text-primary' : 'text-muted-foreground'}`} />
+                          <span className="font-semibold text-xs tracking-tight">{item.title}</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

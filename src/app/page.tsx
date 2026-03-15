@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -82,16 +81,18 @@ export default function Home() {
 
   const { dept } = useMemo(() => inferDeptAndLevel(user), [user]);
   
-  // Defensive queries - only fetch if user is fully recognized as staff and has roles synced
+  // Defensive queries - Migration safe check
   const isInternalAuthorized = useMemo(() => {
-    if (!user || !user.isActive || user.approvalStatus !== 'ACTIVE') return false;
+    if (!user || !user.isActive) return false;
+    
+    // Absolute bypass for admins even during migration
+    if (isAdminUser(user)) return true;
+    
+    // Others must be approved
+    if (user.approvalStatus !== 'ACTIVE') return false;
     if (dept === 'client') return false;
     
-    // Ensure the user has roles assigned in the document (required by security rules)
-    const hasRoles = user.roleIds && user.roleIds.length > 0;
-    const hasProfile = !!user.permissionProfileKey;
-    
-    return hasRoles || hasProfile;
+    return true;
   }, [user, dept]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'main_contracts') : null), [firestore, isInternalAuthorized]);
@@ -226,7 +227,7 @@ export default function Home() {
 
   const dashboardPerms = can('overview_dashboard');
 
-  if (!dashboardPerms.view && !isPermLoading) {
+  if (!dashboardPerms.view && !isPermLoading && !isAdminUser(user)) {
     return (
       <AppShell user={user} onLogout={handleLogout}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
