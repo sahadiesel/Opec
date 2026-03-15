@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -26,15 +25,15 @@ import {
   UserCheck,
   UserX,
   Lock,
-  Clock
+  Clock,
+  Save
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel, ApprovalStatus } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, updateDoc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
   DialogContent, 
@@ -44,12 +43,10 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MenuKey, canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
-import { Separator } from '@/components/ui/separator';
+import { canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'บริหาร / ระบบ (Admin)' },
@@ -79,7 +76,7 @@ const STAFF_PRESETS = [
 
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -88,7 +85,6 @@ export default function UsersPage() {
   const [editedDept, setEditedDept] = useState<DeptType>('hr');
   const [editedLevel, setEditedLevel] = useState<AccessLevel>('viewer');
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
-  const [isActive, setIsActive] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -112,7 +108,6 @@ export default function UsersPage() {
     setEditedDept(dept);
     setEditedLevel(level);
     setEditedStatus(user.approvalStatus || 'PENDING');
-    setIsActive(user.isActive);
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
   };
@@ -143,26 +138,6 @@ export default function UsersPage() {
       }
 
       await updateDoc(userRef, updateData);
-
-      // Attempt legacy role collection update (Non-blocking fallback)
-      // Note: We don't use batch here because we don't want failure in roles_* collection
-      // to roll back the primary user update.
-      const allLegacyRoles: any[] = ['system_admin', 'hr_manager', 'hr_officer', 'finance_officer', 'operations_officer', 'sales_officer', 'store_officer', 'payroll_officer', 'client'];
-      
-      for (const role of allLegacyRoles) {
-        const roleDocRef = doc(firestore, `roles_${role}`, selectedUser.id);
-        if (legacyRoles.includes(role) && finalIsActive) {
-          // Fire and forget legacy doc creation
-          updateDoc(roleDocRef, { assignedAt: Date.now() }).catch(() => {
-            // If it doesn't exist, create it
-            const { setDoc } = require('firebase/firestore');
-            setDoc(roleDocRef, { assignedAt: Date.now() }).catch(() => {});
-          });
-        } else {
-          const { deleteDoc } = require('firebase/firestore');
-          deleteDoc(roleDocRef).catch(() => {});
-        }
-      }
 
       toast({ title: "บันทึกสำเร็จ", description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` });
       setIsEditDialogOpen(false);
