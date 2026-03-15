@@ -30,7 +30,8 @@ import {
   PackageSearch,
   Inbox,
   LockKeyhole,
-  Grid
+  Grid,
+  SearchCheck
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -114,6 +115,7 @@ const navGroups: NavGroup[] = [
       { key: 'system_admin', title: 'จัดการผู้ใช้ (User List)', href: '/users', icon: ShieldCheck },
       { key: 'system_admin', title: 'จัดการสิทธิ์ (Permissions)', href: '/system-admin/permissions', icon: LockKeyhole },
       { key: 'system_admin', title: 'เมทริกซ์สิทธิ์ (Matrix)', href: '/system-admin/permission-matrix', icon: Grid },
+      { key: 'system_admin', title: 'ตรวจสอบสิทธิ์ (Audit)', href: '/system-admin/permission-audit', icon: SearchCheck },
       { key: 'client_portal', title: 'Client Portal', href: '/client-portal', icon: ShieldAlert },
     ]
   },
