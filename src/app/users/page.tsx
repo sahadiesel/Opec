@@ -26,7 +26,8 @@ import {
   UserX,
   Lock,
   Clock,
-  Save
+  Save,
+  MoreHorizontal
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel, ApprovalStatus } from '@/lib/types';
@@ -42,6 +43,12 @@ import {
   DialogHeader, 
   DialogTitle 
 } from '@/components/ui/dialog';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
@@ -237,15 +244,31 @@ export default function UsersPage() {
                         <TableCell>
                           {getStatusBadge(u.approvalStatus, u.isActive)}
                         </TableCell>
-                        <TableCell className="text-right pr-6 space-x-2">
-                          <Button variant="ghost" size="icon" onClick={() => handleEditUser(u)}>
-                            <UserCog className="h-4 w-4" />
-                          </Button>
-                          {currentUser.id !== u.id && (
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(u.id)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
+                        <TableCell className="text-right pr-6">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" className="h-8 w-8 p-0">
+                                <span className="sr-only">Open menu</span>
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleEditUser(u)}>
+                                ดู
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditUser(u)}>
+                                แก้ไข
+                              </DropdownMenuItem>
+                              {currentUser.id !== u.id && (
+                                <DropdownMenuItem 
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => handleDelete(u.id)}
+                                >
+                                  ลบ
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     );
