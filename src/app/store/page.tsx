@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -8,29 +8,31 @@ import {
   Warehouse, 
   Plus, 
   History, 
-  ArrowUpRight, 
-  ArrowDownLeft, 
   AlertTriangle, 
   Package, 
   Search,
-  ShoppingCart,
   HardHat,
   Hammer,
   Info,
   ChevronRight,
   PackageMinus,
   PackagePlus,
-  PackageOpen,
   Trash2,
-  AlertCircle
+  AlertCircle,
+  Users,
+  TrendingDown,
+  ArrowRight,
+  ClipboardList,
+  CheckCircle2
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy, limit } from 'firebase/firestore';
-import { StoreItem, StoreTransaction, User } from '@/lib/types';
+import { collection, query, orderBy, limit, where } from 'firebase/firestore';
+import { StoreItem, StoreTransaction, User, Assignment, Worker } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function StoreDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -41,17 +43,66 @@ export default function StoreDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
+  // 1. Data Fetching
   const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
-  const { data: items } = useCollection<StoreItem>(itemsQuery as any);
+  const { data: items, isLoading: isItemsLoading } = useCollection<StoreItem>(itemsQuery as any);
 
-  const txQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(10)) : null), [firestore]);
+  const txQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(50)) : null), [firestore]);
   const { data: transactions } = useCollection<StoreTransaction>(txQuery as any);
 
-  if (!currentUser) return null;
+  const mobQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'mobilizations') : null), [firestore]);
+  const { data: mobilizations } = useCollection<Assignment>(mobQuery as any);
 
-  const lowStockCount = items?.filter(i => i.currentStock <= i.minimumStock).length || 0;
-  const activePPE = items?.filter(i => i.isPPE && i.active).length || 0;
-  const activeTools = items?.filter(i => i.isTool && i.active).length || 0;
+  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const { data: workers } = useCollection<Worker>(workersQuery as any);
+
+  // 2. Calculated Stats
+  const stats = useMemo(() => {
+    if (!items) return { total: 0, low: 0, activePPE: 0, activeTools: 0 };
+    return {
+      total: items.length,
+      low: items.filter(i => i.currentStock <= i.minimumStock).length,
+      activePPE: items.filter(i => i.isPPE && i.active).length,
+      activeTools: items.filter(i => i.isTool && i.active).length,
+    };
+  }, [items]);
+
+  const stockAlerts = useMemo(() => {
+    if (!items) return [];
+    return items.filter(i => i.currentStock <= i.minimumStock && i.active);
+  }, [items]);
+
+  const pendingReturns = useMemo(() => {
+    if (!transactions || !mobilizations || !workers) return [];
+    
+    // Group all transactions by assignment
+    const balanceMap: Record<string, { assignmentId: string; itemCount: number; totalQty: number }> = {};
+    
+    transactions.forEach(tx => {
+      if (!tx.assignmentId) return;
+      if (!balanceMap[tx.assignmentId]) {
+        balanceMap[tx.assignmentId] = { assignmentId: tx.assignmentId, itemCount: 0, totalQty: 0 };
+      }
+      
+      const change = tx.transactionType === 'ISSUE' ? tx.quantity : -tx.quantity;
+      balanceMap[tx.assignmentId].totalQty += change;
+    });
+
+    return Object.values(balanceMap)
+      .filter(b => b.totalQty > 0)
+      .map(b => {
+        const asgn = mobilizations.find(m => m.id === b.assignmentId);
+        const worker = workers.find(w => w.id === asgn?.workerId);
+        return {
+          ...b,
+          workerName: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
+          projectName: asgn?.projectName || 'Unknown Project',
+          waveCode: asgn?.waveId || 'N/A'
+        };
+      });
+  }, [transactions, mobilizations, workers]);
+
+  if (!currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -62,144 +113,269 @@ export default function StoreDashboardPage() {
             <Warehouse className="h-8 w-8" /> คลังอุปกรณ์ (Store / Inventory)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้จัดการ PPE และเครื่องมือสำหรับงาน offshore โดยผูกกับตำแหน่งงาน Assignment และ Wave เพื่อควบคุมการเบิกและการคืนของอย่างถูกต้อง
+            ใช้สำหรับดูภาพรวมสต๊อก PPE และเครื่องมือ รวมถึงรายการคงค้าง การเบิก-คืน และของที่ต้องจัดซื้อเพิ่ม
           </p>
         </div>
 
-        {/* Warning Notice */}
-        <Alert className="bg-amber-50 border-amber-200 text-amber-800">
-          <AlertTriangle className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold">นโยบายการเบิกอุปกรณ์ (Issuance Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            ระบบต้องอนุญาตให้เบิกเฉพาะ PPE หรือเครื่องมือที่ระบุไว้ใน Position Requirement เท่านั้น หากอยู่นอก requirement ต้องใช้ขั้นตอนอนุมัติพิเศษ
-          </AlertDescription>
-        </Alert>
+        {/* Action Bar */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <QuickActionCard 
+            title="เบิกอุปกรณ์" 
+            sub="Issue to Worker" 
+            href="/store/issue" 
+            icon={PackageMinus} 
+            color="bg-primary" 
+          />
+          <QuickActionCard 
+            title="รับคืนอุปกรณ์" 
+            sub="Return from Worker" 
+            href="/store/return" 
+            icon={PackagePlus} 
+            color="bg-blue-600" 
+          />
+          <QuickActionCard 
+            title="รับของเข้า" 
+            sub="Receive Stock" 
+            href="/store/receive" 
+            icon={Plus} 
+            color="bg-green-600" 
+          />
+          <QuickActionCard 
+            title="ตัดของออก" 
+            sub="Write-off / Scrapped" 
+            href="/store/writeoff" 
+            icon={Trash2} 
+            color="bg-destructive" 
+          />
+          <QuickActionCard 
+            title="ทะเบียนอุปกรณ์" 
+            sub="Master Catalog" 
+            href="/store/items" 
+            icon={ClipboardList} 
+            color="bg-slate-600" 
+          />
+        </div>
 
         {/* Stats Grid */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <StatCard title="รายการทั้งหมด" value={items?.length || 0} sub="Items in Catalog" icon={Package} colorClass="border-l-blue-600" />
-          <StatCard title="PPE Active" value={activePPE} sub="Personal Protective Eq." icon={HardHat} colorClass="border-l-orange-500" />
-          <StatCard title="เครื่องมือ Active" value={activeTools} sub="Tools & Equipment" icon={Hammer} colorClass="border-l-emerald-600" />
-          <StatCard title="สินค้าใกล้หมด" value={lowStockCount} sub="Below Minimum Level" icon={AlertTriangle} colorClass={lowStockCount > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
+        <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-6">
+          <StatCard title="รายการอุปกรณ์" value={stats.total} sub="Total Catalog Items" icon={Package} colorClass="border-l-slate-400" />
+          <StatCard title="PPE Active" value={stats.activePPE} sub="Safety Eq. Types" icon={HardHat} colorClass="border-l-orange-500" />
+          <StatCard title="เครื่องมือ Active" value={stats.activeTools} sub="Tools & Assets" icon={Hammer} colorClass="border-l-blue-500" />
+          <StatCard title="สินค้าใกล้หมด" value={stats.low} sub="Low Stock Alerts" icon={AlertTriangle} colorClass={stats.low > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
+          <StatCard title="รายการค้างคืน" value={pendingReturns.length} sub="Pending Returns" icon={Users} colorClass="border-l-amber-600" />
+          <StatCard title="ยอดค้างรวม" value={pendingReturns.reduce((sum, r) => sum + r.totalQty, 0)} sub="Items in Field" icon={TrendingDown} colorClass="border-l-indigo-600" />
         </div>
 
-        {/* Action Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Link href="/store/issue" className="block">
-            <Button className="w-full h-24 text-lg font-bold gap-3 shadow-md bg-primary hover:bg-primary/90 flex flex-col items-center justify-center pt-2">
-              <PackageMinus className="h-6 w-6" />
-              <span>เบิกอุปกรณ์ (Issue)</span>
-            </Button>
-          </Link>
-          <Link href="/store/return" className="block">
-            <Button variant="outline" className="w-full h-24 text-lg font-bold gap-3 shadow-md border-primary text-primary flex flex-col items-center justify-center pt-2">
-              <PackagePlus className="h-6 w-6" />
-              <span>รับคืนอุปกรณ์ (Return)</span>
-            </Button>
-          </Link>
-          <Link href="/store/receive" className="block">
-            <Button variant="secondary" className="w-full h-24 text-lg font-bold gap-3 shadow-md flex flex-col items-center justify-center pt-2">
-              <Plus className="h-6 w-6" />
-              <span>รับของเข้าคลัง (Receive)</span>
-            </Button>
-          </Link>
-          <Link href="/store/writeoff" className="block">
-            <Button variant="destructive" className="w-full h-24 text-lg font-bold gap-3 shadow-md flex flex-col items-center justify-center pt-2">
-              <Trash2 className="h-6 w-6" />
-              <span>ตัดจ่าย/ตัดของออก (Write-off)</span>
-            </Button>
-          </Link>
-        </div>
+        <Tabs defaultValue="alerts" className="w-full">
+          <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
+            <TabsTrigger value="alerts" className="gap-2 py-2 px-6">แจ้งเตือนสต็อก ({stockAlerts.length})</TabsTrigger>
+            <TabsTrigger value="returns" className="gap-2 py-2 px-6">รายการค้างคืน ({pendingReturns.length})</TabsTrigger>
+            <TabsTrigger value="recent" className="gap-2 py-2 px-6">ความเคลื่อนไหวล่าสุด</TabsTrigger>
+            <TabsTrigger value="requirements" className="gap-2 py-2 px-6">ความต้องการจัดซื้อ</TabsTrigger>
+          </TabsList>
 
-        <div className="grid gap-6 md:grid-cols-3">
-          {/* Recent Transactions */}
-          <Card className="md:col-span-2">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-xl flex items-center gap-2">
-                  <History className="h-5 w-5" /> ประวัติการทำรายการล่าสุด (Recent Activity)
-                </CardTitle>
-                <CardDescription>รายการล่าสุด 10 รายการในคลัง</CardDescription>
+          <TabsContent value="alerts" className="mt-6 space-y-6">
+            {stockAlerts.length > 0 ? (
+              <Card className="border-red-200 shadow-lg overflow-hidden">
+                <CardHeader className="bg-red-50/50 border-b border-red-100">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="text-red-700 flex items-center gap-2">
+                        <AlertCircle className="h-5 w-5" /> สินค้าใกล้หมดหรือขาดแคลน (Stock Alerts)
+                      </CardTitle>
+                      <CardDescription>รายการสินค้าที่มีจำนวนคงเหลือต่ำกว่าเกณฑ์มาตรฐาน</CardDescription>
+                    </div>
+                    <Button variant="outline" className="text-red-700 border-red-200 hover:bg-red-100" asChild>
+                      <Link href="/store/receive">สั่งซื้อ/รับเข้า <ArrowRight className="h-4 w-4 ml-2" /></Link>
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="font-bold pl-6">รหัส</TableHead>
+                        <TableHead className="font-bold">ชื่ออุปกรณ์</TableHead>
+                        <TableHead className="font-bold">หมวดหมู่</TableHead>
+                        <TableHead className="text-center font-bold">คงเหลือ</TableHead>
+                        <TableHead className="text-center font-bold">เกณฑ์ขั้นต่ำ</TableHead>
+                        <TableHead className="text-center font-bold text-red-600">จำนวนที่ขาด</TableHead>
+                        <TableHead className="text-right pr-6">จัดการ</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {stockAlerts.map((item) => (
+                        <TableRow key={item.id} className="hover:bg-muted/30">
+                          <TableCell className="pl-6 font-mono text-xs font-bold text-primary">{item.itemCode}</TableCell>
+                          <TableCell className="font-bold text-primary">{item.itemName}</TableCell>
+                          <TableCell><Badge variant="outline">{item.category}</Badge></TableCell>
+                          <TableCell className="text-center">
+                            <span className={`font-black ${item.currentStock === 0 ? 'text-red-600' : 'text-orange-600'}`}>
+                              {item.currentStock} {item.unit}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-center text-muted-foreground">{item.minimumStock}</TableCell>
+                          <TableCell className="text-center font-black text-red-600">
+                            {Math.max(0, item.minimumStock - item.currentStock)}
+                          </TableCell>
+                          <TableCell className="text-right pr-6">
+                            <Button size="sm" variant="ghost" asChild>
+                              <Link href="/store/receive">รับเข้า <ChevronRight className="h-4 w-4" /></Link>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="py-20 text-center space-y-4 border-2 border-dashed rounded-lg bg-muted/10">
+                <CheckCircle2 className="h-12 w-12 mx-auto text-green-500/30" />
+                <p className="text-muted-foreground italic">ไม่มีการแจ้งเตือนสต็อก ทุกรายการมีสินค้าเพียงพอ</p>
               </div>
-              <Button variant="ghost" asChild>
-                <Link href="/store/transactions">ดูทั้งหมด <ChevronRight className="h-4 w-4 ml-1" /></Link>
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ประเภท</TableHead>
-                    <TableHead>รายการ</TableHead>
-                    <TableHead>จำนวน</TableHead>
-                    <TableHead>วันที่</TableHead>
-                    <TableHead>ผู้ดำเนินการ</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {transactions?.map((tx) => {
-                    const item = items?.find(i => i.id === tx.itemId);
-                    return (
-                      <TableRow key={tx.id}>
-                        <TableCell>
-                          <Badge variant={tx.transactionType === 'ISSUE' || tx.transactionType === 'WRITEOFF' ? 'destructive' : 'default'} className="uppercase text-[10px]">
-                            {tx.transactionType}
+            )}
+          </TabsContent>
+
+          <TabsContent value="returns" className="mt-6">
+            <Card className="shadow-lg overflow-hidden border-none">
+              <CardHeader className="bg-amber-50/50 border-b">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Users className="h-5 w-5 text-amber-600" /> รายการค้างคืนจากคนงาน (Pending Returns)
+                </CardTitle>
+                <CardDescription>รายการ PPE และเครื่องมือที่พนักงานยังไม่ได้ส่งคืนหลังจบงานหรือ Demob</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="font-bold pl-6">พนักงาน (Worker)</TableHead>
+                      <TableHead className="font-bold">โครงการ / โฟลว์</TableHead>
+                      <TableHead className="font-bold">รอบงาน (Wave)</TableHead>
+                      <TableHead className="text-center font-bold">จำนวนชิ้นที่ถือครอง</TableHead>
+                      <TableHead className="text-right pr-6">ดำเนินการ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingReturns.map((ret) => (
+                      <TableRow key={ret.assignmentId} className="hover:bg-muted/30 transition-colors">
+                        <TableCell className="pl-6 font-bold text-primary">{ret.workerName}</TableCell>
+                        <TableCell className="text-sm">{ret.projectName}</TableCell>
+                        <TableCell><Badge variant="outline" className="font-mono bg-white">{ret.waveCode}</Badge></TableCell>
+                        <TableCell className="text-center">
+                          <Badge className="bg-amber-600 hover:bg-amber-700 font-bold px-3">
+                            {ret.totalQty} รายการ
                           </Badge>
                         </TableCell>
-                        <TableCell className="font-medium">{item?.itemName || 'Unknown Item'}</TableCell>
-                        <TableCell className="font-bold">{tx.quantity}</TableCell>
-                        <TableCell className="text-xs">{tx.transactionDate}</TableCell>
-                        <TableCell className="text-[10px] text-muted-foreground">{tx.createdBy}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Button size="sm" variant="outline" className="border-amber-600 text-amber-700 hover:bg-amber-50 font-bold" asChild>
+                            <Link href="/store/return">บันทึกรับคืน <ChevronRight className="h-4 w-4 ml-1" /></Link>
+                          </Button>
+                        </TableCell>
                       </TableRow>
-                    );
-                  })}
-                  {(!transactions || transactions.length === 0) && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีประวัติการทำรายการ</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          {/* Quick Links & Info */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">ระบบจัดการหลัก</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Button variant="outline" className="w-full justify-between" asChild>
-                  <Link href="/store/items">
-                    <span className="flex items-center gap-2"><Package className="h-4 w-4" /> ทะเบียนอุปกรณ์ (Master Data)</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button variant="outline" className="w-full justify-between" asChild>
-                  <Link href="/store/outstanding">
-                    <span className="flex items-center gap-2"><ShoppingCart className="h-4 w-4" /> รายการค้างคืน (Outstanding)</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Link>
-                </Button>
+                    ))}
+                    {pendingReturns.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการค้างคืนในขณะนี้</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
+          </TabsContent>
 
-            <Card className="bg-primary/5 border-dashed">
-              <CardHeader>
-                <CardTitle className="text-sm flex items-center gap-2 text-primary">
-                  <Info className="h-4 w-4" /> ขั้นตอนการทำงาน
+          <TabsContent value="recent" className="mt-6">
+            <Card className="shadow-lg border-none overflow-hidden">
+              <CardHeader className="bg-muted/30 border-b">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <History className="h-5 w-5 text-primary" /> ประวัติการทำรายการ (Recent Transactions)
                 </CardTitle>
               </CardHeader>
-              <CardContent className="text-xs space-y-3 text-muted-foreground">
-                <p>1. <b>เลือก Worker & Assignment:</b> เพื่อดึงตำแหน่งงานมาตรวจสอบ Requirement</p>
-                <p>2. <b>ตรวจสอบรายการ:</b> ระบบจะอนุญาตให้เบิกเฉพาะสิ่งที่ระบุในเมทริกซ์ตำแหน่งเท่านั้น</p>
-                <p>3. <b>บันทึกการเบิก:</b> สต็อกจะถูกตัด และสถานะความพร้อมในหน้า Mobilization จะอัปเดต</p>
-                <p>4. <b>คืนอุปกรณ์:</b> เมื่อพนักงานกลับจากหน้างาน (Demob) ต้องคืนอุปกรณ์เพื่อปิด Wave</p>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="font-bold pl-6">วันที่ (Date)</TableHead>
+                      <TableHead className="font-bold">ประเภท</TableHead>
+                      <TableHead className="font-bold">อุปกรณ์</TableHead>
+                      <TableHead className="text-center font-bold">จำนวน</TableHead>
+                      <TableHead className="font-bold">อ้างอิง / ผู้เบิก</TableHead>
+                      <TableHead className="text-right pr-6">ผู้ทำรายการ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {transactions?.map((tx) => {
+                      const item = items?.find(i => i.id === tx.itemId);
+                      const worker = workers?.find(w => w.id === tx.workerId);
+                      return (
+                        <TableRow key={tx.id} className="hover:bg-muted/20">
+                          <TableCell className="pl-6 text-xs text-muted-foreground">{tx.transactionDate}</TableCell>
+                          <TableCell>
+                            <Badge variant={
+                              tx.transactionType === 'ISSUE' || tx.transactionType === 'WRITEOFF' || tx.transactionType === 'DAMAGED' || tx.transactionType === 'LOST' 
+                              ? 'destructive' : 'default'
+                            } className="uppercase text-[9px] font-bold">
+                              {tx.transactionType}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-medium text-sm">{item?.itemName || 'N/A'}</TableCell>
+                          <TableCell className="text-center font-bold">{tx.quantity}</TableCell>
+                          <TableCell className="text-[10px] text-muted-foreground">
+                            {worker ? `${worker.firstName} ${worker.lastName}` : (tx.referenceId ? `Ref: ${tx.referenceId.substring(0,8)}` : '-')}
+                          </TableCell>
+                          <TableCell className="text-right pr-6 text-[10px] font-medium text-primary">{tx.createdBy}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
-          </div>
-        </div>
+          </TabsContent>
+
+          <TabsContent value="requirements" className="mt-6">
+            <Card className="shadow-lg border-none overflow-hidden">
+              <CardHeader className="bg-blue-50/50 border-b">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5 text-blue-600" /> แผนความต้องการอุปกรณ์ (Demand Requirements)
+                </CardTitle>
+                <CardDescription>คำนวณจากจำนวนพนักงานที่กำลังเตรียมส่งตัว (Mobilization Queue)</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="font-bold pl-6">อุปกรณ์</TableHead>
+                      <TableHead className="text-center font-bold">ความต้องการ (Demand)</TableHead>
+                      <TableHead className="text-center font-bold">พร้อมใช้งาน (Available)</TableHead>
+                      <TableHead className="text-center font-bold text-red-600">ขาดแคลน (Shortage)</TableHead>
+                      <TableHead className="text-right pr-6">คำแนะนำ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {items?.filter(i => i.currentStock <= i.minimumStock).map(i => (
+                      <TableRow key={i.id}>
+                        <TableCell className="pl-6 font-bold text-primary">{i.itemName}</TableCell>
+                        <TableCell className="text-center text-muted-foreground">-</TableCell>
+                        <TableCell className="text-center font-bold">{i.currentStock}</TableCell>
+                        <TableCell className="text-center font-black text-red-600">{i.minimumStock}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700">Recommend Purchase</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {(!items || items.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่มีข้อมูลความต้องการพิเศษ</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </AppShell>
   );
@@ -207,15 +383,35 @@ export default function StoreDashboardPage() {
 
 function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   return (
-    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm`}>
+    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm h-full`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-4 w-4 opacity-50" />
+        <Icon className="h-4 w-4 opacity-50 text-primary" />
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-black text-primary">{value}</div>
         <p className="text-[10px] font-medium text-muted-foreground mt-1">{sub}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function QuickActionCard({ title, sub, href, icon: Icon, color }: any) {
+  return (
+    <Link href={href} className="block group">
+      <Card className="h-full hover:shadow-lg transition-all border-none shadow-md overflow-hidden">
+        <div className={`h-1.5 ${color}`} />
+        <CardContent className="p-4 flex items-center gap-4 group-hover:bg-muted/10">
+          <div className={`p-2 rounded-lg ${color} text-white shadow-sm`}>
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm text-primary truncate leading-tight">{title}</p>
+            <p className="text-[10px] text-muted-foreground font-medium truncate">{sub}</p>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+        </CardContent>
+      </Card>
+    </Link>
   );
 }
