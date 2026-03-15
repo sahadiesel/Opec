@@ -106,63 +106,7 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
 }
 
 /**
- * Generates the full set of migrated fields for a user document.
- * Safe and idempotent.
- */
-export function getMigratedUserFields(user: Partial<User>): Partial<User> {
-  const { dept, level } = inferDeptAndLevel(user);
-  const isActive = user.isActive ?? true;
-  const approvalStatus: ApprovalStatus = user.approvalStatus || (isActive ? 'ACTIVE' : 'PENDING');
-  
-  return {
-    department: dept,
-    level: level,
-    isActive: isActive,
-    approvalStatus: approvalStatus,
-    customerId: user.customerId || null,
-    notes: user.notes || "",
-    roleIds: getLegacyRoles(dept, level), // Keep sync for security rules compatibility
-    updatedAt: Date.now()
-  };
-}
-
-/**
- * Effective Authorization Helpers
- */
-export const getEffectiveDepartment = (user: Partial<User> | null) => inferDeptAndLevel(user).dept;
-export const getEffectiveLevel = (user: Partial<User> | null) => inferDeptAndLevel(user).level;
-
-export const isAdminUser = (user: User | null) => {
-  const { dept, level } = inferDeptAndLevel(user);
-  return (dept === 'admin' && level === 'admin');
-};
-
-export const isHRUser = (user: User | null) => getEffectiveDepartment(user) === 'hr';
-export const isHRManager = (user: User | null) => {
-  const { dept, level } = inferDeptAndLevel(user);
-  return (dept === 'hr' && (level === 'manager' || level === 'admin')) || (dept === 'admin' && level === 'admin');
-};
-
-export const isAccountingUser = (user: User | null) => getEffectiveDepartment(user) === 'accounting';
-export const isSalesUser = (user: User | null) => getEffectiveDepartment(user) === 'sales';
-export const isOperationsUser = (user: User | null) => getEffectiveDepartment(user) === 'operations';
-export const isStoreUser = (user: User | null) => getEffectiveDepartment(user) === 'store';
-export const isClientUser = (user: User | null) => getEffectiveDepartment(user) === 'client';
-
-/**
- * Functional permission helpers
- */
-export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): boolean {
-  return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
-}
-
-// Legacy-named exports for backward compatibility
-export const isAdmin = isAdminUser;
-export const sameCustomer = (user: User | null, recordCustomerId: string) => 
-  isAdminUser(user) || (isClientUser(user) && user?.customerId === recordCustomerId);
-
-/**
- * Maps Dept + Level to legacy roleIds for Firestore Security Rules
+ * Maps Dept + Level to legacy roleIds for Firestore Security Rules compatibility
  */
 export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
   if (dept === 'admin' && level === 'admin') return ['system_admin'];
@@ -197,6 +141,61 @@ export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
   
   return roles;
 }
+
+/**
+ * Generates the full set of migrated fields for a user document.
+ * Safe and idempotent.
+ */
+export function getMigratedUserFields(user: Partial<User>): Partial<User> {
+  const { dept, level } = inferDeptAndLevel(user);
+  const isActive = user.isActive ?? true;
+  const approvalStatus: ApprovalStatus = user.approvalStatus || (isActive ? 'ACTIVE' : 'PENDING');
+  
+  return {
+    department: dept,
+    level: level,
+    isActive: isActive,
+    approvalStatus: approvalStatus,
+    customerId: user.customerId || null,
+    notes: user.notes || "",
+    roleIds: getLegacyRoles(dept, level), // Keep sync for security rules compatibility
+    updatedAt: Date.now()
+  };
+}
+
+/**
+ * Effective Authorization Helpers
+ */
+export const getEffectiveDepartment = (user: Partial<User> | null) => inferDeptAndLevel(user).dept;
+export const getEffectiveLevel = (user: Partial<User> | null) => inferDeptAndLevel(user).level;
+
+export const isAdminUser = (user: User | null) => {
+  if (!user) return false;
+  const { dept, level } = inferDeptAndLevel(user);
+  return (dept === 'admin' && level === 'admin');
+};
+
+export const isHRUser = (user: User | null) => getEffectiveDepartment(user) === 'hr';
+export const isHRManager = (user: User | null) => {
+  const { dept, level } = inferDeptAndLevel(user);
+  return (dept === 'hr' && (level === 'manager' || level === 'admin')) || (dept === 'admin' && level === 'admin');
+};
+
+export const isAccountingUser = (user: User | null) => getEffectiveDepartment(user) === 'accounting';
+export const isSalesUser = (user: User | null) => getEffectiveDepartment(user) === 'sales';
+export const isOperationsUser = (user: User | null) => getEffectiveDepartment(user) === 'operations';
+export const isStoreUser = (user: User | null) => getEffectiveDepartment(user) === 'store';
+export const isClientUser = (user: User | null) => getEffectiveDepartment(user) === 'client';
+
+/**
+ * Functional permission helpers
+ */
+export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): boolean {
+  return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
+}
+
+export const sameCustomer = (user: User | null, recordCustomerId: string) => 
+  isAdminUser(user) || (isClientUser(user) && user?.customerId === recordCustomerId);
 
 /**
  * Visibility and Access Rules per Menu
