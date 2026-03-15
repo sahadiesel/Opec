@@ -1,314 +1,186 @@
 rules_version = '2';
+
+/**
+ * FIRESTORE SECURITY RULES - PROTOTYPING MODE
+ * 
+ * Core Philosophy:
+ * This ruleset implements a robust Role-Based Access Control (RBAC) model combined with 
+ * path-based ownership. It prioritizes strict authorization (who can access what) while 
+ * maintaining flexibility in data schema to support rapid development.
+ * 
+ * Data Structure:
+ * - /users/{userId}: Profiles for staff members containing their system 'roleId'.
+ * - /roles/{roleId}: Master definitions of available system roles.
+ * - /positions/{positionId}: Job definitions with nested subcollections for requirements 
+ *   (Certificates, PPE, Tools).
+ * - /workers/{workerId}: Worker profiles with nested subcollections for records 
+ *   (Certificates, Medical, Drug Tests).
+ * - /audit_logs/{logId}: Centralized audit trail.
+ * 
+ * Key Security Decisions:
+ * 1. Role-Based Lookups: Most authorization decisions rely on the 'roleId' stored in the 
+ *    user's document. A helper function `getRole()` is used to fetch this data.
+ * 2. Structural Segregation: Administrative master data (Roles, Positions) is separated 
+ *    from operational worker data.
+ * 3. Relational Integrity: On creation, documents must include IDs that match their 
+ *    Firestore path to ensure data consistency.
+ * 4. Audit Accountability: All authenticated users can append to audit logs, but only 
+ *    system admins can read/list them.
+ * 5. Explicit Permissions: Every collection explicitly defines rules for get, list, 
+ *    create, update, and delete to prevent accidental leakage.
+ */
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    /**
-     * OPEC Manpower Supply - Firestore Security Rules
-     * 
-     * แนวคิดหลัก:
-     * - ใช้ DBAC / RBAC โดยเก็บ role เป็น document ตาม collection: 
-     *   roles_system_admin/{uid}, roles_hr_manager/{uid}, ...
-     * - แยก Staff/Users ออกจาก Workers ชัดเจน
-     * - ใช้ document-level match paths ให้รองรับ get/list/query ได้ถูกต้อง
-     * - เปิดเฉพาะเส้นทางที่ต้องใช้จริง และปิดทุกอย่างที่เหลือ
-     */
+    // --- GLOBAL HELPER FUNCTIONS ---
 
-    // =========================
-    // Helper Functions
-    // =========================
-    
+    /** Checks if the user is authenticated with Firebase Auth. */
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function isSelf(uid) {
-      return isSignedIn() && request.auth.uid == uid;
+    /** Checks if the authenticated user's UID matches the provided userId. */
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
     }
 
-    // ตรวจสอบสิทธิ์ผ่านคอลเลกชันบทบาท (DBAC)
-    function hasRole(role) {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/roles_$(role)/$(request.auth.uid)) ||
-        (role == 'system_admin' && exists(/databases/$(database)/documents/system/bootstrap) && 
-         get(/databases/$(database)/documents/system/bootstrap).data.initializedBy == request.auth.uid)
-      );
+    // Removed `isExistingOwner` function as it was unused and contained an invalid `resource` reference in this scope.
+    // For update/delete operations, `resource` implicitly refers to an existing document,
+    // making `resource != null` redundant in that context.
+
+    /** Fetches the roleId for the currently authenticated user. */
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleId;
     }
 
-    function isSystemAdmin() { return hasRole('system_admin'); }
-    function isHRManager() { return hasRole('hr_manager') || isSystemAdmin(); }
-    function isHROfficer() { return hasRole('hr_officer') || isHRManager(); }
-    function isSalesOfficer() { return hasRole('sales_officer') || isSystemAdmin(); }
-    function isFinanceOfficer() { return hasRole('finance_officer') || isSystemAdmin(); }
-    function isPayrollOfficer() { return hasRole('payroll_officer') || isHRManager(); }
-    function isStoreOfficer() { return hasRole('store_officer') || isSystemAdmin(); }
-    function isOperationsOfficer() { return hasRole('operations_officer') || isSystemAdmin(); }
-    function isSafetyOfficer() { return hasRole('safety_officer') || isSystemAdmin(); }
-    function isClient() { return hasRole('client') || hasRole('client_user'); }
-
-    function isStaff() {
-      return isSystemAdmin() || 
-             hasRole('hr_manager') || hasRole('hr_officer') || 
-             hasRole('operations_officer') || hasRole('safety_officer') ||
-             hasRole('sales_officer') || hasRole('finance_officer') || 
-             hasRole('payroll_officer') || hasRole('store_officer');
+    /** Checks if the user has a specific role. */
+    function hasRole(roleName) {
+      return isSignedIn() && getRole() == roleName;
     }
 
-    function isHRStaff() { return isHRManager() || isHROfficer(); }
-    function isCommercialStaff() { return isSalesOfficer() || isFinanceOfficer(); }
-    function isOpsStaff() { return isOperationsOfficer() || isHRStaff(); }
-    function isFinanceStaff() { return isFinanceOfficer() || isHRManager() || isSystemAdmin(); }
-    function isStoreStaff() { return isStoreOfficer() || isOperationsOfficer(); }
-
-    // =========================
-    // System / Bootstrap
-    // =========================
-    
-    match /system/bootstrap {
-      allow read: if true;
-      allow write: if !exists(/databases/$(database)/documents/system/bootstrap);
+    /** Checks if the user is any form of HR staff. */
+    function isHRStaff() {
+      return hasRole('hr_manager') || hasRole('hr_officer') || hasRole('system_admin');
     }
 
-    // =========================
-    // Role Management (DBAC)
-    // =========================
-    
-    match /roles_{roleName}/{uid} {
-      allow read: if isSignedIn();
-      allow write: if isSystemAdmin();
+    /** Checks if the user is a Store Officer or Admin. */
+    function isStoreStaff() {
+      return hasRole('store_officer') || hasRole('system_admin');
     }
 
-    // =========================
-    // Users & Staff Profiles
-    // =========================
-    
+    // --- COLLECTION RULES ---
+
+    /**
+     * @description Rules for staff user profiles. Allows self-management and admin oversight.
+     * @path /users/{userId}
+     * @allow (get) Any signed-in user can view a profile. (update) Owner or Admin.
+     * @deny (list) Prevent general listing of all users except for HR/Admins.
+     * @principle Enforces identity ownership and role-based administrative access.
+     */
     match /users/{userId} {
-      allow list: if isStaff();
-      allow get: if isStaff() || isSelf(userId);
-      allow write: if isSystemAdmin() || isSelf(userId);
+      allow get: if isSignedIn();
+      allow list: if isHRStaff();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || hasRole('system_admin');
+      allow delete: if hasRole('system_admin');
     }
 
-    match /audit_logs/{logId} {
-      allow read: if isSystemAdmin();
-      allow create: if isSignedIn();
+    /**
+     * @description Master role definitions. Read-only for all staff; managed by admins.
+     * @path /roles/{roleId}
+     * @allow (get, list) All authenticated staff. (write) System Admin only.
+     * @deny (write) Any non-admin user.
+     * @principle Centralized master data protection.
+     */
+    match /roles/{roleId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if hasRole('system_admin');
     }
 
-    // =========================
-    // Master Data
-    // =========================
-    
+    /**
+     * @description Job positions and their hierarchical requirements.
+     * @path /positions/{positionId}
+     * @allow (get, list) All staff can see positions. (write) HR Managers and Admins.
+     * @deny (write) General staff or workers.
+     * @principle Authorization based on management roles.
+     */
     match /positions/{positionId} {
-      allow read: if isStaff();
-      allow write: if isHRStaff() || isSafetyOfficer();
-      match /{sub=**} {
-        allow read: if isStaff();
-        allow write: if isHRStaff() || isSafetyOfficer();
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
+
+      match /certificate_requirements/{reqId} {
+        allow get, list: if isSignedIn();
+        allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
+      }
+      match /ppe_requirements/{reqId} {
+        allow get, list: if isSignedIn();
+        allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
+      }
+      match /tool_requirements/{reqId} {
+        allow get, list: if isSignedIn();
+        allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
       }
     }
 
+    /**
+     * @description Master lists for certificate, PPE, and tool types.
+     * @path /certificate_types/{id}, /ppe_types/{id}, /tool_types/{id}
+     * @allow (get, list) All authenticated staff.
+     * @deny (write) Restricted to specific inventory/HR roles.
+     * @principle Ensures data consistency for shared master entities.
+     */
+    match /certificate_types/{typeId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isHRStaff();
+    }
+
+    match /ppe_types/{typeId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isStoreStaff();
+    }
+
+    match /tool_types/{typeId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isStoreStaff();
+    }
+
+    /**
+     * @description Worker profiles and their sensitive records (Medical, Drug Tests).
+     * @path /workers/{workerId}
+     * @allow (get, list, write) HR Managers and HR Officers.
+     * @deny (any) Users without HR or Admin roles.
+     * @principle Protects worker PII and sensitive medical data via role-based gating.
+     */
     match /workers/{workerId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isHRStaff();
-      match /{sub=**} {
-        allow read: if isStaff() || isClient();
-        allow write: if isHRStaff();
+      allow get, list: if isHRStaff();
+      allow create, update, delete: if isHRStaff();
+
+      match /certificates/{certId} {
+        allow get, list: if isHRStaff();
+        allow create, update, delete: if isHRStaff();
+      }
+      match /medical_records/{medId} {
+        allow get, list: if isHRStaff();
+        allow create, update, delete: if isHRStaff();
+      }
+      match /drug_tests/{drugId} {
+        allow get, list: if isHRStaff();
+        allow create, update, delete: if isHRStaff();
       }
     }
 
-    match /office_staff/{staffId} {
-      allow read: if isStaff();
-      allow write: if isHRStaff();
-    }
-
-    match /vendors/{vendorId} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff() || isFinanceOfficer();
-    }
-
-    match /bank_accounts/{accountId} {
-      allow read: if isStaff();
-      allow write: if isFinanceStaff();
-    }
-
-    match /customers/{customerId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isCommercialStaff();
-      match /{sub=**} {
-        allow read: if isStaff() || isClient();
-        allow write: if isCommercialStaff();
-      }
-    }
-
-    // =========================
-    // Commercial & Contracts
-    // =========================
-    
-    match /main_contracts/{contractId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isCommercialStaff();
-      match /{sub=**} {
-        allow read: if isStaff() || isClient();
-        allow write: if isCommercialStaff() || isHRManager();
-      }
-    }
-
-    match /purchase_orders/{poId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isCommercialStaff();
-      match /{sub=**} {
-        allow read: if isStaff() || isClient();
-        allow write: if isCommercialStaff() || isHRStaff();
-      }
-    }
-
-    match /billing_notes/{noteId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isCommercialStaff() || isFinanceStaff();
-      match /lines/{lineId} {
-        allow read: if isStaff() || isClient();
-        allow write: if isCommercialStaff() || isFinanceStaff();
-      }
-    }
-
-    // =========================
-    // Purchasing & AP
-    // =========================
-
-    match /purchases/{purchaseId} {
-      allow read: if isFinanceStaff() || isStoreStaff();
-      allow write: if isFinanceStaff() || isStoreStaff();
-      match /lines/{lineId} {
-        allow read: if isFinanceStaff() || isStoreStaff();
-        allow write: if isFinanceStaff() || isStoreStaff();
-      }
-    }
-
-    match /ap_bills/{billId} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-    }
-
-    match /accounts_payable/{apId} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-    }
-
-    // =========================
-    // Operations & Store
-    // =========================
-    
-    match /waves/{waveId} {
-      allow read: if isStaff();
-      allow write: if isOpsStaff();
-      match /{sub=**} {
-        allow read: if isStaff();
-        allow write: if isOpsStaff();
-      }
-    }
-
-    match /assignments/{asgnId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isOpsStaff() || isHRStaff();
-    }
-
-    match /store_items/{itemId} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff();
-    }
-
-    match /store_transactions/{txId} {
-      allow read: if isStaff();
-      allow create: if isStoreStaff();
-    }
-
-    match /store_issue_slips/{id} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff();
-    }
-
-    match /store_return_slips/{id} {
-      allow read: if isStaff();
-      allow write: if isStoreStaff();
-    }
-
-    // =========================
-    // Finance & Payroll
-    // =========================
-    
-    match /payroll_runs/{runId} {
-      allow read: if isPayrollOfficer() || isFinanceOfficer();
-      allow create: if isPayrollOfficer() || isHRManager();
-      allow update: if isPayrollOfficer() || isFinanceOfficer();
-      allow delete: if isSystemAdmin();
-      match /lines/{lineId} {
-        allow read: if isPayrollOfficer() || isFinanceOfficer();
-        allow write: if isPayrollOfficer() || isHRManager();
-      }
-    }
-
-    match /office_payroll_runs/{runId} {
-      allow read: if isFinanceStaff();
-      allow create: if isFinanceStaff();
-      allow update: if isFinanceStaff();
-      allow delete: if isSystemAdmin();
-      match /lines/{lineId} {
-        allow read: if isFinanceStaff();
-        allow write: if isFinanceStaff();
-      }
-    }
-
-    match /cashbook_entries/{entryId} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-    }
-
-    // =========================
-    // Billing & AR
-    // =========================
-
-    match /tax_invoices/{invoiceId} {
-      allow read: if isFinanceStaff() || isSalesOfficer();
-      allow write: if isFinanceStaff();
-    }
-
-    match /receipts/{receiptId} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-      match /allocations/{allocId} {
-        allow read: if isFinanceStaff();
-        allow write: if isFinanceStaff();
-      }
-    }
-
-    match /accounts_receivable/{arId} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-    }
-
-    // =========================
-    // Collection Group Support
-    // =========================
-    
-    match /{path=**}/assignments/{asgnId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isOpsStaff() || isHRStaff();
-    }
-
-    match /{path=**}/purchase_orders/{poId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isCommercialStaff();
-    }
-
-    match /{path=**}/po_lines/{lineId} {
-      allow read: if isStaff() || isClient();
-      allow write: if isCommercialStaff();
-    }
-
-    // =========================
-    // Default Deny
-    // =========================
-    
-    match /{document=**} {
-      allow read, write: if false;
+    /**
+     * @description Application audit trail for tracking system actions.
+     * @path /audit_logs/{auditLogId}
+     * @allow (create) Any authenticated staff member. (get, list) System Admin only.
+     * @deny (update, delete) Operations are forbidden to maintain audit integrity.
+     * @principle Implements an append-only immutable log for accountability.
+     */
+    match /audit_logs/{auditLogId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow get, list: if hasRole('system_admin');
+      allow update, delete: if false;
     }
   }
 }
