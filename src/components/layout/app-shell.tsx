@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
 import { useFirestore } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import { inferDeptAndLevel } from '@/lib/auth-mapping';
+import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -35,7 +35,9 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   if (!user) return <>{children}</>;
 
-  const { dept, level } = inferDeptAndLevel(user);
+  const dept = getEffectiveDepartment(user);
+  const level = getEffectiveLevel(user);
+  
   const deptDisplay = dept.toUpperCase();
   const levelDisplay = level.toUpperCase();
 

@@ -60,101 +60,70 @@ export const LEGACY_ROLE_MAP: Record<string, { dept: DeptType; level: AccessLeve
 };
 
 /**
- * Infers Dept and Level from legacy roleIds if new fields are missing
+ * Infers Dept and Level from legacy roleIds if new fields are missing.
+ * This is the core migration-safe engine.
  */
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
   if (!user) return { dept: 'hr', level: 'viewer' };
   
-  // Use existing if available
+  // 1. Use explicit fields if available
   if (user.department && user.level) {
     return { dept: user.department, level: user.level };
   }
 
-  // Fallback to roleIds
+  // 2. Fallback to roleIds (Array)
   const roles = user.roleIds || [];
   if (roles.includes('system_admin')) return { dept: 'admin', level: 'admin' };
   if (roles.includes('hr_manager')) return { dept: 'hr', level: 'manager' };
-  if (roles.includes('hr_officer')) return { dept: 'hr', level: 'officer' };
+  if (roles.includes('hr_officer') || roles.includes('payroll_officer')) return { dept: 'hr', level: 'officer' };
   if (roles.includes('finance_officer')) return { dept: 'accounting', level: 'officer' };
   if (roles.includes('sales_officer')) return { dept: 'sales', level: 'officer' };
   if (roles.includes('store_officer')) return { dept: 'store', level: 'officer' };
   if (roles.includes('operations_officer')) return { dept: 'operations', level: 'officer' };
   if (roles.includes('client') || roles.includes('client_user')) return { dept: 'client', level: 'viewer' };
 
+  // 3. Last resort fallback to single roleId
+  if (user.roleId && LEGACY_ROLE_MAP[user.roleId]) {
+    return LEGACY_ROLE_MAP[user.roleId];
+  }
+
   return { dept: 'hr', level: 'viewer' };
 }
 
+/**
+ * Effective Authorization Helpers (Requested names)
+ */
+export const getEffectiveDepartment = (user: Partial<User> | null) => inferDeptAndLevel(user).dept;
+export const getEffectiveLevel = (user: Partial<User> | null) => inferDeptAndLevel(user).level;
+
+export const isAdminUser = (user: User | null) => {
+  const { dept, level } = inferDeptAndLevel(user);
+  return (dept === 'admin' && level === 'admin');
+};
+
+export const isHRUser = (user: User | null) => getEffectiveDepartment(user) === 'hr';
+export const isHRManager = (user: User | null) => {
+  const { dept, level } = inferDeptAndLevel(user);
+  return (dept === 'hr' && (level === 'manager' || level === 'admin')) || (dept === 'admin' && level === 'admin');
+};
+
+export const isAccountingUser = (user: User | null) => getEffectiveDepartment(user) === 'accounting';
+export const isSalesUser = (user: User | null) => getEffectiveDepartment(user) === 'sales';
+export const isOperationsUser = (user: User | null) => getEffectiveDepartment(user) === 'operations';
+export const isStoreUser = (user: User | null) => getEffectiveDepartment(user) === 'store';
+export const isClientUser = (user: User | null) => getEffectiveDepartment(user) === 'client';
+
+/**
+ * Functional permission helpers
+ */
 export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): boolean {
   return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
 }
 
-/**
- * Authorization Helpers for App Code
- * Supports both new Dept/Level model and legacy roleIds for migration.
- */
-
-export const isAdmin = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return (dept === 'admin' && level === 'admin') || user.roleIds?.includes('system_admin');
-};
-
-export const isHRViewer = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'hr' && hasLevel(level, 'viewer')) || user.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
-};
-
-export const isHROfficerOrHigher = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'hr' && hasLevel(level, 'officer')) || user.roleIds?.some(r => ['hr_manager', 'hr_officer'].includes(r));
-};
-
-export const isHRManager = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'hr' && hasLevel(level, 'manager')) || user.roleIds?.includes('hr_manager');
-};
-
-export const isSalesOfficerOrHigher = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'sales' && hasLevel(level, 'officer')) || user.roleIds?.includes('sales_officer');
-};
-
-export const isOperationsOfficerOrHigher = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'operations' && hasLevel(level, 'officer')) || user.roleIds?.includes('operations_officer');
-};
-
-export const isStoreOfficerOrHigher = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'store' && hasLevel(level, 'officer')) || user.roleIds?.includes('store_officer');
-};
-
-export const isAccountingViewer = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'accounting' && hasLevel(level, 'viewer')) || user.roleIds?.includes('finance_officer');
-};
-
-export const isAccountingOfficerOrHigher = (user: User | null) => {
-  if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
-  return isAdmin(user) || (dept === 'accounting' && hasLevel(level, 'officer')) || user.roleIds?.includes('finance_officer');
-};
-
-export const isClientUser = (user: User | null) => {
-  if (!user) return false;
-  const { dept } = inferDeptAndLevel(user);
-  return dept === 'client' || user.roleIds?.some(r => ['client', 'client_user'].includes(r));
-};
-
+// Legacy-named exports for backward compatibility with existing components
+export const isAdmin = isAdminUser;
 export const sameCustomer = (user: User | null, recordCustomerId: string) => 
-  isAdmin(user) || (isClientUser(user) && user?.customerId === recordCustomerId);
+  isAdminUser(user) || (isClientUser(user) && user?.customerId === recordCustomerId);
 
 /**
  * Maps Dept + Level to legacy roleIds for Firestore Security Rules
@@ -195,13 +164,13 @@ export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
 
 /**
  * Visibility and Access Rules per Menu
- * Note: Grouping in sidebar is different from functional ownership.
  */
 export const MENU_PERMISSIONS: Record<MenuKey, { depts: DeptType[]; minLevel: AccessLevel; readOnlyDepts?: DeptType[] }> = {
   dashboard: { depts: ['admin', 'hr', 'operations', 'sales', 'accounting', 'store', 'client'], minLevel: 'viewer' },
   
   // Commercial
   customers: { depts: ['admin', 'sales', 'accounting', 'operations'], minLevel: 'viewer', readOnlyDepts: ['accounting', 'operations'] },
+  vendors: { depts: ['admin', 'store', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
   main_contracts: { depts: ['admin', 'sales', 'accounting', 'hr'], minLevel: 'officer', readOnlyDepts: ['accounting', 'hr'] },
   purchase_orders: { depts: ['admin', 'sales', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
   
@@ -217,7 +186,6 @@ export const MENU_PERMISSIONS: Record<MenuKey, { depts: DeptType[]; minLevel: Ac
   waves: { depts: ['admin', 'operations', 'hr'], minLevel: 'officer', readOnlyDepts: ['hr'] },
   assignments: { depts: ['admin', 'operations', 'hr', 'sales'], minLevel: 'officer', readOnlyDepts: ['sales'] },
   mobilization: { depts: ['admin', 'operations', 'hr'], minLevel: 'officer' },
-  vendors: { depts: ['admin', 'store', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
   purchases: { depts: ['admin', 'store', 'operations', 'accounting'], minLevel: 'officer', readOnlyDepts: ['accounting'] },
   store: { depts: ['admin', 'store', 'operations', 'hr'], minLevel: 'viewer', readOnlyDepts: ['operations', 'hr'] },
   
@@ -252,10 +220,6 @@ export function canWriteMenu(menu: MenuKey, dept: DeptType, level: AccessLevel):
   const config = MENU_PERMISSIONS[menu];
   if (!config) return false;
   if (config.readOnlyDepts?.includes(dept)) return false;
-  
-  // Functional Write rules
-  if (menu === 'office_payroll' && dept === 'accounting') return false; // Accounting only pays, HR prepares
-  if (menu === 'worker_payroll' && dept === 'accounting') return false;
   
   return config.depts.includes(dept) && hasLevel(level, 'officer');
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -43,7 +43,7 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MenuKey, canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdmin } from '@/lib/auth-mapping';
+import { MenuKey, canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'บริหาร / ระบบ (Admin)' },
@@ -90,7 +90,7 @@ export default function UsersPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isUserAdmin = isAdmin(currentUser);
+  const isUserAdmin = useMemo(() => isAdminUser(currentUser), [currentUser]);
 
   const usersQuery = useMemoFirebase(() => {
     if (!firestore || !currentUser || !isUserAdmin) return null;
@@ -159,14 +159,6 @@ export default function UsersPage() {
     }
   };
 
-  const handleQuickMigrate = (user: User) => {
-    const { dept, level } = inferDeptAndLevel(user);
-    handleEditUser(user);
-    setEditedDept(dept);
-    setEditedLevel(level);
-    toast({ title: "Suggesting Migration", description: `Inferred: ${dept}/${level}` });
-  };
-
   if (isUserLoading || !currentUser) return null;
 
   if (!isUserAdmin) {
@@ -197,7 +189,7 @@ export default function UsersPage() {
           <Info className="h-5 w-5 text-primary" />
           <AlertTitle className="font-bold">Migration Safety Mode Active</AlertTitle>
           <AlertDescription className="text-sm">
-            ระบบรองรับทั้งโมเดล Department/Level ใหม่ และบทบาท legacy เดิม หากพบผู้ใช้งานที่ยังไม่ได้ย้ายสิทธิ์ กรุณากดแก้ไขเพื่อทำการ Migration
+            ระบบแสดงผลสิทธิ์ที่มีผลจริง (Effective Access) แม้บัญชีจะยังไม่ได้ถูก migrate ข้อมูลลงฟิลด์ใหม่
           </AlertDescription>
         </Alert>
 
@@ -229,19 +221,19 @@ export default function UsersPage() {
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium"><Mail className="h-3 w-3" /> {u.email}</span>
                             {isLegacy && (
                               <Badge variant="outline" className="w-fit mt-1 text-[9px] bg-amber-50 text-amber-700 border-amber-200">
-                                <RefreshCcw className="h-2 w-2 mr-1 animate-spin" /> Legacy Role Only / ยังไม่ได้ย้ายสิทธิ์
+                                <RefreshCcw className="h-2 w-2 mr-1 animate-spin" /> Legacy / รอย้ายสิทธิ์
                               </Badge>
                             )}
                           </div>
                         </TableCell>
                         <TableCell>
                           <Badge variant={isLegacy ? "secondary" : "outline"} className="capitalize">
-                            <Building2 className="h-3 w-3 mr-1" /> {isLegacy ? `Inferred: ${dept}` : u.department}
+                            <Building2 className="h-3 w-3 mr-1" /> {dept}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={u.level === 'admin' ? 'default' : 'secondary'} className="capitalize">
-                            <Briefcase className="h-3 w-3 mr-1" /> {isLegacy ? `Inferred: ${level}` : u.level}
+                          <Badge variant={level === 'admin' ? 'default' : 'secondary'} className="capitalize">
+                            <Briefcase className="h-3 w-3 mr-1" /> {level}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -329,23 +321,6 @@ export default function UsersPage() {
               </div>
 
               <div className="md:col-span-2 space-y-6 border-l pl-6">
-                {selectedUser?.roleIds && selectedUser.roleIds.length > 0 && (
-                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
-                    <div className="flex gap-2 items-center mb-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      <p className="text-xs font-bold text-amber-800 uppercase">Legacy Access Detected</p>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {selectedUser.roleIds.map(r => (
-                        <Badge key={r} variant="secondary" className="text-[9px]">{r}</Badge>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-amber-700 mt-2 italic">
-                      เมื่อกดบันทึก ระบบจะย้ายสิทธิ์ผู้ใช้งานมายัง Department/Level ใหม่ และทำ Snapshot roles เพื่อรองรับ Firestore Rules
-                    </p>
-                  </div>
-                )}
-
                 <div className="space-y-4">
                   <Label className="text-sm font-bold flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" /> สรุปการเข้าถึงเมนู (Menu Matrix)

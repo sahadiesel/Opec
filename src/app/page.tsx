@@ -41,7 +41,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { inferDeptAndLevel, isAdmin } from '@/lib/auth-mapping';
+import { inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -91,12 +91,14 @@ export default function Home() {
     checkBootstrap();
   }, [firestore]);
 
+  // Effective authorization for UI
+  const { dept, level } = useMemo(() => inferDeptAndLevel(user), [user]);
+
   // Authorization Guard for Dashboard Data
   const isInternalStaff = useMemo(() => {
     if (!user) return false;
-    const { dept } = inferDeptAndLevel(user);
     return dept !== 'client';
-  }, [user]);
+  }, [user, dept]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'main_contracts') : null), [firestore, isInternalStaff]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
@@ -275,15 +277,16 @@ export default function Home() {
     pendingApprovals: assignments?.filter(a => a.clientApprovalStatus === 'SUBMITTED').length || 0
   };
 
-  const { dept, level } = inferDeptAndLevel(user);
-
   return (
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Operations Dashboard)</h1>
           <p className="text-muted-foreground text-lg">
-            {dept === 'client' ? `Customer Portal: ${user.displayName}` : `Department: ${dept.toUpperCase()} | Access: ${level.toUpperCase()}`}
+            {dept === 'client' 
+              ? `Customer Portal: ${user.displayName}` 
+              : `Department: ${dept?.toUpperCase() || 'N/A'} | Access: ${level?.toUpperCase() || 'N/A'}`
+            }
           </p>
         </div>
 
