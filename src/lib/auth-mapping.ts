@@ -152,9 +152,12 @@ export function getMigratedUserFields(user: Partial<User>): Partial<User> {
   const isActive = user.isActive ?? true;
   const approvalStatus: ApprovalStatus = user.approvalStatus || (isActive ? 'ACTIVE' : 'PENDING');
   
+  const profileKey = user.permissionProfileKey || `${dept}_${level}`;
+
   return {
     department: dept,
     level: level,
+    permissionProfileKey: profileKey,
     isActive: isActive,
     approvalStatus: approvalStatus,
     customerId: user.customerId || null,
