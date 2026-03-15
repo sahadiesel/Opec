@@ -31,6 +31,7 @@ export type MenuKey =
   | 'cashbook'
   | 'bank_accounts'
   | 'system_admin'
+  | 'permission_profiles'
   | 'client_portal';
 
 /**
@@ -236,6 +237,7 @@ export const MENU_PERMISSIONS: Record<MenuKey, { depts: DeptType[]; minLevel: Ac
   
   // Administration
   system_admin: { depts: ['admin'], minLevel: 'admin' },
+  permission_profiles: { depts: ['admin'], minLevel: 'admin' },
   client_portal: { depts: ['admin', 'client'], minLevel: 'viewer' }
 };
 

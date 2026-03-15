@@ -91,11 +91,36 @@ export interface User {
   lastLoginAt?: number;
   lastLogoutAt?: number;
   customerId?: string | null; 
+  permissionProfileKey?: string | null;
   isSharedAccount?: boolean;
   linkedProjectIds?: string[];
   nationalId?: string;
   address?: string;
   notes?: string;
+}
+
+export type ModulePermission = {
+  view: boolean;
+  create: boolean;
+  edit: boolean;
+  delete: boolean;
+  approve: boolean;
+};
+
+export interface PermissionProfile {
+  id: string;
+  profileKey: string;
+  profileNameTh: string;
+  profileNameEn: string;
+  department: DeptType;
+  level: AccessLevel;
+  isActive: boolean;
+  notes: string;
+  permissions: Record<string, ModulePermission>;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
 }
 
 export interface ClientUser {
