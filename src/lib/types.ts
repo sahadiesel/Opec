@@ -73,6 +73,8 @@ export type PayrollRunStatus =
 
 export type PayrollType = 'MONTHLY' | 'WAVE_BASED' | 'SPECIAL_RUN' | 'ADJUSTMENT';
 
+export type ApprovalStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
+
 export interface User {
   id: string;
   email: string;
@@ -81,6 +83,9 @@ export interface User {
   level: AccessLevel;
   roleIds: RoleType[]; // Legacy fallback for Security Rules
   isActive: boolean;
+  approvalStatus: ApprovalStatus;
+  approvedAt?: number;
+  approvedBy?: string;
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;

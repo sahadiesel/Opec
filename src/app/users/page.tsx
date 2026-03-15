@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -21,10 +22,14 @@ import {
   Briefcase,
   AlertTriangle,
   RefreshCcw,
-  Info
+  Info,
+  UserCheck,
+  UserX,
+  Lock,
+  Clock
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { User, DeptType, AccessLevel } from '@/lib/types';
+import { User, DeptType, AccessLevel, ApprovalStatus } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -44,6 +49,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MenuKey, canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
+import { Separator } from '@/components/ui/separator';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'บริหาร / ระบบ (Admin)' },
@@ -81,6 +87,7 @@ export default function UsersPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editedDept, setEditedDept] = useState<DeptType>('hr');
   const [editedLevel, setEditedLevel] = useState<AccessLevel>('viewer');
+  const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [isActive, setIsActive] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -104,44 +111,58 @@ export default function UsersPage() {
     setSelectedUser(user);
     setEditedDept(dept);
     setEditedLevel(level);
+    setEditedStatus(user.approvalStatus || 'PENDING');
     setIsActive(user.isActive);
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveUser = async () => {
+  const handleSaveUser = async (newStatus?: ApprovalStatus) => {
     if (!firestore || !selectedUser) return;
     setIsSaving(true);
 
     try {
+      const finalStatus = newStatus || editedStatus;
+      const finalIsActive = finalStatus === 'ACTIVE';
       const legacyRoles = getLegacyRoles(editedDept, editedLevel);
       const userRef = doc(firestore, 'users', selectedUser.id);
       
-      const batch = writeBatch(firestore);
-      
-      // Update User Doc with new schema
-      batch.update(userRef, {
+      const updateData: Partial<User> = {
         department: editedDept,
         level: editedLevel,
         roleIds: legacyRoles,
-        isActive: isActive,
+        isActive: finalIsActive,
+        approvalStatus: finalStatus,
         notes: notes,
         updatedAt: Date.now()
-      });
+      };
 
-      // Update Legacy Role Collections (DBAC)
+      if (finalStatus === 'ACTIVE' && selectedUser.approvalStatus !== 'ACTIVE') {
+        updateData.approvedAt = Date.now();
+        updateData.approvedBy = currentUser?.displayName || 'Admin';
+      }
+
+      await updateDoc(userRef, updateData);
+
+      // Attempt legacy role collection update (Non-blocking fallback)
+      // Note: We don't use batch here because we don't want failure in roles_* collection
+      // to roll back the primary user update.
       const allLegacyRoles: any[] = ['system_admin', 'hr_manager', 'hr_officer', 'finance_officer', 'operations_officer', 'sales_officer', 'store_officer', 'payroll_officer', 'client'];
       
       for (const role of allLegacyRoles) {
         const roleDocRef = doc(firestore, `roles_${role}`, selectedUser.id);
-        if (legacyRoles.includes(role)) {
-          batch.set(roleDocRef, { assignedAt: Date.now() }, { merge: true });
+        if (legacyRoles.includes(role) && finalIsActive) {
+          // Fire and forget legacy doc creation
+          updateDoc(roleDocRef, { assignedAt: Date.now() }).catch(() => {
+            // If it doesn't exist, create it
+            const { setDoc } = require('firebase/firestore');
+            setDoc(roleDocRef, { assignedAt: Date.now() }).catch(() => {});
+          });
         } else {
-          batch.delete(roleDocRef);
+          const { deleteDoc } = require('firebase/firestore');
+          deleteDoc(roleDocRef).catch(() => {});
         }
       }
-
-      await batch.commit();
 
       toast({ title: "บันทึกสำเร็จ", description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` });
       setIsEditDialogOpen(false);
@@ -156,6 +177,16 @@ export default function UsersPage() {
     if (!firestore) return;
     if (confirm('ยืนยันการลบผู้ใช้งานระบบรายนี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'users', id));
+    }
+  };
+
+  const getStatusBadge = (status: ApprovalStatus, isActive: boolean) => {
+    switch (status) {
+      case 'ACTIVE': return <Badge className="bg-green-600">ACTIVE</Badge>;
+      case 'PENDING': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">PENDING</Badge>;
+      case 'SUSPENDED': return <Badge variant="destructive">SUSPENDED</Badge>;
+      case 'REJECTED': return <Badge variant="secondary">REJECTED</Badge>;
+      default: return <Badge variant="outline">{isActive ? 'ACTIVE' : 'INACTIVE'}</Badge>;
     }
   };
 
@@ -185,14 +216,6 @@ export default function UsersPage() {
           </p>
         </div>
 
-        <Alert className="bg-primary/5 border-primary/20">
-          <Info className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold">Migration Safety Mode Active</AlertTitle>
-          <AlertDescription className="text-sm">
-            ระบบแสดงผลสิทธิ์ที่มีผลจริง (Effective Access) แม้บัญชีจะยังไม่ได้ถูก migrate ข้อมูลลงฟิลด์ใหม่
-          </AlertDescription>
-        </Alert>
-
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isCollectionLoading ? (
@@ -204,7 +227,7 @@ export default function UsersPage() {
                     <TableHead className="font-bold py-4 pl-6">เจ้าหน้าที่ (Staff Name)</TableHead>
                     <TableHead className="font-bold">แผนก (Department)</TableHead>
                     <TableHead className="font-bold">ระดับสิทธิ์ (Level)</TableHead>
-                    <TableHead className="font-bold">สถานะ</TableHead>
+                    <TableHead className="font-bold">สถานะการอนุมัติ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -232,14 +255,12 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={level === 'admin' ? 'default' : 'secondary'} className="capitalize">
+                          <Badge variant={level === 'admin' ? "default" : "secondary"} className="capitalize">
                             <Briefcase className="h-3 w-3 mr-1" /> {level}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={u.isActive ? "default" : "secondary"} className={u.isActive ? "bg-green-600" : ""}>
-                            {u.isActive ? "Active" : "Pending"}
-                          </Badge>
+                          {getStatusBadge(u.approvalStatus, u.isActive)}
                         </TableCell>
                         <TableCell className="text-right pr-6 space-x-2">
                           <Button variant="ghost" size="icon" onClick={() => handleEditUser(u)}>
@@ -264,7 +285,7 @@ export default function UsersPage() {
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-2xl flex items-center gap-2">
-                <UserCog className="h-6 w-6 text-primary" /> ตั้งค่าระดับการเข้าถึง
+                <UserCog className="h-6 w-6 text-primary" /> จัดการสิทธิ์และการอนุมัติ
               </DialogTitle>
               <DialogDescription>ตั้งค่าสิทธิ์สำหรับคุณ <b>{selectedUser?.displayName}</b></DialogDescription>
             </DialogHeader>
@@ -272,9 +293,22 @@ export default function UsersPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-4">
               <div className="space-y-6">
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
-                    <Label className="font-bold">เปิดใช้งานบัญชี (Active)</Label>
-                    <Switch checked={isActive} onCheckedChange={setIsActive} />
+                  <div className="p-4 border rounded-lg bg-primary/5 space-y-3">
+                    <Label className="font-bold flex items-center gap-2"><UserCheck className="h-4 w-4" /> สถานะการอนุมัติ (Approval)</Label>
+                    <Select value={editedStatus} onValueChange={(v: ApprovalStatus) => setEditedStatus(v)}>
+                      <SelectTrigger className="h-11 font-bold"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="PENDING">PENDING (รอพิจารณา)</SelectItem>
+                        <SelectItem value="ACTIVE">ACTIVE (อนุมัติเข้าใช้งาน)</SelectItem>
+                        <SelectItem value="SUSPENDED">SUSPENDED (ระงับสิทธิ์)</SelectItem>
+                        <SelectItem value="REJECTED">REJECTED (ไม่อนุมัติ)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {selectedUser?.approvedBy && (
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" /> Approved by {selectedUser.approvedBy} on {new Date(selectedUser.approvedAt || 0).toLocaleDateString()}
+                      </p>
+                    )}
                   </div>
                   
                   <div className="space-y-2">
@@ -302,7 +336,7 @@ export default function UsersPage() {
 
                   <div className="space-y-2">
                     <Label>หมายเหตุ</Label>
-                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุหน้าที่รับผิดชอบ..." className="min-h-[80px]" />
+                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุหน้าที่รับผิดชอบหรือสาเหตุที่ระงับสิทธิ์..." className="min-h-[80px]" />
                   </div>
                 </div>
 
@@ -344,26 +378,53 @@ export default function UsersPage() {
                   </div>
                 </div>
 
+                {selectedUser?.roleIds && selectedUser.roleIds.length > 0 && (
+                  <div className="p-4 bg-muted/20 rounded-lg">
+                    <Label className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-2 mb-2">
+                      <Clock className="h-3 w-3" /> Legacy Role Reference
+                    </Label>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedUser.roleIds.map(role => (
+                        <Badge key={role} variant="secondary" className="text-[9px] h-5">{role}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="p-4 bg-blue-50/50 rounded-lg border-dashed border-2 border-blue-200">
                   <div className="flex gap-2 mb-2">
                     <Info className="h-4 w-4 text-blue-600" />
-                    <p className="text-xs font-bold text-blue-800">Business Logic Summary</p>
+                    <p className="text-xs font-bold text-blue-800">Operational Guidance</p>
                   </div>
                   <ul className="text-[10px] text-blue-700 list-disc pl-4 space-y-1">
-                    <li><b>Payroll:</b> HR เตรียมและอนุมัติ แผนก Finance ดูข้อมูลได้เพื่อโอนเงิน</li>
-                    <li><b>Commercial:</b> Sales ดูข้อมูลลูกค้าและ PO ได้ แต่ Finance เป็นผู้ออก Billing Notes</li>
-                    <li><b>Operations:</b> จัดการ Wave และ Mobilization แผนก HR ตรวจสอบความพร้อม</li>
+                    <li>การตั้งสถานะเป็น <b>ACTIVE</b> จะเปิดสิทธิ์การล็อกอินทันที</li>
+                    <li>หากต้องการยกเลิกการเข้าถึงชั่วคราว ให้ใช้สถานะ <b>SUSPENDED</b></li>
+                    <li>สิทธิ์ทั้งหมดจะถูกบันทึกใน <b>User Registry</b> และ <b>Security Token</b></li>
                   </ul>
                 </div>
               </div>
             </div>
 
-            <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4">
-              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
-              <Button onClick={handleSaveUser} disabled={isSaving} className="bg-primary font-bold shadow-md">
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                บันทึกสิทธิ์และ Migration
-              </Button>
+            <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4 flex flex-row items-center justify-between gap-4">
+              <div className="flex gap-2">
+                {editedStatus === 'PENDING' && (
+                  <Button variant="default" className="bg-green-600 hover:bg-green-700 font-bold" onClick={() => handleSaveUser('ACTIVE')} disabled={isSaving}>
+                    <UserCheck className="h-4 w-4 mr-2" /> อนุมัติทันที
+                  </Button>
+                )}
+                {editedStatus === 'ACTIVE' && (
+                  <Button variant="destructive" className="font-bold" onClick={() => handleSaveUser('SUSPENDED')} disabled={isSaving}>
+                    <Lock className="h-4 w-4 mr-2" /> ระงับสิทธิ์
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
+                <Button onClick={() => handleSaveUser()} disabled={isSaving} className="bg-primary font-bold shadow-md">
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                  บันทึกการตั้งค่า
+                </Button>
+              </div>
             </DialogFooter>
           </DialogContent>
         </Dialog>
