@@ -159,6 +159,24 @@ service cloud.firestore {
       }
     }
 
+    match /store_receipts/{id} {
+      allow get, list: if isSignedIn() && (isStoreStaff() || isFinanceStaff());
+      allow create: if isStoreStaff();
+      match /items/{itemId} { allow get, list, create: if isStoreStaff(); }
+    }
+
+    match /store_return_slips/{id} {
+      allow get, list: if isSignedIn() && (isStoreStaff() || isOperationsStaff());
+      allow create: if isStoreStaff();
+      match /items/{itemId} { allow get, list, create: if isStoreStaff(); }
+    }
+
+    match /store_writeoffs/{id} {
+      allow get, list: if hasRole('system_admin') || isStoreStaff();
+      allow create: if isStoreStaff();
+      match /items/{itemId} { allow get, list, create: if isStoreStaff(); }
+    }
+
     match /billing_notes/{id} {
       allow get, list: if isFinanceStaff() || isSalesStaff();
       allow write: if isFinanceStaff() || isSalesStaff();
