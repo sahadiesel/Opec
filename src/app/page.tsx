@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -14,11 +15,8 @@ import {
   UserPlus, 
   ShoppingCart,
   Users,
-  Clock,
-  TrendingUp,
   Activity,
   HardHat,
-  ArrowRight,
   ShieldAlert,
   Loader2,
   Settings2,
@@ -37,7 +35,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { inferDeptAndLevel } from '@/lib/auth-mapping';
+import { inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 
 export default function Home() {
@@ -47,7 +45,6 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // Registration States
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
@@ -60,7 +57,6 @@ export default function Home() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const { toast } = useToast();
   
-  // Permissions Hook
   const { can, isLoading: isPermLoading } = usePermissions(user);
 
   useEffect(() => {
@@ -71,22 +67,27 @@ export default function Home() {
         const parsed = JSON.parse(stored);
         setUser(parsed);
         if (firestore && parsed.id) {
-          updateDoc(doc(firestore, 'users', parsed.id), { lastLoginAt: Date.now() }).catch(console.error);
+          updateDoc(doc(firestore, 'users', parsed.id), { lastLoginAt: Date.now() }).catch(() => {});
         }
       } catch (e) { console.error(e); }
     }
   }, [firestore]);
 
   const { dept } = useMemo(() => inferDeptAndLevel(user), [user]);
-  const isInternalStaff = useMemo(() => user && dept !== 'client', [user, dept]);
+  
+  // Defensive queries - only fetch if user is fully recognized as staff
+  const isInternalAuthorized = useMemo(() => {
+    if (!user || !user.isActive || user.approvalStatus !== 'ACTIVE') return false;
+    return dept !== 'client';
+  }, [user, dept]);
 
-  const contractsQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'main_contracts') : null), [firestore, isInternalStaff]);
+  const contractsQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'main_contracts') : null), [firestore, isInternalAuthorized]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'workers') : null), [firestore, isInternalStaff]);
+  const workersQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'workers') : null), [firestore, isInternalAuthorized]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  const mobilizationQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'mobilizations') : null), [firestore, isInternalStaff]);
+  const mobilizationQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'mobilizations') : null), [firestore, isInternalAuthorized]);
   const { data: assignments } = useCollection<Assignment>(mobilizationQuery as any);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -100,7 +101,7 @@ export default function Home() {
       if (userDoc.exists()) {
         const userData = userDoc.data() as User;
         if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED' || !userData.isActive) {
-          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณยังไม่อนุญาตให้เข้าใช้งาน กรุณาติดต่อ Admin" });
+          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณยังไม่อนุญาตให้เข้าใช้งาน" });
           setIsLoggingIn(false);
           return;
         }
@@ -108,6 +109,8 @@ export default function Home() {
         setUser(userData);
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
         toast({ title: "เข้าสู่ระบบสำเร็จ" });
+      } else {
+        toast({ variant: "destructive", title: "Configuration Required", description: "ตรวจพบไอดีแต่ไม่พบข้อมูลสิทธิ์ กรุณาติดต่อแอดมินหรือใช้เครื่องมือ Repair" });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
@@ -154,7 +157,7 @@ export default function Home() {
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
+      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4 font-body">
         <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
@@ -199,7 +202,7 @@ export default function Home() {
                 </DialogContent>
               </Dialog>
               <Button variant="ghost" size="sm" className="w-full mt-2 text-xs opacity-50" asChild>
-                <Link href="/setup-admin"><Settings2 className="h-3 w-3 mr-2" /> กู้คืนสิทธิ์บัญชี</Link>
+                <Link href="/setup-admin"><Settings2 className="h-3 w-3 mr-2" /> กู้คืนสิทธิ์บัญชี (Repair)</Link>
               </Button>
             </CardFooter>
           </form>
@@ -215,8 +218,8 @@ export default function Home() {
       <AppShell user={user} onLogout={handleLogout}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
-          <h2 className="text-xl font-bold">Access Denied</h2>
-          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงแดชบอร์ดหลัก กรุณาเลือกเมนูอื่นจากแถบด้านข้าง</p>
+          <h2 className="text-xl font-bold">Access Pending</h2>
+          <p className="text-muted-foreground">บัญชีของคุณยังไม่ได้รับการกำหนดโปรไฟล์การเข้าถึง กรุณาติดต่อแอดมิน</p>
         </div>
       </AppShell>
     );
@@ -231,7 +234,7 @@ export default function Home() {
 
   return (
     <AppShell user={user} onLogout={handleLogout}>
-      <div className="space-y-8 max-w-[1600px] mx-auto">
+      <div className="space-y-8 max-w-[1600px] mx-auto font-body">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Dashboard)</h1>
           <p className="text-muted-foreground text-lg">

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -15,14 +16,10 @@ import {
   CheckCircle2, 
   XCircle, 
   Loader2, 
-  Sparkles, 
   Building2, 
   Briefcase,
   RefreshCcw,
-  Info,
   UserCheck,
-  Lock,
-  Clock,
   Save,
   MoreHorizontal,
   Wand2
@@ -31,7 +28,7 @@ import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel, ApprovalStatus } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, updateDoc } from 'firebase/firestore';
-import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -75,19 +72,10 @@ const DEPARTMENTS: { id: DeptType; label: string }[] = [
 ];
 
 const LEVELS: { id: AccessLevel; label: string; desc: string }[] = [
-  { id: 'viewer', label: 'Viewer (ผู้ดู)', desc: 'อ่านข้อมูลได้อย่างเดียว ไม่สามารถบันทึกหรือแก้ไขได้' },
-  { id: 'officer', label: 'Officer (เจ้าหน้าที่)', desc: 'เข้าถึงเมนูตามแผนก และบันทึกข้อมูลประจำวันได้' },
-  { id: 'manager', label: 'Manager (ผู้จัดการ)', desc: 'อนุมัติรายการ ตรวจสอบรายงาน และจัดการข้อมูลสำคัญ' },
-  { id: 'admin', label: 'Admin (ผู้ดูแลระบบ)', desc: 'สิทธิ์สูงสุด จัดการสิทธิ์ผู้อื่นและตั้งค่าระบบได้' },
-];
-
-const STAFF_PRESETS = [
-  { name: 'พี่โจ้ (Admin)', dept: 'admin', level: 'admin' },
-  { name: 'นุช (HR Mgr)', dept: 'hr', level: 'manager' },
-  { name: 'หญิง (HR Off)', dept: 'hr', level: 'officer' },
-  { name: 'โดม (Sales Off)', dept: 'sales', level: 'officer' },
-  { name: 'ก้อย (HR Off)', dept: 'hr', level: 'officer' },
-  { name: 'ณัฐ (Store Off)', dept: 'store', level: 'officer' },
+  { id: 'viewer', label: 'Viewer (ผู้ดู)', desc: 'อ่านข้อมูลได้อย่างเดียว' },
+  { id: 'officer', label: 'Officer (เจ้าหน้าที่)', desc: 'บันทึกข้อมูลประจำวันได้' },
+  { id: 'manager', label: 'Manager (ผู้จัดการ)', desc: 'อนุมัติรายการและจัดการข้อมูลสำคัญ' },
+  { id: 'admin', label: 'Admin (ผู้ดูแลระบบ)', desc: 'สิทธิ์สูงสุดในแผนก' },
 ];
 
 export default function UsersPage() {
@@ -129,90 +117,58 @@ export default function UsersPage() {
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveUser = async (newStatus?: ApprovalStatus) => {
+  const handleSaveUser = (newStatus?: ApprovalStatus) => {
     if (!firestore || !selectedUser) return;
     setIsSaving(true);
 
-    try {
-      const finalStatus = newStatus || editedStatus;
-      const finalIsActive = finalStatus === 'ACTIVE';
-      const legacyRoles = getLegacyRoles(editedDept, editedLevel);
-      const userRef = doc(firestore, 'users', selectedUser.id);
-      
-      const updateData: Partial<User> = {
-        department: editedDept,
-        level: editedLevel,
-        roleIds: legacyRoles,
-        isActive: finalIsActive,
-        approvalStatus: finalStatus,
-        notes: notes,
-        updatedAt: Date.now()
-      };
+    const finalStatus = newStatus || editedStatus;
+    const finalIsActive = finalStatus === 'ACTIVE';
+    const legacyRoles = getLegacyRoles(editedDept, editedLevel);
+    const userRef = doc(firestore, 'users', selectedUser.id);
+    
+    const updateData: Partial<User> = {
+      department: editedDept,
+      level: editedLevel,
+      roleIds: legacyRoles,
+      permissionProfileKey: `${editedDept}_${editedLevel}`,
+      isActive: finalIsActive,
+      approvalStatus: finalStatus,
+      notes: notes,
+      updatedAt: Date.now()
+    };
 
-      if (finalStatus === 'ACTIVE' && selectedUser.approvalStatus !== 'ACTIVE') {
-        updateData.approvedAt = Date.now();
-        updateData.approvedBy = currentUser?.displayName || 'Admin';
-      }
-
-      await updateDoc(userRef, updateData);
-
-      toast({ title: "บันทึกสำเร็จ", description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` });
-      setIsEditDialogOpen(false);
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Error", description: err.message });
-    } finally {
-      setIsSaving(false);
+    if (finalStatus === 'ACTIVE' && selectedUser.approvalStatus !== 'ACTIVE') {
+      updateData.approvedAt = Date.now();
+      updateData.approvedBy = currentUser?.displayName || 'Admin';
     }
+
+    updateDocumentNonBlocking(userRef, updateData);
+    toast({ title: "บันทึกข้อมูลสำเร็จ", description: "ข้อมูลสิทธิ์เข้าถึงถูกอัปเดตเรียบร้อยแล้ว" });
+    setIsSaving(false);
+    setIsEditDialogOpen(false);
   };
 
   const handleBulkMigration = async () => {
     if (!firestore || !users || !isUserAdmin) return;
     setIsMigrating(true);
-    let migratedCount = 0;
-    let skippedCount = 0;
-    let failedCount = 0;
+    let count = 0;
 
-    try {
-      for (const u of users) {
-        try {
-          if (!u.department || !u.level || !u.approvalStatus) {
-            const migratedFields = getMigratedUserFields(u);
-            const userRef = doc(firestore, 'users', u.id);
-            await updateDoc(userRef, migratedFields);
-            migratedCount++;
-          } else {
-            skippedCount++;
-          }
-        } catch (e) {
-          console.error(`Failed to migrate user ${u.id}:`, e);
-          failedCount++;
-        }
+    for (const u of users) {
+      if (!u.department || !u.level || !u.approvalStatus) {
+        const migratedFields = getMigratedUserFields(u);
+        updateDocumentNonBlocking(doc(firestore, 'users', u.id), migratedFields);
+        count++;
       }
-      toast({ 
-        title: "Migration Complete", 
-        description: `Successfully migrated: ${migratedCount}, Skipped: ${skippedCount}, Failed: ${failedCount}` 
-      });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Migration Error", description: err.message });
-    } finally {
-      setIsMigrating(false);
     }
+    
+    toast({ title: "Migration Complete", description: `Migrated ${count} users to the new authorization model.` });
+    setIsMigrating(false);
   };
 
   const handleDelete = (id: string) => {
     if (!firestore) return;
-    if (confirm('ยืนยันการลบผู้ใช้งานระบบรายนี้?')) {
+    if (confirm('ยืนยันการลบผู้ใช้งาน?')) {
       deleteDocumentNonBlocking(doc(firestore, 'users', id));
-    }
-  };
-
-  const getStatusBadge = (status: ApprovalStatus, isActive: boolean) => {
-    switch (status) {
-      case 'ACTIVE': return <Badge className="bg-green-600">ACTIVE</Badge>;
-      case 'PENDING': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">PENDING</Badge>;
-      case 'SUSPENDED': return <Badge variant="destructive">SUSPENDED</Badge>;
-      case 'REJECTED': return <Badge variant="secondary">REJECTED</Badge>;
-      default: return <Badge variant="outline">{isActive ? 'ACTIVE' : 'INACTIVE'}</Badge>;
     }
   };
 
@@ -238,105 +194,72 @@ export default function UsersPage() {
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
               <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งานและสิทธิ์ (Access Control)
             </h1>
-            <p className="text-muted-foreground text-lg">
-              บริหารจัดการสิทธิ์เข้าถึงตามแผนก (Department) และระดับ (Access Level)
-            </p>
+            <p className="text-muted-foreground text-lg">จัดการสิทธิ์เข้าถึงตามแผนกและระดับความสำคัญ</p>
           </div>
-          <div className="flex gap-2">
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button 
-                  variant="outline" 
-                  className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
-                  disabled={isMigrating}
-                >
-                  {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                  Migrate User Access Fields
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Run Access Field Migration?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will backfill all existing user documents with the new Department and Level authorization fields based on their legacy roles.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleBulkMigration} className="bg-amber-600 hover:bg-amber-700">
-                    Confirm Migration
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50" disabled={isMigrating}>
+                {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                Migrate User Access Fields
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>ยืนยันการอัปเกรดฐานข้อมูล?</AlertDialogTitle>
+                <AlertDialogDescription>ระบบจะทำการเติมข้อมูลแผนกและระดับสิทธิ์ให้กับพนักงานที่ยังเป็นระบบเดิมโดยอัตโนมัติ</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                <AlertDialogAction onClick={handleBulkMigration} className="bg-amber-600">ตกลง (Run Migration)</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isCollectionLoading ? (
-              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลผู้ใช้งาน...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลด...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">เจ้าหน้าที่ (Staff Name)</TableHead>
-                    <TableHead className="font-bold">แผนก (Department)</TableHead>
-                    <TableHead className="font-bold">ระดับสิทธิ์ (Level)</TableHead>
-                    <TableHead className="font-bold">สถานะการอนุมัติ</TableHead>
+                    <TableHead className="pl-6 py-4">ชื่อ-นามสกุล</TableHead>
+                    <TableHead>แผนก (Dept)</TableHead>
+                    <TableHead>ระดับ (Level)</TableHead>
+                    <TableHead>สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {users?.map((u) => {
-                    const isLegacy = !u.department || !u.level;
                     const { dept, level } = inferDeptAndLevel(u);
-                    
+                    const isLegacy = !u.department || !u.level;
                     return (
-                      <TableRow key={u.id} className="hover:bg-muted/30 transition-all group">
+                      <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
                         <TableCell className="py-4 pl-6">
                           <div className="flex flex-col">
                             <span className="font-bold text-base text-primary">{u.displayName}</span>
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium"><Mail className="h-3 w-3" /> {u.email}</span>
-                            {isLegacy && (
-                              <Badge variant="outline" className="w-fit mt-1 text-[9px] bg-amber-50 text-amber-700 border-amber-200">
-                                <RefreshCcw className="h-2 w-2 mr-1 animate-spin" /> Legacy / รอย้ายสิทธิ์
-                              </Badge>
-                            )}
+                            <span className="text-[10px] text-muted-foreground">{u.email}</span>
+                            {isLegacy && <Badge variant="outline" className="w-fit mt-1 text-[8px] bg-amber-50">Legacy Data</Badge>}
                           </div>
                         </TableCell>
+                        <TableCell><Badge variant="outline" className="capitalize"><Building2 className="h-3 w-3 mr-1" /> {dept}</Badge></TableCell>
+                        <TableCell><Badge variant="secondary" className="capitalize"><Briefcase className="h-3 w-3 mr-1" /> {level}</Badge></TableCell>
                         <TableCell>
-                          <Badge variant={isLegacy ? "secondary" : "outline"} className="capitalize">
-                            <Building2 className="h-3 w-3 mr-1" /> {dept}
+                          <Badge className={u.approvalStatus === 'ACTIVE' ? 'bg-green-600' : 'bg-amber-500'}>
+                            {u.approvalStatus || (u.isActive ? 'ACTIVE' : 'PENDING')}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={level === 'admin' ? "default" : "secondary"} className="capitalize">
-                            <Briefcase className="h-3 w-3 mr-1" /> {level}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {getStatusBadge(u.approvalStatus, u.isActive)}
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" className="h-8 w-8 p-0">
-                                <span className="sr-only">Open menu</span>
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
+                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleEditUser(u)}>ดู</DropdownMenuItem>
                               <DropdownMenuItem onClick={() => handleEditUser(u)}>แก้ไข</DropdownMenuItem>
-                              {currentUser.id !== u.id && (
-                                <DropdownMenuItem 
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() => handleDelete(u.id)}
-                                >
-                                  ลบ
-                                </DropdownMenuItem>
-                              )}
+                              <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(u.id)}>ลบ</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -350,84 +273,63 @@ export default function UsersPage() {
         </Card>
 
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-4xl">
             <DialogHeader>
-              <DialogTitle className="text-2xl flex items-center gap-2">
-                <UserCog className="h-6 w-6 text-primary" /> จัดการสิทธิ์และการอนุมัติ
-              </DialogTitle>
-              <DialogDescription>ตั้งค่าสิทธิ์สำหรับคุณ <b>{selectedUser?.displayName}</b></DialogDescription>
+              <DialogTitle className="text-2xl flex items-center gap-2"><UserCog className="h-6 w-6 text-primary" /> ตั้งค่าสิทธิ์พนักงาน</DialogTitle>
+              <DialogDescription>จัดการการเข้าถึงของ <b>{selectedUser?.displayName}</b></DialogDescription>
             </DialogHeader>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-4">
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <div className="p-4 border rounded-lg bg-primary/5 space-y-3">
-                    <Label className="font-bold flex items-center gap-2"><UserCheck className="h-4 w-4" /> สถานะการอนุมัติ (Approval)</Label>
-                    <Select value={editedStatus} onValueChange={(v: ApprovalStatus) => setEditedStatus(v)}>
-                      <SelectTrigger className="h-11 font-bold"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="PENDING">PENDING (รอพิจารณา)</SelectItem>
-                        <SelectItem value="ACTIVE">ACTIVE (อนุมัติเข้าใช้งาน)</SelectItem>
-                        <SelectItem value="SUSPENDED">SUSPENDED (ระงับสิทธิ์)</SelectItem>
-                        <SelectItem value="REJECTED">REJECTED (ไม่อนุมัติ)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label>แผนก (Department)</Label>
-                    <Select value={editedDept} onValueChange={(v: DeptType) => setEditedDept(v)}>
-                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {DEPARTMENTS.map(d => <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>ระดับสิทธิ์ (Level)</Label>
-                    <Select value={editedLevel} onValueChange={(v: AccessLevel) => setEditedLevel(v)}>
-                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {LEVELS.map(l => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>หมายเหตุ</Label>
-                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุเหตุผล..." className="min-h-[80px]" />
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
+              <div className="space-y-4">
+                <div className="p-4 border rounded-lg bg-primary/5 space-y-3">
+                  <Label className="font-bold flex items-center gap-2"><UserCheck className="h-4 w-4" /> สถานะสมาชิก</Label>
+                  <Select value={editedStatus} onValueChange={(v: ApprovalStatus) => setEditedStatus(v)}>
+                    <SelectTrigger className="h-11 font-bold"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PENDING">PENDING (รออนุมัติ)</SelectItem>
+                      <SelectItem value="ACTIVE">ACTIVE (เปิดใช้งาน)</SelectItem>
+                      <SelectItem value="SUSPENDED">SUSPENDED (ระงับชั่วคราว)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>แผนก (Department)</Label>
+                  <Select value={editedDept} onValueChange={(v: DeptType) => setEditedDept(v)}>
+                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {DEPARTMENTS.map(d => <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>ระดับ (Level)</Label>
+                  <Select value={editedLevel} onValueChange={(v: AccessLevel) => setEditedLevel(v)}>
+                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {LEVELS.map(l => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-
-              <div className="md:col-span-2 space-y-6 border-l pl-6">
-                <div className="space-y-4">
-                  <Label className="text-sm font-bold flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" /> สรุปการเข้าถึงเมนู (Menu Matrix)
-                  </Label>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 border rounded bg-slate-50 space-y-2">
-                      <p className="text-xs font-bold border-b pb-1 text-primary">Commercial & Ops</p>
-                      <AccessIndicator label="Customers" active={canSeeMenu('customers', editedDept, editedLevel)} />
-                      <AccessIndicator label="PO / Contracts" active={canSeeMenu('main_contracts', editedDept, editedLevel)} />
-                    </div>
-                    <div className="p-3 border rounded bg-slate-50 space-y-2">
-                      <p className="text-xs font-bold border-b pb-1 text-primary">HR & Finance</p>
-                      <AccessIndicator label="Payroll" active={canSeeMenu('worker_payroll', editedDept, editedLevel)} />
-                      <AccessIndicator label="Staff / Workers" active={canSeeMenu('workers', editedDept, editedLevel)} />
-                    </div>
-                  </div>
+              <div className="space-y-4 border-l pl-6">
+                <Label className="font-bold text-green-600 flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> สรุปการเข้าถึง</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <AccessIndicator label="Dashboard" active={canSeeMenu('dashboard', editedDept, editedLevel)} />
+                  <AccessIndicator label="Customers" active={canSeeMenu('customers', editedDept, editedLevel)} />
+                  <AccessIndicator label="Payroll" active={canSeeMenu('worker_payroll', editedDept, editedLevel)} />
+                  <AccessIndicator label="Workers" active={canSeeMenu('workers', editedDept, editedLevel)} />
+                  <AccessIndicator label="Store" active={canSeeMenu('store', editedDept, editedLevel)} />
+                  <AccessIndicator label="Accounting" active={canSeeMenu('billing_notes', editedDept, editedLevel)} />
+                </div>
+                <div className="mt-4">
+                  <Label>หมายเหตุเพิ่มเติม</Label>
+                  <Textarea value={notes} onChange={e => setNotes(e.target.value)} className="mt-2 min-h-[100px]" />
                 </div>
               </div>
             </div>
-
-            <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
-              <Button onClick={() => handleSaveUser()} disabled={isSaving} className="bg-primary font-bold shadow-md">
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                บันทึกการตั้งค่า
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>ยกเลิก</Button>
+              <Button onClick={() => handleSaveUser()} disabled={isSaving} className="bg-primary font-bold">
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} บันทึกสิทธิ์
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -439,9 +341,9 @@ export default function UsersPage() {
 
 function AccessIndicator({ label, active }: { label: string; active: boolean }) {
   return (
-    <div className={`flex items-center justify-between text-[10px] ${active ? 'text-primary font-medium' : 'text-muted-foreground/40'}`}>
+    <div className={`flex items-center justify-between p-2 rounded border text-[10px] ${active ? 'bg-green-50 border-green-100 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
       <span>{label}</span>
-      {active ? <CheckCircle2 className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3" />}
+      {active ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3 opacity-20" />}
     </div>
   );
 }
