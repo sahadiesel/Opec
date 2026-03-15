@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Plus, 
@@ -15,17 +15,15 @@ import {
   ChevronRight, 
   Building2, 
   Calendar,
-  ShieldCheck,
-  Truck,
   Waves,
   AlertTriangle,
   Info
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, POLine, User, DeploymentStatus, ClientApprovalStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
+import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collectionGroup, collection, doc, query, where, increment, updateDoc } from 'firebase/firestore';
+import { collection, doc, increment, updateDoc } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
@@ -57,24 +55,19 @@ export default function AssignmentsPage() {
     return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
   }, [currentUser]);
 
-  const assignmentsQuery = useMemoFirebase(() => {
+  // Standardized to 'mobilizations' top-level collection
+  const mobilizationQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
-    return collectionGroup(firestore, 'assignments');
+    return collection(firestore, 'mobilizations');
   }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
 
-  const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
+  const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(mobilizationQuery as any);
 
   const wavesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'waves') : null), [firestore, isAuthorized]);
   const { data: allWaves } = useCollection<Wave>(wavesQuery as any);
 
   const workersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'workers') : null), [firestore, isAuthorized]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
-
-  const poLinesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collectionGroup(firestore, 'po_lines') : null), [firestore, isAuthorized]);
-  const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
-
-  const poQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null), [firestore, isAuthorized]);
-  const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
   const positionsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'positions') : null), [firestore, isAuthorized]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
@@ -95,25 +88,20 @@ export default function AssignmentsPage() {
     const wave = allWaves?.find(w => w.id === selectedWaveId);
     if (!wave) return;
 
-    const poLine = allPOLines?.find(l => l.id === wave.poLineId);
-    if (!poLine || !poLine._path) return;
-
-    const po = allPOs?.find(p => p.id === poLine.poId);
-    if (!po) return;
-
-    const assignmentsCollectionRef = collection(firestore, poLine._path, 'assignments');
-    const newAssignmentRef = doc(assignmentsCollectionRef);
+    // Create in top-level 'mobilizations' collection
+    const mobCollectionRef = collection(firestore, 'mobilizations');
+    const newMobRef = doc(mobCollectionRef);
     
     const newAssignment: Assignment = {
-      id: newAssignmentRef.id,
+      id: newMobRef.id,
       workerId: selectedWorkerId,
-      poLineId: poLine.id,
-      poId: po.id,
-      contractId: po.contractId,
+      poLineId: wave.poLineId,
+      poId: wave.poId,
+      contractId: '', 
       waveId: selectedWaveId,
-      positionId: poLine.positionId,
-      customerId: po.customerId,
-      projectName: po.projectName || po.title,
+      positionId: '', 
+      customerId: wave.customerId,
+      projectName: wave.projectName,
       startDate: startDate,
       endDate: endDate,
       deploymentStatus: 'DRAFT',
@@ -135,7 +123,7 @@ export default function AssignmentsPage() {
       updatedAt: Date.now(),
     };
 
-    setDocumentNonBlocking(newAssignmentRef, newAssignment, { merge: true });
+    setDocumentNonBlocking(newMobRef, newAssignment, { merge: true });
     
     // Update wave assignedWorkers count
     const waveRef = doc(firestore, 'waves', selectedWaveId);
@@ -152,8 +140,6 @@ export default function AssignmentsPage() {
       case 'READY': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 uppercase font-bold">Ready</Badge>;
       case 'MOBILIZING': return <Badge className="bg-blue-600 uppercase font-bold">Mobilizing</Badge>;
       case 'ACTIVE': return <Badge className="bg-green-600 uppercase font-bold">Active Duty</Badge>;
-      case 'DEMOBILIZED': return <Badge variant="secondary" className="uppercase font-bold">Demob</Badge>;
-      case 'CLOSED': return <Badge variant="secondary" className="uppercase font-bold">Closed</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
@@ -163,35 +149,31 @@ export default function AssignmentsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        {/* Page Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <UserPlus className="h-8 w-8" /> การมอบหมายงาน (Assignments)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้กำหนดว่า worker คนใดจะไปทำงานในตำแหน่งใด ภายใต้ Customer PO และ Wave ใด ระบบจะตรวจสอบความพร้อมก่อนอนุญาตให้ mobilize
+            ใช้กำหนดว่า worker คนใดจะไปทำงานในตำแหน่งใด ภายใต้ Customer PO และ Wave ใด
           </p>
         </div>
 
-        {/* Access Restriction for Unapproved Users */}
         {!isAuthorized ? (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <Info className="h-12 w-12 text-muted-foreground opacity-50" />
             <h2 className="text-xl font-bold">Access Pending (รอนุมัติสิทธิ์)</h2>
-            <p className="text-muted-foreground max-w-md">บัญชีของคุณยังไม่ได้รับการกำหนดบทบาท กรุณาติดต่อผู้ดูแลระบบเพื่อเปิดสิทธิ์เข้าถึงข้อมูลการมอบหมายงาน</p>
+            <p className="text-muted-foreground max-w-md">บัญชีของคุณยังไม่ได้รับการกำหนดบทบาท กรุณาติดต่อผู้ดูแลระบบ</p>
           </div>
         ) : (
           <>
-            {/* Compliance Warning Box */}
             <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
               <AlertTriangle className="h-5 w-5 text-amber-600" />
               <AlertTitle className="font-bold text-lg text-amber-900">ระเบียบความพร้อมนอกชายฝั่ง (Offshore Readiness Policy)</AlertTitle>
               <AlertDescription className="text-sm">
-                Worker จะไม่สามารถ Mobilize ได้ หาก passport, medical, certificate, PPE หรือเครื่องมือยังไม่พร้อมตามเกณฑ์ที่กำหนดใน Readiness Checklist
+                Worker จะไม่สามารถ Mobilize ได้ หากเอกสารหรืออุปกรณ์ยังไม่พร้อมตามเกณฑ์ที่กำหนด
               </AlertDescription>
             </Alert>
 
-            {/* Action Bar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
@@ -208,7 +190,7 @@ export default function AssignmentsPage() {
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>สร้างการมอบหมายงาน (New Deployment Entry)</DialogTitle>
+                    <DialogTitle>สร้างการมอบหมายงาน</DialogTitle>
                     <DialogDescription>เลือกคนงานและเชื่อมต่อเข้ากับรอบการทำงาน (Wave) ของโครงการ</DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
@@ -217,20 +199,19 @@ export default function AssignmentsPage() {
                       <Select onValueChange={setSelectedWaveId}>
                         <SelectTrigger className="h-11"><SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." /></SelectTrigger>
                         <SelectContent>
-                          {allWaves?.filter(w => w.status !== 'CLOSED').map(wave => {
-                            const po = allPOs?.find(p => p.id === wave.poId);
-                            return <SelectItem key={wave.id} value={wave.id}>{wave.waveCode} | {wave.projectName} ({po?.poCode})</SelectItem>;
-                          })}
+                          {allWaves?.filter(w => w.status !== 'CLOSED').map(wave => (
+                            <SelectItem key={wave.id} value={wave.id}>{wave.waveCode} | {wave.projectName}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2 md:col-span-2">
-                      <Label>เลือกคนงานที่มีความพร้อม (Worker - Ready/Available)</Label>
+                      <Label>เลือกคนงานที่มีความพร้อม</Label>
                       <Select onValueChange={setSelectedWorkerId}>
                         <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
                         <SelectContent>
                           {allWorkers?.map(w => (
-                            <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.readinessStatus})</SelectItem>
+                            <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -240,7 +221,7 @@ export default function AssignmentsPage() {
                       <Input type="date" className="h-11" value={startDate} onChange={e => setStartDate(e.target.value)} />
                     </div>
                     <div className="space-y-2">
-                      <Label>วันที่สิ้นสุด (End Date)</Label>
+                      <Label>วันที่สิ้นสุดงาน (End Date)</Label>
                       <Input type="date" className="h-11" value={endDate} onChange={e => setEndDate(e.target.value)} />
                     </div>
                   </div>
@@ -252,7 +233,6 @@ export default function AssignmentsPage() {
               </Dialog>
             </div>
 
-            {/* Table Content */}
             <Card className="shadow-lg border-none overflow-hidden">
               <CardContent className="p-0">
                 {isAssignmentsLoading ? (
@@ -261,11 +241,10 @@ export default function AssignmentsPage() {
                   <Table>
                     <TableHeader className="bg-muted/50">
                       <TableRow>
-                        <TableHead className="font-bold py-4">คนงาน & ตำแหน่ง</TableHead>
+                        <TableHead className="font-bold py-4 pl-6">คนงาน</TableHead>
                         <TableHead className="font-bold">Wave & โครงการ</TableHead>
                         <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
                         <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
-                        <TableHead className="font-bold">การพิจารณา (Client)</TableHead>
                         <TableHead className="font-bold">สถานะ Deployment</TableHead>
                         <TableHead className="text-right pr-6">จัดการ</TableHead>
                       </TableRow>
@@ -273,15 +252,14 @@ export default function AssignmentsPage() {
                     <TableBody>
                       {assignments?.map((asgn) => {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
-                        const pos = allPositions?.find(p => p.id === asgn.positionId);
                         const wave = allWaves?.find(w => w.id === asgn.waveId);
                         
                         return (
                           <TableRow key={asgn.id} className="cursor-pointer hover:bg-muted/30 group transition-all" onClick={() => router.push(`/assignments/${asgn.id}`)}>
-                            <TableCell className="py-4">
+                            <TableCell className="py-4 pl-6">
                               <div className="flex flex-col">
                                 <span className="font-bold text-base text-primary">{worker?.firstName} {worker?.lastName}</span>
-                                <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {pos?.positionName}</span>
+                                <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {asgn.positionId}</span>
                               </div>
                             </TableCell>
                             <TableCell>
@@ -301,11 +279,6 @@ export default function AssignmentsPage() {
                                 {asgn.readinessStatus.toUpperCase()}
                               </Badge>
                             </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className={asgn.clientApprovalStatus === 'APPROVED' ? 'text-green-600 border-green-200 bg-green-50/50' : 'font-medium'}>
-                                {asgn.clientApprovalStatus.replace('_', ' ')}
-                              </Badge>
-                            </TableCell>
                             <TableCell>{getDeploymentStatusBadge(asgn.deploymentStatus)}</TableCell>
                             <TableCell className="text-right pr-6">
                               <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
@@ -313,41 +286,9 @@ export default function AssignmentsPage() {
                           </TableRow>
                         );
                       })}
-                      {(!assignments || assignments.length === 0) && !isAssignmentsLoading && (
-                        <TableRow>
-                          <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการการมอบหมายงานในขณะนี้</TableCell>
-                        </TableRow>
-                      )}
                     </TableBody>
                   </Table>
                 )}
-              </CardContent>
-            </Card>
-
-            {/* Workflow Guidance */}
-            <Card className="bg-primary/5 border-primary/10 border-dashed">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
-                  <Info className="h-5 w-5" /> แนวทางปฏิบัติ (Workflow Guidance)
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                    <div className="bg-blue-100 p-2 rounded text-blue-700 font-bold">1</div>
-                    <div>
-                      <p className="font-bold">ตรวจสอบความพร้อม (Readiness Check)</p>
-                      <p className="text-muted-foreground text-xs">หลังการมอบหมาย ต้องตรวจสอบใบเซอร์และผลตรวจร่างกายรายบุคคลให้ครบถ้วนในหน้ารายละเอียด</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                    <div className="bg-green-100 p-2 rounded text-green-700 font-bold">2</div>
-                    <div>
-                      <p className="font-bold">เตรียมส่งตัว (Mobilization)</p>
-                      <p className="text-muted-foreground text-xs">เมื่อคนงานผ่าน Readiness Check และได้รับอนุมัติจากลูกค้า จึงจะเริ่มกระบวนการระดมพลได้</p>
-                    </div>
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </>

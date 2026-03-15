@@ -12,7 +12,6 @@ import {
   User, 
   Briefcase, 
   Calendar, 
-  ShieldCheck, 
   AlertCircle, 
   Clock, 
   CheckCircle2, 
@@ -20,7 +19,6 @@ import {
   XCircle,
   ClipboardCheck,
   Info,
-  ShieldAlert,
   Waves,
   HardHat,
   Package,
@@ -28,26 +26,22 @@ import {
   CheckCircle,
   Loader2,
   FileText,
-  Stethoscope,
   ChevronRight,
   MapPin,
   AlertTriangle
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, collectionGroup, query, where, getDocs, limit, collection } from 'firebase/firestore';
+import { doc, collection, getDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   Assignment, 
   Worker, 
-  PurchaseOrder, 
   Customer, 
   Position, 
   User as AppUser, 
   ChecklistItemStatus,
   Wave,
   WorkerCertificate,
-  PositionCertificateRequirement,
-  WorkerMedicalRecord,
   MobilizationStatus,
   DeploymentStatus
 } from '@/lib/types';
@@ -76,26 +70,25 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   }, []);
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [asgnPath, setAsgnPath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Standardized fetch from 'mobilizations' top-level collection
   useEffect(() => {
-    async function findAssignment() {
+    async function fetchMobilization() {
       if (!firestore) return;
       try {
-        const q = query(collectionGroup(firestore, 'assignments'), where('id', '==', id), limit(1));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          setAssignment(snap.docs[0].data() as Assignment);
-          setAsgnPath(snap.docs[0].ref.path);
+        const mobRef = doc(firestore, 'mobilizations', id);
+        const snap = await getDoc(mobRef);
+        if (snap.exists()) {
+          setAssignment(snap.data() as Assignment);
         }
       } catch (err) {
-        console.error('Failed to fetch assignment', err);
+        console.error('Failed to fetch mobilization data', err);
       } finally {
         setIsLoading(false);
       }
     }
-    findAssignment();
+    fetchMobilization();
   }, [firestore, id]);
 
   const workerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId]);
@@ -114,7 +107,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
   const handleUpdateMobStatus = (newStatus: MobilizationStatus, deploymentStatus?: DeploymentStatus) => {
-    if (!firestore || !asgnPath) return;
+    if (!firestore) return;
     const updateData: any = { 
       mobilizationStatus: newStatus, 
       updatedAt: Date.now(),
@@ -122,7 +115,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     };
     if (deploymentStatus) updateData.deploymentStatus = deploymentStatus;
     
-    updateDocumentNonBlocking(doc(firestore, asgnPath), updateData);
+    const mobRef = doc(firestore, 'mobilizations', id);
+    updateDocumentNonBlocking(mobRef, updateData);
     setAssignment(prev => prev ? ({ ...prev, ...updateData }) : null);
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} เรียบร้อยแล้ว` });
   };
@@ -137,7 +131,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         <div className="text-center py-20 space-y-4">
           <AlertCircle className="h-12 w-12 text-destructive mx-auto" />
           <h2 className="text-xl font-bold">ไม่พบข้อมูลการเตรียมความพร้อม</h2>
-          <Button asChild variant="outline" onClick={() => router.push('/mobilization')}>กลับไปหน้ารายการ</Button>
+          <Button variant="outline" onClick={() => router.push('/mobilization')}>กลับไปหน้ารายการ</Button>
         </div>
       </AppShell>
     );
@@ -157,7 +151,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.push('/mobilization')}>
@@ -173,7 +166,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
             </div>
           </div>
           <div className="flex gap-2">
-            <Badge variant="outline" className="text-sm py-1 px-4 border-primary/20 bg-primary/5 text-primary font-bold">
+            <Badge variant="outline" className="text-sm py-1.5 px-4 border-primary/20 bg-primary/5 text-primary font-bold">
               MOB STATUS: {assignment.mobilizationStatus || 'PENDING'}
             </Badge>
             <Badge variant={isFullyReady ? 'default' : 'destructive'} className={isFullyReady ? 'bg-green-600' : ''}>
@@ -182,11 +175,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        {/* Readiness Warnings */}
         {!isFullyReady && (
           <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
             <AlertTriangle className="h-5 w-5" />
-            <AlertTitle className="font-bold">ตรวจพบรายการที่ไม่สมบูรณ์ (Incomplete Readiness)</AlertTriangle>
+            <AlertTitle className="font-bold">ตรวจพบรายการที่ไม่สมบูรณ์ (Incomplete Readiness)</AlertTitle>
             <AlertDescription>
               คนงานยังไม่ผ่านเกณฑ์ความพร้อมที่กำหนด กรุณาตรวจสอบแท็บ "ภาพรวมความพร้อม" เพื่อดูรายละเอียดสิ่งที่ขาดหายไป
             </AlertDescription>
@@ -194,7 +186,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Area */}
           <div className="lg:col-span-2 space-y-6">
             <Tabs defaultValue="overview" className="w-full">
               <TabsList className="grid grid-cols-5 w-full h-auto p-1 bg-muted/50">
@@ -283,9 +274,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                       <CheckCircle className="h-4 w-4 mr-2" /> เข้าหน้างานแล้ว (Mark as Active)
                     </Button>
                   </CardContent>
-                  <CardFooter className="border-t pt-4">
-                    <p className="text-[10px] text-muted-foreground italic">หมายเหตุ: ปุ่ม Confirm Mob จะเปิดให้กดเมื่อรายการ Checklist ทั้งหมดเป็น 'pass'</p>
-                  </CardFooter>
                 </Card>
               </TabsContent>
 
@@ -308,11 +296,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           </Badge>
                         </div>
                       ))}
-                      {(!workerCerts || workerCerts.length === 0) && (
-                        <div className="text-center py-10 text-muted-foreground italic border-2 border-dashed rounded-lg">
-                          ไม่มีข้อมูลใบเซอร์ในระบบ
-                        </div>
-                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -325,9 +308,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     <p className="font-bold text-muted-foreground">รายการเบิก-คืน PPE และเครื่องมือ</p>
                     <p className="text-xs text-muted-foreground">กรุณาจัดการที่โมดูล คลังอุปกรณ์ (Store / Inventory)</p>
                   </div>
-                  <Button asChild variant="outline" size="sm">
-                    <Link href="/store" className="gap-2">ไปที่คลังอุปกรณ์ <ArrowRight className="h-4 w-4" /></Link>
-                  </Button>
                 </div>
               </TabsContent>
 
@@ -361,7 +341,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         <div>
                           <p className="font-bold">MOBILIZATION PIPELINE START</p>
                           <p className="text-xs text-muted-foreground">{new Date(assignment.updatedAt).toLocaleString('th-TH')}</p>
-                          <p className="text-xs mt-1">Personnel assigned to wave and entered mobilization queue</p>
+                          <p className="text-xs mt-1">Personnel entered mobilization queue</p>
                         </div>
                       </div>
                     </div>
@@ -371,7 +351,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
             </Tabs>
           </div>
 
-          {/* Sidebar */}
           <div className="space-y-6">
             <Card>
               <CardHeader className="pb-3 border-b">
@@ -392,16 +371,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                       </div>
                     </div>
                     <Separator />
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground uppercase text-[9px] font-bold">Passport No:</p>
-                        <p className="font-medium">{worker.passportNo || 'N/A'}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-muted-foreground uppercase text-[9px] font-bold">Readiness:</p>
-                        <Badge variant="outline" className="text-[9px] font-bold h-5">{worker.readinessStatus}</Badge>
-                      </div>
-                    </div>
                     <Button variant="outline" size="sm" className="w-full text-xs h-8" asChild>
                       <Link href={`/workers/${worker.id}`}>ดูประวัติคนงานแบบเต็ม <ChevronRight className="h-3 w-3 ml-1" /></Link>
                     </Button>
@@ -427,21 +396,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   <p className="text-[9px] text-muted-foreground uppercase font-bold">สถานที่ (Site):</p>
                   <p className="text-xs font-medium flex items-center gap-1"><MapPin className="h-3 w-3" /> {wave?.siteLocation || '...'}</p>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-dashed border-primary/30">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm flex items-center gap-2 text-primary font-bold">
-                  <Info className="h-4 w-4" /> ขั้นตอนถัดไป
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs text-muted-foreground leading-relaxed">
-                {isFullyReady ? (
-                  "พร้อมสำหรับ Mobilization: คุณสามารถกดยืนยันการส่งตัวเพื่อเปลี่ยนสถานะพนักงานเป็น 'MOBILIZING' และเริ่มจองตั๋วเดินทาง"
-                ) : (
-                  "รอการแก้ไข: ตรวจสอบรายการที่แสดงเป็น 'warning' หรือ 'fail' ในแท็บ Overview เพื่อดำเนินการแก้ไขให้ครบถ้วน"
-                )}
               </CardContent>
             </Card>
           </div>

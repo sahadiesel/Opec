@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Truck, 
@@ -12,22 +12,19 @@ import {
   Filter, 
   ChevronRight, 
   ClipboardCheck, 
-  CheckCircle2, 
   AlertCircle, 
   ShieldAlert, 
   Info,
-  ArrowRight,
   HardHat,
   Waves,
   Calendar,
-  Briefcase,
-  AlertTriangle
+  Briefcase
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, User, Position, Wave, ReadinessStatus } from '@/lib/types';
+import { Assignment, Worker, User, Position, Wave } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collectionGroup, collection } from 'firebase/firestore';
+import { collection } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function MobilizationPage() {
@@ -51,12 +48,13 @@ export default function MobilizationPage() {
     return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
   }, [currentUser]);
 
-  const assignmentsQuery = useMemoFirebase(() => {
+  // Standardized to 'mobilizations' collection
+  const mobilizationQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
-    return collectionGroup(firestore, 'assignments');
+    return collection(firestore, 'mobilizations');
   }, [firestore, isAuthorized]);
 
-  const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(assignmentsQuery as any);
+  const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(mobilizationQuery as any);
 
   const workersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'workers') : null), [firestore, isAuthorized]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
@@ -68,12 +66,15 @@ export default function MobilizationPage() {
   const { data: allWaves } = useCollection<Wave>(wavesQuery as any);
 
   // Filter for workers in mobilization pipeline
-  const mobilizationList = assignments?.filter(a => 
-    ['CLIENT_APPROVED', 'READY', 'MOBILIZING', 'READINESS_CHECK'].includes(a.deploymentStatus) &&
-    a.deploymentStatus !== 'CLOSED' &&
-    a.deploymentStatus !== 'DEMOBILIZED' &&
-    a.deploymentStatus !== 'ACTIVE'
-  ) || [];
+  const mobilizationList = useMemo(() => {
+    if (!assignments) return [];
+    return assignments.filter(a => 
+      ['CLIENT_APPROVED', 'READY', 'MOBILIZING', 'READINESS_CHECK'].includes(a.deploymentStatus) &&
+      a.deploymentStatus !== 'CLOSED' &&
+      a.deploymentStatus !== 'DEMOBILIZED' &&
+      a.deploymentStatus !== 'ACTIVE'
+    );
+  }, [assignments]);
 
   if (isUserLoading || !currentUser) return null;
 
@@ -95,13 +96,12 @@ export default function MobilizationPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        {/* Page Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <Truck className="h-8 w-8" /> การเตรียมความพร้อม (Mobilization Management)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้ตรวจสอบความพร้อมขั้นสุดท้ายก่อนส่งคนลงงาน โดยรวมข้อมูลจาก Worker, Position, Assignment และ Store มาไว้ในที่เดียว
+            ใช้ตรวจสอบความพร้อมขั้นสุดท้ายก่อนส่งคนลงงาน โดยรวมข้อมูลจาก Worker, Position, Assignment และ Store
           </p>
         </div>
 
@@ -113,17 +113,14 @@ export default function MobilizationPage() {
           </div>
         ) : (
           <>
-            {/* Warning Notice */}
             <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 shadow-sm">
               <ShieldAlert className="h-5 w-5 text-destructive" />
               <AlertTitle className="font-bold text-lg">มาตรการความปลอดภัยหน้างาน (Pre-deployment Safety Policy)</AlertTitle>
               <AlertDescription className="text-sm">
-                ห้ามยืนยัน Mobilization หากยังมีรายการ readiness ไม่ครบ หรือใบรับรองแพทย์หมดอายุ แม้จะมี client approval แล้วก็ตาม 
-                เจ้าหน้าที่ Operations ต้องตรวจสอบหลักฐานตัวจริงทุกครั้ง
+                ห้ามยืนยัน Mobilization หากยังมีรายการ readiness ไม่ครบ หรือใบรับรองแพทย์หมดอายุ เจ้าหน้าที่ Operations ต้องตรวจสอบหลักฐานตัวจริงทุกครั้ง
               </AlertDescription>
             </Alert>
 
-            {/* Action Bar */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
@@ -139,7 +136,6 @@ export default function MobilizationPage() {
               </div>
             </div>
 
-            {/* Deployment Readiness Dashboard */}
             <Card className="shadow-lg border-none overflow-hidden">
               <CardContent className="p-0">
                 {isAssignmentsLoading ? (
@@ -218,7 +214,6 @@ export default function MobilizationPage() {
               </CardContent>
             </Card>
 
-            {/* Next-Step Guidance */}
             <Card className="bg-primary/5 border-primary/10 border-dashed">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
@@ -231,7 +226,7 @@ export default function MobilizationPage() {
                     <div className="bg-amber-100 p-2 rounded text-amber-700 font-bold">1</div>
                     <div>
                       <p className="font-bold">ขั้นตอนที่ 1: ตรวจความสมบูรณ์ (Verify Compliance)</p>
-                      <p className="text-muted-foreground text-xs">หาก PPE หรือเครื่องมือยังไม่ครบ ให้ไปที่ <span className="font-bold text-primary underline">คลังอุปกรณ์ (Store / Inventory)</span> เพื่อดำเนินการเบิกจ่าย</p>
+                      <p className="text-muted-foreground text-xs">หาก PPE หรือเครื่องมือยังไม่ครบ ให้ไปที่ คลังอุปกรณ์ (Store / Inventory) เพื่อดำเนินการเบิกจ่าย</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">

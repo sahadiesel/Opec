@@ -1,83 +1,54 @@
 rules_version = '2';
 
-/**
- * FIRESTORE SECURITY RULES - PROTOTYPING MODE
- * 
- * Core Philosophy:
- * This ruleset implements a robust Role-Based Access Control (RBAC) model combined with 
- * path-based ownership. It prioritizes strict authorization (who can access what) while 
- * maintaining flexibility in data schema to support rapid development.
- * 
- * Data Structure:
- * - /users/{userId}: Profiles for staff members containing their system 'roleId'.
- * - /roles/{roleId}: Master definitions of available system roles.
- * - /positions/{positionId}: Job definitions with nested subcollections for requirements 
- *   (Certificates, PPE, Tools).
- * - /workers/{workerId}: Worker profiles with nested subcollections for records 
- *   (Certificates, Medical, Drug Tests).
- * - /audit_logs/{logId}: Centralized audit trail.
- * 
- * Key Security Decisions:
- * 1. Role-Based Lookups: Most authorization decisions rely on the 'roleId' stored in the 
- *    user's document. A helper function `getRole()` is used to fetch this data.
- * 2. Structural Segregation: Administrative master data (Roles, Positions) is separated 
- *    from operational worker data.
- * 3. Relational Integrity: On creation, documents must include IDs that match their 
- *    Firestore path to ensure data consistency.
- * 4. Audit Accountability: All authenticated users can append to audit logs, but only 
- *    system admins can read/list them.
- * 5. Explicit Permissions: Every collection explicitly defines rules for get, list, 
- *    create, update, and delete to prevent accidental leakage.
- */
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // --- GLOBAL HELPER FUNCTIONS ---
 
-    /** Checks if the user is authenticated with Firebase Auth. */
     function isSignedIn() {
       return request.auth != null;
     }
 
-    /** Checks if the authenticated user's UID matches the provided userId. */
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Removed `isExistingOwner` function as it was unused and contained an invalid `resource` reference in this scope.
-    // For update/delete operations, `resource` implicitly refers to an existing document,
-    // making `resource != null` redundant in that context.
-
-    /** Fetches the roleId for the currently authenticated user. */
-    function getRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roleId;
+    /** Fetches the user document. */
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    /** Checks if the user has a specific role. */
+    /** Checks if the user has a specific role (supports legacy roleId and new roleIds array). */
     function hasRole(roleName) {
-      return isSignedIn() && getRole() == roleName;
+      let user = getUserData();
+      return isSignedIn() && (
+        user.roleId == roleName || 
+        (user.roleIds != null && user.roleIds.hasAny([roleName]))
+      );
     }
 
-    /** Checks if the user is any form of HR staff. */
     function isHRStaff() {
       return hasRole('hr_manager') || hasRole('hr_officer') || hasRole('system_admin');
     }
 
-    /** Checks if the user is a Store Officer or Admin. */
     function isStoreStaff() {
       return hasRole('store_officer') || hasRole('system_admin');
     }
 
+    function isOperationsStaff() {
+      return hasRole('operations_officer') || hasRole('system_admin');
+    }
+
+    function isFinanceStaff() {
+      return hasRole('finance_officer') || hasRole('system_admin');
+    }
+
+    function isSalesStaff() {
+      return hasRole('sales_officer') || hasRole('system_admin');
+    }
+
     // --- COLLECTION RULES ---
 
-    /**
-     * @description Rules for staff user profiles. Allows self-management and admin oversight.
-     * @path /users/{userId}
-     * @allow (get) Any signed-in user can view a profile. (update) Owner or Admin.
-     * @deny (list) Prevent general listing of all users except for HR/Admins.
-     * @principle Enforces identity ownership and role-based administrative access.
-     */
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isHRStaff();
@@ -86,101 +57,110 @@ service cloud.firestore {
       allow delete: if hasRole('system_admin');
     }
 
-    /**
-     * @description Master role definitions. Read-only for all staff; managed by admins.
-     * @path /roles/{roleId}
-     * @allow (get, list) All authenticated staff. (write) System Admin only.
-     * @deny (write) Any non-admin user.
-     * @principle Centralized master data protection.
-     */
     match /roles/{roleId} {
       allow get, list: if isSignedIn();
-      allow create, update, delete: if hasRole('system_admin');
+      allow write: if hasRole('system_admin');
     }
 
-    /**
-     * @description Job positions and their hierarchical requirements.
-     * @path /positions/{positionId}
-     * @allow (get, list) All staff can see positions. (write) HR Managers and Admins.
-     * @deny (write) General staff or workers.
-     * @principle Authorization based on management roles.
-     */
     match /positions/{positionId} {
       allow get, list: if isSignedIn();
-      allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
+      allow write: if isHRStaff();
 
-      match /certificate_requirements/{reqId} {
-        allow get, list: if isSignedIn();
-        allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
-      }
-      match /ppe_requirements/{reqId} {
-        allow get, list: if isSignedIn();
-        allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
-      }
-      match /tool_requirements/{reqId} {
-        allow get, list: if isSignedIn();
-        allow create, update, delete: if hasRole('hr_manager') || hasRole('system_admin');
-      }
+      match /certificate_requirements/{reqId} { allow get, list, write: if isHRStaff(); }
+      match /ppe_requirements/{reqId} { allow get, list, write: if isHRStaff(); }
+      match /tool_requirements/{reqId} { allow get, list, write: if isHRStaff(); }
     }
 
-    /**
-     * @description Master lists for certificate, PPE, and tool types.
-     * @path /certificate_types/{id}, /ppe_types/{id}, /tool_types/{id}
-     * @allow (get, list) All authenticated staff.
-     * @deny (write) Restricted to specific inventory/HR roles.
-     * @principle Ensures data consistency for shared master entities.
-     */
-    match /certificate_types/{typeId} {
+    match /mobilizations/{mobId} {
+      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isSalesStaff());
+      allow write: if isSignedIn() && (isHRStaff() || isOperationsStaff());
+    }
+
+    match /waves/{waveId} {
       allow get, list: if isSignedIn();
-      allow create, update, delete: if isHRStaff();
+      allow write: if isHRStaff() || isOperationsStaff();
     }
 
-    match /ppe_types/{typeId} {
+    match /customers/{customerId} {
       allow get, list: if isSignedIn();
-      allow create, update, delete: if isStoreStaff();
+      allow write: if isSalesStaff() || isFinanceStaff();
+      
+      match /contact_persons/{id} { allow get, list, write: if isSalesStaff(); }
     }
 
-    match /tool_types/{typeId} {
+    match /main_contracts/{contractId} {
       allow get, list: if isSignedIn();
-      allow create, update, delete: if isStoreStaff();
+      allow write: if isSalesStaff() || isFinanceStaff();
+      
+      match /position_rates/{id} { allow get, list, write: if isSalesStaff() || isFinanceStaff(); }
     }
 
-    /**
-     * @description Worker profiles and their sensitive records (Medical, Drug Tests).
-     * @path /workers/{workerId}
-     * @allow (get, list, write) HR Managers and HR Officers.
-     * @deny (any) Users without HR or Admin roles.
-     * @principle Protects worker PII and sensitive medical data via role-based gating.
-     */
+    match /purchase_orders/{poId} {
+      allow get, list: if isSignedIn();
+      allow write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+
+      match /po_lines/{id} { allow get, list, write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff(); }
+    }
+
     match /workers/{workerId} {
-      allow get, list: if isHRStaff();
-      allow create, update, delete: if isHRStaff();
+      allow get, list: if isHRStaff() || isOperationsStaff();
+      allow write: if isHRStaff();
 
-      match /certificates/{certId} {
-        allow get, list: if isHRStaff();
-        allow create, update, delete: if isHRStaff();
-      }
-      match /medical_records/{medId} {
-        allow get, list: if isHRStaff();
-        allow create, update, delete: if isHRStaff();
-      }
-      match /drug_tests/{drugId} {
-        allow get, list: if isHRStaff();
-        allow create, update, delete: if isHRStaff();
-      }
+      match /certificates/{id} { allow get, list, write: if isHRStaff(); }
+      match /medical_records/{id} { allow get, list, write: if isHRStaff(); }
+      match /drug_tests/{id} { allow get, list, write: if isHRStaff(); }
+      match /documents/{id} { allow get, list, write: if isHRStaff(); }
     }
 
-    /**
-     * @description Application audit trail for tracking system actions.
-     * @path /audit_logs/{auditLogId}
-     * @allow (create) Any authenticated staff member. (get, list) System Admin only.
-     * @deny (update, delete) Operations are forbidden to maintain audit integrity.
-     * @principle Implements an append-only immutable log for accountability.
-     */
+    match /vendors/{vendorId} {
+      allow get, list: if isSignedIn();
+      allow write: if isStoreStaff() || isFinanceStaff();
+    }
+
+    match /store_items/{itemId} {
+      allow get, list: if isSignedIn();
+      allow write: if isStoreStaff();
+    }
+
+    match /store_transactions/{id} {
+      allow get, list: if isSignedIn();
+      allow create: if isStoreStaff();
+    }
+
+    match /billing_notes/{id} {
+      allow get, list: if isFinanceStaff() || isSalesStaff();
+      allow write: if isFinanceStaff() || isSalesStaff();
+      match /lines/{lineId} { allow get, list, write: if isFinanceStaff() || isSalesStaff(); }
+    }
+
+    match /tax_invoices/{id} {
+      allow get, list, write: if isFinanceStaff();
+    }
+
+    match /receipts/{id} {
+      allow get, list, write: if isFinanceStaff();
+      match /allocations/{allocId} { allow get, list, write: if isFinanceStaff(); }
+    }
+
+    match /bank_accounts/{id} {
+      allow get, list, write: if isFinanceStaff();
+    }
+
+    match /cashbook_entries/{id} {
+      allow get, list, write: if isFinanceStaff();
+    }
+
+    match /accounts_receivable/{id} {
+      allow get, list, write: if isFinanceStaff();
+    }
+
+    match /accounts_payable/{id} {
+      allow get, list, write: if isFinanceStaff();
+    }
+
     match /audit_logs/{auditLogId} {
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn();
       allow get, list: if hasRole('system_admin');
-      allow update, delete: if false;
     }
   }
 }

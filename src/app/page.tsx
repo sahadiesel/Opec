@@ -14,24 +14,19 @@ import {
   UserPlus, 
   ShoppingCart,
   Users,
-  CircleDollarSign,
   Clock,
   TrendingUp,
   Activity,
   HardHat,
   ArrowRight,
   ShieldAlert,
-  Info,
   Loader2,
-  KeyRound,
-  UserCheck,
   Settings2
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
-import { signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, collectionGroup, updateDoc } from 'firebase/firestore';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc, setDoc, collection, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Dialog,
   DialogContent,
@@ -41,12 +36,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
+import { inferDeptAndLevel } from '@/lib/auth-mapping';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [isBootstrapped, setIsBootstrapped] = useState<boolean | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -71,34 +65,15 @@ export default function Home() {
       try {
         const parsed = JSON.parse(stored);
         setUser(parsed);
-        
-        // Update presence
         if (firestore && parsed.id) {
-          updateDoc(doc(firestore, 'users', parsed.id), {
-            lastLoginAt: Date.now()
-          }).catch(console.error);
+          updateDoc(doc(firestore, 'users', parsed.id), { lastLoginAt: Date.now() }).catch(console.error);
         }
       } catch (e) { console.error(e); }
     }
-
-    async function checkBootstrap() {
-      if (!firestore) return;
-      try {
-        const snap = await getDoc(doc(firestore, 'system', 'bootstrap'));
-        setIsBootstrapped(snap.exists());
-      } catch (e) { setIsBootstrapped(false); }
-    }
-    checkBootstrap();
   }, [firestore]);
 
-  // Effective authorization for UI
   const { dept, level } = useMemo(() => inferDeptAndLevel(user), [user]);
-
-  // Authorization Guard for Dashboard Data
-  const isInternalStaff = useMemo(() => {
-    if (!user) return false;
-    return dept !== 'client';
-  }, [user, dept]);
+  const isInternalStaff = useMemo(() => user && dept !== 'client', [user, dept]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'main_contracts') : null), [firestore, isInternalStaff]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
@@ -106,8 +81,9 @@ export default function Home() {
   const workersQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'workers') : null), [firestore, isInternalStaff]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  const assignmentsQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collectionGroup(firestore, 'assignments') : null), [firestore, isInternalStaff]);
-  const { data: assignments } = useCollection<Assignment>(assignmentsQuery as any);
+  // Standardized to 'mobilizations' top-level collection
+  const mobilizationQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'mobilizations') : null), [firestore, isInternalStaff]);
+  const { data: assignments } = useCollection<Assignment>(mobilizationQuery as any);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,17 +95,11 @@ export default function Home() {
       
       if (userDoc.exists()) {
         const userData = userDoc.data() as User;
-        
         if (!userData.isActive) {
-          toast({ 
-            variant: "destructive", 
-            title: "บัญชีรอนุมัติ (Pending Approval)", 
-            description: "บัญชีของคุณยังไม่ได้รับการอนุมัติการใช้งาน กรุณาติดต่อผู้ดูแลระบบ" 
-          });
+          toast({ variant: "destructive", title: "บัญชีรอนุมัติ", description: "กรุณาติดต่อผู้ดูแลระบบ" });
           setIsLoggingIn(false);
           return;
         }
-
         await updateDoc(userDocRef, { lastLoginAt: Date.now() });
         setUser(userData);
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
@@ -146,21 +116,14 @@ export default function Home() {
   };
 
   const handleRegister = async () => {
-    if (!regEmail || !regPassword || !regConfirmPassword || !regDisplayName) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณากรอกข้อมูลให้ครบถ้วน" });
-      return;
-    }
     if (regPassword !== regConfirmPassword) {
       toast({ variant: "destructive", title: "รหัสผ่านไม่ตรงกัน" });
       return;
     }
-
     setIsRegistering(true);
     try {
       const cred = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
       const uid = cred.user.uid;
-      
-      const now = Date.now();
       const newUser: Partial<User> = {
         id: uid,
         email: regEmail,
@@ -169,16 +132,11 @@ export default function Home() {
         level: 'viewer',  
         roleIds: [], 
         isActive: false,
-        createdAt: now,
-        updatedAt: now
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       };
-
       await setDoc(doc(firestore!, 'users', uid), newUser);
-      
-      toast({ 
-        title: "ลงทะเบียนสำเร็จ", 
-        description: "บัญชีรอนุมัติสิทธิ์เข้าใช้งานจากผู้ดูแลระบบ" 
-      });
+      toast({ title: "ลงทะเบียนสำเร็จ", description: "บัญชีรอนุมัติสิทธิ์จากผู้ดูแลระบบ" });
       setIsRegDialogOpen(false);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Registration Failed", description: err.message });
@@ -216,51 +174,27 @@ export default function Home() {
                 {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
                 เข้าสู่ระบบ
               </Button>
-              
-              <div className="relative w-full py-2">
-                <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-muted-foreground">หรือ</span></div>
-              </div>
-
               <Dialog open={isRegDialogOpen} onOpenChange={setIsRegDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button variant="outline" className="w-full h-11 font-semibold gap-2">
-                    <UserPlus className="h-4 w-4" /> ลงทะเบียนเข้าใช้งาน
-                  </Button>
+                  <Button variant="outline" className="w-full h-11 font-semibold gap-2"><UserPlus className="h-4 w-4" /> ลงทะเบียนเข้าใช้งาน</Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>ลงทะเบียนพนักงานใหม่</DialogTitle>
-                    <DialogDescription>ข้อมูลของคุณจะถูกตรวจสอบโดย Admin ก่อนเปิดใช้งาน</DialogDescription>
-                  </DialogHeader>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>ลงทะเบียนพนักงานใหม่</DialogTitle></DialogHeader>
                   <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label>ชื่อ-นามสกุล</Label>
-                      <Input value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} placeholder="เช่น สมชาย สายชล" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>อีเมลพนักงาน</Label>
-                      <Input type="email" value={regEmail} onChange={e => setRegEmail(e.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>รหัสผ่าน</Label>
-                      <Input type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>ยืนยันรหัสผ่าน</Label>
-                      <Input type="password" value={regConfirmPassword} onChange={e => setRegConfirmPassword(e.target.value)} />
-                    </div>
+                    <Label>ชื่อ-นามสกุล</Label>
+                    <Input value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} />
+                    <Label>อีเมล</Label>
+                    <Input type="email" value={regEmail} onChange={e => setRegEmail(e.target.value)} />
+                    <Label>รหัสผ่าน</Label>
+                    <Input type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} />
+                    <Label>ยืนยันรหัสผ่าน</Label>
+                    <Input type="password" value={regConfirmPassword} onChange={e => setRegConfirmPassword(e.target.value)} />
                   </div>
-                  <DialogFooter>
-                    <Button onClick={handleRegister} disabled={isRegistering} className="w-full font-bold">
-                      ยืนยันการลงทะเบียน
-                    </Button>
-                  </DialogFooter>
+                  <DialogFooter><Button onClick={handleRegister} disabled={isRegistering} className="w-full">ยืนยันการลงทะเบียน</Button></DialogFooter>
                 </DialogContent>
               </Dialog>
-
               <Button variant="ghost" size="sm" className="w-full mt-2 text-xs opacity-50" asChild>
-                <Link href="/setup-admin"><Settings2 className="h-3 w-3 mr-2" /> กู้คืนสิทธิ์บัญชี (System Recovery)</Link>
+                <Link href="/setup-admin"><Settings2 className="h-3 w-3 mr-2" /> กู้คืนสิทธิ์บัญชี</Link>
               </Button>
             </CardFooter>
           </form>
@@ -269,7 +203,6 @@ export default function Home() {
     );
   }
 
-  // Statistics Calculation
   const stats = {
     revenue: assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0,
     activeWorkers: workers?.filter(w => w.workerStatus === 'assigned').length || 0,
@@ -283,21 +216,12 @@ export default function Home() {
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Operations Dashboard)</h1>
           <p className="text-muted-foreground text-lg">
-            {dept === 'client' 
-              ? `Customer Portal: ${user.displayName}` 
-              : `Department: ${dept?.toUpperCase() || 'N/A'} | Access: ${level?.toUpperCase() || 'N/A'}`
-            }
+            {dept === 'client' ? `Customer Portal: ${user.displayName}` : `Dept: ${dept?.toUpperCase() || 'N/A'} | Access: ${level?.toUpperCase() || 'N/A'}`}
           </p>
         </div>
 
         {dept === 'client' ? (
-          <Alert className="bg-blue-50 border-blue-200">
-            <Info className="h-4 w-4 text-blue-600" />
-            <AlertTitle className="font-bold">Welcome to Client Portal</AlertTitle>
-            <AlertDescription>
-              คุณสามารถตรวจสอบสถานะคนงานที่ได้รับมอบหมายและพิจารณาอนุมัติ Candidate ได้ในเมนู Client Portal
-            </AlertDescription>
-          </Alert>
+          <Alert className="bg-blue-50 border-blue-200"><Info className="h-4 w-4 text-blue-600" /><AlertTitle className="font-bold">Welcome</AlertTitle><AlertDescription>คุณสามารถตรวจสอบสถานะคนงานได้ที่ Client Portal</AlertDescription></Alert>
         ) : (
           <>
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -305,37 +229,6 @@ export default function Home() {
               <StatCard title="Total Assigned" value={stats.activeWorkers} sub="Personnel in Waves" icon={Users} colorClass="border-l-orange-500" />
               <StatCard title="Active Contracts" value={stats.activeContracts} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
               <StatCard title="Pending Client Review" value={stats.pendingApprovals} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
-            </div>
-
-            <div className="grid gap-6 md:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><TrendingUp className="h-5 w-5" /> Staffing Activity</CardTitle>
-                  <CardDescription>การเคลื่อนไหวของคนงานรายสัปดาห์</CardDescription>
-                </CardHeader>
-                <CardContent className="h-[300px] flex items-center justify-center text-muted-foreground italic bg-muted/10 rounded-md m-6 border-dashed border-2">
-                  [Chart Placeholder]
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><Clock className="h-5 w-5" /> Recent Actions</CardTitle>
-                  <CardDescription>รายการล่าสุดที่เกิดขึ้นในระบบ</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="p-4 border rounded-lg hover:bg-muted/10 transition-colors flex items-center justify-between">
-                    <div className="flex gap-3 items-center">
-                      <div className="bg-blue-100 p-2 rounded-full text-blue-600"><UserPlus className="h-4 w-4" /></div>
-                      <div>
-                        <p className="font-bold text-sm">New Candidates submitted</p>
-                        <p className="text-xs text-muted-foreground">รอการพิจารณา {stats.pendingApprovals} ราย</p>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm" asChild><Link href="/assignments"><ArrowRight className="h-4 w-4" /></Link></Button>
-                  </div>
-                </CardContent>
-              </Card>
             </div>
           </>
         )}
