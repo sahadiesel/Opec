@@ -50,7 +50,7 @@ export default function ReturnItemsPage() {
 
   const asgnQuery = useMemoFirebase(() => {
     if (!firestore || !selectedWorkerId) return null;
-    return query(collectionGroup(firestore, 'assignments'), where('workerId', '==', selectedWorkerId));
+    return query(collection(firestore, 'mobilizations'), where('workerId', '==', selectedWorkerId));
   }, [firestore, selectedWorkerId]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 

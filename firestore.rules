@@ -102,6 +102,12 @@ service cloud.firestore {
       match /po_lines/{id} { allow get, list, write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff(); }
     }
 
+    // Collection Group rule for PO Lines (used in /waves list)
+    match /{path=**}/po_lines/{id} {
+      allow read: if isSignedIn();
+      allow write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+    }
+
     match /workers/{workerId} {
       allow get, list: if isHRStaff() || isOperationsStaff();
       allow write: if isHRStaff();

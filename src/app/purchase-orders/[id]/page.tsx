@@ -34,7 +34,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where, collectionGroup } from 'firebase/firestore';
+import { doc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { PurchaseOrder, POLine, Customer, MainContract, Position, PositionRate, User, Assignment, Worker } from '@/lib/types';
 import Link from 'next/link';
@@ -48,18 +48,21 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const firestore = useFirestore();
   const { toast } = useToast();
 
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
   const poRef = useMemoFirebase(() => (firestore ? doc(firestore, 'purchase_orders', id) : null), [firestore, id]);
   const { data: po, isLoading: isPOLoading } = useDoc<PurchaseOrder>(poRef as any);
 
   const poLinesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders', id, 'po_lines') : null), [firestore, id]);
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
 
-  // For assignments summary - fetch all assignments for this PO Line collection group if needed, 
-  // or fetch specific ones. Here we fetch group and filter.
   const assignmentsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser) return null;
-    return collectionGroup(firestore, 'assignments');
-  }, [firestore, firebaseUser, isUserLoading]);
+    return query(collection(firestore, 'mobilizations'), where('poId', '==', id));
+  }, [firestore, firebaseUser, isUserLoading, id]);
   const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
 
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
@@ -85,11 +88,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     quantity: 1,
     status: 'active'
   });
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const handleSaveMaster = () => {
     if (!poRef) return;
@@ -143,7 +141,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   }
 
   const customer = customers?.find(c => c.id === po.customerId);
-  const poAssignments = allAssignments?.filter(a => poLines?.some(l => l.id === a.poLineId)) || [];
+  const poAssignments = allAssignments || [];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -196,7 +194,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <Input disabled={!isEditing} value={isEditing ? editedPO.poCode : po.poCode} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
                   </div>
                   <div className="space-y-2">
-                    <Label>ชื่อโครงการเฉพาะ (Project Name)</Label>
+                    <Label>ชื่อโครงการเฉพาะทาง (Project Name)</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedPO.projectName : po.projectName} onChange={e => setEditedPO({...editedPO, projectName: e.target.value})} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -301,7 +299,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <TableBody>
                     {poLines?.map(line => {
                       const pos = allPositions?.find(p => p.id === line.positionId);
-                      const assignedCount = poAssignments.filter(a => a.poLineId === line.id && ['approved', 'active', 'mobilizing'].includes(a.status)).length;
+                      const assignedCount = poAssignments.filter(a => a.poLineId === line.id && ['DRAFT', 'READY', 'MOBILIZING', 'ACTIVE'].includes(a.deploymentStatus)).length;
                       const remaining = line.quantity - assignedCount;
                       
                       return (
@@ -348,7 +346,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     })}
                     {!poLines?.length && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ยังไม่มีรายการสั่งจองในใบสั่งซื้อนี้</TableCell>
+                        <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ยังไม่มีรายการสั่งจองในใบสั่งซื้อนี้</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -392,14 +390,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             </TableCell>
                             <TableCell className="text-xs font-semibold">{pos?.positionName || asgn.positionId}</TableCell>
                             <TableCell className="text-xs">
-                              {new Date(asgn.startDate).toLocaleDateString('th-TH')} - {new Date(asgn.endDate).toLocaleDateString('th-TH')}
+                              {asgn.startDate} - {asgn.endDate}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline" className="capitalize">{asgn.status}</Badge>
+                              <Badge variant="outline" className="capitalize">{asgn.deploymentStatus}</Badge>
                             </TableCell>
                             <TableCell className="text-right">
                               <Button variant="ghost" size="sm" asChild>
-                                <Link href="/assignments">จัดการการมอบหมาย</Link>
+                                <Link href={`/mobilization/${asgn.id}`}>จัดการการเตรียมความพร้อม</Link>
                               </Button>
                             </TableCell>
                           </TableRow>

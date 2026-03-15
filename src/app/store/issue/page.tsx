@@ -20,7 +20,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { collection, doc, query, where, collectionGroup, getDocs, updateDoc, increment } from 'firebase/firestore';
+import { collection, doc, query, where, getDocs, updateDoc, increment } from 'firebase/firestore';
 import { StoreItem, Worker, Assignment, Wave, Position, User as AppUser, PositionPPERequirement, PositionToolRequirement } from '@/lib/types';
 import { addDocumentNonBlocking, setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Label } from '@/components/ui/label';
@@ -54,7 +54,7 @@ export default function IssueItemsPage() {
 
   const asgnQuery = useMemoFirebase(() => {
     if (!firestore || !selectedWorkerId) return null;
-    return query(collectionGroup(firestore, 'assignments'), where('workerId', '==', selectedWorkerId));
+    return query(collection(firestore, 'mobilizations'), where('workerId', '==', selectedWorkerId));
   }, [firestore, selectedWorkerId]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
