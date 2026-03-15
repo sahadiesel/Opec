@@ -69,10 +69,12 @@ export function getPermissions(
 ): ModulePermission {
   if (!user || !user.isActive || user.approvalStatus !== 'ACTIVE') return RESTRICTED_PERMISSIONS;
 
-  // 1. Full Admin Override
-  if (isAdminUser(user)) return ADMIN_PERMISSIONS;
+  // 1. Full Admin Override (Profile Key or Legacy Role)
+  if (user.permissionProfileKey === 'admin_admin' || isAdminUser(user)) {
+    return ADMIN_PERMISSIONS;
+  }
 
-  // 2. Profile-based check (Primary)
+  // 2. Profile-based check (Primary Source of Truth)
   if (profile && profile.isActive && profile.permissions?.[moduleKey]) {
     return profile.permissions[moduleKey];
   }
@@ -81,15 +83,14 @@ export function getPermissions(
   // Derive permissions based on hardcoded department logic if profile is missing
   const { dept, level } = inferDeptAndLevel(user);
   
-  // Example hardcoded fallbacks for the transition period
   const isOfficer = level === 'officer' || level === 'manager' || level === 'admin';
   const isManager = level === 'manager' || level === 'admin';
 
   const fallbackMap: Record<ModuleKey, ModulePermission> = {
     overview_dashboard: { view: true, create: false, edit: false, delete: false, approve: false },
-    customers: { view: ['sales', 'accounting', 'operations'].includes(dept), create: dept === 'sales', edit: dept === 'sales', delete: false, approve: false },
-    main_contracts: { view: ['sales', 'accounting', 'hr'].includes(dept), create: dept === 'sales', edit: dept === 'sales', delete: false, approve: false },
-    customer_pos: { view: ['sales', 'accounting', 'operations'].includes(dept), create: dept === 'sales', edit: dept === 'sales', delete: false, approve: false },
+    customers: { view: ['sales', 'accounting', 'operations'].includes(dept), create: dept === 'sales' && isOfficer, edit: dept === 'sales' && isOfficer, delete: false, approve: false },
+    main_contracts: { view: ['sales', 'accounting', 'hr'].includes(dept), create: dept === 'sales' && isOfficer, edit: dept === 'sales' && isOfficer, delete: false, approve: false },
+    customer_pos: { view: ['sales', 'accounting', 'operations'].includes(dept), create: dept === 'sales' && isOfficer, edit: dept === 'sales' && isOfficer, delete: false, approve: false },
     timesheets: { view: ['hr', 'operations'].includes(dept), create: isOfficer, edit: isOfficer, delete: false, approve: isManager },
     worker_payroll: { view: ['hr', 'accounting'].includes(dept), create: dept === 'hr' && isOfficer, edit: dept === 'hr' && isOfficer, delete: false, approve: dept === 'hr' && isManager },
     office_payroll: { view: ['hr', 'accounting'].includes(dept), create: dept === 'hr' && isManager, edit: dept === 'hr' && isManager, delete: false, approve: dept === 'hr' && isManager },

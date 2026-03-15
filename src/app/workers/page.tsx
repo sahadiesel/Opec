@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -34,13 +33,13 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/use-permissions';
 
 export default function WorkersPage() {
   const router = useRouter();
@@ -60,21 +59,19 @@ export default function WorkersPage() {
     }
   }, []);
 
-  const isStaff = useMemo(() => {
-    return currentUser?.roleIds?.some(r => ![ 'client', 'client_user' ].includes(r as any)) || false;
-  }, [currentUser]);
+  const { can, isLoading: isPermLoading } = usePermissions(currentUser);
 
   const workersQuery = useMemoFirebase(() => {
-    if (isUserLoading || !firebaseUser || !firestore || !currentUser || !isStaff) return null;
+    if (isUserLoading || !firebaseUser || !firestore || !currentUser || !can('workers').view) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, isUserLoading, currentUser, isStaff]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser, can('workers').view]);
 
   const { data: workers, isLoading: isCollectionLoading } = useCollection<Worker>(workersQuery as any);
 
   const positionsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !isStaff) return null;
+    if (!firestore || !firebaseUser || !can('positions').view) return null;
     return collection(firestore, 'positions');
-  }, [firestore, firebaseUser, isStaff]);
+  }, [firestore, firebaseUser, can('positions').view]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -117,9 +114,9 @@ export default function WorkersPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || isPermLoading || !currentUser) return null;
 
-  if (!isStaff) {
+  if (!can('workers').view) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
@@ -134,7 +131,6 @@ export default function WorkersPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <HardHat className="h-8 w-8" /> ทะเบียนคนงาน (Worker Directory)
@@ -144,7 +140,6 @@ export default function WorkersPage() {
           </p>
         </div>
 
-        {/* 2. Compliance Warning Box */}
         <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 shadow-sm">
           <ShieldAlert className="h-5 w-5" />
           <AlertTitle className="font-bold text-lg">การตรวจสอบความพร้อมก่อนส่งตัว (Compliance & Readiness Check)</AlertTitle>
@@ -153,7 +148,6 @@ export default function WorkersPage() {
           </AlertDescription>
         </Alert>
 
-        {/* 3. Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
@@ -165,50 +159,51 @@ export default function WorkersPage() {
             </Button>
           </div>
           <div className="flex items-center gap-2">
-            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-              <DialogTrigger asChild>
-                <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
-                  <Plus className="h-5 w-5" /> ลงทะเบียนคนงานใหม่ (New Registration)
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-3xl">
-                <DialogHeader>
-                  <DialogTitle>ลงทะเบียนคนงานใหม่ (Worker Registration)</DialogTitle>
-                  <DialogDescription>กรอกข้อมูลพื้นฐานตามบัตรประชาชนและพาสปอร์ตเพื่อเริ่มบันทึกประวัติ</DialogDescription>
-                </DialogHeader>
-                <div className="grid grid-cols-2 gap-4 py-4">
-                  <div className="grid gap-2">
-                    <Label>ชื่อ (First Name)</Label>
-                    <Input value={newWorker.firstName} onChange={e => setNewWorker({...newWorker, firstName: e.target.value})} />
+            {can('workers').create && (
+              <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
+                    <Plus className="h-5 w-5" /> ลงทะเบียนคนงานใหม่ (New Registration)
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-3xl">
+                  <DialogHeader>
+                    <DialogTitle>ลงทะเบียนคนงานใหม่ (Worker Registration)</DialogTitle>
+                    <DialogDescription>กรอกข้อมูลพื้นฐานตามบัตรประชาชนและพาสปอร์ตเพื่อเริ่มบันทึกประวัติ</DialogDescription>
+                  </DialogHeader>
+                  <div className="grid grid-cols-2 gap-4 py-4">
+                    <div className="grid gap-2">
+                      <Label>ชื่อ (First Name)</Label>
+                      <Input value={newWorker.firstName} onChange={e => setNewWorker({...newWorker, firstName: e.target.value})} />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>นามสกุล (Last Name)</Label>
+                      <Input value={newWorker.lastName} onChange={e => setNewWorker({...newWorker, lastName: e.target.value})} />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>เลขบัตรประชาชน (National ID)</Label>
+                      <Input value={newWorker.thaiNationalId} onChange={e => setNewWorker({...newWorker, thaiNationalId: e.target.value})} />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>ตำแหน่งหลัก (Primary Position)</Label>
+                      <Select onValueChange={v => setNewWorker({...newWorker, currentPositionId: v})}>
+                        <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
+                        <SelectContent>
+                          {positions?.map(p => <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="grid gap-2">
-                    <Label>นามสกุล (Last Name)</Label>
-                    <Input value={newWorker.lastName} onChange={e => setNewWorker({...newWorker, lastName: e.target.value})} />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>เลขบัตรประชาชน (National ID)</Label>
-                    <Input value={newWorker.thaiNationalId} onChange={e => setNewWorker({...newWorker, thaiNationalId: e.target.value})} />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>ตำแหน่งหลัก (Primary Position)</Label>
-                    <Select onValueChange={v => setNewWorker({...newWorker, currentPositionId: v})}>
-                      <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
-                      <SelectContent>
-                        {positions?.map(p => <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                  <Button onClick={handleCreate} className="bg-primary">บันทึกประวัติ (Save Profile)</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
+                    <Button onClick={handleCreate} className="bg-primary">บันทึกประวัติ (Save Profile)</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
           </div>
         </div>
 
-        {/* 4. Data Content */}
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isCollectionLoading ? (
@@ -265,7 +260,6 @@ export default function WorkersPage() {
           </CardContent>
         </Card>
 
-        {/* 5. Next-Step Guidance */}
         <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2 text-primary">
