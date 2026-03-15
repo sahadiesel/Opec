@@ -17,7 +17,9 @@ import {
   HardHat,
   CheckCircle2,
   Info,
-  Loader2
+  Loader2,
+  PackageMinus,
+  ShoppingCart
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, doc, query, where, getDocs, updateDoc, increment } from 'firebase/firestore';
@@ -177,7 +179,7 @@ export default function IssueItemsPage() {
           <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
           <div className="flex-1">
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-              <ArrowUpRight className="h-6 w-6 text-orange-600" /> บันทึกการเบิกอุปกรณ์ (Issue PPE/Tools)
+              <PackageMinus className="h-6 w-6 text-orange-600" /> บันทึกการเบิกอุปกรณ์ (Issue PPE/Tools)
             </h1>
             <p className="text-muted-foreground text-sm">เบิกอุปกรณ์ตามโควต้าตำแหน่งงานรายบุคคล</p>
           </div>
@@ -264,12 +266,12 @@ export default function IssueItemsPage() {
             <Card className="border-primary/20 shadow-lg">
               <CardHeader className="bg-primary/5 border-b">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <ShoppingCart className="h-5 w-5" /> รายการที่จะเบิก (Cart)
+                  <ShoppingCart className="h-5 w-5" /> รายการเตรียมเบิก (Issue List)
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 space-y-4">
                 {cart.length === 0 ? (
-                  <div className="py-10 text-center text-muted-foreground italic text-xs">ยังไม่มีรายการในตะกร้า</div>
+                  <div className="py-10 text-center text-muted-foreground italic text-xs">ยังไม่มีรายการที่เลือก</div>
                 ) : (
                   <div className="space-y-2">
                     {cart.map((item, idx) => (

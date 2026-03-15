@@ -702,7 +702,7 @@ export interface StoreItem {
   updatedAt: number;
 }
 
-export type TransactionType = 'RECEIVE' | 'ISSUE' | 'RETURN' | 'ADJUST' | 'TRANSFER' | 'DAMAGED' | 'LOST';
+export type TransactionType = 'RECEIVE' | 'ISSUE' | 'RETURN' | 'WRITEOFF' | 'ADJUST' | 'TRANSFER' | 'DAMAGED' | 'LOST';
 
 export interface StoreTransaction {
   id: string;

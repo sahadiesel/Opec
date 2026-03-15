@@ -17,7 +17,12 @@ import {
   HardHat,
   Hammer,
   Info,
-  ChevronRight
+  ChevronRight,
+  PackageMinus,
+  PackagePlus,
+  PackageOpen,
+  Trash2,
+  AlertCircle
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
@@ -79,20 +84,29 @@ export default function StoreDashboardPage() {
         </div>
 
         {/* Action Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Link href="/store/issue" className="block">
-            <Button className="w-full h-24 text-lg font-bold gap-3 shadow-md bg-primary hover:bg-primary/90">
-              <ArrowUpRight className="h-6 w-6" /> เบิกอุปกรณ์ (Issue PPE/Tools)
+            <Button className="w-full h-24 text-lg font-bold gap-3 shadow-md bg-primary hover:bg-primary/90 flex flex-col items-center justify-center pt-2">
+              <PackageMinus className="h-6 w-6" />
+              <span>เบิกอุปกรณ์ (Issue)</span>
             </Button>
           </Link>
           <Link href="/store/return" className="block">
-            <Button variant="outline" className="w-full h-24 text-lg font-bold gap-3 shadow-md border-primary text-primary">
-              <ArrowDownLeft className="h-6 w-6" /> รับคืนอุปกรณ์ (Return Items)
+            <Button variant="outline" className="w-full h-24 text-lg font-bold gap-3 shadow-md border-primary text-primary flex flex-col items-center justify-center pt-2">
+              <PackagePlus className="h-6 w-6" />
+              <span>รับคืนอุปกรณ์ (Return)</span>
             </Button>
           </Link>
           <Link href="/store/receive" className="block">
-            <Button variant="secondary" className="w-full h-24 text-lg font-bold gap-3 shadow-md">
-              <Plus className="h-6 w-6" /> รับของเข้าคลัง (Receive Stock)
+            <Button variant="secondary" className="w-full h-24 text-lg font-bold gap-3 shadow-md flex flex-col items-center justify-center pt-2">
+              <Plus className="h-6 w-6" />
+              <span>รับของเข้าคลัง (Receive)</span>
+            </Button>
+          </Link>
+          <Link href="/store/writeoff" className="block">
+            <Button variant="destructive" className="w-full h-24 text-lg font-bold gap-3 shadow-md flex flex-col items-center justify-center pt-2">
+              <Trash2 className="h-6 w-6" />
+              <span>ตัดจ่าย/ตัดของออก (Write-off)</span>
             </Button>
           </Link>
         </div>
@@ -128,7 +142,7 @@ export default function StoreDashboardPage() {
                     return (
                       <TableRow key={tx.id}>
                         <TableCell>
-                          <Badge variant={tx.transactionType === 'ISSUE' ? 'destructive' : 'default'} className="uppercase text-[10px]">
+                          <Badge variant={tx.transactionType === 'ISSUE' || tx.transactionType === 'WRITEOFF' ? 'destructive' : 'default'} className="uppercase text-[10px]">
                             {tx.transactionType}
                           </Badge>
                         </TableCell>

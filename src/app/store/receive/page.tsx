@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-import { Plus, ArrowLeft, Loader2, CheckCircle2, Package } from 'lucide-react';
+import { Plus, ArrowLeft, Loader2, CheckCircle2, Package, PackagePlus } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, doc, updateDoc, increment } from 'firebase/firestore';
 import { StoreItem, User } from '@/lib/types';
@@ -77,7 +77,7 @@ export default function ReceiveStockPage() {
           <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-              <Plus className="h-6 w-6 text-primary" /> รับของเข้าคลัง (Receive Stock)
+              <PackagePlus className="h-6 w-6 text-primary" /> รับของเข้าคลัง (Receive Stock)
             </h1>
             <p className="text-muted-foreground text-sm">เพิ่มสต็อกอุปกรณ์ใหม่เข้าระบบคลังสินค้า</p>
           </div>
@@ -85,8 +85,8 @@ export default function ReceiveStockPage() {
 
         <Card className="shadow-lg border-none">
           <CardHeader className="bg-primary/5 border-b">
-            <CardTitle>แบบฟอร์มรับของ (Intake Form)</CardTitle>
-            <CardDescription>ระบุรายการและจำนวนที่ได้รับจริง</CardDescription>
+            <CardTitle>แบบฟอร์มรับของเข้า (Intake Form)</CardTitle>
+            <CardDescription>ระบุรายการและจำนวนที่ได้รับจริงเพื่อเพิ่มสต็อก</CardDescription>
           </CardHeader>
           <CardContent className="pt-6 space-y-4">
             <div className="space-y-2">
