@@ -90,7 +90,7 @@ export interface User {
   updatedAt: number;
   lastLoginAt?: number;
   lastLogoutAt?: number;
-  customerId?: string; 
+  customerId?: string | null; 
   isSharedAccount?: boolean;
   linkedProjectIds?: string[];
   nationalId?: string;

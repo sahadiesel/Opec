@@ -3,7 +3,7 @@
  * Centralized mapping from Department + Access Level to Menu Visibility and Roles.
  */
 
-import { DeptType, AccessLevel, RoleType, User } from './types';
+import { DeptType, AccessLevel, RoleType, User, ApprovalStatus } from './types';
 
 export type MenuKey = 
   | 'dashboard'
@@ -61,37 +61,73 @@ export const LEGACY_ROLE_MAP: Record<string, { dept: DeptType; level: AccessLeve
 
 /**
  * Infers Dept and Level from legacy roleIds if new fields are missing.
- * This is the core migration-safe engine.
+ * Strict priority following business rules.
  */
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
   if (!user) return { dept: 'hr', level: 'viewer' };
   
-  // 1. Use explicit fields if available
+  // 1. Use explicit fields if already migrated and present
   if (user.department && user.level) {
     return { dept: user.department, level: user.level };
   }
 
-  // 2. Fallback to roleIds (Array)
+  // 2. Fallback logic: Priority based inference from roleIds array
   const roles = user.roleIds || [];
+  
+  // Highest priority: System Admin
   if (roles.includes('system_admin')) return { dept: 'admin', level: 'admin' };
+  
+  // Second: HR
   if (roles.includes('hr_manager')) return { dept: 'hr', level: 'manager' };
   if (roles.includes('hr_officer') || roles.includes('payroll_officer')) return { dept: 'hr', level: 'officer' };
+  
+  // Third: Accounting
   if (roles.includes('finance_officer')) return { dept: 'accounting', level: 'officer' };
+  
+  // Fourth: Sales
   if (roles.includes('sales_officer')) return { dept: 'sales', level: 'officer' };
+  
+  // Fifth: Store
   if (roles.includes('store_officer')) return { dept: 'store', level: 'officer' };
+  
+  // Sixth: Operations
   if (roles.includes('operations_officer')) return { dept: 'operations', level: 'officer' };
+  
+  // Seventh: Client
   if (roles.includes('client') || roles.includes('client_user')) return { dept: 'client', level: 'viewer' };
 
-  // 3. Last resort fallback to single roleId
-  if (user.roleId && LEGACY_ROLE_MAP[user.roleId]) {
-    return LEGACY_ROLE_MAP[user.roleId];
+  // 3. Fallback to single roleId if array is empty
+  if (user.roleId && LEGACY_ROLE_MAP[user.roleId as string]) {
+    return LEGACY_ROLE_MAP[user.roleId as string];
   }
 
+  // Default for unknown users
   return { dept: 'hr', level: 'viewer' };
 }
 
 /**
- * Effective Authorization Helpers (Requested names)
+ * Generates the full set of migrated fields for a user document.
+ * Safe and idempotent.
+ */
+export function getMigratedUserFields(user: Partial<User>): Partial<User> {
+  const { dept, level } = inferDeptAndLevel(user);
+  const isActive = user.isActive ?? true;
+  const approvalStatus: ApprovalStatus = user.approvalStatus || (isActive ? 'ACTIVE' : 'PENDING');
+  
+  return {
+    department: dept,
+    level: level,
+    isActive: isActive,
+    approvalStatus: approvalStatus,
+    customerId: user.customerId || null,
+    notes: user.notes || "",
+    roleIds: getLegacyRoles(dept, level), // Keep sync for security rules compatibility
+    updatedAt: Date.now()
+  };
+}
+
+/**
+ * Effective Authorization Helpers
  */
 export const getEffectiveDepartment = (user: Partial<User> | null) => inferDeptAndLevel(user).dept;
 export const getEffectiveLevel = (user: Partial<User> | null) => inferDeptAndLevel(user).level;
@@ -120,7 +156,7 @@ export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): bo
   return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
 }
 
-// Legacy-named exports for backward compatibility with existing components
+// Legacy-named exports for backward compatibility
 export const isAdmin = isAdminUser;
 export const sameCustomer = (user: User | null, recordCustomerId: string) => 
   isAdminUser(user) || (isClientUser(user) && user?.customerId === recordCustomerId);

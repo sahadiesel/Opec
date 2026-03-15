@@ -27,12 +27,13 @@ import {
   Lock,
   Clock,
   Save,
-  MoreHorizontal
+  MoreHorizontal,
+  Wand2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, DeptType, AccessLevel, ApprovalStatus } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc } from 'firebase/firestore';
+import { collection, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -53,7 +54,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
+import { canSeeMenu, getLegacyRoles, inferDeptAndLevel, isAdminUser, getMigratedUserFields } from '@/lib/auth-mapping';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'บริหาร / ระบบ (Admin)' },
@@ -94,6 +95,7 @@ export default function UsersPage() {
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -114,7 +116,7 @@ export default function UsersPage() {
     setSelectedUser(user);
     setEditedDept(dept);
     setEditedLevel(level);
-    setEditedStatus(user.approvalStatus || 'PENDING');
+    setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
   };
@@ -155,6 +157,32 @@ export default function UsersPage() {
     }
   };
 
+  const handleBulkMigration = async () => {
+    if (!firestore || !users || !isUserAdmin) return;
+    setIsMigrating(true);
+    let count = 0;
+
+    try {
+      for (const u of users) {
+        // Only migrate if essential fields are missing
+        if (!u.department || !u.level || !u.approvalStatus) {
+          const migratedFields = getMigratedUserFields(u);
+          const userRef = doc(firestore, 'users', u.id);
+          await updateDoc(userRef, migratedFields);
+          count++;
+        }
+      }
+      toast({ 
+        title: "ย้ายข้อมูลสำเร็จ", 
+        description: `ปรับปรุงข้อมูลพนักงานทั้งหมด ${count} รายเข้าสู่ระบบใหม่เรียบร้อยแล้ว` 
+      });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Migration Failed", description: err.message });
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
   const handleDelete = (id: string) => {
     if (!firestore) return;
     if (confirm('ยืนยันการลบผู้ใช้งานระบบรายนี้?')) {
@@ -189,13 +217,26 @@ export default function UsersPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งานและสิทธิ์ (Access Control)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            บริหารจัดการสิทธิ์เข้าถึงตามแผนก (Department) และระดับ (Access Level)
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งานและสิทธิ์ (Access Control)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              บริหารจัดการสิทธิ์เข้าถึงตามแผนก (Department) และระดับ (Access Level)
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              className="gap-2 border-amber-200 text-amber-700 hover:bg-amber-50"
+              onClick={handleBulkMigration}
+              disabled={isMigrating}
+            >
+              {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+              ย้ายข้อมูลสิทธิ์ (Run Migration)
+            </Button>
+          </div>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
@@ -437,5 +478,4 @@ function AccessIndicator({ label, active }: { label: string; active: boolean }) 
       <span>{label}</span>
       {active ? <CheckCircle2 className="h-3 w-3 text-green-600" /> : <XCircle className="h-3 w-3" />}
     </div>
-  );
 }
