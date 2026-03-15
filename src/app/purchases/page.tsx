@@ -52,7 +52,7 @@ export default function PurchasesPage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer', 'store_officer'];
+    const authRoles = ['system_admin', 'finance_officer', 'store_officer', 'operations_officer'];
     return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
   }, [currentUser]);
 

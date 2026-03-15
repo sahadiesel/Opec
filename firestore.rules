@@ -114,7 +114,22 @@ service cloud.firestore {
 
     match /vendors/{vendorId} {
       allow get, list: if isSignedIn();
-      allow write: if isStoreStaff() || isFinanceStaff();
+      allow write: if isStoreStaff() || isFinanceStaff() || isOperationsStaff();
+    }
+
+    match /purchases/{purchaseId} {
+      allow get, list: if isSignedIn() && (isStoreStaff() || isOperationsStaff() || isFinanceStaff());
+      allow write: if isStoreStaff() || isOperationsStaff();
+      
+      match /lines/{lineId} {
+        allow get, list: if isSignedIn() && (isStoreStaff() || isOperationsStaff() || isFinanceStaff());
+        allow write: if isStoreStaff() || isOperationsStaff();
+      }
+    }
+
+    match /ap_bills/{billId} {
+      allow get, list: if isFinanceStaff() || isStoreStaff();
+      allow write: if isFinanceStaff();
     }
 
     match /store_items/{itemId} {
