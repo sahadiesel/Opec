@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -42,11 +43,11 @@ import {
   SidebarMenuButton, 
   SidebarMenuItem 
 } from '@/components/ui/sidebar';
-import { DeptType, AccessLevel } from '@/lib/types';
-import { MenuKey, canSeeMenu } from '@/lib/auth-mapping';
+import { User, PermissionProfile } from '@/lib/types';
+import { ModuleKey, canView } from '@/lib/permissions';
 
 interface NavItem {
-  key: MenuKey;
+  key: ModuleKey;
   title: string;
   href: string;
   icon: any;
@@ -61,7 +62,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'ภาพรวม (Overview)',
     items: [
-      { key: 'dashboard', title: 'แดชบอร์ด (Dashboard)', href: '/', icon: LayoutDashboard },
+      { key: 'overview_dashboard', title: 'แดชบอร์ด (Dashboard)', href: '/', icon: LayoutDashboard },
     ]
   },
   {
@@ -69,7 +70,7 @@ const navGroups: NavGroup[] = [
     items: [
       { key: 'customers', title: 'ลูกค้า (Customers)', href: '/customers', icon: Users },
       { key: 'main_contracts', title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList },
-      { key: 'purchase_orders', title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart },
+      { key: 'customer_pos', title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart },
     ]
   },
   {
@@ -91,7 +92,7 @@ const navGroups: NavGroup[] = [
       { key: 'mobilization', title: 'การระดมพล (Mobilization)', href: '/mobilization', icon: Truck },
       { key: 'vendors', title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store },
       { key: 'purchases', title: 'การซื้อสินค้า/บริการ (Purchases)', href: '/purchases', icon: PackageSearch },
-      { key: 'store', title: 'คลังอุปกรณ์ (Store / Inventory)', href: '/store', icon: Warehouse },
+      { key: 'store_inventory', title: 'คลังอุปกรณ์ (Store / Inventory)', href: '/store', icon: Warehouse },
     ]
   },
   {
@@ -101,8 +102,8 @@ const navGroups: NavGroup[] = [
       { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
       { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
       { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
-      { key: 'ar', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
-      { key: 'ap', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
+      { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
+      { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
       { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
       { key: 'bank_accounts', title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard },
     ]
@@ -111,46 +112,51 @@ const navGroups: NavGroup[] = [
     label: 'ผู้ดูแลระบบ (Administration)',
     items: [
       { key: 'system_admin', title: 'จัดการผู้ใช้ (User List)', href: '/users', icon: ShieldCheck },
-      { key: 'permission_profiles', title: 'จัดการสิทธิ์ (Permissions)', href: '/system-admin/permissions', icon: LockKeyhole },
+      { key: 'system_admin', title: 'จัดการสิทธิ์ (Permissions)', href: '/system-admin/permissions', icon: LockKeyhole },
       { key: 'client_portal', title: 'Client Portal', href: '/client-portal', icon: ShieldAlert },
     ]
   },
 ];
 
-export function SidebarNav({ userDept, userLevel }: { userDept: DeptType; userLevel: AccessLevel }) {
+export function SidebarNav({ user, profile }: { user: User; profile?: PermissionProfile | null }) {
   const pathname = usePathname();
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">
-      <SidebarHeader className="border-b p-4">
-        <div className="flex items-center gap-2 font-bold text-primary">
-          <div className="bg-primary text-primary-foreground p-1 rounded">
+      <SidebarHeader className="border-b p-4 bg-primary text-primary-foreground">
+        <div className="flex items-center gap-2 font-bold">
+          <div className="bg-white text-primary p-1 rounded">
             <FileText className="h-5 w-5" />
           </div>
           <span className="group-data-[collapsible=icon]:hidden text-lg tracking-tight">OPEC OpsFlow</span>
         </div>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="py-2">
         {navGroups.map((group) => {
           const visibleItems = group.items.filter(item => 
-            canSeeMenu(item.key, userDept || 'hr', userLevel || 'viewer')
+            canView(user, item.key, profile)
           );
 
           if (visibleItems.length === 0) return null;
 
           return (
-            <SidebarGroup key={group.label}>
-              <SidebarGroupLabel className="px-4 text-[10px] uppercase tracking-widest font-bold text-muted-foreground/70">
+            <SidebarGroup key={group.label} className="py-2">
+              <SidebarGroupLabel className="px-4 text-[10px] uppercase tracking-widest font-black text-muted-foreground/50">
                 {group.label}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {visibleItems.map((item) => (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={pathname === item.href} tooltip={item.title}>
+                    <SidebarMenuItem key={`${item.key}-${item.href}`}>
+                      <SidebarMenuButton 
+                        asChild 
+                        isActive={pathname === item.href} 
+                        tooltip={item.title}
+                        className="transition-all duration-200"
+                      >
                         <Link href={item.href}>
                           <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
+                          <span className="font-medium">{item.title}</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -21,7 +22,8 @@ import {
   ArrowRight,
   ShieldAlert,
   Loader2,
-  Settings2
+  Settings2,
+  Info
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -37,6 +39,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { inferDeptAndLevel } from '@/lib/auth-mapping';
+import { usePermissions } from '@/hooks/use-permissions';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -57,6 +60,9 @@ export default function Home() {
   const auth = useAuth();
   const { user: firebaseUser, isUserLoading } = useUser();
   const { toast } = useToast();
+  
+  // Permissions Hook
+  const { can, isLoading: isPermLoading } = usePermissions(user);
 
   useEffect(() => {
     setIsLoaded(true);
@@ -81,7 +87,6 @@ export default function Home() {
   const workersQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'workers') : null), [firestore, isInternalStaff]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  // Standardized to 'mobilizations' top-level collection
   const mobilizationQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'mobilizations') : null), [firestore, isInternalStaff]);
   const { data: assignments } = useCollection<Assignment>(mobilizationQuery as any);
 
@@ -95,8 +100,8 @@ export default function Home() {
       
       if (userDoc.exists()) {
         const userData = userDoc.data() as User;
-        if (!userData.isActive) {
-          toast({ variant: "destructive", title: "บัญชีรอนุมัติ", description: "กรุณาติดต่อผู้ดูแลระบบ" });
+        if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED' || !userData.isActive) {
+          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณยังไม่อนุญาตให้เข้าใช้งาน กรุณาติดต่อ Admin" });
           setIsLoggingIn(false);
           return;
         }
@@ -132,6 +137,7 @@ export default function Home() {
         level: 'viewer',  
         roleIds: [], 
         isActive: false,
+        approvalStatus: 'PENDING',
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -203,6 +209,20 @@ export default function Home() {
     );
   }
 
+  const dashboardPerms = can('overview_dashboard');
+
+  if (!dashboardPerms.view && !isPermLoading) {
+    return (
+      <AppShell user={user} onLogout={handleLogout}>
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Denied</h2>
+          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงแดชบอร์ดหลัก กรุณาเลือกเมนูอื่นจากแถบด้านข้าง</p>
+        </div>
+      </AppShell>
+    );
+  }
+
   const stats = {
     revenue: assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0,
     activeWorkers: workers?.filter(w => w.workerStatus === 'assigned').length || 0,
@@ -214,23 +234,25 @@ export default function Home() {
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Operations Dashboard)</h1>
+          <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Dashboard)</h1>
           <p className="text-muted-foreground text-lg">
-            {dept === 'client' ? `Customer Portal: ${user.displayName}` : `Dept: ${dept?.toUpperCase() || 'N/A'} | Access: ${level?.toUpperCase() || 'N/A'}`}
+            ยินดีต้อนรับกลับมา, {user.displayName}
           </p>
         </div>
 
         {dept === 'client' ? (
-          <Alert className="bg-blue-50 border-blue-200"><Info className="h-4 w-4 text-blue-600" /><AlertTitle className="font-bold">Welcome</AlertTitle><AlertDescription>คุณสามารถตรวจสอบสถานะคนงานได้ที่ Client Portal</AlertDescription></Alert>
+          <Alert className="bg-blue-50 border-blue-200">
+            <Info className="h-4 w-4 text-blue-600" />
+            <AlertTitle className="font-bold">Portal Information</AlertTitle>
+            <AlertDescription>คุณสามารถตรวจสอบสถานะคนงานและการอนุมัติได้ที่เมนู <b>Client Portal</b></AlertDescription>
+          </Alert>
         ) : (
-          <>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-              <StatCard title="Active Assignments" value={stats.revenue} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
-              <StatCard title="Total Assigned" value={stats.activeWorkers} sub="Personnel in Waves" icon={Users} colorClass="border-l-orange-500" />
-              <StatCard title="Active Contracts" value={stats.activeContracts} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
-              <StatCard title="Pending Client Review" value={stats.pendingApprovals} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
-            </div>
-          </>
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <StatCard title="Active Assignments" value={stats.revenue} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
+            <StatCard title="Total Assigned" value={stats.activeWorkers} sub="Personnel in Waves" icon={Users} colorClass="border-l-orange-500" />
+            <StatCard title="Active Contracts" value={stats.activeContracts} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
+            <StatCard title="Pending Client Review" value={stats.pendingApprovals} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
+          </div>
         )}
       </div>
     </AppShell>

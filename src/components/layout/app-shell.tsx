@@ -4,14 +4,15 @@
 import * as React from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { SidebarNav } from './sidebar-nav';
-import { User } from '@/lib/types';
+import { User, PermissionProfile } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { LogOut } from 'lucide-react';
-import { useFirestore } from '@/firebase';
+import { LogOut, Shield, Sparkles } from 'lucide-react';
+import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
 import { useRouter } from 'next/navigation';
+import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +35,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const firestore = useFirestore();
   const router = useRouter();
 
+  const profileRef = useMemoFirebase(() => {
+    if (!firestore || !user?.permissionProfileKey) return null;
+    return doc(firestore, 'permission_profiles', user.permissionProfileKey);
+  }, [firestore, user?.permissionProfileKey]);
+
+  const { data: profile } = useDoc<PermissionProfile>(profileRef as any);
+
   const handleLogout = async () => {
     if (user && firestore) {
       try {
@@ -45,15 +53,8 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       }
     }
     
-    // Clear global session
     localStorage.removeItem('opsflow_user');
-    
-    // Call the provided onLogout callback (to clear local state if applicable)
-    if (onLogout) {
-      onLogout();
-    }
-    
-    // Redirect to home/login page
+    if (onLogout) onLogout();
     router.push('/');
   };
 
@@ -62,36 +63,49 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const dept = getEffectiveDepartment(user);
   const level = getEffectiveLevel(user);
   
-  const deptDisplay = dept.toUpperCase();
-  const levelDisplay = level.toUpperCase();
+  const isLegacy = !user.permissionProfileKey;
 
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <SidebarNav userDept={dept} userLevel={level} />
+        <SidebarNav user={user} profile={profile} />
         <SidebarInset>
           <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
               <SidebarTrigger />
               <div className="h-4 w-px bg-border mx-2" />
-              <h1 className="font-semibold text-foreground">ระบบจัดการกำลังคน (OpsFlow)</h1>
+              <h1 className="font-semibold text-foreground hidden sm:inline-block">ระบบจัดการกำลังคน (OpsFlow)</h1>
             </div>
             <div className="flex items-center gap-4">
-              <div className="hidden md:flex flex-col items-end max-w-[200px]">
-                <span className="text-sm font-medium truncate w-full text-right">{user.displayName}</span>
-                <span className="text-[10px] text-muted-foreground uppercase truncate w-full text-right">
-                  {deptDisplay} / {levelDisplay}
-                </span>
+              <div className="hidden md:flex flex-col items-end max-w-[250px]">
+                <div className="flex items-center gap-2">
+                  {isLegacy && (
+                    <Badge variant="outline" className="text-[8px] h-4 px-1.5 bg-amber-50 text-amber-700 border-amber-200">
+                      Legacy Access
+                    </Badge>
+                  )}
+                  <span className="text-sm font-bold truncate">{user.displayName}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground uppercase font-medium">
+                    {dept} / {level}
+                  </span>
+                  {profile && (
+                    <Badge variant="secondary" className="text-[9px] h-4 py-0 px-1 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1">
+                      <Shield className="h-2 w-2" /> {profile.profileNameEn}
+                    </Badge>
+                  )}
+                </div>
               </div>
-              <Avatar className="h-8 w-8">
-                <AvatarFallback className="bg-primary text-primary-foreground">
+              <Avatar className="h-8 w-8 ring-2 ring-primary/10">
+                <AvatarFallback className="bg-primary text-primary-foreground font-bold">
                   {user.displayName.charAt(0)}
                 </AvatarFallback>
               </Avatar>
               
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="icon" title="ออกจากระบบ">
+                  <Button variant="ghost" size="icon" title="ออกจากระบบ" className="hover:bg-destructive/10 hover:text-destructive">
                     <LogOut className="h-5 w-5" />
                   </Button>
                 </AlertDialogTrigger>
@@ -99,7 +113,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                   <AlertDialogHeader>
                     <AlertDialogTitle>ยืนยันการออกจากระบบ</AlertDialogTitle>
                     <AlertDialogDescription>
-                      คุณต้องการออกจากระบบใช่หรือไม่?
+                      คุณต้องการออกจากระบบ OpsFlow ใช่หรือไม่?
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
