@@ -175,7 +175,6 @@ export default function UsersPage() {
     try {
       for (const u of users) {
         try {
-          // Only migrate if essential fields are missing
           if (!u.department || !u.level || !u.approvalStatus) {
             const migratedFields = getMigratedUserFields(u);
             const userRef = doc(firestore, 'users', u.id);
@@ -259,7 +258,7 @@ export default function UsersPage() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Run Access Field Migration?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will backfill all existing user documents with the new Department and Level authorization fields based on their legacy roles. No data will be overwritten if already present.
+                    This will backfill all existing user documents with the new Department and Level authorization fields based on their legacy roles.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -373,11 +372,6 @@ export default function UsersPage() {
                         <SelectItem value="REJECTED">REJECTED (ไม่อนุมัติ)</SelectItem>
                       </SelectContent>
                     </Select>
-                    {selectedUser?.approvedBy && (
-                      <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <CheckCircle2 className="h-3 w-3" /> Approved by {selectedUser.approvedBy} on {new Date(selectedUser.approvedAt || 0).toLocaleDateString()}
-                      </p>
-                    )}
                   </div>
                   
                   <div className="space-y-2">
@@ -398,27 +392,11 @@ export default function UsersPage() {
                         {LEVELS.map(l => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    <p className="text-[10px] text-muted-foreground italic mt-1 leading-relaxed">
-                      {LEVELS.find(l => l.id === editedLevel)?.desc}
-                    </p>
                   </div>
 
                   <div className="space-y-2">
                     <Label>หมายเหตุ</Label>
-                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุหน้าที่รับผิดชอบหรือสาเหตุที่ระงับสิทธิ์..." className="min-h-[80px]" />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold text-muted-foreground uppercase flex items-center gap-2">
-                    <Sparkles className="h-3 w-3 text-amber-500" /> Presets องค์กร
-                  </Label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {STAFF_PRESETS.map(p => (
-                      <Button key={p.name} variant="outline" size="sm" className="justify-start text-[9px] h-8 px-2" onClick={() => { setEditedDept(p.dept as any); setEditedLevel(p.level as any); }}>
-                        {p.name}
-                      </Button>
-                    ))}
+                    <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="ระบุเหตุผล..." className="min-h-[80px]" />
                   </div>
                 </div>
               </div>
@@ -434,66 +412,23 @@ export default function UsersPage() {
                       <p className="text-xs font-bold border-b pb-1 text-primary">Commercial & Ops</p>
                       <AccessIndicator label="Customers" active={canSeeMenu('customers', editedDept, editedLevel)} />
                       <AccessIndicator label="PO / Contracts" active={canSeeMenu('main_contracts', editedDept, editedLevel)} />
-                      <AccessIndicator label="Waves / Assignments" active={canSeeMenu('waves', editedDept, editedLevel)} />
-                      <AccessIndicator label="Store / Inventory" active={canSeeMenu('store', editedDept, editedLevel)} />
                     </div>
                     <div className="p-3 border rounded bg-slate-50 space-y-2">
                       <p className="text-xs font-bold border-b pb-1 text-primary">HR & Finance</p>
-                      <AccessIndicator label="Payroll preparation" active={canSeeMenu('worker_payroll', editedDept, editedLevel)} />
+                      <AccessIndicator label="Payroll" active={canSeeMenu('worker_payroll', editedDept, editedLevel)} />
                       <AccessIndicator label="Staff / Workers" active={canSeeMenu('workers', editedDept, editedLevel)} />
-                      <AccessIndicator label="Tax / Billing / Receipts" active={canSeeMenu('tax_invoices', editedDept, editedLevel)} />
-                      <AccessIndicator label="Cashbook / Bank" active={canSeeMenu('cashbook', editedDept, editedLevel)} />
                     </div>
                   </div>
-                </div>
-
-                {selectedUser?.roleIds && selectedUser.roleIds.length > 0 && (
-                  <div className="p-4 bg-muted/20 rounded-lg">
-                    <Label className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-2 mb-2">
-                      <Clock className="h-3 w-3" /> Legacy Role Reference
-                    </Label>
-                    <div className="flex flex-wrap gap-1">
-                      {selectedUser.roleIds.map(role => (
-                        <Badge key={role} variant="secondary" className="text-[9px] h-5">{role}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="p-4 bg-blue-50/50 rounded-lg border-dashed border-2 border-blue-200">
-                  <div className="flex gap-2 mb-2">
-                    <Info className="h-4 w-4 text-blue-600" />
-                    <p className="text-xs font-bold text-blue-800">Operational Guidance</p>
-                  </div>
-                  <ul className="text-[10px] text-blue-700 list-disc pl-4 space-y-1">
-                    <li>การตั้งสถานะเป็น <b>ACTIVE</b> จะเปิดสิทธิ์การล็อกอินทันที</li>
-                    <li>หากต้องการยกเลิกการเข้าถึงชั่วคราว ให้ใช้สถานะ <b>SUSPENDED</b></li>
-                    <li>สิทธิ์ทั้งหมดจะถูกบันทึกใน <b>User Registry</b> และ <b>Security Token</b></li>
-                  </ul>
                 </div>
               </div>
             </div>
 
-            <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4 flex flex-row items-center justify-between gap-4">
-              <div className="flex gap-2">
-                {editedStatus === 'PENDING' && (
-                  <Button variant="default" className="bg-green-600 hover:bg-green-700 font-bold" onClick={() => handleSaveUser('ACTIVE')} disabled={isSaving}>
-                    <UserCheck className="h-4 w-4 mr-2" /> อนุมัติทันที
-                  </Button>
-                )}
-                {editedStatus === 'ACTIVE' && (
-                  <Button variant="destructive" className="font-bold" onClick={() => handleSaveUser('SUSPENDED')} disabled={isSaving}>
-                    <Lock className="h-4 w-4 mr-2" /> ระงับสิทธิ์
-                  </Button>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
-                <Button onClick={() => handleSaveUser()} disabled={isSaving} className="bg-primary font-bold shadow-md">
-                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                  บันทึกการตั้งค่า
-                </Button>
-              </div>
+            <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
+              <Button onClick={() => handleSaveUser()} disabled={isSaving} className="bg-primary font-bold shadow-md">
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                บันทึกการตั้งค่า
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

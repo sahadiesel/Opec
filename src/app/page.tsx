@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -78,7 +77,7 @@ export default function Home() {
     }
   }, [firestore]);
 
-  const { dept, level } = useMemo(() => inferDeptAndLevel(user), [user]);
+  const { dept } = useMemo(() => inferDeptAndLevel(user), [user]);
   const isInternalStaff = useMemo(() => user && dept !== 'client', [user, dept]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalStaff ? collection(firestore, 'main_contracts') : null), [firestore, isInternalStaff]);
