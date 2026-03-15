@@ -150,8 +150,13 @@ export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
 export function getMigratedUserFields(user: Partial<User>): Partial<User> {
   const { dept, level } = inferDeptAndLevel(user);
   const isActive = user.isActive ?? true;
-  const approvalStatus: ApprovalStatus = user.approvalStatus || (isActive ? 'ACTIVE' : 'PENDING');
   
+  // Logic for initial approval status
+  let approvalStatus: ApprovalStatus = user.approvalStatus || 'PENDING';
+  if (isActive && dept !== 'client') {
+    approvalStatus = 'ACTIVE';
+  }
+
   const profileKey = user.permissionProfileKey || `${dept}_${level}`;
 
   return {

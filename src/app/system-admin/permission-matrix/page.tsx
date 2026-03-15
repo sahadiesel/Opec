@@ -28,7 +28,8 @@ import {
   Lock,
   Wand2,
   RefreshCcw,
-  Zap
+  Zap,
+  Sparkles
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { 
@@ -39,7 +40,7 @@ import {
   ModulePermission 
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc, setDoc, query, orderBy, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, updateDoc, setDoc, query, orderBy, deleteDoc, writeBatch, getDocs } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -67,6 +68,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { isAdminUser, inferDeptAndLevel, getMigratedUserFields } from '@/lib/auth-mapping';
+import { getBaselineProfiles } from '@/lib/permissions';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหาร)' },
@@ -143,6 +145,7 @@ export default function PermissionMatrixPage() {
   // Migration State
   const [isMigrating, setIsMigrating] = useState(false);
   const [migrationResults, setMigrationResults] = useState<MigrationResult[]>([]);
+  const [baselineSummary, setBaselineSummary] = useState<{ profiles: number; users: number } | null>(null);
 
   // Editor Form State
   const [formData, setFormData] = useState<Partial<PermissionProfile>>({
@@ -252,6 +255,50 @@ export default function PermissionMatrixPage() {
     }
   };
 
+  const handleCreateBaseline = async () => {
+    if (!firestore || !users) return;
+    setIsMigrating(true);
+    const batch = writeBatch(firestore);
+    let profilesCreated = 0;
+    let usersMigrated = 0;
+
+    try {
+      // 1. Create Baseline Profiles
+      const baselineProfiles = getBaselineProfiles();
+      for (const p of baselineProfiles) {
+        const pRef = doc(firestore, 'permission_profiles', p.profileKey!);
+        batch.set(pRef, {
+          ...p,
+          id: p.profileKey,
+          createdAt: Date.now(),
+          createdBy: 'System Migration',
+          updatedAt: Date.now(),
+          updatedBy: 'System Migration'
+        }, { merge: true });
+        profilesCreated++;
+      }
+
+      // 2. Migrate Users
+      for (const user of users) {
+        // Idempotency: Keep existing manually curated profile keys
+        if (!user.permissionProfileKey || user.permissionProfileKey === "") {
+          const migratedFields = getMigratedUserFields(user);
+          const userRef = doc(firestore, 'users', user.id);
+          batch.update(userRef, migratedFields);
+          usersMigrated++;
+        }
+      }
+
+      await batch.commit();
+      setBaselineSummary({ profiles: profilesCreated, users: usersMigrated });
+      toast({ title: "Baseline Ready", description: `Created ${profilesCreated} profiles and updated ${usersMigrated} users.` });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Migration Failed", description: e.message });
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
   const runMigration = async (force = false) => {
     if (!firestore || !users) return;
     setIsMigrating(true);
@@ -331,9 +378,31 @@ export default function PermissionMatrixPage() {
               ตั้งค่าสิทธิ์การใช้งานตามแผนกและระดับ (Department → Level → Module Permissions)
             </p>
           </div>
-          <Button onClick={handleCreateProfile} className="gap-2 bg-primary font-bold shadow-md">
-            <Plus className="h-4 w-4" /> สร้างโปรไฟล์สิทธิ์ใหม่
-          </Button>
+          <div className="flex gap-2">
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" className="gap-2 border-primary text-primary" disabled={isMigrating}>
+                  <Sparkles className="h-4 w-4" /> Create Baseline & Assign
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>ยืนยันการสร้าง Baseline?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    ระบบจะสร้าง Permission Profile มาตรฐานทั้ง 8 ชุด และมอบหมายให้กับพนักงานที่ยังไม่มี Profile โดยอัตโนมัติตามตำแหน่งเดิม 
+                    (ข้อมูลเดิมจะไม่ถูกเขียนทับ)
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCreateBaseline} className="bg-primary">ตกลง (Run Baseline Tool)</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button onClick={handleCreateProfile} className="gap-2 bg-primary font-bold shadow-md">
+              <Plus className="h-4 w-4" /> สร้างโปรไฟล์สิทธิ์ใหม่
+            </Button>
+          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -345,6 +414,15 @@ export default function PermissionMatrixPage() {
           </TabsList>
 
           <TabsContent value="profiles" className="mt-6 space-y-6">
+            {baselineSummary && (
+              <Alert className="bg-green-50 border-green-200 text-green-800">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <AlertTitle className="font-bold">Baseline Process Summary</AlertTitle>
+                <AlertDescription>
+                  Created/Verified <b>{baselineSummary.profiles}</b> baseline profiles and migrated <b>{baselineSummary.users}</b> users.
+                </AlertDescription>
+              </Alert>
+            )}
             <Card className="shadow-lg border-none overflow-hidden">
               <CardContent className="p-0">
                 {isProfilesLoading ? (

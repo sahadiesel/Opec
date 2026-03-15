@@ -3,7 +3,7 @@
  * Primary source of truth for what a user can see and do.
  */
 
-import { User, PermissionProfile, ModulePermission } from './types';
+import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel } from './types';
 import { inferDeptAndLevel, isAdminUser } from './auth-mapping';
 
 /**
@@ -59,6 +59,22 @@ const RESTRICTED_PERMISSIONS: ModulePermission = {
   approve: false
 };
 
+const READ_ONLY_PERMISSIONS: ModulePermission = {
+  view: true,
+  create: false,
+  edit: false,
+  delete: false,
+  approve: false
+};
+
+const OFFICER_PERMISSIONS: ModulePermission = {
+  view: true,
+  create: true,
+  edit: true,
+  delete: false,
+  approve: false
+};
+
 /**
  * Primary helper to check permissions for a specific module
  */
@@ -80,7 +96,6 @@ export function getPermissions(
   }
 
   // 3. Fallback logic (Migration Support)
-  // Derive permissions based on hardcoded department logic if profile is missing
   const { dept, level } = inferDeptAndLevel(user);
   
   const isOfficer = level === 'officer' || level === 'manager' || level === 'admin';
@@ -117,6 +132,207 @@ export function getPermissions(
 
   return fallbackMap[moduleKey] || RESTRICTED_PERMISSIONS;
 }
+
+/**
+ * Baseline Permission Profile Definitions
+ */
+export function getBaselineProfiles(): Partial<PermissionProfile>[] {
+  const empty = RESTRICTED_PERMISSIONS;
+  const read = READ_ONLY_PERMISSIONS;
+  const full = ADMIN_PERMISSIONS;
+  const off = OFFICER_PERMISSIONS;
+
+  return [
+    {
+      profileKey: 'admin_admin',
+      profileNameTh: 'ผู้ดูแลระบบสูงสุด',
+      profileNameEn: 'System Administrator',
+      department: 'admin',
+      level: 'admin',
+      isActive: true,
+      permissions: Object.keys(INITIAL_PERMISSIONS_TEMPLATE).reduce((acc, key) => ({ ...acc, [key]: full }), {})
+    },
+    {
+      profileKey: 'hr_officer',
+      profileNameTh: 'เจ้าหน้าที่ฝ่ายบุคคล',
+      profileNameEn: 'HR Officer',
+      department: 'hr',
+      level: 'officer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        overview_dashboard: read,
+        positions: off,
+        workers: off,
+        timesheets: off,
+        worker_payroll: off,
+        waves: off,
+        assignments: off,
+        mobilization: off,
+        office_staff: read,
+        store_inventory: read
+      }
+    },
+    {
+      profileKey: 'hr_manager',
+      profileNameTh: 'ผู้จัดการฝ่ายบุคคล',
+      profileNameEn: 'HR Manager',
+      department: 'hr',
+      level: 'manager',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        overview_dashboard: read,
+        positions: { ...off, approve: true },
+        workers: { ...off, approve: true },
+        timesheets: { ...off, approve: true },
+        worker_payroll: { ...off, approve: true },
+        office_payroll: { ...off, approve: true },
+        office_staff: { ...off, approve: true },
+        waves: off,
+        assignments: off,
+        mobilization: off,
+        store_inventory: read
+      }
+    },
+    {
+      profileKey: 'sales_officer',
+      profileNameTh: 'เจ้าหน้าที่ฝ่ายขาย',
+      profileNameEn: 'Sales Officer',
+      department: 'sales',
+      level: 'officer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        overview_dashboard: read,
+        customers: off,
+        main_contracts: off,
+        customer_pos: off,
+        waves: read,
+        assignments: read,
+        mobilization: read,
+        billing_notes: read
+      }
+    },
+    {
+      profileKey: 'operations_officer',
+      profileNameTh: 'เจ้าหน้าที่ฝ่ายปฏิบัติการ',
+      profileNameEn: 'Operations Officer',
+      department: 'operations',
+      level: 'officer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        overview_dashboard: read,
+        waves: off,
+        assignments: off,
+        mobilization: off,
+        purchases: off,
+        timesheets: off,
+        customers: read,
+        main_contracts: read,
+        customer_pos: read,
+        positions: read,
+        workers: read,
+        vendors: read,
+        store_inventory: read
+      }
+    },
+    {
+      profileKey: 'store_officer',
+      profileNameTh: 'เจ้าหน้าที่คลังสินค้า',
+      profileNameEn: 'Store Officer',
+      department: 'store',
+      level: 'officer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        overview_dashboard: read,
+        vendors: off,
+        purchases: off,
+        store_inventory: off,
+        positions: read,
+        workers: read,
+        waves: read,
+        assignments: read,
+        mobilization: read,
+        ap_bills: read
+      }
+    },
+    {
+      profileKey: 'accounting_officer',
+      profileNameTh: 'เจ้าหน้าที่บัญชีและการเงิน',
+      profileNameEn: 'Accounting & Finance Officer',
+      department: 'accounting',
+      level: 'officer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        overview_dashboard: read,
+        billing_notes: off,
+        tax_invoices: off,
+        receipts: off,
+        ap_bills: off,
+        accounts_receivable: read,
+        accounts_payable: read,
+        cashbook: off,
+        bank_accounts: off,
+        customers: read,
+        main_contracts: read,
+        customer_pos: read,
+        vendors: read,
+        purchases: read,
+        store_inventory: read,
+        worker_payroll: read,
+        office_payroll: read,
+        office_staff: read,
+        waves: read,
+        assignments: read
+      }
+    },
+    {
+      profileKey: 'client_viewer',
+      profileNameTh: 'ลูกค้า (Viewer)',
+      profileNameEn: 'Client Viewer',
+      department: 'client',
+      level: 'viewer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        client_portal: read
+      }
+    }
+  ];
+}
+
+const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
+  overview_dashboard: RESTRICTED_PERMISSIONS,
+  customers: RESTRICTED_PERMISSIONS,
+  main_contracts: RESTRICTED_PERMISSIONS,
+  customer_pos: RESTRICTED_PERMISSIONS,
+  timesheets: RESTRICTED_PERMISSIONS,
+  worker_payroll: RESTRICTED_PERMISSIONS,
+  office_payroll: RESTRICTED_PERMISSIONS,
+  positions: RESTRICTED_PERMISSIONS,
+  workers: RESTRICTED_PERMISSIONS,
+  office_staff: RESTRICTED_PERMISSIONS,
+  waves: RESTRICTED_PERMISSIONS,
+  assignments: RESTRICTED_PERMISSIONS,
+  mobilization: RESTRICTED_PERMISSIONS,
+  vendors: RESTRICTED_PERMISSIONS,
+  purchases: RESTRICTED_PERMISSIONS,
+  store_inventory: RESTRICTED_PERMISSIONS,
+  billing_notes: RESTRICTED_PERMISSIONS,
+  tax_invoices: RESTRICTED_PERMISSIONS,
+  receipts: RESTRICTED_PERMISSIONS,
+  ap_bills: RESTRICTED_PERMISSIONS,
+  accounts_receivable: RESTRICTED_PERMISSIONS,
+  accounts_payable: RESTRICTED_PERMISSIONS,
+  cashbook: RESTRICTED_PERMISSIONS,
+  bank_accounts: RESTRICTED_PERMISSIONS,
+  system_admin: RESTRICTED_PERMISSIONS,
+  client_portal: RESTRICTED_PERMISSIONS,
+};
 
 /**
  * Functional shorthand helpers
