@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -10,6 +11,18 @@ import { LogOut } from 'lucide-react';
 import { useFirestore } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
+import { useRouter } from 'next/navigation';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -19,6 +32,7 @@ interface AppShellProps {
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const firestore = useFirestore();
+  const router = useRouter();
 
   const handleLogout = async () => {
     if (user && firestore) {
@@ -30,7 +44,17 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
         console.error('Failed to log logout time', error);
       }
     }
-    onLogout();
+    
+    // Clear global session
+    localStorage.removeItem('opsflow_user');
+    
+    // Call the provided onLogout callback (to clear local state if applicable)
+    if (onLogout) {
+      onLogout();
+    }
+    
+    // Redirect to home/login page
+    router.push('/');
   };
 
   if (!user) return <>{children}</>;
@@ -64,9 +88,31 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                   {user.displayName.charAt(0)}
                 </AvatarFallback>
               </Avatar>
-              <Button variant="ghost" size="icon" onClick={handleLogout}>
-                <LogOut className="h-5 w-5" />
-              </Button>
+              
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="icon" title="ออกจากระบบ">
+                    <LogOut className="h-5 w-5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>ยืนยันการออกจากระบบ</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      คุณต้องการออกจากระบบใช่หรือไม่?
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                    <AlertDialogAction 
+                      onClick={handleLogout}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      ตกลง
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </header>
           <main className="flex-1 p-6">
