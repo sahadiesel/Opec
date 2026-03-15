@@ -19,17 +19,11 @@ import {
   Loader2,
   AlertTriangle,
   UserCheck,
-  Building2,
-  Briefcase,
-  Activity,
   Save,
   Trash2,
-  History,
-  Lock,
-  Wand2,
-  RefreshCcw,
+  Sparkles,
   Zap,
-  Sparkles
+  RefreshCw
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { 
@@ -40,7 +34,7 @@ import {
   ModulePermission 
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc, setDoc, query, orderBy, deleteDoc, writeBatch, getDocs } from 'firebase/firestore';
+import { collection, doc, updateDoc, setDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -88,49 +82,38 @@ const LEVELS: { id: AccessLevel; label: string }[] = [
 ];
 
 const MODULE_LIST = [
-  { group: 'Overview', key: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Main Dashboard)' },
-  { group: 'Commercial', key: 'customers', label: 'ทะเบียนลูกค้า (Customers)' },
-  { group: 'Commercial', key: 'main_contracts', label: 'สัญญาหลัก (Contracts)' },
-  { group: 'Commercial', key: 'customer_pos', label: 'ใบสั่งซื้อลูกค้า (Customer POs)' },
-  { group: 'HR & Payroll', key: 'positions', label: 'ตำแหน่งงาน (Positions)' },
-  { group: 'HR & Payroll', key: 'workers', label: 'ทะเบียนคนงาน (Workers)' },
-  { group: 'HR & Payroll', key: 'office_staff', label: 'พนักงานออฟฟิศ (Office Staff)' },
-  { group: 'HR & Payroll', key: 'timesheets', label: 'ลงเวลาทำงาน (Timesheets)' },
-  { group: 'HR & Payroll', key: 'worker_payroll', label: 'จ่ายเงินคนงาน (Worker Payroll)' },
-  { group: 'HR & Payroll', key: 'office_payroll', label: 'เงินเดือนพนักงาน (Office Payroll)' },
-  { group: 'Operations', key: 'waves', label: 'รอบการทำงาน (Waves)' },
-  { group: 'Operations', key: 'assignments', label: 'การมอบหมาย (Assignments)' },
-  { group: 'Operations', key: 'mobilization', label: 'การระดมพล (Mobilization)' },
-  { group: 'Operations', key: 'vendors', label: 'คู่ค้า / ผู้ขาย (Vendors)' },
-  { group: 'Operations', key: 'purchases', label: 'การซื้อ (Purchases)' },
-  { group: 'Operations', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
-  { group: 'Finance', key: 'billing_notes', label: 'ใบวางบิล (Billing Notes)' },
-  { group: 'Finance', key: 'tax_invoices', label: 'ใบกำกับภาษี (Tax Invoices)' },
-  { group: 'Finance', key: 'receipts', label: 'ใบเสร็จรับเงิน (Receipts)' },
-  { group: 'Finance', key: 'ap_bills', label: 'วางบิลเจ้าหนี้ (AP Bills)' },
-  { group: 'Finance', key: 'accounts_receivable', label: 'ลูกหนี้ (AR)' },
-  { group: 'Finance', key: 'accounts_payable', label: 'เจ้าหนี้ (AP)' },
-  { group: 'Finance', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
-  { group: 'Finance', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
-  { group: 'System', key: 'system_admin', label: 'จัดการระบบ (System Admin)' },
-  { group: 'System', key: 'client_portal', label: 'พอร์ทัลลูกค้า (Client Portal)' },
+  { group: 'Overview', key: 'overview_dashboard', label: 'Dashboard' },
+  { group: 'Commercial', key: 'customers', label: 'Customers' },
+  { group: 'Commercial', key: 'main_contracts', label: 'Contracts' },
+  { group: 'Commercial', key: 'customer_pos', label: 'Customer POs' },
+  { group: 'HR & Payroll', key: 'timesheets', label: 'Timesheets' },
+  { group: 'HR & Payroll', key: 'worker_payroll', label: 'Worker Payroll' },
+  { group: 'HR & Payroll', key: 'office_payroll', label: 'Office Payroll' },
+  { group: 'HR & Payroll', key: 'positions', label: 'Positions' },
+  { group: 'HR & Payroll', key: 'workers', label: 'Workers' },
+  { group: 'HR & Payroll', key: 'office_staff', label: 'Office Staff' },
+  { group: 'Operations', key: 'waves', label: 'Waves' },
+  { group: 'Operations', key: 'assignments', label: 'Assignments' },
+  { group: 'Operations', key: 'mobilization', label: 'Mobilization' },
+  { group: 'Operations', key: 'vendors', label: 'Vendors' },
+  { group: 'Operations', key: 'purchases', label: 'Purchases' },
+  { group: 'Operations', key: 'store_inventory', label: 'Store / Inventory' },
+  { group: 'Finance', key: 'billing_notes', label: 'Billing Notes' },
+  { group: 'Finance', key: 'tax_invoices', label: 'Tax Invoices' },
+  { group: 'Finance', key: 'receipts', label: 'Receipts' },
+  { group: 'Finance', key: 'ap_bills', label: 'AP Bills' },
+  { group: 'Finance', key: 'accounts_receivable', label: 'AR' },
+  { group: 'Finance', key: 'accounts_payable', label: 'AP' },
+  { group: 'Finance', key: 'cashbook', label: 'Cashbook' },
+  { group: 'Finance', key: 'bank_accounts', label: 'Bank Accounts' },
+  { group: 'System', key: 'system_admin', label: 'System Admin' },
+  { group: 'System', key: 'client_portal', label: 'Client Portal' },
 ];
 
 const INITIAL_PERMISSIONS: Record<string, ModulePermission> = {};
 MODULE_LIST.forEach(m => {
   INITIAL_PERMISSIONS[m.key] = { view: false, create: false, edit: false, delete: false, approve: false };
 });
-
-interface MigrationResult {
-  userId: string;
-  displayName: string;
-  oldRoles: string[];
-  newDept: string;
-  newLevel: string;
-  newProfile: string;
-  status: 'migrated' | 'skipped' | 'failed';
-  error?: string;
-}
 
 export default function PermissionMatrixPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -141,11 +124,8 @@ export default function PermissionMatrixPage() {
   const [activeTab, setActiveTab] = useState('profiles');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-
-  // Migration State
   const [isMigrating, setIsMigrating] = useState(false);
-  const [migrationResults, setMigrationResults] = useState<MigrationResult[]>([]);
-  const [baselineSummary, setBaselineSummary] = useState<{ profiles: number; users: number } | null>(null);
+  const [migrationSummary, setMigrationSummary] = useState<any>(null);
 
   // Editor Form State
   const [formData, setFormData] = useState<Partial<PermissionProfile>>({
@@ -164,7 +144,6 @@ export default function PermissionMatrixPage() {
 
   const isUserAdmin = useMemo(() => isAdminUser(currentUser), [currentUser]);
 
-  // Queries
   const profilesQuery = useMemoFirebase(() => {
     if (!firestore || !isUserAdmin) return null;
     return query(collection(firestore, 'permission_profiles'), orderBy('department', 'asc'));
@@ -177,7 +156,6 @@ export default function PermissionMatrixPage() {
   }, [firestore, isUserAdmin]);
   const { data: users, isLoading: isUsersLoading } = useCollection<User>(usersQuery as any);
 
-  // Actions
   const handleCreateProfile = () => {
     setFormData({
       profileKey: '',
@@ -210,10 +188,7 @@ export default function PermissionMatrixPage() {
     if (!firestore || !currentUser) return;
     
     const key = formData.profileKey || `${formData.department}_${formData.level}`;
-    if (!key) {
-      toast({ variant: "destructive", title: "Error", description: "Invalid Profile Key" });
-      return;
-    }
+    if (!key) return;
 
     setIsSaving(true);
     try {
@@ -232,7 +207,7 @@ export default function PermissionMatrixPage() {
       }
 
       await setDoc(profileRef, saveData, { merge: true });
-      toast({ title: "บันทึกโปรไฟล์สำเร็จ", description: `โปรไฟล์ ${key} ถูกบันทึกแล้ว` });
+      toast({ title: "บันทึกโปรไฟล์สำเร็จ" });
       setIsEditorOpen(false);
     } catch (err: any) {
       toast({ variant: "destructive", title: "Error", description: err.message });
@@ -255,12 +230,15 @@ export default function PermissionMatrixPage() {
     }
   };
 
-  const handleCreateBaseline = async () => {
+  const handleBaselineMigration = async () => {
     if (!firestore || !users) return;
     setIsMigrating(true);
+    
     const batch = writeBatch(firestore);
     let profilesCreated = 0;
     let usersMigrated = 0;
+    let usersSkipped = 0;
+    let usersFailed = 0;
 
     try {
       // 1. Create Baseline Profiles
@@ -280,77 +258,32 @@ export default function PermissionMatrixPage() {
 
       // 2. Migrate Users
       for (const user of users) {
-        // Idempotency: Keep existing manually curated profile keys
-        if (!user.permissionProfileKey || user.permissionProfileKey === "") {
+        // Keep manual curation if already exists and looks valid
+        if (user.permissionProfileKey && user.permissionProfileKey !== "") {
+          usersSkipped++;
+          continue;
+        }
+
+        try {
           const migratedFields = getMigratedUserFields(user);
           const userRef = doc(firestore, 'users', user.id);
           batch.update(userRef, migratedFields);
           usersMigrated++;
+        } catch (e) {
+          console.error('Migration failed for user:', user.id, e);
+          usersFailed++;
         }
       }
 
       await batch.commit();
-      setBaselineSummary({ profiles: profilesCreated, users: usersMigrated });
-      toast({ title: "Baseline Ready", description: `Created ${profilesCreated} profiles and updated ${usersMigrated} users.` });
+      setMigrationSummary({ profilesCreated, usersMigrated, usersSkipped, usersFailed });
+      toast({ title: "Baseline Migration Complete" });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Migration Failed", description: e.message });
     } finally {
       setIsMigrating(false);
     }
   };
-
-  const runMigration = async (force = false) => {
-    if (!firestore || !users) return;
-    setIsMigrating(true);
-    const results: MigrationResult[] = [];
-    const batch = writeBatch(firestore);
-    let batchCount = 0;
-
-    for (const user of users) {
-      const { dept, level } = inferDeptAndLevel(user);
-      const profileKey = `${dept}_${level}`;
-      
-      const res: MigrationResult = {
-        userId: user.id,
-        displayName: user.displayName,
-        oldRoles: user.roleIds || [],
-        newDept: dept,
-        newLevel: level,
-        newProfile: profileKey,
-        status: 'skipped'
-      };
-
-      if (!user.permissionProfileKey || force) {
-        try {
-          const migratedFields = getMigratedUserFields(user);
-          const userRef = doc(firestore, 'users', user.id);
-          batch.update(userRef, migratedFields);
-          res.status = 'migrated';
-          batchCount++;
-        } catch (e: any) {
-          res.status = 'failed';
-          res.error = e.message;
-        }
-      }
-      results.push(res);
-    }
-
-    if (batchCount > 0) {
-      await batch.commit();
-    }
-
-    setMigrationResults(results);
-    setIsMigrating(false);
-    toast({ title: "Migration Complete", description: `Successfully processed ${batchCount} users.` });
-  };
-
-  const auditStats = useMemo(() => {
-    if (!users || !profiles) return { unassigned: 0, inactive: 0 };
-    return {
-      unassigned: users.filter(u => u.isActive && !u.permissionProfileKey).length,
-      inactive: profiles.filter(p => !p.isActive).length,
-    };
-  }, [users, profiles]);
 
   if (isUserLoading || !currentUser) return null;
 
@@ -360,7 +293,7 @@ export default function PermissionMatrixPage() {
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Restricted</h2>
-          <p className="text-muted-foreground">This page is for full System Administrators only.</p>
+          <p className="text-muted-foreground">Only system administrators can access this page.</p>
         </div>
       </AppShell>
     );
@@ -382,20 +315,21 @@ export default function PermissionMatrixPage() {
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" className="gap-2 border-primary text-primary" disabled={isMigrating}>
-                  <Sparkles className="h-4 w-4" /> Create Baseline & Assign
+                  {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  Create Baseline & Assign
                 </Button>
               </AlertDialogTrigger>
-              <AlertDialogContent className="max-w-md">
+              <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>ยืนยันการสร้าง Baseline?</AlertDialogTitle>
+                  <AlertDialogTitle>ยืนยันการตั้งค่า Baseline?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    ระบบจะสร้าง Permission Profile มาตรฐานทั้ง 8 ชุด และมอบหมายให้กับพนักงานที่ยังไม่มี Profile โดยอัตโนมัติตามตำแหน่งเดิม 
-                    (ข้อมูลเดิมจะไม่ถูกเขียนทับ)
+                    ระบบจะสร้าง Permission Profile มาตรฐาน (8 ชุด) และอัปเดตข้อมูลพนักงานทุกคนที่ยังไม่มี Profile 
+                    โดยคำนวณจากตำแหน่งและแผนกเดิมที่มีอยู่ในระบบ ข้อมูลเดิมจะไม่ถูกลบ
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleCreateBaseline} className="bg-primary">ตกลง (Run Baseline Tool)</AlertDialogAction>
+                  <AlertDialogAction onClick={handleBaselineMigration} className="bg-primary">เริ่มการทำงาน</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -405,28 +339,31 @@ export default function PermissionMatrixPage() {
           </div>
         </div>
 
+        {migrationSummary && (
+          <Alert className="bg-green-50 border-green-200 text-green-800">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <AlertTitle className="font-bold">Migration Summary</AlertTitle>
+            <AlertDescription className="text-xs">
+              Profiles Created: {migrationSummary.profilesCreated} | 
+              Users Migrated: {migrationSummary.usersMigrated} | 
+              Users Skipped: {migrationSummary.usersSkipped} | 
+              Users Failed: {migrationSummary.usersFailed}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid grid-cols-4 w-full md:w-[800px] h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-3 w-full md:w-[600px] h-auto p-1 bg-muted/50">
             <TabsTrigger value="profiles" className="gap-2 py-2">1. รายการโปรไฟล์ (Profiles)</TabsTrigger>
             <TabsTrigger value="assignment" className="gap-2 py-2">2. มอบหมายสิทธิ์ (Assignment)</TabsTrigger>
             <TabsTrigger value="audit" className="gap-2 py-2">3. ตรวจสอบ (Audit)</TabsTrigger>
-            <TabsTrigger value="migration" className="gap-2 py-2">4. ย้ายข้อมูล (Migration)</TabsTrigger>
           </TabsList>
 
           <TabsContent value="profiles" className="mt-6 space-y-6">
-            {baselineSummary && (
-              <Alert className="bg-green-50 border-green-200 text-green-800">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <AlertTitle className="font-bold">Baseline Process Summary</AlertTitle>
-                <AlertDescription>
-                  Created/Verified <b>{baselineSummary.profiles}</b> baseline profiles and migrated <b>{baselineSummary.users}</b> users.
-                </AlertDescription>
-              </Alert>
-            )}
             <Card className="shadow-lg border-none overflow-hidden">
               <CardContent className="p-0">
                 {isProfilesLoading ? (
-                  <div className="py-20 text-center animate-pulse">Loading profiles...</div>
+                  <div className="py-20 text-center animate-pulse italic">กำลังโหลดข้อมูลโปรไฟล์...</div>
                 ) : (
                   <Table>
                     <TableHeader className="bg-muted/50">
@@ -443,10 +380,10 @@ export default function PermissionMatrixPage() {
                       {profiles?.map((p) => (
                         <TableRow key={p.id} className="hover:bg-muted/30 transition-all">
                           <TableCell className="pl-6 py-4">
-                            <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700">{p.department}</Badge>
+                            <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700 font-bold">{p.department}</Badge>
                           </TableCell>
                           <TableCell>
-                            <Badge variant="secondary" className="capitalize">{p.level}</Badge>
+                            <Badge variant="secondary" className="capitalize font-bold">{p.level}</Badge>
                           </TableCell>
                           <TableCell className="font-mono text-xs font-bold text-primary">{p.profileKey}</TableCell>
                           <TableCell>
@@ -454,7 +391,7 @@ export default function PermissionMatrixPage() {
                               {p.isActive ? 'ACTIVE' : 'INACTIVE'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-[10px] text-muted-foreground">
+                          <TableCell className="text-[10px] text-muted-foreground leading-tight">
                             {new Date(p.updatedAt).toLocaleString()}<br/>โดย {p.updatedBy}
                           </TableCell>
                           <TableCell className="text-right pr-6">
@@ -474,17 +411,17 @@ export default function PermissionMatrixPage() {
           <TabsContent value="assignment" className="mt-6 space-y-6">
             <Card className="shadow-md">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2"><UserCheck className="h-5 w-5" /> มอบหมายสิทธิ์ให้ผู้ใช้งาน</CardTitle>
-                <CardDescription>เลือก Permission Profile ให้กับพนักงานแต่ละคน</CardDescription>
+                <CardTitle className="flex items-center gap-2"><UserCheck className="h-5 w-5 text-primary" /> มอบหมายสิทธิ์ให้ผู้ใช้งาน</CardTitle>
+                <CardDescription>ผูกโปรไฟล์การเข้าถึงให้กับพนักงานแต่ละคน</CardDescription>
               </CardHeader>
               <CardContent className="p-0 border-t">
                 <Table>
                   <TableHeader className="bg-muted/50">
                     <TableRow>
-                      <TableHead className="pl-6 py-4">พนักงาน (User)</TableHead>
-                      <TableHead>แผนก / ระดับปัจจุบัน</TableHead>
-                      <TableHead>โปรไฟล์สิทธิ์ (Permission Profile)</TableHead>
-                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                      <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
+                      <TableHead>แผนก / ระดับ</TableHead>
+                      <TableHead>Profile Assigned</TableHead>
+                      <TableHead className="text-right pr-6">ดำเนินการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -509,7 +446,7 @@ export default function PermissionMatrixPage() {
                               value={u.permissionProfileKey || 'none'} 
                               onValueChange={(v) => handleAssignProfile(u.id, v)}
                             >
-                              <SelectTrigger className={`h-9 text-xs w-[250px] ${!u.permissionProfileKey ? 'border-amber-500 bg-amber-50' : ''}`}>
+                              <SelectTrigger className={`h-9 text-xs w-[250px] ${!u.permissionProfileKey ? 'border-amber-500 bg-amber-50 shadow-sm' : ''}`}>
                                 <SelectValue placeholder="เลือกโปรไฟล์..." />
                               </SelectTrigger>
                               <SelectContent>
@@ -522,7 +459,7 @@ export default function PermissionMatrixPage() {
                           </TableCell>
                           <TableCell className="text-right pr-6">
                             {!u.permissionProfileKey && (
-                              <Badge variant="destructive" className="animate-pulse">Missing Profile</Badge>
+                              <Badge variant="destructive" className="animate-pulse text-[8px]">Missing Profile</Badge>
                             )}
                           </TableCell>
                         </TableRow>
@@ -536,140 +473,25 @@ export default function PermissionMatrixPage() {
 
           <TabsContent value="audit" className="mt-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card className="border-l-8 border-l-red-600">
+              <Card className="border-l-8 border-l-red-600 shadow-md">
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-muted-foreground">Users without Profile</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-muted-foreground">Unassigned Users (ยังไม่มีโปรไฟล์)</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-4xl font-black text-red-600">{auditStats.unassigned}</div>
-                  <p className="text-xs text-muted-foreground mt-2 italic">เจ้าหน้าที่ที่มีสถานะ Active แต่ยังไม่ได้รับการกำหนดโปรไฟล์สิทธิ์</p>
+                  <div className="text-4xl font-black text-red-600">{users?.filter(u => u.isActive && !u.permissionProfileKey).length} ราย</div>
+                  <p className="text-xs text-muted-foreground mt-2 italic">ควรได้รับมอบหมาย Profile Key เพื่อความปลอดภัยสูงสุด</p>
                 </CardContent>
               </Card>
-              <Card className="border-l-8 border-l-amber-500">
+              <Card className="border-l-8 border-l-amber-500 shadow-md">
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-muted-foreground">Inactive Profiles</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-muted-foreground">Inactive Profiles (โปรไฟล์ที่ปิดใช้งาน)</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-4xl font-black text-amber-600">{auditStats.inactive}</div>
-                  <p className="text-xs text-muted-foreground mt-2 italic">ชุดสิทธิ์ที่ถูกปิดการใช้งานชั่วคราว</p>
+                  <div className="text-4xl font-black text-amber-600">{profiles?.filter(p => !p.isActive).length} ชุด</div>
+                  <p className="text-xs text-muted-foreground mt-2 italic">ผู้ที่ถือโปรไฟล์นี้จะไม่มีสิทธิ์เข้าถึงโมดูลใด ๆ</p>
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
-
-          <TabsContent value="migration" className="mt-6 space-y-6">
-            <div className="flex flex-col md:flex-row gap-4 justify-between items-start">
-              <div className="space-y-1">
-                <h3 className="text-lg font-bold text-primary">Migration Tool (เครื่องมือย้ายข้อมูลสิทธิ์)</h3>
-                <p className="text-sm text-muted-foreground">ใช้สำหรับย้ายข้อมูลผู้ใช้งานจากระบบ Role-based เดิม เข้าสู่ระบบ Permission Profile ใหม่</p>
-              </div>
-              <div className="flex gap-2">
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" className="gap-2 border-primary text-primary hover:bg-primary/5">
-                      <RefreshCcw className="h-4 w-4" /> Migration Scan
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>ยืนยันการย้ายข้อมูลสิทธิ์ผู้ใช้งาน?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        ระบบจะทำการสแกนผู้ใช้งานทั้งหมด และกำหนด Permission Profile ให้อัตโนมัติตามตำแหน่งและแผนกเดิม 
-                        (จะไม่ทับข้อมูลเดิมหากผู้ใช้มี Profile Key อยู่แล้ว)
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => runMigration(false)} className="bg-primary">เริ่มการย้ายข้อมูล (Normal)</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="destructive" className="gap-2">
-                      <Zap className="h-4 w-4" /> Force Migration
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle className="text-destructive">คำเตือน: ยืนยันการบังคับย้ายข้อมูล (Force)?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        การทำ Force Migration จะทำการ **เขียนทับ (Overwrite)** Profile Key ของผู้ใช้งานทุกคนในระบบ 
-                        กรุณาตรวจสอบให้แน่ใจก่อนดำเนินการ
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => runMigration(true)} className="bg-destructive">ยืนยันเขียนทับข้อมูลทั้งหมด</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            </div>
-
-            {migrationResults.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <Card className="bg-blue-50 border-blue-200">
-                  <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-blue-700">Scanned</CardTitle></CardHeader>
-                  <CardContent><div className="text-2xl font-black text-blue-900">{migrationResults.length}</div></CardContent>
-                </Card>
-                <Card className="bg-green-50 border-green-200">
-                  <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-green-700">Migrated</CardTitle></CardHeader>
-                  <CardContent><div className="text-2xl font-black text-green-900">{migrationResults.filter(r => r.status === 'migrated').length}</div></CardContent>
-                </Card>
-                <Card className="bg-slate-50 border-slate-200">
-                  <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-slate-700">Skipped</CardTitle></CardHeader>
-                  <CardContent><div className="text-2xl font-black text-slate-900">{migrationResults.filter(r => r.status === 'skipped').length}</div></CardContent>
-                </Card>
-                <Card className="bg-red-50 border-red-200">
-                  <CardHeader className="pb-2"><CardTitle className="text-xs uppercase text-red-700">Failed</CardTitle></CardHeader>
-                  <CardContent><div className="text-2xl font-black text-red-900">{migrationResults.filter(r => r.status === 'failed').length}</div></CardContent>
-                </Card>
-              </div>
-            )}
-
-            {migrationResults.length > 0 && (
-              <Card className="shadow-md overflow-hidden border-none">
-                <CardHeader className="border-b bg-muted/20">
-                  <CardTitle className="text-sm">รายละเอียดผลลัพธ์รายบุคคล (Per-User Results)</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader className="bg-muted/50">
-                      <TableRow>
-                        <TableHead className="pl-6 py-3">ผู้ใช้งาน (User)</TableHead>
-                        <TableHead>Legacy Roles</TableHead>
-                        <TableHead>Derived Context</TableHead>
-                        <TableHead>Assigned Profile</TableHead>
-                        <TableHead className="text-right pr-6">ผลลัพธ์ (Status)</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {migrationResults.map((res) => (
-                        <TableRow key={res.userId}>
-                          <TableCell className="pl-6 py-3 font-bold text-sm">{res.displayName}</TableCell>
-                          <TableCell>
-                            <div className="flex flex-wrap gap-1">
-                              {res.oldRoles.map(r => <Badge key={r} variant="outline" className="text-[8px] uppercase">{r}</Badge>)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-xs font-medium text-primary capitalize">{res.newDept} / {res.newLevel}</span>
-                          </TableCell>
-                          <TableCell className="font-mono text-[10px] text-primary font-bold">{res.newProfile}</TableCell>
-                          <TableCell className="text-right pr-6">
-                            <Badge variant={res.status === 'migrated' ? 'default' : res.status === 'skipped' ? 'secondary' : 'destructive'} className="text-[10px]">
-                              {res.status.toUpperCase()}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            )}
           </TabsContent>
         </Tabs>
 
@@ -678,7 +500,7 @@ export default function PermissionMatrixPage() {
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-2xl flex items-center gap-2">
-                <Lock className="h-6 w-6 text-primary" /> แก้ไขโปรไฟล์สิทธิ์ (Profile Editor)
+                <ShieldCheck className="h-6 w-6 text-primary" /> จัดการโปรไฟล์สิทธิ์ (Profile Editor)
               </DialogTitle>
               <DialogDescription>กำหนดการเข้าถึงรายโมดูลสำหรับโปรไฟล์นี้</DialogDescription>
             </DialogHeader>
@@ -711,11 +533,10 @@ export default function PermissionMatrixPage() {
                       value={formData.profileKey} 
                       onChange={e => setFormData({ ...formData, profileKey: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
                     />
-                    <p className="text-[10px] text-muted-foreground italic">แนะนำให้ใช้รูปแบบ แผนก_ระดับ</p>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="isactive" checked={formData.isActive} onCheckedChange={(v) => setFormData({ ...formData, isActive: !!v })} />
-                    <Label htmlFor="isactive" className="font-bold">เปิดใช้งานโปรไฟล์นี้</Label>
+                    <Label htmlFor="isactive" className="font-bold">เปิดใช้งาน (Active)</Label>
                   </div>
                 </div>
               </div>
@@ -769,7 +590,7 @@ export default function PermissionMatrixPage() {
               <Button variant="outline" onClick={() => setIsEditorOpen(false)}>ยกเลิก</Button>
               <Button onClick={handleSaveProfile} disabled={isSaving} className="bg-primary font-bold shadow-md">
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                บันทึกโปรไฟล์สิทธิ์
+                บันทึกโปรไฟล์
               </Button>
             </DialogFooter>
           </DialogContent>
