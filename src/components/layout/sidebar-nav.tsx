@@ -48,6 +48,7 @@ import {
 import { User, PermissionProfile } from '@/lib/types';
 import { ModuleKey, canView } from '@/lib/permissions';
 import { isAdminUser } from '@/lib/auth-mapping';
+import { UI_LABELS } from '@/lib/constants/labels';
 
 interface NavItem {
   key: ModuleKey;
@@ -65,37 +66,37 @@ const navGroups: NavGroup[] = [
   {
     label: 'ภาพรวม (Overview)',
     items: [
-      { key: 'overview_dashboard', title: 'แดชบอร์ด (Dashboard)', href: '/', icon: LayoutDashboard },
+      { key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/', icon: LayoutDashboard },
     ]
   },
   {
     label: 'งานขายและสัญญา (Commercial)',
     items: [
-      { key: 'customers', title: 'ลูกค้า (Customers)', href: '/customers', icon: Users },
-      { key: 'main_contracts', title: 'สัญญาหลัก (Main Contracts)', href: '/main-contracts', icon: ClipboardList },
-      { key: 'customer_pos', title: 'ใบสั่งซื้อลูกค้า (Customer POs)', href: '/purchase-orders', icon: ShoppingCart },
+      { key: 'customers', title: UI_LABELS.CUSTOMERS, href: '/customers', icon: Users },
+      { key: 'main_contracts', title: UI_LABELS.MAIN_CONTRACTS, href: '/main-contracts', icon: ClipboardList },
+      { key: 'customer_pos', title: UI_LABELS.CUSTOMER_POS, href: '/purchase-orders', icon: ShoppingCart },
     ]
   },
   {
     label: 'บุคคลและเงินเดือน (HR & Payroll)',
     items: [
-      { key: 'timesheets', title: 'ลงเวลาทำงาน (Timesheets)', href: '/timesheets', icon: Clock },
-      { key: 'worker_payroll', title: 'จ่ายเงินคนงาน (Worker Payroll)', href: '/payroll', icon: CircleDollarSign },
-      { key: 'office_payroll', title: 'เงินเดือนพนักงาน (Office Payroll)', href: '/office-payroll', icon: Coins },
-      { key: 'positions', title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity },
-      { key: 'workers', title: 'คนงาน (Workers)', href: '/workers', icon: HardHat },
-      { key: 'office_staff', title: 'พนักงานออฟฟิศ (Office Staff)', href: '/office-staff', icon: UserSearch },
+      { key: 'timesheets', title: UI_LABELS.TIMESHEETS, href: '/timesheets', icon: Clock },
+      { key: 'worker_payroll', title: UI_LABELS.WORKER_PAYROLL, href: '/payroll', icon: CircleDollarSign },
+      { key: 'office_payroll', title: UI_LABELS.OFFICE_PAYROLL, href: '/office-payroll', icon: Coins },
+      { key: 'positions', title: UI_LABELS.POSITIONS, href: '/positions', icon: Activity },
+      { key: 'workers', title: UI_LABELS.WORKERS, href: '/workers', icon: HardHat },
+      { key: 'office_staff', title: UI_LABELS.OFFICE_STAFF, href: '/office-staff', icon: UserSearch },
     ]
   },
   {
     label: 'งานปฏิบัติการ (Operations)',
     items: [
-      { key: 'waves', title: 'กลุ่มการส่งตัว (Waves)', href: '/waves', icon: Waves },
-      { key: 'assignments', title: 'การมอบหมายงาน (Assignments)', href: '/assignments', icon: UserPlus },
-      { key: 'mobilization', title: 'การระดมพล (Mobilization)', href: '/mobilization', icon: Truck },
-      { key: 'vendors', title: 'คู่ค้า / ผู้ขาย (Vendors)', href: '/vendors', icon: Store },
-      { key: 'purchases', title: 'การซื้อสินค้า/บริการ (Purchases)', href: '/purchases', icon: PackageSearch },
-      { key: 'store_inventory', title: 'คลังอุปกรณ์ (Store / Inventory)', href: '/store', icon: Warehouse },
+      { key: 'waves', title: UI_LABELS.WAVES, href: '/waves', icon: Waves },
+      { key: 'assignments', title: UI_LABELS.ASSIGNMENTS, href: '/assignments', icon: UserPlus },
+      { key: 'mobilization', title: UI_LABELS.MOBILIZATION, href: '/mobilization', icon: Truck },
+      { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
+      { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
+      { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
     ]
   },
   {

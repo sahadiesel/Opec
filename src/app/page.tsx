@@ -37,6 +37,8 @@ import {
 } from "@/components/ui/dialog";
 import { inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
+import { UI_LABELS } from '@/lib/constants/labels';
+import { HELP_TEXTS } from '@/lib/constants/help-texts';
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
@@ -57,7 +59,6 @@ export default function Home() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const { toast } = useToast();
   
-  // Sync state with latest Firestore document
   const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
   const { data: latestUserDoc, isLoading: isDocLoading } = useDoc<User>(userDocRef as any);
 
@@ -82,26 +83,16 @@ export default function Home() {
 
   const { dept } = useMemo(() => inferDeptAndLevel(user), [user]);
   
-  // Defensive queries - Wait for ground truth from Firestore
   const isInternalAuthorized = useMemo(() => {
-    // If we are still loading the document, don't authorize yet to avoid permission errors
     if (isDocLoading) return false;
-    
-    // ground truth must come from the latest document if available
     const activeUser = latestUserDoc || user;
     if (!activeUser || !activeUser.isActive) return false;
-    
-    // Absolute bypass for admins even during migration
     if (isAdminUser(activeUser)) return true;
-    
-    // Others must be approved
     if (activeUser.approvalStatus !== 'ACTIVE') return false;
     if (dept === 'client') return false;
-    
     return true;
   }, [user, latestUserDoc, isDocLoading, dept]);
 
-  // Queries only run when we are confirmed authorized by the ground truth
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'main_contracts') : null), [firestore, isInternalAuthorized]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
 
@@ -131,7 +122,7 @@ export default function Home() {
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
         toast({ title: "เข้าสู่ระบบสำเร็จ" });
       } else {
-        toast({ variant: "destructive", title: "Configuration Required", description: "ตรวจพบไอดีแต่ไม่พบข้อมูลสิทธิ์ กรุณาติดต่อแอดมินหรือใช้เครื่องมือ Repair" });
+        toast({ variant: "destructive", title: "Configuration Required", description: "ตรวจพบไอดีแต่ไม่พบข้อมูลสิทธิ์" });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
@@ -222,9 +213,6 @@ export default function Home() {
                   <DialogFooter><Button onClick={handleRegister} disabled={isRegistering} className="w-full">ยืนยันการลงทะเบียน</Button></DialogFooter>
                 </DialogContent>
               </Dialog>
-              <Button variant="ghost" size="sm" className="w-full mt-2 text-xs opacity-50" asChild>
-                <Link href="/setup-admin"><Settings2 className="h-3 w-3 mr-2" /> กู้คืนสิทธิ์บัญชี (Repair)</Link>
-              </Button>
             </CardFooter>
           </form>
         </Card>
@@ -232,73 +220,13 @@ export default function Home() {
     );
   }
 
-  const dashboardPerms = can('overview_dashboard');
-
-  if ((!dashboardPerms.view && !isPermLoading && !isAdminUser(user)) || isDocLoading) {
-    return (
-      <AppShell user={user} onLogout={handleLogout}>
-        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-6">
-          {isDocLoading ? (
-            <div className="flex flex-col items-center gap-4">
-              <Loader2 className="h-12 w-12 text-primary animate-spin" />
-              <p className="text-muted-foreground font-medium">กำลังตรวจสอบสิทธิ์ล่าสุดจากระบบ...</p>
-            </div>
-          ) : (
-            <>
-              <ShieldAlert className="h-16 w-16 text-destructive opacity-50" />
-              <div className="space-y-2">
-                <h2 className="text-2xl font-black text-primary uppercase">Access Pending</h2>
-                <p className="text-muted-foreground max-w-md mx-auto">บัญชีของคุณยังไม่ได้รับการกำหนดโปรไฟล์การเข้าถึง หรือสิทธิ์ในระบบความปลอดภัย (Security Rules) ยังไม่สมบูรณ์</p>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-lg">
-                <Card className="border-amber-200 bg-amber-50">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2"><Wrench className="h-4 w-4" /> สำหรับผู้ดูแลระบบ</CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-xs text-left text-amber-800">
-                    หากคุณคือ Admin แต่เห็นหน้านี้ แสดงว่า UID ของคุณยังไม่ได้ผูกกับบทบาท System Admin ใน Firestore
-                  </CardContent>
-                  <CardFooter>
-                    <Button variant="outline" className="w-full bg-white border-amber-300 text-amber-700 font-bold" asChild>
-                      <Link href="/setup-admin">Repair My Access</Link>
-                    </Button>
-                  </CardFooter>
-                </Card>
-                
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-bold flex items-center gap-2"><Info className="h-4 w-4" /> สำหรับพนักงาน</CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-xs text-left text-muted-foreground">
-                    กรุณาแจ้งฝ่าย IT หรือ HR Manager เพื่อเปิดสิทธิ์การใช้งานตามแผนกและระดับของคุณ
-                  </CardContent>
-                  <CardFooter>
-                    <Button variant="ghost" className="w-full text-[10px]" onClick={handleLogout}>Logout and retry</Button>
-                  </CardFooter>
-                </Card>
-              </div>
-            </>
-          )}
-        </div>
-      </AppShell>
-    );
-  }
-
-  const stats = {
-    revenue: assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0,
-    activeWorkers: workers?.filter(w => w.workerStatus === 'assigned').length || 0,
-    activeContracts: contracts?.filter(c => c.status === 'active').length || 0,
-    pendingApprovals: assignments?.filter(a => a.clientApprovalStatus === 'SUBMITTED').length || 0
-  };
-
   return (
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto font-body">
         <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold text-primary tracking-tight">แดชบอร์ดภาพรวม (Dashboard)</h1>
+          <h1 className="text-3xl font-bold text-primary tracking-tight">{UI_LABELS.DASHBOARD}</h1>
           <p className="text-muted-foreground text-lg">
-            ยินดีต้อนรับกลับมา, {user.displayName}
+            {HELP_TEXTS.DASHBOARD}
           </p>
         </div>
 
@@ -310,10 +238,10 @@ export default function Home() {
           </Alert>
         ) : (
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Active Assignments" value={stats.revenue} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
-            <StatCard title="Total Assigned" value={stats.activeWorkers} sub="Personnel in Waves" icon={Users} colorClass="border-l-orange-500" />
-            <StatCard title="Active Contracts" value={stats.activeContracts} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
-            <StatCard title="Pending Client Review" value={stats.pendingApprovals} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
+            <StatCard title="Active Assignments" value={assignments?.filter(a => a.status === 'ACTIVE').length || 0} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
+            <StatCard title="Total Manpower" value={workers?.length || 0} sub="Registered Workers" icon={Users} colorClass="border-l-orange-500" />
+            <StatCard title="Active Contracts" value={contracts?.filter(c => c.status === 'ACTIVE').length || 0} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
+            <StatCard title="Pending Review" value={assignments?.filter(a => a.status === 'CLIENT_SUBMITTED').length || 0} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
           </div>
         )}
       </div>
