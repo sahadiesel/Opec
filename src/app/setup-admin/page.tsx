@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { ShieldAlert, Lock, Mail, User, RefreshCw, UserCheck, CheckCircle2, Shield } from 'lucide-react';
+import { ShieldAlert, Lock, Mail, User, RefreshCw, UserCheck, CheckCircle2, Shield, Wrench } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { doc, getDoc, setDoc, collection, getDocs, limit, query } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
@@ -102,6 +102,7 @@ export default function SetupAdminPage() {
         department: 'admin',
         level: 'admin',
         permissionProfileKey: 'admin_admin',
+        assignedRoleKey: 'system_admin',
         approvalStatus: 'ACTIVE',
         isActive: true,
         createdAt: now,
@@ -123,7 +124,10 @@ export default function SetupAdminPage() {
   };
 
   const handleRepair = async () => {
-    if (!firestore || !repairUid) return;
+    if (!firestore || !repairUid) {
+      toast({ variant: "destructive", title: "UID Missing", description: "กรุณาระบุ UID ของผู้ใช้งาน" });
+      return;
+    }
     setIsSubmitting(true);
     try {
       const now = Date.now();
@@ -134,7 +138,7 @@ export default function SetupAdminPage() {
       if (repairRole.startsWith('hr_')) {
         dept = 'hr';
         level = repairRole.includes('manager') ? 'manager' : 'officer';
-      } else if (repairRole.startsWith('finance')) {
+      } else if (repairRole.startsWith('accounting')) {
         dept = 'accounting';
         level = 'officer';
       }
@@ -148,6 +152,7 @@ export default function SetupAdminPage() {
         level: level,
         roleIds: legacyRoles,
         permissionProfileKey: profileKey,
+        assignedRoleKey: repairRole,
         isActive: true,
         approvalStatus: 'ACTIVE',
         updatedAt: now
@@ -156,14 +161,17 @@ export default function SetupAdminPage() {
       // Set directly to firestore to fix rules access immediately
       await setDoc(doc(firestore, 'users', repairUid), repairData, { merge: true });
       
-      // Also sync to legacy role collection if needed for certain rules
+      // Also sync to legacy role collection if system_admin to ensure rules catch it
       if (repairRole === 'system_admin') {
         await setDoc(doc(firestore, 'roles_system_admin', repairUid), { assignedAt: now }, { merge: true });
       }
 
-      toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว กรุณา Login ใหม่อีกครั้ง` });
+      toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว กรุณา Logout และเข้าสู่ระบบใหม่อีกครั้ง` });
+      
+      // Clear local storage to force refresh on next login
       localStorage.removeItem('opsflow_user');
-      setTimeout(() => router.push('/'), 2000);
+      
+      setTimeout(() => router.push('/'), 2500);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error.message });
     } finally {
@@ -232,23 +240,27 @@ export default function SetupAdminPage() {
           <TabsContent value="repair">
             <CardContent className="space-y-4 pt-4">
               <Alert className="bg-amber-50 border-amber-200">
-                <Shield className="h-4 w-4 text-amber-600" />
+                <Wrench className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 font-bold">Fix Permission Denied</AlertTitle>
-                <AlertDescription className="text-amber-700 text-xs">
-                  หากคุณล็อกอินแล้วแต่ไม่มีสิทธิ์เข้าใช้งาน ให้ระบุ UID ของคุณและเลือกบทบาท System Admin เพื่อซ่อมแซมสิทธิ์ในระบบฐานข้อมูล
+                <AlertDescription className="text-amber-700 text-xs leading-relaxed">
+                  หากคุณพบข้อผิดพลาด "Missing or insufficient permissions" ให้ระบุ UID ของคุณและเลือกบทบาท System Admin เพื่อซ่อมแซมสิทธิ์ในระบบฐานข้อมูล (Synchronize RoleIds)
                 </AlertDescription>
               </Alert>
               
               <div className="space-y-2">
-                <Label>UID ผู้ใช้งานที่ต้องการซ่อมแซม</Label>
+                <Label className="font-bold">UID ผู้ใช้งานที่ต้องการซ่อมแซม</Label>
                 <Input value={repairUid} onChange={e => setRepairUid(e.target.value)} placeholder="User UID" className="font-mono text-xs" />
-                {firebaseUser?.uid === repairUid && (
-                  <p className="text-[10px] text-green-600 font-bold">✓ ตรวจพบ UID ของคุณที่กำลังล็อกอินอยู่</p>
+                {firebaseUser?.uid === repairUid ? (
+                  <p className="text-[10px] text-green-600 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> ตรวจพบ UID ของคุณที่กำลังล็อกอินอยู่
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground italic">กรุณาระบุ UID จาก Error Log หากไม่ใช่ตัวคุณ</p>
                 )}
               </div>
               
               <div className="space-y-2">
-                <Label>บทบาทที่ต้องการกู้คืน</Label>
+                <Label className="font-bold">บทบาทที่ต้องการกู้คืน (Target Role)</Label>
                 <Select value={repairRole} onValueChange={setRepairRole}>
                   <SelectTrigger className="h-11 font-bold">
                     <SelectValue />
@@ -256,15 +268,15 @@ export default function SetupAdminPage() {
                   <SelectContent>
                     <SelectItem value="system_admin">System Admin (สิทธิ์สูงสุด)</SelectItem>
                     <SelectItem value="hr_manager">HR Manager</SelectItem>
-                    <SelectItem value="finance_officer">Finance Officer</SelectItem>
+                    <SelectItem value="accounting_manager">Accounting Manager</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-2">
-              <Button onClick={handleRepair} className="w-full h-12 font-bold bg-primary" disabled={isSubmitting || !repairUid}>
+              <Button onClick={handleRepair} className="w-full h-12 font-black bg-primary text-lg shadow-lg" disabled={isSubmitting || !repairUid}>
                 {isSubmitting ? <RefreshCw className="animate-spin mr-2" /> : <UserCheck className="mr-2" />}
-                ซ่อมแซมสิทธิ์บัญชีนี้ (Repair)
+                ซ่อมแซมสิทธิ์บัญชีนี้ (Apply Repair)
               </Button>
               <Button variant="ghost" onClick={() => router.push('/')} className="w-full">กลับไปหน้าหลัก</Button>
             </CardFooter>

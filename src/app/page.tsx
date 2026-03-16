@@ -1,7 +1,8 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,7 +21,8 @@ import {
   Loader2,
   Settings2,
   Info,
-  Wrench
+  Wrench,
+  AlertTriangle
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -39,8 +41,10 @@ import { inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HELP_TEXTS } from '@/lib/constants/help-texts';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function Home() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [email, setEmail] = useState('');
@@ -62,8 +66,6 @@ export default function Home() {
   const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
   const { data: latestUserDoc, isLoading: isDocLoading } = useDoc<User>(userDocRef as any);
 
-  const { can, isLoading: isPermLoading } = usePermissions(user);
-
   useEffect(() => {
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
@@ -81,17 +83,24 @@ export default function Home() {
     }
   }, [latestUserDoc]);
 
-  const { dept } = useMemo(() => inferDeptAndLevel(user), [user]);
-  
+  // CRITICAL: Internal authorization must be strictly driven by ground truth from Firestore
+  // to avoid "Missing or insufficient permissions" errors caused by stale localStorage data.
   const isInternalAuthorized = useMemo(() => {
     if (isDocLoading) return false;
-    const activeUser = latestUserDoc || user;
-    if (!activeUser || !activeUser.isActive) return false;
-    if (isAdminUser(activeUser)) return true;
-    if (activeUser.approvalStatus !== 'ACTIVE') return false;
+    if (!latestUserDoc) return false;
+    
+    // Admin bypass
+    if (isAdminUser(latestUserDoc)) return true;
+    
+    // Normal user checks
+    if (!latestUserDoc.isActive) return false;
+    if (latestUserDoc.approvalStatus !== 'ACTIVE') return false;
+    
+    const { dept } = inferDeptAndLevel(latestUserDoc);
     if (dept === 'client') return false;
+    
     return true;
-  }, [user, latestUserDoc, isDocLoading, dept]);
+  }, [latestUserDoc, isDocLoading]);
 
   const contractsQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'main_contracts') : null), [firestore, isInternalAuthorized]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
@@ -112,7 +121,7 @@ export default function Home() {
       
       if (userDoc.exists()) {
         const userData = userDoc.data() as User;
-        if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED' || !userData.isActive) {
+        if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED' || (!userData.isActive && !isAdminUser(userData))) {
           toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณยังไม่อนุญาตให้เข้าใช้งาน" });
           setIsLoggingIn(false);
           return;
@@ -122,7 +131,7 @@ export default function Home() {
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
         toast({ title: "เข้าสู่ระบบสำเร็จ" });
       } else {
-        toast({ variant: "destructive", title: "Configuration Required", description: "ตรวจพบไอดีแต่ไม่พบข้อมูลสิทธิ์" });
+        toast({ variant: "destructive", title: "Profile Required", description: "ตรวจพบไอดีแต่ไม่พบข้อมูลสิทธิ์ กรุณาติดต่อแอดมิน" });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
@@ -220,6 +229,8 @@ export default function Home() {
     );
   }
 
+  const { dept } = inferDeptAndLevel(user);
+
   return (
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto font-body">
@@ -230,18 +241,46 @@ export default function Home() {
           </p>
         </div>
 
-        {dept === 'client' ? (
-          <Alert className="bg-blue-50 border-blue-200">
-            <Info className="h-4 w-4 text-blue-600" />
-            <AlertTitle className="font-bold">Portal Information</AlertTitle>
-            <AlertDescription>คุณสามารถตรวจสอบสถานะคนงานและการอนุมัติได้ที่เมนู <b>Client Portal</b></AlertDescription>
+        {/* Access Restricted Warning */}
+        {!isInternalAuthorized && !isDocLoading && (
+          <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 border-l-8 border-l-destructive">
+            <ShieldAlert className="h-6 w-6" />
+            <AlertTitle className="font-bold text-lg mb-2">Access Pending (รอนุมัติสิทธิ์เข้าใช้งาน)</AlertTitle>
+            <AlertDescription className="space-y-4">
+              <p className="text-base">บัญชีของคุณยังไม่ได้รับการกำหนดบทบาทหรือยังไม่ได้รับการอนุมัติให้เข้าใช้งานส่วนงานภายใน (Internal Modules)</p>
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" className="gap-2 bg-white" onClick={() => router.push('/setup-admin')}>
+                  <Wrench className="h-4 w-4" /> กู้คืนสิทธิ์แอดมิน (Repair Admin)
+                </Button>
+                <Button variant="ghost" className="gap-2" onClick={handleLogout}>
+                  ออกจากระบบ
+                </Button>
+              </div>
+            </AlertDescription>
           </Alert>
+        )}
+
+        {isInternalAuthorized ? (
+          <>
+            {dept === 'client' ? (
+              <Alert className="bg-blue-50 border-blue-200">
+                <Info className="h-4 w-4 text-blue-600" />
+                <AlertTitle className="font-bold">Portal Information</AlertTitle>
+                <AlertDescription>คุณสามารถตรวจสอบสถานะคนงานและการอนุมัติได้ที่เมนู <b>Client Portal</b></AlertDescription>
+              </Alert>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+                <StatCard title="Active Assignments" value={assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
+                <StatCard title="Total Manpower" value={workers?.length || 0} sub="Registered Workers" icon={Users} colorClass="border-l-orange-500" />
+                <StatCard title="Active Contracts" value={contracts?.filter(c => c.status === 'active').length || 0} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
+                <StatCard title="Pending Review" value={assignments?.filter(a => a.deploymentStatus === 'CLIENT_SUBMITTED').length || 0} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
+              </div>
+            )}
+          </>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Active Assignments" value={assignments?.filter(a => a.status === 'ACTIVE').length || 0} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
-            <StatCard title="Total Manpower" value={workers?.length || 0} sub="Registered Workers" icon={Users} colorClass="border-l-orange-500" />
-            <StatCard title="Active Contracts" value={contracts?.filter(c => c.status === 'ACTIVE').length || 0} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
-            <StatCard title="Pending Review" value={assignments?.filter(a => a.status === 'CLIENT_SUBMITTED').length || 0} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
+          <div className="py-20 text-center space-y-4 bg-muted/10 rounded-xl border-2 border-dashed">
+            <Loader2 className="h-12 w-12 mx-auto text-primary/20 animate-spin" />
+            <p className="text-muted-foreground italic">กำลังตรวจสอบสิทธิ์การเข้าถึงข้อมูลล่าสุด...</p>
           </div>
         )}
       </div>
