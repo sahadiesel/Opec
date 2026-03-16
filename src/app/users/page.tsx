@@ -22,7 +22,9 @@ import {
   Info,
   Shield,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Mail,
+  AlertTriangle
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus } from '@/lib/types';
@@ -158,14 +160,22 @@ export default function UsersPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+            <ShieldCheck className="h-8 w-8" /> จัดการสิทธิ์ผู้ใช้งาน (User Access Management)
+          </h1>
+          <p className="text-muted-foreground text-lg italic">
+            เลือกบทบาทหลักตามหน้าที่การทำงาน (Role-based access control simplified for OPEC staff)
+          </p>
+        </div>
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <ShieldCheck className="h-8 w-8" /> จัดการสิทธิ์ผู้ใช้งาน (User Access Management)
-            </h1>
-            <p className="text-muted-foreground text-lg italic">
-              เลือกบทบาทหลักตามหน้าที่การทำงาน (Role-based access control simplified for OPEC staff)
-            </p>
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="ค้นหาตามชื่อ หรือ อีเมล..." className="pl-9 h-11" />
+            </div>
+            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           <Button 
             variant="outline" 
@@ -180,12 +190,9 @@ export default function UsersPage() {
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardHeader className="bg-muted/30 border-b">
-            <div className="flex items-center gap-3">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามชื่อ หรือ อีเมล..." className="max-w-md bg-white h-10" />
-              <div className="ml-auto flex gap-2">
-                <Badge variant="outline" className="bg-white px-3 py-1 font-bold">รวม: {users?.length || 0} ราย</Badge>
-              </div>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">รายชื่อผู้ใช้งานระบบ</CardTitle>
+              <Badge variant="outline" className="bg-white px-3 py-1 font-bold">รวม: {users?.length || 0} ราย</Badge>
             </div>
           </CardHeader>
           <CardContent className="p-0">
