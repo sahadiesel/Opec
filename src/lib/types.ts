@@ -22,6 +22,21 @@ export type RoleType =
   | 'client_user'
   | 'client'; 
 
+/** Business Role Keys for Simple Mode */
+export type BusinessRoleKey = 
+  | 'system_admin'
+  | 'sales_manager'
+  | 'sales_officer'
+  | 'hr_manager'
+  | 'hr_officer'
+  | 'operations_manager'
+  | 'operations_officer'
+  | 'accounting_manager'
+  | 'accounting_officer'
+  | 'store_officer'
+  | 'client_viewer'
+  | 'client_approver';
+
 /** Readiness Status for Workers (ลูกจ้าง) */
 export type ReadinessStatus = 
   | 'READY'               // พร้อมปฏิบัติงาน
@@ -86,6 +101,8 @@ export type BillingStatus =
   | 'OVERDUE'             // เกินกำหนดชำระ
   | 'CANCELLED';          // ยกเลิก
 
+export type ApprovalStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
+
 export interface User {
   id: string;
   email: string;
@@ -94,11 +111,15 @@ export interface User {
   level: AccessLevel;
   roleIds: RoleType[];
   isActive: boolean;
-  approvalStatus: 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
+  approvalStatus: ApprovalStatus;
   permissionProfileKey?: string | null;
+  assignedRoleKey?: BusinessRoleKey | null; // For simplified UI
   createdAt: number;
   updatedAt: number;
+  lastLoginAt?: number;
+  lastLogoutAt?: number;
   notes?: string;
+  customerId?: string | null;
 }
 
 export interface PermissionProfile {
@@ -109,15 +130,20 @@ export interface PermissionProfile {
   department: DeptType;
   level: AccessLevel;
   isActive: boolean;
-  permissions: Record<string, {
-    view: boolean;
-    create: boolean;
-    edit: boolean;
-    delete: boolean;
-    approve: boolean;
-  }>;
+  permissions: Record<string, ModulePermission>;
   updatedAt: number;
   updatedBy: string;
+  createdAt?: number;
+  createdBy?: string;
+  notes?: string;
+}
+
+export interface ModulePermission {
+  view: boolean;
+  create: boolean;
+  edit: boolean;
+  delete: boolean;
+  approve: boolean;
 }
 
 export interface Position {
@@ -159,6 +185,7 @@ export interface Worker {
   emergencyContactPhone?: string;
   skills: string[];
   notes?: string;
+  disciplinaryNotes?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -195,17 +222,26 @@ export interface OfficeStaff {
   id: string;
   staffCode: string;
   fullName: string;
-  department: DeptType;
+  nickname?: string;
+  department: string;
   positionTitle: string;
-  level: AccessLevel;
-  employmentStatus: 'PROBATION' | 'ACTIVE' | 'RESIGNED' | 'SUSPENDED';
-  supervisorId?: string;
+  employmentType: 'FULL_TIME' | 'PART_TIME' | 'CONTRACT';
+  salaryType: 'MONTHLY' | 'DAILY';
   monthlySalary: number;
+  startDate: string;
   bankName?: string;
+  bankAccountName?: string;
   bankAccountNumber?: string;
-  startDate: number;
+  taxId?: string;
+  socialSecurityNo?: string;
+  status: 'ACTIVE' | 'INACTIVE' | 'RESIGNED';
+  notes?: string;
+  linkedUserId?: string;
+  supervisorId?: string;
   createdAt: number;
+  createdBy?: string;
   updatedAt: number;
+  updatedBy?: string;
 }
 
 export interface Customer {
@@ -356,4 +392,446 @@ export interface AuditLog {
   entityId: string;
   timestamp: number;
   details?: string;
+  changes?: any;
+  collection?: string;
+  documentId?: string;
 }
+
+export interface ClientUser {
+  id: string;
+  customerId: string;
+  email: string;
+  displayName: string;
+  isSharedAccount: boolean;
+  active: boolean;
+  createdAt: number;
+}
+
+export type APStatus = 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
+export type ARStatus = 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
+
+export interface AccountsPayable {
+  id: string;
+  vendorId: string;
+  documentNo: string;
+  referenceId: string; // PurchaseId or BillId
+  billDate: string;
+  dueDate: string;
+  debitAmount: number;
+  creditAmount: number;
+  outstandingAmount: number;
+  status: APStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AccountsReceivable {
+  id: string;
+  customerId: string;
+  documentNo: string;
+  referenceType: 'TAX_INVOICE' | 'BILLING_NOTE';
+  referenceId: string;
+  issueDate: string;
+  dueDate: string;
+  debitAmount: number;
+  creditAmount: number;
+  outstandingAmount: number;
+  status: ARStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface APBill {
+  id: string;
+  apBillNo: string;
+  vendorId: string;
+  purchaseId?: string;
+  supplierInvoiceNo: string;
+  billReceivedDate: string;
+  invoiceDate: string;
+  dueDate: string;
+  amountBeforeTax: number;
+  vatAmount: number;
+  totalAmount: number;
+  outstandingAmount: number;
+  status: APBillStatus;
+  paymentTerms: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type APBillStatus = 'RECEIVED' | 'VERIFIED' | 'APPROVED' | 'PAID' | 'CANCELLED';
+
+export interface BankAccount {
+  id: string;
+  accountCode: string;
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  branchName: string;
+  accountType: BankAccountType;
+  currency: string;
+  openingBalance: number;
+  currentBalance: number;
+  status: BankAccountStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type BankAccountType = 'SAVINGS' | 'CURRENT' | 'CASH';
+export type BankAccountStatus = 'ACTIVE' | 'INACTIVE';
+
+export interface BillingNote {
+  id: string;
+  billingNoteNo: string;
+  customerId: string;
+  contractId?: string;
+  poId?: string;
+  billingDate: string;
+  dueDate: string;
+  billingPeriodStart: string;
+  billingPeriodEnd: string;
+  amountBeforeTax: number;
+  vatAmount: number;
+  withholdingTaxAmount: number;
+  netAmount: number;
+  currency: string;
+  status: BillingNoteStatus;
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export type BillingNoteStatus = 'DRAFT' | 'ISSUED' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
+
+export interface BillingNoteLine {
+  id: string;
+  billingNoteId: string;
+  description: string;
+  referenceType: BillingNoteReferenceType;
+  referenceId?: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type BillingNoteReferenceType = 'CONTRACT' | 'PO' | 'TIMESHEET' | 'SERVICE';
+
+export interface CashbookEntry {
+  id: string;
+  bankAccountId: string;
+  entryDate: string;
+  direction: 'IN' | 'OUT';
+  entryType: CashbookEntryType;
+  referenceType?: 'RECEIPT' | 'PAYMENT' | 'BILL' | 'TRANSFER' | 'OTHER';
+  referenceId?: string;
+  amount: number;
+  description: string;
+  paymentMethod: PaymentMethod;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type CashbookEntryType = 'CUSTOMER_RECEIPT' | 'SUPPLIER_PAYMENT' | 'PAYROLL' | 'TAX' | 'TRANSFER' | 'OTHER';
+export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CHEQUE' | 'OTHER';
+
+export interface OfficePayrollRun {
+  id: string;
+  payrollRunNo: string;
+  payrollMonth: string; // YYYY-MM
+  payrollPeriodStart: string;
+  payrollPeriodEnd: string;
+  status: PayrollRunStatus;
+  staffCount: number;
+  grossAmount: number;
+  totalAllowances: number;
+  totalDeductions: number;
+  netAmount: number;
+  hrApprovedBy?: string;
+  financeApprovedBy?: string;
+  lockedAt?: number;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface OfficePayrollLine {
+  id: string;
+  staffId: string;
+  staffName: string;
+  department: string;
+  positionTitle: string;
+  baseSalary: number;
+  allowance: number;
+  bonus: number;
+  deductions: number;
+  tax: number;
+  socialSecurity: number;
+  grossPay: number;
+  netPay: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PayrollRun {
+  id: string;
+  payrollRunNo: string;
+  payrollPeriodStart: string;
+  payrollPeriodEnd: string;
+  payrollType: PayrollType;
+  currency: string;
+  status: PayrollRunStatus;
+  workerCount: number;
+  grossAmount: number;
+  totalAllowance: number;
+  totalDeduction: number;
+  netAmount: number;
+  sourceTimesheetBatchIds: string[];
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+  hrApprovedAt?: number;
+  hrApprovedBy?: string;
+  financeApprovedAt?: number;
+  financeApprovedBy?: string;
+  lockedAt?: number;
+  lockedBy?: string;
+  notes?: string;
+}
+
+export type PayrollType = 'MONTHLY' | 'WAVE_BASED' | 'SPECIAL_RUN' | 'ADJUSTMENT';
+
+export interface PayrollLine {
+  id: string;
+  workerId: string;
+  assignmentId: string;
+  waveId: string;
+  positionId: string;
+  normalDays: number;
+  normalHours: number;
+  otHours15: number;
+  otHours20: number;
+  otHours30: number;
+  holidayHours: number;
+  standbyDays: number;
+  travelDays: number;
+  unpaidDays: number;
+  baseRateSnapshot: number;
+  otRateSnapshot: number;
+  allowanceSnapshot: number;
+  deductionSnapshot: number;
+  grossPay: number;
+  totalAllowance: number;
+  totalDeduction: number;
+  netPay: number;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Purchase {
+  id: string;
+  purchaseNo: string;
+  vendorId: string;
+  purchaseDate: string;
+  purchaseType: PurchaseType;
+  amountBeforeTax: number;
+  vatAmount: number;
+  totalAmount: number;
+  storeReceiptStatus: 'PENDING' | 'PARTIAL' | 'COMPLETED';
+  paymentStatus: 'UNPAID' | 'PARTIAL' | 'PAID';
+  status: PurchaseStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type PurchaseType = 'CASH' | 'CREDIT';
+export type PurchaseStatus = 'DRAFT' | 'ISSUED' | 'COMPLETED' | 'CANCELLED';
+
+export interface PurchaseLine {
+  id: string;
+  purchaseId: string;
+  itemDescription: string;
+  itemId?: string; // Optional if not a master item
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  createdAt: number;
+}
+
+export interface Receipt {
+  id: string;
+  receiptNo: string;
+  customerId: string;
+  receiptDate: string;
+  paymentMethod: PaymentMethod;
+  bankAccountId: string;
+  receivedAmount: number;
+  status: ReceiptStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ReceiptStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+
+export interface ReceiptAllocation {
+  id: string;
+  receiptId: string;
+  taxInvoiceId: string;
+  amountAllocated: number;
+  createdAt: number;
+}
+
+export interface StoreItem {
+  id: string;
+  itemCode: string;
+  itemName: string;
+  category: string;
+  unit: string;
+  minimumStock: number;
+  currentStock: number;
+  isPPE: boolean;
+  isTool: boolean;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoreTransaction {
+  id: string;
+  itemId: string;
+  transactionType: TransactionType;
+  quantity: number;
+  workerId?: string;
+  assignmentId?: string;
+  waveId?: string;
+  transactionDate: string;
+  referenceType?: string; // SLIP, RECEIPT, etc.
+  referenceId?: string;
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+export type TransactionType = 'RECEIVE' | 'ISSUE' | 'RETURN' | 'WRITEOFF' | 'DAMAGED' | 'LOST';
+
+export interface TaxInvoice {
+  id: string;
+  taxInvoiceNo: string;
+  billingNoteId: string;
+  customerId: string;
+  issueDate: string;
+  taxableAmount: number;
+  vatAmount: number;
+  withholdingTaxAmount: number;
+  totalAmount: number;
+  currency: string;
+  status: TaxInvoiceStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+
+export interface Vendor {
+  id: string;
+  vendorCode: string;
+  vendorName: string;
+  vendorType: VendorType;
+  taxId: string;
+  branchNo: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  address: string;
+  paymentTerms: string;
+  creditDays: number;
+  defaultCurrency: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  bankName: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type VendorType = 
+  | 'PPE_SUPPLIER' 
+  | 'TOOL_SUPPLIER' 
+  | 'SERVICE_PROVIDER' 
+  | 'TRANSPORT' 
+  | 'ACCOMMODATION' 
+  | 'OFFICE_EXPENSE' 
+  | 'GENERAL_SUPPLIER';
+
+export interface WorkerDocument {
+  id: string;
+  workerId: string;
+  documentType: string;
+  documentNo: string;
+  documentUrl?: string;
+  issueDate: number;
+  expiryDate: number;
+  status: 'valid' | 'expired' | 'missing';
+  createdAt: number;
+  updatedAt: number;
+  _path?: string;
+}
+
+export interface WorkerMedicalRecord {
+  id: string;
+  workerId: string;
+  medicalType: string;
+  examDate: number;
+  expiryDate: number;
+  fitStatus: 'fit' | 'unfit' | 'fit_with_restrictions';
+  hospitalOrClinic: string;
+  documentUrl?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+  _path?: string;
+}
+
+export interface WorkerDrugTest {
+  id: string;
+  workerId: string;
+  testDate: number;
+  expiryDate: number;
+  result: 'negative' | 'positive';
+  laboratory: string;
+  documentUrl?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+  _path?: string;
+}
+
+export interface WorkerCertificate {
+  id: string;
+  workerId: string;
+  certificateName: string;
+  certificateCode: string;
+  certificateNo: string;
+  issueDate: number;
+  expiryDate: number;
+  issuer?: string;
+  documentUrl?: string;
+  status: 'valid' | 'expired' | 'pending_renewal';
+  createdAt: number;
+  updatedAt: number;
+  _path?: string;
+}
+
+export type MobilizationStatus = 'PENDING' | 'READY_TO_MOBILIZE' | 'MOBILIZING' | 'ACTIVE' | 'FAILED_CHECK';

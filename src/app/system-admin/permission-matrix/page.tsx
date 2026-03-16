@@ -3,29 +3,22 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   ShieldCheck, 
   Plus, 
-  Search, 
-  Filter, 
   CheckCircle2, 
-  XCircle, 
   Edit2, 
   ShieldAlert,
   Info,
   ChevronRight,
   Loader2,
-  AlertTriangle,
-  UserCheck,
   Save,
-  Trash2,
   Sparkles,
-  Zap,
-  RefreshCw
+  Settings2,
+  Lock
 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
 import { 
   User, 
   DeptType, 
@@ -34,7 +27,7 @@ import {
   ModulePermission 
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc, setDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+import { collection, doc, query, orderBy, writeBatch, setDoc } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -61,8 +54,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { isAdminUser, inferDeptAndLevel, getMigratedUserFields } from '@/lib/auth-mapping';
-import { getBaselineProfiles } from '@/lib/permissions';
+import { isAdminUser, getBaselineProfiles } from '@/lib/auth-mapping';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหาร)' },
@@ -121,11 +113,9 @@ export default function PermissionMatrixPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState('profiles');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
-  const [migrationSummary, setMigrationSummary] = useState<any>(null);
 
   // Editor Form State
   const [formData, setFormData] = useState<Partial<PermissionProfile>>({
@@ -149,12 +139,6 @@ export default function PermissionMatrixPage() {
     return query(collection(firestore, 'permission_profiles'), orderBy('department', 'asc'));
   }, [firestore, isUserAdmin]);
   const { data: profiles, isLoading: isProfilesLoading } = useCollection<PermissionProfile>(profilesQuery as any);
-
-  const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !isUserAdmin) return null;
-    return collection(firestore, 'users');
-  }, [firestore, isUserAdmin]);
-  const { data: users, isLoading: isUsersLoading } = useCollection<User>(usersQuery as any);
 
   const handleCreateProfile = () => {
     setFormData({
@@ -216,70 +200,24 @@ export default function PermissionMatrixPage() {
     }
   };
 
-  const handleAssignProfile = async (userId: string, profileKey: string) => {
+  const handleResetToBaseline = async () => {
     if (!firestore) return;
-    try {
-      const userRef = doc(firestore, 'users', userId);
-      await updateDoc(userRef, { 
-        permissionProfileKey: profileKey === 'none' ? null : profileKey,
-        updatedAt: Date.now()
-      });
-      toast({ title: "Assign Success" });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Error", description: err.message });
-    }
-  };
-
-  const handleBaselineMigration = async () => {
-    if (!firestore || !users) return;
     setIsMigrating(true);
-    
     const batch = writeBatch(firestore);
-    let profilesCreated = 0;
-    let usersMigrated = 0;
-    let usersSkipped = 0;
-    let usersFailed = 0;
-
+    
     try {
-      // 1. Create Baseline Profiles
-      const baselineProfiles = getBaselineProfiles();
-      for (const p of baselineProfiles) {
+      const baselines = getBaselineProfiles();
+      for (const p of baselines) {
         const pRef = doc(firestore, 'permission_profiles', p.profileKey!);
         batch.set(pRef, {
           ...p,
           id: p.profileKey,
-          createdAt: Date.now(),
-          createdBy: 'System Migration',
           updatedAt: Date.now(),
-          updatedBy: 'System Migration'
+          updatedBy: 'System Baseline Tool'
         }, { merge: true });
-        profilesCreated++;
       }
-
-      // 2. Migrate Users
-      for (const user of users) {
-        // Keep manual curation if already exists and looks valid
-        if (user.permissionProfileKey && user.permissionProfileKey !== "") {
-          usersSkipped++;
-          continue;
-        }
-
-        try {
-          const migratedFields = getMigratedUserFields(user);
-          const userRef = doc(firestore, 'users', user.id);
-          batch.update(userRef, migratedFields);
-          usersMigrated++;
-        } catch (e) {
-          console.error('Migration failed for user:', user.id, e);
-          usersFailed++;
-        }
-      }
-
       await batch.commit();
-      setMigrationSummary({ profilesCreated, usersMigrated, usersSkipped, usersFailed });
-      toast({ title: "Baseline Migration Complete" });
-    } catch (e: any) {
-      toast({ variant: "destructive", title: "Migration Failed", description: e.message });
+      toast({ title: "กู้คืนโปรไฟล์มาตรฐานสำเร็จ (Baseline restored)" });
     } finally {
       setIsMigrating(false);
     }
@@ -293,7 +231,7 @@ export default function PermissionMatrixPage() {
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Restricted</h2>
-          <p className="text-muted-foreground">Only system administrators can access this page.</p>
+          <p className="text-muted-foreground">Only system administrators can access advanced settings.</p>
         </div>
       </AppShell>
     );
@@ -305,195 +243,86 @@ export default function PermissionMatrixPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <ShieldCheck className="h-8 w-8 text-primary" /> เมทริกซ์การกำหนดสิทธิ์ (Permission Matrix)
+              <Settings2 className="h-8 w-8 text-primary" /> จัดการแม่แบบสิทธิ์ (Advanced Permission Matrix)
             </h1>
-            <p className="text-muted-foreground text-lg">
-              ตั้งค่าสิทธิ์การใช้งานตามแผนกและระดับ (Department → Level → Module Permissions)
+            <p className="text-muted-foreground text-lg italic">
+              กำหนดรายละเอียดสิทธิ์รายโมดูลสำหรับแต่ละแผนก (Internal module-level security configuration)
             </p>
           </div>
           <div className="flex gap-2">
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" className="gap-2 border-primary text-primary" disabled={isMigrating}>
-                  {isMigrating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Create Baseline & Assign
+                  <RefreshCw className={`h-4 w-4 ${isMigrating ? 'animate-spin' : ''}`} />
+                  Reset to Baseline
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>ยืนยันการตั้งค่า Baseline?</AlertDialogTitle>
+                  <AlertDialogTitle>ยืนยันการกู้คืนค่ามาตรฐาน?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    ระบบจะสร้าง Permission Profile มาตรฐาน (8 ชุด) และอัปเดตข้อมูลพนักงานทุกคนที่ยังไม่มี Profile 
-                    โดยคำนวณจากตำแหน่งและแผนกเดิมที่มีอยู่ในระบบ ข้อมูลเดิมจะไม่ถูกลบ
+                    ระบบจะเขียนทับโปรไฟล์สิทธิ์มาตรฐาน 8 ชุดด้วยค่าเริ่มต้น ข้อมูลที่คุณแก้ไขไว้จะสูญหาย
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleBaselineMigration} className="bg-primary">เริ่มการทำงาน</AlertDialogAction>
+                  <AlertDialogAction onClick={handleResetToBaseline}>ตกลง</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
             <Button onClick={handleCreateProfile} className="gap-2 bg-primary font-bold shadow-md">
-              <Plus className="h-4 w-4" /> สร้างโปรไฟล์สิทธิ์ใหม่
+              <Plus className="h-4 w-4" /> สร้างเทมเพลตใหม่
             </Button>
           </div>
         </div>
 
-        {migrationSummary && (
-          <Alert className="bg-green-50 border-green-200 text-green-800">
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-            <AlertTitle className="font-bold">Migration Summary</AlertTitle>
-            <AlertDescription className="text-xs">
-              Profiles Created: {migrationSummary.profilesCreated} | 
-              Users Migrated: {migrationSummary.usersMigrated} | 
-              Users Skipped: {migrationSummary.usersSkipped} | 
-              Users Failed: {migrationSummary.usersFailed}
-            </AlertDescription>
-          </Alert>
-        )}
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid grid-cols-3 w-full md:w-[600px] h-auto p-1 bg-muted/50">
-            <TabsTrigger value="profiles" className="gap-2 py-2">1. รายการโปรไฟล์ (Profiles)</TabsTrigger>
-            <TabsTrigger value="assignment" className="gap-2 py-2">2. มอบหมายสิทธิ์ (Assignment)</TabsTrigger>
-            <TabsTrigger value="audit" className="gap-2 py-2">3. ตรวจสอบ (Audit)</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="profiles" className="mt-6 space-y-6">
-            <Card className="shadow-lg border-none overflow-hidden">
-              <CardContent className="p-0">
-                {isProfilesLoading ? (
-                  <div className="py-20 text-center animate-pulse italic">กำลังโหลดข้อมูลโปรไฟล์...</div>
-                ) : (
-                  <Table>
-                    <TableHeader className="bg-muted/50">
-                      <TableRow>
-                        <TableHead className="font-bold py-4 pl-6">แผนก (Department)</TableHead>
-                        <TableHead className="font-bold">ระดับ (Level)</TableHead>
-                        <TableHead className="font-bold">Profile Key</TableHead>
-                        <TableHead className="font-bold">สถานะ</TableHead>
-                        <TableHead className="font-bold">อัปเดตล่าสุด</TableHead>
-                        <TableHead className="text-right pr-6">จัดการ</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {profiles?.map((p) => (
-                        <TableRow key={p.id} className="hover:bg-muted/30 transition-all">
-                          <TableCell className="pl-6 py-4">
-                            <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700 font-bold">{p.department}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="capitalize font-bold">{p.level}</Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs font-bold text-primary">{p.profileKey}</TableCell>
-                          <TableCell>
-                            <Badge className={p.isActive ? "bg-green-600" : "bg-slate-300"}>
-                              {p.isActive ? 'ACTIVE' : 'INACTIVE'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-[10px] text-muted-foreground leading-tight">
-                            {new Date(p.updatedAt).toLocaleString()}<br/>โดย {p.updatedBy}
-                          </TableCell>
-                          <TableCell className="text-right pr-6">
-                            <Button variant="ghost" size="icon" onClick={() => handleEditProfile(p)}>
-                              <Edit2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="assignment" className="mt-6 space-y-6">
-            <Card className="shadow-md">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2"><UserCheck className="h-5 w-5 text-primary" /> มอบหมายสิทธิ์ให้ผู้ใช้งาน</CardTitle>
-                <CardDescription>ผูกโปรไฟล์การเข้าถึงให้กับพนักงานแต่ละคน</CardDescription>
-              </CardHeader>
-              <CardContent className="p-0 border-t">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
-                      <TableHead>แผนก / ระดับ</TableHead>
-                      <TableHead>Profile Assigned</TableHead>
-                      <TableHead className="text-right pr-6">ดำเนินการ</TableHead>
+        <Card className="shadow-lg border-none overflow-hidden">
+          <CardContent className="p-0">
+            {isProfilesLoading ? (
+              <div className="py-20 text-center animate-pulse italic">กำลังโหลดข้อมูลโปรไฟล์...</div>
+            ) : (
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead className="pl-6 py-4">โปรไฟล์ (Profile Key)</TableHead>
+                    <TableHead>แผนก / ระดับ (Context)</TableHead>
+                    <TableHead>สถานะ</TableHead>
+                    <TableHead>อัปเดตล่าสุด</TableHead>
+                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {profiles?.map((p) => (
+                    <TableRow key={p.id} className="hover:bg-muted/30 transition-all">
+                      <TableCell className="pl-6 py-4 font-mono text-xs font-bold text-primary">
+                        {p.profileKey}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1.5">
+                          <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700 font-bold">{p.department}</Badge>
+                          <Badge variant="secondary" className="capitalize font-bold">{p.level}</Badge>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={p.isActive ? "bg-green-600" : "bg-slate-300"}>
+                          {p.isActive ? 'ACTIVE' : 'INACTIVE'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-[10px] text-muted-foreground leading-tight">
+                        {new Date(p.updatedAt).toLocaleString()}<br/>โดย {p.updatedBy}
+                      </TableCell>
+                      <TableCell className="text-right pr-6">
+                        <Button variant="ghost" size="icon" onClick={() => handleEditProfile(p)}>
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {users?.filter(u => u.isActive).map((u) => {
-                      const { dept, level } = inferDeptAndLevel(u);
-                      return (
-                        <TableRow key={u.id}>
-                          <TableCell className="pl-6 py-4">
-                            <div className="flex flex-col">
-                              <span className="font-bold text-sm">{u.displayName}</span>
-                              <span className="text-[10px] text-muted-foreground">{u.email}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Badge variant="outline" className="text-[9px] capitalize">{dept}</Badge>
-                              <Badge variant="secondary" className="text-[9px] capitalize">{level}</Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Select 
-                              value={u.permissionProfileKey || 'none'} 
-                              onValueChange={(v) => handleAssignProfile(u.id, v)}
-                            >
-                              <SelectTrigger className={`h-9 text-xs w-[250px] ${!u.permissionProfileKey ? 'border-amber-500 bg-amber-50 shadow-sm' : ''}`}>
-                                <SelectValue placeholder="เลือกโปรไฟล์..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none">-- ไม่ได้มอบหมาย (No Profile) --</SelectItem>
-                                {profiles?.filter(p => p.isActive).map(p => (
-                                  <SelectItem key={p.id} value={p.profileKey}>{p.profileKey}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell className="text-right pr-6">
-                            {!u.permissionProfileKey && (
-                              <Badge variant="destructive" className="animate-pulse text-[8px]">Missing Profile</Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="audit" className="mt-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card className="border-l-8 border-l-red-600 shadow-md">
-                <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-muted-foreground">Unassigned Users (ยังไม่มีโปรไฟล์)</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-4xl font-black text-red-600">{users?.filter(u => u.isActive && !u.permissionProfileKey).length} ราย</div>
-                  <p className="text-xs text-muted-foreground mt-2 italic">ควรได้รับมอบหมาย Profile Key เพื่อความปลอดภัยสูงสุด</p>
-                </CardContent>
-              </Card>
-              <Card className="border-l-8 border-l-amber-500 shadow-md">
-                <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-muted-foreground">Inactive Profiles (โปรไฟล์ที่ปิดใช้งาน)</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-4xl font-black text-amber-600">{profiles?.filter(p => !p.isActive).length} ชุด</div>
-                  <p className="text-xs text-muted-foreground mt-2 italic">ผู้ที่ถือโปรไฟล์นี้จะไม่มีสิทธิ์เข้าถึงโมดูลใด ๆ</p>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-        </Tabs>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Editor Dialog */}
         <Dialog open={isEditorOpen} onOpenChange={setIsEditorOpen}>
