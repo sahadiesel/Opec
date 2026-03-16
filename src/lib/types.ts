@@ -135,7 +135,8 @@ export interface ClientUser {
 
 export interface Position {
   id: string;
-  positionName: string;
+  positionName: string; // Acts as English Name
+  positionNameTh: string; // Added for bilingual support
   positionCode: string;
   category: string;
   active: boolean;
@@ -825,6 +826,7 @@ export interface OfficeStaff {
   taxId: string;
   socialSecurityNo: string;
   linkedUserId?: string;
+  supervisorId?: string; // For approver chain
   status: StaffStatus;
   notes: string;
   createdAt: number;
@@ -851,6 +853,11 @@ export interface Worker {
   readinessStatus: ReadinessStatus;
   nationality: string;
   gender: string;
+  skills: string[]; // Skill tags
+  bankName?: string;
+  bankAccountNumber?: string;
+  bankAccountName?: string;
+  disciplinaryNotes?: string;
   notes?: string;
   createdAt: number;
   updatedAt: number;

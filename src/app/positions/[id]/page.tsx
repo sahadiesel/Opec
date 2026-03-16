@@ -21,7 +21,9 @@ import {
   Hammer, 
   ArrowLeft,
   Sparkles,
-  Briefcase
+  Briefcase,
+  Activity,
+  Info
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -70,19 +72,11 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const [newPPE, setNewPPE] = useState<Partial<PositionPPERequirement>>({ required: true, quantityDefault: 1 });
   const [newTool, setNewTool] = useState<Partial<PositionToolRequirement>>({ allowed: true, quantityDefault: 1, itemType: 'tool' });
 
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isGenerating, setIsGenerating] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (parsed.roleId && !parsed.roleIds) parsed.roleIds = [parsed.roleId];
-        setCurrentUser(parsed);
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
+    if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
   const handleSaveMaster = () => {
@@ -141,7 +135,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const handleGenerateAI = async (type: 'certificate' | 'ppe' | 'tool') => {
     if (!position) return;
-    setIsGenerating(type as any); // Use simple loading state
+    setIsGenerating(type);
     try {
       const result = await generatePositionRequirements({
         positionName: position.positionName,
@@ -160,7 +154,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
         description: "ไม่สามารถสร้างคำแนะนำได้ในขณะนี้"
       });
     } finally {
-      setIsGenerating(false);
+      setIsGenerating(null);
     }
   };
 
@@ -168,7 +162,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลตำแหน่งงาน...</div>
+          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูล (Loading Positions Matrix)...</div>
         </div>
       </AppShell>
     );
@@ -176,25 +170,31 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6">
+      <div className="space-y-6 max-w-[1400px] mx-auto">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
             <Link href="/positions"><ArrowLeft className="h-5 w-5" /></Link>
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold tracking-tight">{position.positionName}</h1>
-              <Badge variant="outline" className="font-mono text-primary border-primary/20">{position.positionCode}</Badge>
+              <h1 className="text-3xl font-bold tracking-tight text-primary">
+                {position.positionNameTh || position.positionName} ({position.positionName})
+              </h1>
+              <Badge variant="outline" className="font-mono text-primary border-primary/20">
+                Code: {position.positionCode}
+              </Badge>
             </div>
-            <p className="text-muted-foreground">{position.category} | จ่ายแบบ {position.payrollBasis}</p>
+            <p className="text-muted-foreground mt-1 flex items-center gap-2">
+              <Info className="h-4 w-4" /> จัดการเกณฑ์มาตรฐานตำแหน่ง (Standard Matrix), ใบเซอร์บังคับ และอุปกรณ์ที่จำเป็น
+            </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => { setEditedPos(position); setIsEditing(!isEditing); }}>
-              {isEditing ? 'ยกเลิกการแก้ไข' : 'แก้ไขข้อมูลหลัก'}
+            <Button variant="outline" className="h-11" onClick={() => { setEditedPos(position); setIsEditing(!isEditing); }}>
+              {isEditing ? 'ยกเลิก (Cancel)' : 'แก้ไขข้อมูลหลัก (Edit Info)'}
             </Button>
             {isEditing && (
-              <Button className="gap-2" onClick={handleSaveMaster}>
-                <Save className="h-4 w-4" /> บันทึก
+              <Button className="h-11 gap-2 bg-primary font-bold shadow-md" onClick={handleSaveMaster}>
+                <Save className="h-4 w-4" /> บันทึก (Save)
               </Button>
             )}
           </div>
@@ -202,22 +202,31 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
         <Tabs defaultValue="master" className="w-full">
           <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="master" className="gap-2 py-2 px-6"><Briefcase className="h-4 w-4" /> ข้อมูลตำแหน่ง</TabsTrigger>
-            <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบเซอร์ (Certificates)</TabsTrigger>
-            <TabsTrigger value="ppe" className="gap-2 py-2 px-6"><HardHat className="h-4 w-4" /> PPE</TabsTrigger>
-            <TabsTrigger value="tools" className="gap-2 py-2 px-6"><Hammer className="h-4 w-4" /> เครื่องมือ/อุปกรณ์</TabsTrigger>
+            <TabsTrigger value="master" className="gap-2 py-2 px-8"><Briefcase className="h-4 w-4" /> ข้อมูลตำแหน่ง (Profile)</TabsTrigger>
+            <TabsTrigger value="certs" className="gap-2 py-2 px-8"><FileText className="h-4 w-4" /> ใบเซอร์ (Certs)</TabsTrigger>
+            <TabsTrigger value="ppe" className="gap-2 py-2 px-8"><HardHat className="h-4 w-4" /> PPE</TabsTrigger>
+            <TabsTrigger value="tools" className="gap-2 py-2 px-8"><Hammer className="h-4 w-4" /> อุปกรณ์ (Tools)</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="master" className="mt-6">
+          <TabsContent value="master" className="mt-6 space-y-6">
             <Card className="shadow-sm">
-              <CardHeader>
-                <CardTitle>ข้อมูลตำแหน่ง (Position Info)</CardTitle>
-                <CardDescription>รายละเอียดพื้นฐานของตำแหน่งงาน</CardDescription>
+              <CardHeader className="bg-primary/5 border-b">
+                <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                  <Activity className="h-5 w-5" /> รายละเอียดตำแหน่ง (Job Definition)
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-6 pt-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label>ชื่อตำแหน่ง (Position Name)</Label>
+                    <Label className="font-bold">ชื่อภาษาไทย (Thai Name) *</Label>
+                    <Input 
+                      disabled={!isEditing} 
+                      value={isEditing ? editedPos.positionNameTh : position.positionNameTh} 
+                      onChange={e => setEditedPos({...editedPos, positionNameTh: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ชื่อภาษาอังกฤษ (English Name) *</Label>
                     <Input 
                       disabled={!isEditing} 
                       value={isEditing ? editedPos.positionName : position.positionName} 
@@ -225,7 +234,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>รหัสตำแหน่ง (Code)</Label>
+                    <Label className="font-bold">รหัสตำแหน่ง (Position Code) *</Label>
                     <Input 
                       disabled={!isEditing} 
                       value={isEditing ? editedPos.positionCode : position.positionCode} 
@@ -233,43 +242,39 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>หมวดหมู่ (Category)</Label>
+                    <Label className="font-bold">หมวดหมู่ (Category)</Label>
                     <Select 
                       disabled={!isEditing}
                       onValueChange={v => setEditedPos({...editedPos, category: v})}
                       value={isEditing ? editedPos.category : position.category}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Offshore">Offshore</SelectItem>
-                        <SelectItem value="Onshore">Onshore</SelectItem>
-                        <SelectItem value="Technical">Technical</SelectItem>
-                        <SelectItem value="Administrative">Administrative</SelectItem>
+                        <SelectItem value="Offshore">Offshore (นอกชายฝั่ง)</SelectItem>
+                        <SelectItem value="Onshore">Onshore (บนฝั่ง)</SelectItem>
+                        <SelectItem value="Technical">Technical (สายเทคนิค)</SelectItem>
+                        <SelectItem value="Administrative">Administrative (สายธุรการ)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>ฐานการจ่ายเงิน (Payroll Basis)</Label>
+                    <Label className="font-bold">ฐานการจ่ายเงินคนงาน (Payroll Basis)</Label>
                     <Select 
                       disabled={!isEditing}
                       onValueChange={v => setEditedPos({...editedPos, payrollBasis: v as any})}
                       value={isEditing ? editedPos.payrollBasis : position.payrollBasis}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Daily">Daily</SelectItem>
-                        <SelectItem value="Monthly">Monthly</SelectItem>
-                        <SelectItem value="Hourly">Hourly</SelectItem>
+                        <SelectItem value="Daily">Daily (รายวัน)</SelectItem>
+                        <SelectItem value="Monthly">Monthly (รายเดือน)</SelectItem>
+                        <SelectItem value="Hourly">Hourly (รายชั่วโมง)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>รายละเอียดงาน (Description)</Label>
+                  <Label className="font-bold">รายละเอียดงาน (Description)</Label>
                   <Textarea 
                     className="min-h-[100px]"
                     disabled={!isEditing} 
@@ -277,95 +282,94 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     onChange={e => setEditedPos({...editedPos, description: e.target.value})}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>หมายเหตุภายใน (Internal Notes)</Label>
-                  <Textarea 
-                    className="min-h-[80px]"
-                    disabled={!isEditing} 
-                    value={isEditing ? editedPos.notes : position.notes} 
-                    onChange={e => setEditedPos({...editedPos, notes: e.target.value})}
-                  />
-                </div>
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="certs" className="mt-6">
-            <Card className="shadow-sm">
-              <CardHeader className="flex flex-row items-center justify-between">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between border-b bg-primary/5 pb-4">
                 <div>
-                  <CardTitle>ใบเซอร์ที่ต้องมี (Required Certificates)</CardTitle>
-                  <CardDescription>เกณฑ์ใบเซอร์มาตรฐานสำหรับตำแหน่งนี้</CardDescription>
+                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                    <FileText className="h-5 w-5" /> เกณฑ์ใบรับรองบังคับ (Compliance Reqs)
+                  </CardTitle>
+                  <CardDescription>ใบเซอร์ที่คนงานต้องมีและยังไม่หมดอายุเพื่อผ่านเกณฑ์ READY</CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleGenerateAI('certificate')} disabled={isGenerating}>
-                    <Sparkles className="h-4 w-4 mr-2" /> AI Helper
+                  <Button variant="outline" className="h-10 border-blue-200 text-blue-700 bg-blue-50" onClick={() => handleGenerateAI('certificate')} disabled={!!isGenerating}>
+                    {isGenerating === 'certificate' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                    แนะนำโดย AI (AI Suggest)
                   </Button>
                   <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
                     <DialogTrigger asChild>
-                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มใบเซอร์</Button>
+                      <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มเกณฑ์ (Add)</Button>
                     </DialogTrigger>
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>เพิ่มเกณฑ์ใบเซอร์</DialogTitle>
-                        <DialogDescription>เพิ่มมาตรฐานใบเซอร์สำหรับตำแหน่งนี้</DialogDescription>
+                        <DialogTitle>เพิ่มเกณฑ์ใบรับรอง</DialogTitle>
+                        <DialogDescription>กำหนดมาตรฐานใบรับรองสำหรับตำแหน่งงานนี้</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่อใบเซอร์ (Certificate Name)</Label>
+                          <Label className="font-bold">ชื่อใบรับรอง (Certificate Name) *</Label>
                           <Input value={newCert.certificateName || ''} onChange={e => setNewCert({...newCert, certificateName: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>รหัสใบเซอร์ (Code)</Label>
+                          <Label className="font-bold">รหัสมาตรฐาน (System Code)</Label>
                           <Input value={newCert.certificateCode || ''} onChange={e => setNewCert({...newCert, certificateCode: e.target.value})} />
                         </div>
                         <div className="grid gap-2">
-                          <Label>อายุการใช้งาน (Validity Months)</Label>
+                          <Label className="font-bold">อายุการใช้งานแนะนำ (Validity Months)</Label>
                           <Input type="number" value={newCert.validityMonths || ''} onChange={e => setNewCert({...newCert, validityMonths: parseInt(e.target.value)})} />
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 p-3 border rounded-lg bg-muted/20">
                           <Checkbox id="req" checked={newCert.required} onCheckedChange={v => setNewCert({...newCert, required: !!v})} />
-                          <Label htmlFor="req">บังคับ (Mandatory)</Label>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>หมายเหตุ</Label>
-                          <Textarea value={newCert.notes || ''} onChange={e => setNewCert({...newCert, notes: e.target.value})} />
+                          <Label htmlFor="req" className="font-bold cursor-pointer">บังคับต้องมี (Mandatory - Blocks Readiness)</Label>
                         </div>
                       </div>
                       <DialogFooter>
                         <Button variant="outline" onClick={() => setIsAddCertOpen(false)}>ยกเลิก</Button>
-                        <Button onClick={handleAddCert}>บันทึกรายการ</Button>
+                        <Button onClick={handleAddCert} className="bg-primary font-bold">บันทึกเกณฑ์ (Save)</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-0">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-muted/50">
                     <TableRow>
-                      <TableHead>ใบเซอร์</TableHead>
-                      <TableHead>รหัส</TableHead>
-                      <TableHead>บังคับ</TableHead>
-                      <TableHead>อายุใช้งาน (ด.)</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
+                      <TableHead className="pl-6 font-bold">ใบรับรอง (Certificate)</TableHead>
+                      <TableHead className="font-bold">ความสำคัญ (Criticality)</TableHead>
+                      <TableHead className="font-bold">อายุมาตรฐาน</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {certs?.map(c => (
                       <TableRow key={c.id}>
-                        <TableCell className="font-medium">{c.certificateName}</TableCell>
-                        <TableCell className="font-mono text-xs">{c.certificateCode}</TableCell>
-                        <TableCell>{c.required ? <Badge>Mandatory</Badge> : <Badge variant="outline">Optional</Badge>}</TableCell>
-                        <TableCell>{c.validityMonths || '-'}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteReq('certificate_requirements', c.id)}><Trash2 className="h-4 w-4" /></Button>
+                        <TableCell className="pl-6">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-primary">{c.certificateName}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground">{c.certificateCode || 'N/A'}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {c.required ? (
+                            <Badge className="bg-red-600">Mandatory (บังคับ)</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-slate-500">Optional (เสริม)</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm">{c.validityMonths ? `${c.validityMonths} เดือน` : 'ไม่ระบุ'}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteReq('certificate_requirements', c.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
                       </TableRow>
                     ))}
-                    {!certs?.length && (
+                    {certs?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลใบเซอร์</TableCell>
+                        <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการใบเซอร์ที่กำหนด</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -375,81 +379,76 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           </TabsContent>
 
           <TabsContent value="ppe" className="mt-6">
-            <Card className="shadow-sm">
-              <CardHeader className="flex flex-row items-center justify-between">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between border-b bg-primary/5 pb-4">
                 <div>
-                  <CardTitle>PPE ที่ต้องใช้ (Required PPE)</CardTitle>
-                  <CardDescription>รายการชุดอุปกรณ์ป้องกันส่วนบุคคลพื้นฐาน</CardDescription>
+                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                    <HardHat className="h-5 w-5" /> อุปกรณ์ PPE บังคับ (Standard PPE)</CardTitle>
+                  <CardDescription>รายการชุดและอุปกรณ์ป้องกันภัยที่บริษัทต้องจัดเตรียมให้ตำแหน่งนี้</CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleGenerateAI('ppe')} disabled={isGenerating}>
-                    <Sparkles className="h-4 w-4 mr-2" /> AI Helper
+                  <Button variant="outline" className="h-10 border-blue-200 text-blue-700 bg-blue-50" onClick={() => handleGenerateAI('ppe')} disabled={!!isGenerating}>
+                    {isGenerating === 'ppe' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                    แนะนำโดย AI
                   </Button>
                   <Dialog open={isAddPPEOpen} onOpenChange={setIsAddPPEOpen}>
                     <DialogTrigger asChild>
-                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มรายการ PPE</Button>
+                      <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add)</Button>
                     </DialogTrigger>
                     <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>เพิ่มรายการ PPE</DialogTitle>
-                        <DialogDescription>กำหนดอุปกรณ์ PPE มาตรฐานสำหรับตำแหน่งนี้</DialogDescription>
-                      </DialogHeader>
+                      <DialogHeader><DialogTitle>เพิ่มรายการ PPE มาตรฐาน</DialogTitle></DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่ออุปกรณ์</Label>
+                          <Label className="font-bold">ชื่ออุปกรณ์ (Item Name) *</Label>
                           <Input value={newPPE.itemName || ''} onChange={e => setNewPPE({...newPPE, itemName: e.target.value})} />
                         </div>
-                        <div className="grid gap-2">
-                          <Label>รหัสอุปกรณ์</Label>
-                          <Input value={newPPE.itemCode || ''} onChange={e => setNewPPE({...newPPE, itemCode: e.target.value})} />
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label className="font-bold">รหัส (Item Code)</Label>
+                            <Input value={newPPE.itemCode || ''} onChange={e => setNewPPE({...newPPE, itemCode: e.target.value})} />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label className="font-bold">จำนวนต่อคน (Qty)</Label>
+                            <Input type="number" value={newPPE.quantityDefault || 1} onChange={e => setNewPPE({...newPPE, quantityDefault: parseInt(e.target.value)})} />
+                          </div>
                         </div>
-                        <div className="grid gap-2">
-                          <Label>จำนวนมาตรฐาน</Label>
-                          <Input type="number" value={newPPE.quantityDefault || 1} onChange={e => setNewPPE({...newPPE, quantityDefault: parseInt(e.target.value)})} />
-                        </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 p-3 border rounded-lg">
                           <Checkbox id="ppe-req" checked={newPPE.required} onCheckedChange={v => setNewPPE({...newPPE, required: !!v})} />
-                          <Label htmlFor="ppe-req">บังคับ (Required)</Label>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>หมายเหตุ</Label>
-                          <Textarea value={newPPE.notes || ''} onChange={e => setNewPPE({...newPPE, notes: e.target.value})} />
+                          <Label htmlFor="ppe-req" className="font-bold cursor-pointer">รายการบังคับ (Required)</Label>
                         </div>
                       </div>
                       <DialogFooter>
                         <Button variant="outline" onClick={() => setIsAddPPEOpen(false)}>ยกเลิก</Button>
-                        <Button onClick={handleAddPPE}>บันทึกรายการ</Button>
+                        <Button onClick={handleAddPPE} className="bg-primary font-bold">บันทึก (Save)</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-0">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-muted/50">
                     <TableRow>
-                      <TableHead>อุปกรณ์ PPE</TableHead>
-                      <TableHead>รหัส</TableHead>
-                      <TableHead>จำนวน</TableHead>
-                      <TableHead>บังคับ</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
+                      <TableHead className="pl-6 font-bold">อุปกรณ์ (PPE Item)</TableHead>
+                      <TableHead className="font-bold">จำนวน (Qty)</TableHead>
+                      <TableHead className="font-bold">ความสำคัญ</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {ppe?.map(p => (
                       <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.itemName}</TableCell>
-                        <TableCell className="font-mono text-xs">{p.itemCode}</TableCell>
-                        <TableCell>{p.quantityDefault}</TableCell>
-                        <TableCell>{p.required ? <Badge>Required</Badge> : <Badge variant="outline">Optional</Badge>}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteReq('ppe_requirements', p.id)}><Trash2 className="h-4 w-4" /></Button>
+                        <TableCell className="pl-6 font-bold text-primary">{p.itemName}</TableCell>
+                        <TableCell className="text-sm font-medium">{p.quantityDefault} ชุด/คน</TableCell>
+                        <TableCell>{p.required ? <Badge className="bg-orange-600">Required</Badge> : <Badge variant="outline">Optional</Badge>}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteReq('ppe_requirements', p.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
                       </TableRow>
                     ))}
-                    {!ppe?.length && (
+                    {ppe?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูล PPE</TableCell>
+                        <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการ PPE ที่กำหนด</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -459,96 +458,80 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           </TabsContent>
 
           <TabsContent value="tools" className="mt-6">
-            <Card className="shadow-sm">
-              <CardHeader className="flex flex-row items-center justify-between">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between border-b bg-primary/5 pb-4">
                 <div>
-                  <CardTitle>เครื่องมือ/อุปกรณ์ (Tools / Equipment)</CardTitle>
-                  <CardDescription>รายการเครื่องมือที่ได้รับอนุญาต</CardDescription>
+                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                    <Hammer className="h-5 w-5" /> เครื่องมือประจำตำแหน่ง (Tool Reqs)
+                  </CardTitle>
+                  <CardDescription>รายการเครื่องมือช่างพื้นฐานที่อนุญาตให้เบิกได้ตามตำแหน่งงาน</CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleGenerateAI('tool')} disabled={isGenerating}>
-                    <Sparkles className="h-4 w-4 mr-2" /> AI Helper
+                  <Button variant="outline" className="h-10 border-blue-200 text-blue-700 bg-blue-50" onClick={() => handleGenerateAI('tool')} disabled={!!isGenerating}>
+                    {isGenerating === 'tool' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                    แนะนำโดย AI
                   </Button>
                   <Dialog open={isAddToolOpen} onOpenChange={setIsAddToolOpen}>
                     <DialogTrigger asChild>
-                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มเครื่องมือ</Button>
+                      <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add)</Button>
                     </DialogTrigger>
                     <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>เพิ่มเครื่องมือ/อุปกรณ์</DialogTitle>
-                        <DialogDescription>กำหนดเครื่องมือมาตรฐานสำหรับตำแหน่งงาน</DialogDescription>
-                      </DialogHeader>
+                      <DialogHeader><DialogTitle>เพิ่มรายการเครื่องมือ/อุปกรณ์</DialogTitle></DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ชื่อเครื่องมือ</Label>
+                          <Label className="font-bold">ชื่ออุปกรณ์ *</Label>
                           <Input value={newTool.itemName || ''} onChange={e => setNewTool({...newTool, itemName: e.target.value})} />
                         </div>
-                        <div className="grid gap-2">
-                          <Label>รหัสเครื่องมือ</Label>
-                          <Input value={newTool.itemCode || ''} onChange={e => setNewTool({...newTool, itemCode: e.target.value})} />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>ประเภท</Label>
-                          <Select onValueChange={v => setNewTool({...newTool, itemType: v as any})} value={newTool.itemType}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="tool">Tool</SelectItem>
-                              <SelectItem value="equipment">Equipment</SelectItem>
-                              <SelectItem value="consumable">Consumable</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>จำนวนเริ่มต้น</Label>
-                          <Input type="number" value={newTool.quantityDefault || 1} onChange={e => setNewTool({...newTool, quantityDefault: parseInt(e.target.value)})} />
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Checkbox id="tool-allow" checked={newTool.allowed} onCheckedChange={v => setNewTool({...newTool, allowed: !!v})} />
-                          <Label htmlFor="tool-allow">อนุญาตให้ใช้ (Allowed)</Label>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>หมายเหตุ</Label>
-                          <Textarea value={newTool.notes || ''} onChange={e => setNewTool({...newTool, notes: e.target.value})} />
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label className="font-bold">ประเภท</Label>
+                            <Select onValueChange={v => setNewTool({...newTool, itemType: v as any})} value={newTool.itemType}>
+                              <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="tool">Tool (เครื่องมือ)</SelectItem>
+                                <SelectItem value="equipment">Equipment (เครื่องใช้)</SelectItem>
+                                <SelectItem value="consumable">Consumable (วัสดุสิ้นเปลือง)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="grid gap-2">
+                            <Label className="font-bold">จำนวนเบิก</Label>
+                            <Input type="number" value={newTool.quantityDefault || 1} onChange={e => setNewTool({...newTool, quantityDefault: parseInt(e.target.value)})} />
+                          </div>
                         </div>
                       </div>
                       <DialogFooter>
                         <Button variant="outline" onClick={() => setIsAddToolOpen(false)}>ยกเลิก</Button>
-                        <Button onClick={handleAddTool}>บันทึกรายการ</Button>
+                        <Button onClick={handleAddTool} className="bg-primary font-bold">บันทึก (Save)</Button>
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-0">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-muted/50">
                     <TableRow>
-                      <TableHead>เครื่องมือ / อุปกรณ์</TableHead>
-                      <TableHead>รหัส</TableHead>
-                      <TableHead>ประเภท</TableHead>
-                      <TableHead>จำนวน</TableHead>
-                      <TableHead>สถานะ</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
+                      <TableHead className="pl-6 font-bold">เครื่องมือ (Tools & Equipments)</TableHead>
+                      <TableHead className="font-bold">ประเภท</TableHead>
+                      <TableHead className="font-bold">จำนวนเบิก</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {tools?.map(t => (
                       <TableRow key={t.id}>
-                        <TableCell className="font-medium">{t.itemName}</TableCell>
-                        <TableCell className="font-mono text-xs">{t.itemCode}</TableCell>
-                        <TableCell className="capitalize">{t.itemType}</TableCell>
-                        <TableCell>{t.quantityDefault}</TableCell>
-                        <TableCell>{t.allowed ? <Badge className="bg-green-500">Allowed</Badge> : <Badge variant="destructive">Blocked</Badge>}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteReq('tool_requirements', t.id)}><Trash2 className="h-4 w-4" /></Button>
+                        <TableCell className="pl-6 font-bold text-primary">{t.itemName}</TableCell>
+                        <TableCell className="capitalize text-xs font-medium text-muted-foreground">{t.itemType}</TableCell>
+                        <TableCell className="text-sm font-bold">{t.quantityDefault} EA</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteReq('tool_requirements', t.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
                       </TableRow>
                     ))}
-                    {!tools?.length && (
+                    {tools?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลอุปกรณ์</TableCell>
+                        <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการเครื่องมือที่กำหนด</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
