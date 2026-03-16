@@ -17,7 +17,8 @@ import {
   Save,
   Sparkles,
   Settings2,
-  Lock
+  Lock,
+  RefreshCw
 } from 'lucide-react';
 import { 
   User, 
@@ -54,7 +55,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { isAdminUser, getBaselineProfiles } from '@/lib/auth-mapping';
+import { isAdminUser } from '@/lib/auth-mapping';
+import { getBaselineProfiles } from '@/lib/permissions';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหาร)' },
