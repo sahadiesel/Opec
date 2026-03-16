@@ -79,6 +79,9 @@ export default function PermissionAuditPage() {
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
 
+  // Navigation state
+  const [activeTab, setActiveTab] = useState('users');
+
   // Filters state
   const [searchTerm, setSearchTerm] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
@@ -236,7 +239,7 @@ export default function PermissionAuditPage() {
           </div>
         </div>
 
-        <Tabs defaultValue="users" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid grid-cols-4 w-full md:w-[800px] h-auto p-1 bg-muted/50">
             <TabsTrigger value="users" className="gap-2 py-2">1. สรุปรายผู้ใช้ (User Summary)</TabsTrigger>
             <TabsTrigger value="problems" className="gap-2 py-2">2. ตรวจพบความผิดปกติ (Health)</TabsTrigger>
