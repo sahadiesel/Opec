@@ -126,6 +126,7 @@ export interface Position {
   positionNameTh: string;
   positionNameEn: string;
   category: 'OFFSHORE' | 'ONSHORE' | 'OFFICE';
+  jobMode: JobMode;
   payrollBasis: 'DAILY' | 'MONTHLY' | 'HOURLY';
   active: boolean;
   description?: string;
@@ -162,6 +163,34 @@ export interface Worker {
   updatedAt: number;
 }
 
+export interface PositionCertificateRequirement {
+  id: string;
+  certificateName: string;
+  certificateCode: string;
+  required: boolean;
+  validityMonths: number;
+  notes?: string;
+}
+
+export interface PositionPPERequirement {
+  id: string;
+  itemName: string;
+  itemCode: string;
+  quantityDefault: number;
+  required: boolean;
+  notes?: string;
+}
+
+export interface PositionToolRequirement {
+  id: string;
+  itemName: string;
+  itemCode: string;
+  itemType: 'tool' | 'equipment' | 'consumable';
+  quantityDefault: number;
+  allowed: boolean;
+  notes?: string;
+}
+
 export interface OfficeStaff {
   id: string;
   staffCode: string;
@@ -182,30 +211,87 @@ export interface OfficeStaff {
 export interface Customer {
   id: string;
   customerCode: string;
-  nameTh: string;
-  nameEn: string;
+  name: string;
   taxId: string;
   registeredAddress: string;
   billingAddress: string;
-  contactPerson?: string;
   phone?: string;
   email?: string;
   isActive: boolean;
+  creditTerms?: string;
+  billingTerms?: string;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
 }
 
+export interface ContactPerson {
+  id: string;
+  name: string;
+  department: string;
+  role: string;
+  phone: string;
+  email: string;
+  isPrimary: boolean;
+  notes?: string;
+}
+
 export interface MainContract {
   id: string;
-  contractNo: string;
+  contractNumber: string;
   customerId: string;
   title: string;
+  projectId?: string;
   startDate: number;
   endDate: number;
-  status: 'ACTIVE' | 'EXPIRED' | 'TERMINATED';
-  currency: 'THB' | 'USD';
+  status: 'pending' | 'active' | 'expired' | 'closed';
+  currency: string;
+  billingTerms: string;
+  paymentTerms: string;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface PositionRate {
+  id: string;
+  positionId: string;
+  sellRate: number;
+  costBaseline: number;
+  billingUnit: 'daily' | 'monthly' | 'hourly';
+  active: boolean;
+  overtimeRule: string;
+  notes?: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poCode: string;
+  contractId: string;
+  customerId: string;
+  title: string;
+  projectName: string;
+  description: string;
+  startDate: number;
+  endDate: number;
+  status: 'pending' | 'active' | 'closed';
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface POLine {
+  id: string;
+  poId: string;
+  positionId: string;
+  quantity: number;
+  startDate: number;
+  endDate: number;
+  sellRateSnapshot: number;
+  costBaselineSnapshot: number;
+  billingUnitSnapshot: string;
+  overtimeRuleSnapshot: string;
+  status: 'active' | 'cancelled' | 'completed';
 }
 
 export interface Assignment {
@@ -215,17 +301,37 @@ export interface Assignment {
   poId: string;
   poLineId: string;
   positionId: string;
+  customerId: string;
+  projectName: string;
   startDate: string;
   endDate: string;
-  status: DeploymentStatus;
-  readinessStatus: 'INCOMPLETE' | 'READY';
+  deploymentStatus: DeploymentStatus;
+  clientApprovalStatus: ClientApprovalStatus;
+  readinessStatus: 'incomplete' | 'ready';
+  readinessSummary: {
+    passportValid: ChecklistItemStatus;
+    medicalValid: ChecklistItemStatus;
+    certificatesComplete: ChecklistItemStatus;
+    safetyTrainingComplete: ChecklistItemStatus;
+    fitToWork: ChecklistItemStatus;
+    ppeIssued: ChecklistItemStatus;
+    toolsIssued: ChecklistItemStatus;
+    overlapClear: ChecklistItemStatus;
+    clientApproved: ChecklistItemStatus;
+  };
+  clientComments?: string;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
 }
 
+export type ChecklistItemStatus = 'pass' | 'fail' | 'warning' | 'missing';
+
 export interface Wave {
   id: string;
   waveCode: string;
+  poId: string;
+  poLineId: string;
   customerId: string;
   projectName: string;
   siteLocation: string;
@@ -234,6 +340,9 @@ export interface Wave {
   status: WaveStatus;
   plannedWorkers: number;
   assignedWorkers: number;
+  rotationPattern: string;
+  mobilizationDate?: string;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -242,9 +351,9 @@ export interface AuditLog {
   id: string;
   userId: string;
   userName: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'APPROVE' | 'LOCK' | 'LOGIN' | 'LOGOUT';
-  collection: string;
-  documentId: string;
+  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'LOGOUT';
+  entityType: string;
+  entityId: string;
   timestamp: number;
-  changes?: any;
+  details?: string;
 }

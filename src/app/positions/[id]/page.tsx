@@ -23,7 +23,9 @@ import {
   Sparkles,
   Briefcase,
   Activity,
-  Info
+  Info,
+  Globe,
+  Anchor
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -37,7 +39,7 @@ import {
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { Position, PositionCertificateRequirement, PositionPPERequirement, PositionToolRequirement, User } from '@/lib/types';
+import { Position, PositionCertificateRequirement, PositionPPERequirement, PositionToolRequirement, User, JobMode } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
@@ -138,7 +140,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     setIsGenerating(type);
     try {
       const result = await generatePositionRequirements({
-        positionName: position.positionName,
+        positionName: position.positionNameEn,
         requirementsType: type,
         additionalDetails: position.description
       });
@@ -178,14 +180,18 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight text-primary">
-                {position.positionNameTh || position.positionName} ({position.positionName})
+                {position.positionNameTh || position.positionNameEn} ({position.positionNameEn})
               </h1>
               <Badge variant="outline" className="font-mono text-primary border-primary/20">
                 Code: {position.positionCode}
               </Badge>
+              <Badge variant="secondary" className="gap-1">
+                {position.jobMode === 'OFFSHORE' ? <Anchor className="h-3 w-3" /> : <Globe className="h-3 w-3" />}
+                {position.jobMode} Mode
+              </Badge>
             </div>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
-              <Info className="h-4 w-4" /> จัดการเกณฑ์มาตรฐานตำแหน่ง (Standard Matrix), ใบเซอร์บังคับ และอุปกรณ์ที่จำเป็น
+              <Info className="h-4 w-4" /> จัดการเกณฑ์มาตรฐานตำแหน่ง (Standard Matrix) และนโยบายการทำงาน (Job Mode Policy)
             </p>
           </div>
           <div className="flex gap-2">
@@ -212,7 +218,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             <Card className="shadow-sm">
               <CardHeader className="bg-primary/5 border-b">
                 <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                  <Activity className="h-5 w-5" /> รายละเอียดตำแหน่ง (Job Definition)
+                  <Activity className="h-5 w-5" /> รายละเอียดตำแหน่งและนโยบาย (Job Definition & Policy)
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6 pt-6">
@@ -229,8 +235,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <Label className="font-bold">ชื่อภาษาอังกฤษ (English Name) *</Label>
                     <Input 
                       disabled={!isEditing} 
-                      value={isEditing ? editedPos.positionName : position.positionName} 
-                      onChange={e => setEditedPos({...editedPos, positionName: e.target.value})}
+                      value={isEditing ? editedPos.positionNameEn : position.positionNameEn} 
+                      onChange={e => setEditedPos({...editedPos, positionNameEn: e.target.value})}
                     />
                   </div>
                   <div className="space-y-2">
@@ -242,20 +248,21 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="font-bold">หมวดหมู่ (Category)</Label>
+                    <Label className="font-bold">นโยบายการทำงาน (Job Mode) *</Label>
                     <Select 
                       disabled={!isEditing}
-                      onValueChange={v => setEditedPos({...editedPos, category: v})}
-                      value={isEditing ? editedPos.category : position.category}
+                      onValueChange={v => setEditedPos({...editedPos, jobMode: v as JobMode})}
+                      value={isEditing ? editedPos.jobMode : position.jobMode}
                     >
-                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-10 font-bold border-primary/20"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Offshore">Offshore (นอกชายฝั่ง)</SelectItem>
-                        <SelectItem value="Onshore">Onshore (บนฝั่ง)</SelectItem>
-                        <SelectItem value="Technical">Technical (สายเทคนิค)</SelectItem>
-                        <SelectItem value="Administrative">Administrative (สายธุรการ)</SelectItem>
+                        <SelectItem value="OFFSHORE">OFFSHORE (นอกชายฝั่ง)</SelectItem>
+                        <SelectItem value="ONSHORE">ONSHORE (บนฝั่ง)</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[10px] text-muted-foreground italic">
+                      * นโยบายจะมีผลต่อเกณฑ์การคำนวณความพร้อม (Readiness) และกฎการเบิกจ่าย
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ฐานการจ่ายเงินคนงาน (Payroll Basis)</Label>

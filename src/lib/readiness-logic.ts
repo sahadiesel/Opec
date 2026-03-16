@@ -3,45 +3,61 @@ import {
   WorkerCertificate, 
   WorkerMedicalRecord, 
   WorkerDrugTest, 
-  PositionRequirement, 
-  ReadinessStatus 
+  PositionCertificateRequirement, 
+  ReadinessStatus,
+  JobMode
 } from './types';
+import { getPolicy } from './policy/engine';
 
 /**
- * Calculates a worker's readiness status based on their records and position requirements.
+ * Calculates a worker's readiness status based on their records and position-level policy.
  */
-export function calculateWorkerReadiness(
+export async function calculateWorkerReadiness(
   worker: Worker,
   certificates: WorkerCertificate[],
   medicalRecords: WorkerMedicalRecord[],
   drugTests: WorkerDrugTest[],
-  positionRequirements: PositionRequirement[]
-): ReadinessStatus {
+  mandatoryReqs: PositionCertificateRequirement[],
+  mode: JobMode
+): Promise<ReadinessStatus> {
   const now = Date.now();
+  const policy = getPolicy(mode);
 
-  // 1. Check Mandatory Certificates
-  const mandatoryCerts = positionRequirements.filter(r => r.type === 'certificate' && r.isMandatory);
-  for (const req of mandatoryCerts) {
+  // 1. Check Mandatory Certificates based on Job Mode
+  for (const req of mandatoryReqs) {
+    // Only check Offshore specific certs if in Offshore mode
+    const isBOSIET = req.certificateCode === 'BOSIET' || req.certificateName.includes('BOSIET');
+    if (isBOSIET && !policy.readinessRules.requiresBOSIET) continue;
+
     const hasValidCert = certificates.some(c => 
-      c.certificateName.toLowerCase() === req.name.toLowerCase() && 
+      (c.certificateCode === req.certificateCode || c.certificateName === req.certificateName) && 
       c.expiryDate > now && 
-      c.isVerified
+      c.status === 'valid'
     );
     if (!hasValidCert) return 'MISSING_CERTIFICATE';
   }
 
-  // 2. Check Medical Records (valid for 1 year usually, but checking expiryDate field)
-  const latestMedical = medicalRecords.sort((a, b) => b.checkDate - a.checkDate)[0];
-  if (!latestMedical || latestMedical.expiryDate < now || latestMedical.result !== 'pass') {
-    return 'MEDICAL_EXPIRED';
-  }
+  // 2. Check Medical Records
+  const latestMedical = medicalRecords
+    .filter(m => m.status === 'fit_for_duty')
+    .sort((a, b) => new Date(b.recordDate).getTime() - new Date(a.recordDate).getTime())[0];
 
-  // 3. Check Drug Test (valid if within last 6 months usually, result must be negative)
-  const latestDrug = drugTests.sort((a, b) => b.testDate - a.testDate)[0];
-  const sixMonthsAgo = now - (180 * 24 * 60 * 60 * 1000);
-  if (!latestDrug || latestDrug.testDate < sixMonthsAgo || latestDrug.result !== 'negative') {
-    return 'DOCUMENT_MISSING'; // Using DOCUMENT_MISSING as a catch-all for missing/invalid drug/misc docs
-  }
+  if (!latestMedical) return 'MEDICAL_EXPIRED';
+  
+  const medExpiry = new Date(latestMedical.expiryDate).getTime();
+  if (medExpiry < now) return 'MEDICAL_EXPIRED';
+
+  // 3. Check Drug Test (valid 6 months per offshore policy usually)
+  const latestDrug = drugTests
+    .filter(d => d.result === 'pass')
+    .sort((a, b) => new Date(b.testDate).getTime() - new Date(a.testDate).getTime())[0];
+
+  if (!latestDrug) return 'DRUG_TEST_EXPIRED';
+  
+  const drugTestDate = new Date(latestDrug.testDate).getTime();
+  const drugExpiryLimit = drugTestDate + (policy.readinessRules.drugTestValidityMonths * 30 * 24 * 60 * 60 * 1000);
+  
+  if (drugExpiryLimit < now) return 'DRUG_TEST_EXPIRED';
 
   return 'READY';
 }
