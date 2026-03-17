@@ -237,6 +237,15 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
+              {user.department === 'operations' && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/operations/dashboard')}>
+                  <div className="flex items-center gap-3">
+                    <HardHat className="h-4 w-4" />
+                    <span className="text-sm font-medium">ตรวจงาน Operations Dashboard</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
+                </div>
+              )}
               {isAdminUser(user) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/users')}>
                   <div className="flex items-center gap-3">
@@ -283,6 +292,7 @@ export default function Home() {
             {/* Operations Section */}
             {(check('waves', 'view') || check('assignments', 'view')) && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
+                <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
                 {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
                 {check('assignments', 'view') && <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />}
                 {check('mobilization', 'view') && <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />}
