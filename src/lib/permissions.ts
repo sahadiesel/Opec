@@ -227,16 +227,24 @@ export function getPermissions(
     return profile.permissions[moduleKey];
   }
 
-  // 4. Temporary Legacy Fallback logic while migrating
-  // This allows some level of fallback for users without a profile doc yet
+  // 4. Graceful Fallback Logic (while migrating or if profile doc is missing)
+  // This prevents UI lockouts when the profile doc hasn't been created yet.
   const { dept, level } = inferDeptAndLevel(user);
   
   if (moduleKey === 'overview_dashboard') return READ_ONLY;
   
-  // Basic fallback based on dept/level for non-admins if profile doc is missing
-  if (dept === 'hr' && ['workers', 'positions', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (dept === 'store' && ['store_inventory', 'vendors'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (dept === 'accounting' && ['cashbook', 'billing_notes'].includes(moduleKey)) return OFFICER_ACCESS;
+  // Fallback profiles based on assigned department and level
+  if (dept === 'hr') {
+    if (level === 'manager' || level === 'admin') {
+      if (['workers', 'positions', 'timesheets', 'worker_payroll', 'office_payroll', 'office_staff'].includes(moduleKey)) return { ...OFFICER_ACCESS, approve: true };
+    }
+    if (['workers', 'positions', 'timesheets', 'worker_payroll'].includes(moduleKey)) return OFFICER_ACCESS;
+  }
+  
+  if (dept === 'store' && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (dept === 'accounting' && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (dept === 'operations' && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
+  
   if (dept === 'client' && moduleKey === 'client_portal') return READ_ONLY;
 
   return NO_ACCESS;

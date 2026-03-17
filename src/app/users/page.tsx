@@ -92,38 +92,54 @@ export default function UsersPage() {
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
-    setEditedRole(user.assignedRoleKey || deriveBusinessRoleKey(user));
+    const currentRole = user.assignedRoleKey || deriveBusinessRoleKey(user);
+    setEditedRole(currentRole);
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveUser = () => {
+  const handleSaveUser = async () => {
     if (!firestore || !selectedUser || !editedRole) return;
     setIsSaving(true);
 
-    const userRef = doc(firestore, 'users', selectedUser.id);
-    const roleFields = getFieldsForBusinessRole(editedRole);
-    
-    const updateData: Partial<User> = {
-      ...roleFields,
-      assignedRoleKey: editedRole,
-      approvalStatus: editedStatus,
-      isActive: editedStatus === 'ACTIVE',
-      notes: notes,
-      updatedAt: Date.now()
-    };
+    try {
+      const userRef = doc(firestore, 'users', selectedUser.id);
+      
+      // Get all mapped fields based on business role selection
+      const mappedFields = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
+      
+      const updateData: Partial<User> = {
+        ...mappedFields,
+        approvalStatus: editedStatus,
+        isActive: editedStatus === 'ACTIVE',
+        notes: notes,
+        updatedAt: Date.now()
+      };
 
-    updateDocumentNonBlocking(userRef, updateData);
-    toast({ title: "บันทึกข้อมูลสำเร็จ", description: "ข้อมูลสิทธิ์เข้าถึงถูกอัปเดตเรียบร้อยแล้ว" });
-    setIsSaving(false);
-    setIsEditDialogOpen(false);
+      await updateDocumentNonBlocking(userRef, updateData);
+      
+      toast({ 
+        title: "บันทึกข้อมูลสำเร็จ", 
+        description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
+      });
+      setIsEditDialogOpen(false);
+    } catch (err: any) {
+      toast({ 
+        variant: "destructive", 
+        title: "ไม่สามารถบันทึกได้", 
+        description: err.message 
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDelete = (id: string) => {
     if (!firestore) return;
     if (confirm('ยืนยันการลบผู้ใช้งาน?')) {
       deleteDocumentNonBlocking(doc(firestore, 'users', id));
+      toast({ title: "ลบผู้ใช้เรียบร้อยแล้ว" });
     }
   };
 
@@ -148,7 +164,7 @@ export default function UsersPage() {
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งาน (User Access Management)
           </h1>
-          <p className="text-muted-foreground text-lg italic">
+          <p className="text-muted-foreground text-lg">
             เลือกบทบาทให้ผู้ใช้ ระบบจะกำหนดข้อมูลสิทธิ์ภายในให้อัตโนมัติ (Select a role and the system will apply internal access settings automatically).
           </p>
         </div>

@@ -6,7 +6,7 @@ import { SidebarNav } from './sidebar-nav';
 import { User, PermissionProfile } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { LogOut, Shield, AlertTriangle, Info } from 'lucide-react';
+import { LogOut, Shield, AlertTriangle, Info, Settings2 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { getEffectiveDepartment, getEffectiveLevel, isAdminUser } from '@/lib/auth-mapping';
@@ -86,42 +86,33 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             </div>
             
             <div className="flex items-center gap-4">
-              {/* Migration Warnings for Admin */}
+              {/* Discrete System Admin Utilities */}
               {isAdmin && (
-                <div className="hidden lg:flex items-center gap-2">
-                  {isLegacy && (
+                <div className="flex items-center gap-2 mr-2">
+                  {(isLegacy || isProfileMissing || isContextMissing) && (
                     <TooltipProvider>
-                      <Tooltip>
+                      <Tooltip shadow-md>
                         <TooltipTrigger asChild>
-                          <Badge variant="outline" className="text-[9px] h-5 bg-amber-50 text-amber-700 border-amber-200 cursor-help gap-1">
-                            <AlertTriangle className="h-2.5 w-2.5" /> Legacy Access
-                          </Badge>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-amber-600 hover:bg-amber-50"
+                            onClick={() => router.push('/system-admin/permission-audit')}
+                          >
+                            <Settings2 className="h-4 w-4" />
+                          </Button>
                         </TooltipTrigger>
-                        <TooltipContent><p className="text-xs">User relying on legacy roleIds fallback. Assign a Permission Profile.</p></TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                  {isProfileMissing && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge variant="destructive" className="text-[9px] h-5 cursor-help gap-1">
-                            <Info className="h-2.5 w-2.5" /> Missing Profile Doc
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent><p className="text-xs">Profile Key exists but document not found in permission_profiles.</p></TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                  {isContextMissing && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge variant="outline" className="text-[9px] h-5 bg-blue-50 text-blue-700 border-blue-200 cursor-help">
-                            Context Incomplete
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent><p className="text-xs">Department or Level not explicitly set in user document.</p></TooltipContent>
+                        <TooltipContent side="bottom" className="max-w-[300px]">
+                          <div className="space-y-2 p-1">
+                            <p className="font-bold text-xs flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> System Migration Status</p>
+                            <div className="text-[10px] space-y-1">
+                              {isLegacy && <p>• บัญชีนี้ใช้สิทธิ์รูปแบบเดิม (Legacy Mode)</p>}
+                              {isProfileMissing && <p>• ไม่พบเอกสาร Profile Matrix ในฐานข้อมูล</p>}
+                              {isContextMissing && <p>• ข้อมูลแผนกหรือระดับไม่สมบูรณ์</p>}
+                            </div>
+                            <p className="text-[9px] text-muted-foreground italic border-t pt-1 mt-1">คลิกเพื่อไปยังหน้าตรวจสอบสิทธิ์</p>
+                          </div>
+                        </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   )}
