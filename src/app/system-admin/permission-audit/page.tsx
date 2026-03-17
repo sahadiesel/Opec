@@ -168,8 +168,10 @@ export default function PermissionAuditPage() {
 
   const filteredUsers = useMemo(() => {
     return auditData.filter(u => {
-      const matchesSearch = u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           u.email.toLowerCase().includes(searchTerm.toLowerCase());
+      const name = u.displayName || '';
+      const email = u.email || '';
+      const matchesSearch = name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                           email.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesDept = deptFilter === 'ALL' || u.derivedDept === deptFilter;
       const matchesLevel = levelFilter === 'ALL' || u.derivedLevel === levelFilter;
       const matchesProblem = !problemOnly || u.hasProblems;
@@ -231,7 +233,7 @@ export default function PermissionAuditPage() {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" className="gap-2 h-11" onClick={() => router.push('/system-admin/permission-matrix')}>
-              <RefreshCw className="h-4 w-4" /> Run Migration Tool
+              <RefreshCw className="h-4 w-4" /> Go to Matrix Tool
             </Button>
             <Button variant="outline" className="gap-2 h-11">
               <Download className="h-4 w-4" /> Export Audit Report
@@ -399,7 +401,7 @@ export default function PermissionAuditPage() {
                         <p className="text-xs text-amber-700">{u.effectiveSummary}</p>
                       </div>
                       <Button size="sm" variant="outline" onClick={() => {
-                        router.push(`/system-admin/permission-matrix`);
+                        router.push(`/users`);
                       }}>Assign Profile</Button>
                     </div>
                   ))}

@@ -20,12 +20,13 @@ import {
   Shield,
   Clock,
   Mail,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { User, BusinessRoleKey, ApprovalStatus } from '@/lib/types';
+import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, writeBatch } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -50,7 +51,8 @@ import {
   BUSINESS_ROLES, 
   isAdminUser, 
   getFieldsForBusinessRole,
-  deriveBusinessRoleKey
+  deriveBusinessRoleKey,
+  getMigratedUserFields
 } from '@/lib/auth-mapping';
 import { Separator } from '@/components/ui/separator';
 
@@ -66,6 +68,7 @@ export default function UsersPage() {
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isRepairing, setIsRepairing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
@@ -82,12 +85,20 @@ export default function UsersPage() {
 
   const { data: users, isLoading: isCollectionLoading } = useCollection<User>(usersQuery as any);
 
+  const profilesQuery = useMemoFirebase(() => {
+    if (!firestore || !isUserAdmin) return null;
+    return collection(firestore, 'permission_profiles');
+  }, [firestore, isUserAdmin]);
+  const { data: profiles } = useCollection<PermissionProfile>(profilesQuery as any);
+
   const filteredUsers = useMemo(() => {
     if (!users) return [];
-    return users.filter(u => 
-      u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      u.email.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    return users.filter(u => {
+      const name = u.displayName || '';
+      const email = u.email || '';
+      return name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+             email.toLowerCase().includes(searchTerm.toLowerCase());
+    });
   }, [users, searchTerm]);
 
   const handleEditUser = (user: User) => {
@@ -105,8 +116,6 @@ export default function UsersPage() {
 
     try {
       const userRef = doc(firestore, 'users', selectedUser.id);
-      
-      // Get all mapped fields based on business role selection
       const mappedFields = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
       
       const updateData: Partial<User> = {
@@ -117,11 +126,8 @@ export default function UsersPage() {
         updatedAt: Date.now()
       };
 
-      // Initiate the update (non-blocking)
       updateDocumentNonBlocking(userRef, updateData);
       
-      // We use a small delay before closing the UI to ensure the "isSaving" state
-      // is clearly visible and the UI state machine cleans up correctly.
       setTimeout(() => {
         setIsSaving(false);
         setIsEditDialogOpen(false);
@@ -133,11 +139,29 @@ export default function UsersPage() {
 
     } catch (err: any) {
       setIsSaving(false);
-      toast({ 
-        variant: "destructive", 
-        title: "ไม่สามารถบันทึกได้ (Save Failed)", 
-        description: err.message 
-      });
+      toast({ variant: "destructive", title: "Save Failed", description: err.message });
+    }
+  };
+
+  const handleAutoRepair = async () => {
+    if (!firestore || !users) return;
+    setIsRepairing(true);
+    const batch = writeBatch(firestore);
+    let count = 0;
+
+    try {
+      for (const user of users) {
+        const migratedFields = getMigratedUserFields(user);
+        const userRef = doc(firestore, 'users', user.id);
+        batch.update(userRef, migratedFields);
+        count++;
+      }
+      await batch.commit();
+      toast({ title: "ซ่อมสิทธิ์สำเร็จ", description: `ปรับปรุงข้อมูลผู้ใช้ทั้งหมด ${count} รายเรียบร้อยแล้ว` });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Repair Failed", description: err.message });
+    } finally {
+      setIsRepairing(false);
     }
   };
 
@@ -166,13 +190,19 @@ export default function UsersPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งาน (User Access Management)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            เลือกบทบาทให้ผู้ใช้ ระบบจะกำหนดข้อมูลสิทธิ์ภายในให้อัตโนมัติ (Select a role and the system will apply internal access settings automatically).
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งาน (User Access Management)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              เลือกบทบาทให้ผู้ใช้ ระบบจะกำหนดข้อมูลสิทธิ์ภายในให้อัตโนมัติ (Select a role and the system will apply internal access settings automatically).
+            </p>
+          </div>
+          <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
+            {isRepairing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            ซ่อมสิทธิ์อัตโนมัติ (Auto Repair)
+          </Button>
         </div>
 
         <div className="flex items-center gap-3 bg-card p-4 rounded-lg border shadow-sm">
@@ -199,6 +229,7 @@ export default function UsersPage() {
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
                     <TableHead>บทบาทหน้าที่ (Assigned Role)</TableHead>
+                    <TableHead>ความสมบูรณ์ (Integrity)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -206,6 +237,8 @@ export default function UsersPage() {
                   {filteredUsers.map((u) => {
                     const roleKey = u.assignedRoleKey || deriveBusinessRoleKey(u);
                     const roleInfo = BUSINESS_ROLES[roleKey];
+                    const hasProfile = profiles?.some(p => p.profileKey === u.permissionProfileKey);
+                    const isInternal = !['client', 'client_viewer', 'client_approver'].includes(roleKey);
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -227,6 +260,15 @@ export default function UsersPage() {
                             <span className="font-bold text-sm text-primary">{roleInfo?.labelTh || roleKey}</span>
                             <span className="text-[10px] text-muted-foreground uppercase">{roleInfo?.labelEn || 'Custom Role'}</span>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          {isInternal && !u.permissionProfileKey ? (
+                            <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50 text-[9px]">Unassigned</Badge>
+                          ) : isInternal && !hasProfile ? (
+                            <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 text-[9px]">Profile Missing</Badge>
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4 text-green-600" />
+                          )}
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>

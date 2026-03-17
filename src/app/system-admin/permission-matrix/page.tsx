@@ -56,7 +56,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { isAdminUser } from '@/lib/auth-mapping';
-import { getBaselineProfiles } from '@/lib/permissions';
+import { getBaselineProfiles, INITIAL_PERMISSIONS_TEMPLATE } from '@/lib/permissions';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหาร)' },
@@ -104,11 +104,6 @@ const MODULE_LIST = [
   { group: 'System', key: 'client_portal', label: 'Client Portal' },
 ];
 
-const INITIAL_PERMISSIONS: Record<string, ModulePermission> = {};
-MODULE_LIST.forEach(m => {
-  INITIAL_PERMISSIONS[m.key] = { view: false, create: false, edit: false, delete: false, approve: false };
-});
-
 export default function PermissionMatrixPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
@@ -126,7 +121,7 @@ export default function PermissionMatrixPage() {
     level: 'viewer',
     isActive: true,
     notes: '',
-    permissions: { ...INITIAL_PERMISSIONS }
+    permissions: JSON.parse(JSON.stringify(INITIAL_PERMISSIONS_TEMPLATE))
   });
 
   useEffect(() => {
@@ -151,7 +146,7 @@ export default function PermissionMatrixPage() {
       level: 'viewer',
       isActive: true,
       notes: '',
-      permissions: JSON.parse(JSON.stringify(INITIAL_PERMISSIONS))
+      permissions: JSON.parse(JSON.stringify(INITIAL_PERMISSIONS_TEMPLATE))
     });
     setIsEditorOpen(true);
   };
@@ -220,6 +215,8 @@ export default function PermissionMatrixPage() {
       }
       await batch.commit();
       toast({ title: "กู้คืนโปรไฟล์มาตรฐานสำเร็จ (Baseline restored)" });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Migration Failed", description: err.message });
     } finally {
       setIsMigrating(false);
     }
@@ -256,14 +253,14 @@ export default function PermissionMatrixPage() {
               <AlertDialogTrigger asChild>
                 <Button variant="outline" className="gap-2 border-primary text-primary" disabled={isMigrating}>
                   <RefreshCw className={`h-4 w-4 ${isMigrating ? 'animate-spin' : ''}`} />
-                  Reset to Baseline
+                  Restore Baseline Profiles
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>ยืนยันการกู้คืนค่ามาตรฐาน?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    ระบบจะเขียนทับโปรไฟล์สิทธิ์มาตรฐาน 8 ชุดด้วยค่าเริ่มต้น ข้อมูลที่คุณแก้ไขไว้จะสูญหาย
+                    ระบบจะเขียนทับโปรไฟล์สิทธิ์มาตรฐานด้วยค่าเริ่มต้นที่กำหนดโดยระบบ เพื่อแก้ไขปัญหา "Profile Not Found" และสร้างโครงสร้างสิทธิ์ที่ถูกต้อง
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -320,6 +317,13 @@ export default function PermissionMatrixPage() {
                       </TableCell>
                     </TableRow>
                   ))}
+                  {(!profiles || profiles.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-20 text-center text-muted-foreground italic">
+                        ยังไม่มีโปรไฟล์ในฐานข้อมูล กดปุ่ม "Restore Baseline Profiles" เพื่อสร้างโปรไฟล์มาตรฐานเริ่มต้น
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}
