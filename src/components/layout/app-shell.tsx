@@ -7,8 +7,9 @@ import { User, PermissionProfile } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LogOut, Shield, AlertTriangle, Info, Settings2 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
 import { getEffectiveDepartment, getEffectiveLevel, isAdminUser } from '@/lib/auth-mapping';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
@@ -17,8 +18,6 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
@@ -33,6 +32,7 @@ interface AppShellProps {
 
 export function AppShell({ children, user, onLogout }: AppShellProps) {
   const firestore = useFirestore();
+  const auth = useAuth();
   const router = useRouter();
 
   const profileRef = useMemoFirebase(() => {
@@ -51,6 +51,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       } catch (error) {
         console.error('Failed to log logout time', error);
       }
+    }
+    
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error('Failed to sign out from Firebase Auth', e);
     }
     
     localStorage.removeItem('opsflow_user');

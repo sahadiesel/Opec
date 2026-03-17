@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -25,7 +24,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, collection, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -76,6 +75,14 @@ export default function Home() {
     }
   }, []);
 
+  // Sync state with underlying Firebase Auth status
+  useEffect(() => {
+    if (!isUserLoading && !firebaseUser) {
+      setUser(null);
+      localStorage.removeItem('opsflow_user');
+    }
+  }, [firebaseUser, isUserLoading]);
+
   useEffect(() => {
     if (latestUserDoc) {
       setUser(latestUserDoc);
@@ -83,16 +90,11 @@ export default function Home() {
     }
   }, [latestUserDoc]);
 
-  // CRITICAL: Internal authorization must be strictly driven by ground truth from Firestore
-  // to avoid "Missing or insufficient permissions" errors caused by stale localStorage data.
   const isInternalAuthorized = useMemo(() => {
     if (isDocLoading) return false;
     if (!latestUserDoc) return false;
     
-    // Admin bypass
     if (isAdminUser(latestUserDoc)) return true;
-    
-    // Normal user checks
     if (!latestUserDoc.isActive) return false;
     if (latestUserDoc.approvalStatus !== 'ACTIVE') return false;
     
@@ -138,7 +140,12 @@ export default function Home() {
     } finally { setIsLoggingIn(false); }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error(e);
+    }
     setUser(null);
     localStorage.removeItem('opsflow_user');
   };
