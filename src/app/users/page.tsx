@@ -54,6 +54,7 @@ import {
   deriveBusinessRoleKey,
   getMigratedUserFields
 } from '@/lib/auth-mapping';
+import { getBaselineProfiles } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 
 export default function UsersPage() {
@@ -128,6 +129,7 @@ export default function UsersPage() {
 
       updateDocumentNonBlocking(userRef, updateData);
       
+      // Delay to allow Firestore state to propagate slightly before closing
       setTimeout(() => {
         setIsSaving(false);
         setIsEditDialogOpen(false);
@@ -144,20 +146,50 @@ export default function UsersPage() {
   };
 
   const handleAutoRepair = async () => {
-    if (!firestore || !users) return;
+    if (!firestore || !users || !currentUser) return;
     setIsRepairing(true);
+    
     const batch = writeBatch(firestore);
-    let count = 0;
+    let repairedCount = 0;
+    let profilesCreatedCount = 0;
+    
+    const baselineProfiles = getBaselineProfiles();
+    const existingProfileKeys = new Set(profiles?.map(p => p.profileKey) || []);
+    const pendingProfileKeys = new Set<string>();
 
     try {
       for (const user of users) {
         const migratedFields = getMigratedUserFields(user);
+        const targetProfileKey = migratedFields.permissionProfileKey;
+
+        // 1. Check if we need to create a missing profile document
+        if (targetProfileKey && !existingProfileKeys.has(targetProfileKey) && !pendingProfileKeys.has(targetProfileKey)) {
+          const baseline = baselineProfiles.find(p => p.profileKey === targetProfileKey);
+          if (baseline) {
+            const profileRef = doc(firestore, 'permission_profiles', targetProfileKey);
+            batch.set(profileRef, {
+              ...baseline,
+              id: targetProfileKey,
+              updatedAt: Date.now(),
+              updatedBy: currentUser.displayName + ' (System Auto-Repair)'
+            });
+            pendingProfileKeys.add(targetProfileKey);
+            profilesCreatedCount++;
+          }
+        }
+
+        // 2. Sync user document fields
         const userRef = doc(firestore, 'users', user.id);
         batch.update(userRef, migratedFields);
-        count++;
+        repairedCount++;
       }
+
       await batch.commit();
-      toast({ title: "ซ่อมสิทธิ์สำเร็จ", description: `ปรับปรุงข้อมูลผู้ใช้ทั้งหมด ${count} รายเรียบร้อยแล้ว` });
+      
+      toast({ 
+        title: "ซ่อมสิทธิ์สำเร็จ (Repair Complete)", 
+        description: `ซ่อมแซมผู้ใช้ ${repairedCount} ราย และสร้างโปรไฟล์มาตรฐาน ${profilesCreatedCount} รายการ` 
+      });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Repair Failed", description: err.message });
     } finally {
@@ -201,7 +233,7 @@ export default function UsersPage() {
           </div>
           <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
             {isRepairing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            ซ่อมสิทธิ์อัตโนมัติ (Auto Repair)
+            ซ่อมสิทธิ์อัตโนมัติ (Full Access Repair)
           </Button>
         </div>
 
