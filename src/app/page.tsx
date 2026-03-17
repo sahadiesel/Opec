@@ -5,43 +5,43 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { User, MainContract, Worker, Assignment, DeptType, AccessLevel, BillingNote } from '@/lib/types';
+import { User, DeptType, AccessLevel, BusinessRoleKey } from '@/lib/types';
 import { 
-  Briefcase, 
   ShieldCheck, 
   UserPlus, 
   ShoppingCart,
   Users,
-  Activity,
   HardHat,
   ShieldAlert,
   Loader2,
-  Settings2,
-  Info,
   Wrench,
-  AlertTriangle,
-  FileText
+  Info,
+  FileText,
+  Briefcase,
+  Waves,
+  Truck,
+  Warehouse,
+  Receipt,
+  Coins,
+  ArrowRight,
+  ClipboardCheck,
+  CheckCircle2,
+  Clock,
+  LayoutGrid
 } from 'lucide-react';
-import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, collection, updateDoc } from 'firebase/firestore';
+import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
+import { inferDeptAndLevel, isAdminUser, BUSINESS_ROLES } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HELP_TEXTS } from '@/lib/constants/help-texts';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import Link from 'next/link';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function Home() {
   const router = useRouter();
@@ -50,13 +50,6 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-  const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regConfirmPassword, setRegConfirmPassword] = useState('');
-  const [regDisplayName, setRegDisplayName] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [isRegDialogOpen, setIsRegDialogOpen] = useState(false);
 
   const firestore = useFirestore();
   const auth = useAuth();
@@ -76,7 +69,6 @@ export default function Home() {
     }
   }, []);
 
-  // Sync state with underlying Firebase Auth status
   useEffect(() => {
     if (!isUserLoading && !firebaseUser) {
       setUser(null);
@@ -92,63 +84,31 @@ export default function Home() {
   }, [latestUserDoc]);
 
   const isInternalAuthorized = useMemo(() => {
-    if (isDocLoading) return false;
-    if (!latestUserDoc) return false;
-    
-    if (isAdminUser(latestUserDoc)) return true;
-    if (!latestUserDoc.isActive) return false;
-    if (latestUserDoc.approvalStatus !== 'ACTIVE') return false;
-    
-    const { dept } = inferDeptAndLevel(latestUserDoc);
-    if (dept === 'client') return false;
-    
-    return true;
+    if (isDocLoading || !latestUserDoc) return false;
+    return latestUserDoc.isActive && latestUserDoc.approvalStatus === 'ACTIVE';
   }, [latestUserDoc, isDocLoading]);
 
-  const { dept } = useMemo(() => {
-    if (!latestUserDoc) return { dept: 'hr' as DeptType, level: 'viewer' as AccessLevel };
-    return inferDeptAndLevel(latestUserDoc);
-  }, [latestUserDoc]);
-
-  // Permission-aware query guards
-  const canReadContracts = isInternalAuthorized; // Based on firestore.rules, signed in users can read
-  const canReadWorkers = isInternalAuthorized && (isAdminUser(latestUserDoc) || ['admin', 'hr', 'operations'].includes(dept));
-  const canReadMobs = isInternalAuthorized && (isAdminUser(latestUserDoc) || ['admin', 'hr', 'operations', 'sales'].includes(dept));
-  const canReadFinance = isInternalAuthorized && (isAdminUser(latestUserDoc) || ['accounting', 'sales'].includes(dept));
-
-  const contractsQuery = useMemoFirebase(() => (firestore && canReadContracts ? collection(firestore, 'main_contracts') : null), [firestore, canReadContracts]);
-  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
-
-  const workersQuery = useMemoFirebase(() => (firestore && canReadWorkers ? collection(firestore, 'workers') : null), [firestore, canReadWorkers]);
-  const { data: workers } = useCollection<Worker>(workersQuery as any);
-
-  const mobilizationQuery = useMemoFirebase(() => (firestore && canReadMobs ? collection(firestore, 'mobilizations') : null), [firestore, canReadMobs]);
-  const { data: assignments } = useCollection<Assignment>(mobilizationQuery as any);
-
-  const billingNotesQuery = useMemoFirebase(() => (firestore && canReadFinance ? collection(firestore, 'billing_notes') : null), [firestore, canReadFinance]);
-  const { data: billingNotes } = useCollection<BillingNote>(billingNotesQuery as any);
+  const { can, check } = usePermissions(latestUserDoc || null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoggingIn(true);
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
-      const userDocRef = doc(firestore!, 'users', cred.user.uid);
-      const userDoc = await getDoc(userDocRef);
+      const docRef = doc(firestore!, 'users', cred.user.uid);
+      const snap = await getDoc(docRef);
       
-      if (userDoc.exists()) {
-        const userData = userDoc.data() as User;
-        if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED' || (!userData.isActive && !isAdminUser(userData))) {
-          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณยังไม่อนุญาตให้เข้าใช้งาน" });
+      if (snap.exists()) {
+        const userData = snap.data() as User;
+        if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
+          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณถูกระงับการใช้งาน" });
           setIsLoggingIn(false);
           return;
         }
-        await updateDoc(userDocRef, { lastLoginAt: Date.now() });
+        await updateDoc(docRef, { lastLoginAt: Date.now() });
         setUser(userData);
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
         toast({ title: "เข้าสู่ระบบสำเร็จ" });
-      } else {
-        toast({ variant: "destructive", title: "Profile Required", description: "ตรวจพบไอดีแต่ไม่พบข้อมูลสิทธิ์ กรุณาติดต่อแอดมิน" });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
@@ -156,57 +116,23 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.error(e);
-    }
+    await signOut(auth);
     setUser(null);
     localStorage.removeItem('opsflow_user');
   };
 
-  const handleRegister = async () => {
-    if (regPassword !== regConfirmPassword) {
-      toast({ variant: "destructive", title: "รหัสผ่านไม่ตรงกัน" });
-      return;
-    }
-    setIsRegistering(true);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, regEmail, regPassword);
-      const uid = cred.user.uid;
-      const newUser: Partial<User> = {
-        id: uid,
-        email: regEmail,
-        displayName: regDisplayName,
-        department: 'hr', 
-        level: 'viewer',  
-        roleIds: [], 
-        isActive: false,
-        approvalStatus: 'PENDING',
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      await setDoc(doc(firestore!, 'users', uid), newUser);
-      toast({ title: "ลงทะเบียนสำเร็จ", description: "บัญชีรอนุมัติสิทธิ์จากผู้ดูแลระบบ" });
-      setIsRegDialogOpen(false);
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Registration Failed", description: err.message });
-    } finally {
-      setIsRegistering(false);
-    }
-  };
-
   if (!isLoaded || isUserLoading) return null;
 
+  // Login Screen
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4 font-body">
+      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
         <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
               <ShieldCheck className="h-10 w-10 text-primary" />
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">OPEC OpsFlow</CardTitle>
+            <CardTitle className="text-3xl font-bold tracking-tight text-primary">OPEC OpsFlow</CardTitle>
             <CardDescription className="text-base">Enterprise Manpower Supply Operations</CardDescription>
           </CardHeader>
           <form onSubmit={handleLogin}>
@@ -220,30 +146,11 @@ export default function Home() {
                 <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
               </div>
             </CardContent>
-            <CardFooter className="flex flex-col gap-3">
+            <CardFooter>
               <Button type="submit" className="w-full h-12 text-lg font-bold" disabled={isLoggingIn}>
                 {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
                 เข้าสู่ระบบ
               </Button>
-              <Dialog open={isRegDialogOpen} onOpenChange={setIsRegDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="w-full h-11 font-semibold gap-2"><UserPlus className="h-4 w-4" /> ลงทะเบียนเข้าใช้งาน</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>ลงทะเบียนพนักงานใหม่</DialogTitle></DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <Label>ชื่อ-นามสกุล</Label>
-                    <Input value={regDisplayName} onChange={e => setRegDisplayName(e.target.value)} />
-                    <Label>อีเมล</Label>
-                    <Input type="email" value={regEmail} onChange={e => setRegEmail(e.target.value)} />
-                    <Label>รหัสผ่าน</Label>
-                    <Input type="password" value={regPassword} onChange={e => setRegPassword(e.target.value)} />
-                    <Label>ยืนยันรหัสผ่าน</Label>
-                    <Input type="password" value={regConfirmPassword} onChange={e => setRegConfirmPassword(e.target.value)} />
-                  </div>
-                  <DialogFooter><Button onClick={handleRegister} disabled={isRegistering} className="w-full">ยืนยันการลงทะเบียน</Button></DialogFooter>
-                </DialogContent>
-              </Dialog>
             </CardFooter>
           </form>
         </Card>
@@ -251,91 +158,199 @@ export default function Home() {
     );
   }
 
+  const roleKey = latestUserDoc?.assignedRoleKey || 'hr_officer';
+  const roleInfo = BUSINESS_ROLES[roleKey as BusinessRoleKey];
+
   return (
     <AppShell user={user} onLogout={handleLogout}>
-      <div className="space-y-8 max-w-[1600px] mx-auto font-body">
+      <div className="space-y-8 max-w-[1600px] mx-auto">
+        {/* Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold text-primary tracking-tight">{UI_LABELS.DASHBOARD}</h1>
-          <p className="text-muted-foreground text-lg">
-            {HELP_TEXTS.DASHBOARD}
-          </p>
+          <p className="text-muted-foreground text-lg">{HELP_TEXTS.DASHBOARD}</p>
         </div>
 
-        {/* Access Restricted Warning */}
-        {!isInternalAuthorized && !isDocLoading && (
-          <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 border-l-8 border-l-destructive">
-            <ShieldAlert className="h-6 w-6" />
-            <AlertTitle className="font-bold text-lg mb-2">Access Pending (รอนุมัติสิทธิ์เข้าใช้งาน)</AlertTitle>
-            <AlertDescription className="space-y-4">
-              <p className="text-base">บัญชีของคุณยังไม่ได้รับการกำหนดบทบาทหรือยังไม่ได้รับการอนุมัติให้เข้าใช้งานส่วนงานภายใน (Internal Modules)</p>
-              <div className="flex flex-wrap gap-3">
-                <Button variant="outline" className="gap-2 bg-white" onClick={() => router.push('/setup-admin')}>
-                  <Wrench className="h-4 w-4" /> กู้คืนสิทธิ์แอดมิน (Repair Admin)
-                </Button>
-                <Button variant="ghost" className="gap-2" onClick={handleLogout}>
-                  ออกจากระบบ
-                </Button>
+        {/* Welcome Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-2 border-none shadow-md bg-white overflow-hidden">
+            <div className="h-2 bg-primary" />
+            <CardHeader className="pb-4">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-muted-foreground uppercase tracking-widest">ยินดีต้อนรับ (Welcome)</p>
+                  <CardTitle className="text-3xl font-black text-primary">{user.displayName}</CardTitle>
+                </div>
+                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 px-3 py-1 font-bold">
+                  <CheckCircle2 className="h-3 w-3 mr-1" /> Account Verified
+                </Badge>
               </div>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">บทบาทหน้าที่ (Business Role)</p>
+                <p className="font-bold text-lg text-primary">{roleInfo?.labelTh || 'ผู้ใช้งานระบบ'}</p>
+                <p className="text-xs text-muted-foreground uppercase">{roleInfo?.labelEn || 'System User'}</p>
+              </div>
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">แผนกต้นสังกัด (Department)</p>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="capitalize font-bold">{user.department}</Badge>
+                  <span className="text-muted-foreground text-xs">/</span>
+                  <Badge variant="outline" className="capitalize font-bold">{user.level}</Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-none shadow-md bg-primary text-primary-foreground">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Info className="h-5 w-5 opacity-80" /> งานที่ต้องติดตาม (Pending Actions)
+              </CardTitle>
+              <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการในวันนี้</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Role-specific pending actions */}
+              {user.department === 'hr' && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
+                  <div className="flex items-center gap-3">
+                    <Users className="h-4 w-4" />
+                    <span className="text-sm font-medium">ตรวจประวัติคนงานใหม่</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
+                </div>
+              )}
+              {user.department === 'operations' && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
+                  <div className="flex items-center gap-3">
+                    <Truck className="h-4 w-4" />
+                    <span className="text-sm font-medium">ยืนยันใบเบิกอุปกรณ์</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
+                </div>
+              )}
+              {user.department === 'accounting' && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
+                  <div className="flex items-center gap-3">
+                    <Receipt className="h-4 w-4" />
+                    <span className="text-sm font-medium">ตรวจสอบใบวางบิลค้างจ่าย</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
+                </div>
+              )}
+              {isAdminUser(user) && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/users')}>
+                  <div className="flex items-center gap-3">
+                    <ShieldCheck className="h-4 w-4" />
+                    <span className="text-sm font-medium">อนุมัติสิทธิ์ผู้ใช้ใหม่</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
+                </div>
+              )}
+              <p className="text-[10px] text-center opacity-40 italic pt-2">No critical system alerts</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Action Grid (Department Shortcuts) */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-2">
+            <LayoutGrid className="h-5 w-5 text-primary" />
+            <h2 className="text-xl font-bold text-primary">ทางลัดตามแผนก (Department Command)</h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+            {/* HR Section */}
+            {(check('workers', 'view') || check('positions', 'view')) && (
+              <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
+                {check('workers', 'view') && <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />}
+                {check('positions', 'view') && <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />}
+                {check('office_staff', 'view') && <ShortcutLink href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Staff" />}
+                {check('worker_payroll', 'view') && <ShortcutLink href="/payroll" label="จ่ายเงินคนงาน" sub="Payroll" />}
+              </ShortcutGroup>
+            )}
+
+            {/* Sales Section */}
+            {(check('customers', 'view') || check('main_contracts', 'view')) && (
+              <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
+                {check('customers', 'view') && <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />}
+                {check('main_contracts', 'view') && <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />}
+                {check('customer_pos', 'view') && <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />}
+              </ShortcutGroup>
+            )}
+
+            {/* Operations Section */}
+            {(check('waves', 'view') || check('assignments', 'view')) && (
+              <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
+                {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
+                {check('assignments', 'view') && <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />}
+                {check('mobilization', 'view') && <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />}
+              </ShortcutGroup>
+            )}
+
+            {/* Finance Section */}
+            {(check('billing_notes', 'view') || check('cashbook', 'view')) && (
+              <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
+                {check('billing_notes', 'view') && <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />}
+                {check('cashbook', 'view') && <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />}
+                {check('ap_bills', 'view') && <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />}
+              </ShortcutGroup>
+            )}
+
+            {/* Store Section */}
+            {(check('store_inventory', 'view')) && (
+              <ShortcutGroup title="คลังและจัดซื้อ (Store)" icon={Warehouse} color="border-l-amber-500">
+                {check('store_inventory', 'view') && <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />}
+                {check('vendors', 'view') && <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />}
+                {check('purchases', 'view') && <ShortcutLink href="/purchases" label="การสั่งซื้อ" sub="Purchases" />}
+              </ShortcutGroup>
+            )}
+          </div>
+        </div>
+
+        {/* Restricted Access Warning (Fallback) */}
+        {!isInternalAuthorized && !isDocLoading && (
+          <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
+            <ShieldAlert className="h-6 w-6" />
+            <AlertTitle className="font-bold text-lg">Access Pending (รอนุมัติสิทธิ์เข้าใช้งาน)</AlertTitle>
+            <AlertDescription className="space-y-4">
+              <p>บัญชีของคุณยังไม่ได้รับการอนุมัติให้เข้าใช้งานส่วนงานภายใน กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดบทบาท (Role Assignment)</p>
+              <Button variant="outline" className="gap-2 bg-white" onClick={() => router.push('/setup-admin')}>
+                <Wrench className="h-4 w-4" /> กู้คืนสิทธิ์แอดมิน (Repair Admin)
+              </Button>
             </AlertDescription>
           </Alert>
-        )}
-
-        {isInternalAuthorized ? (
-          <>
-            {dept === 'client' ? (
-              <Alert className="bg-blue-50 border-blue-200">
-                <Info className="h-4 w-4 text-blue-600" />
-                <AlertTitle className="font-bold">Portal Information</AlertTitle>
-                <AlertDescription>คุณสามารถตรวจสอบสถานะคนงานและการอนุมัติได้ที่เมนู <b>Client Portal</b></AlertDescription>
-              </Alert>
-            ) : (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                {/* Always show Contracts if authorized */}
-                <StatCard title="Active Contracts" value={contracts?.filter(c => c.status === 'active').length || 0} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
-                
-                {/* Role-specific cards */}
-                {canReadWorkers && (
-                  <StatCard title="Total Manpower" value={workers?.length || 0} sub="Registered Workers" icon={Users} colorClass="border-l-orange-500" />
-                )}
-
-                {canReadMobs && (
-                  <>
-                    <StatCard title="Active Assignments" value={assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
-                    <StatCard title="Pending Review" value={assignments?.filter(a => a.deploymentStatus === 'CLIENT_SUBMITTED').length || 0} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
-                  </>
-                )}
-
-                {canReadFinance && !canReadWorkers && (
-                  <>
-                    <StatCard title="Billing Notes" value={billingNotes?.filter(n => n.status !== 'PAID').length || 0} sub="Open Invoices" icon={FileText} colorClass="border-l-blue-600" />
-                    <StatCard title="Pending Approval" value={billingNotes?.filter(n => n.status === 'DRAFT').length || 0} sub="Draft Billings" icon={Activity} colorClass="border-l-amber-500" />
-                  </>
-                )}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="py-20 text-center space-y-4 bg-muted/10 rounded-xl border-2 border-dashed">
-            <Loader2 className="h-12 w-12 mx-auto text-primary/20 animate-spin" />
-            <p className="text-muted-foreground italic">กำลังตรวจสอบสิทธิ์การเข้าถึงข้อมูลล่าสุด...</p>
-          </div>
         )}
       </div>
     </AppShell>
   );
 }
 
-function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
+function ShortcutGroup({ title, icon: Icon, color, children }: { title: string; icon: any; color: string; children: React.ReactNode }) {
   return (
-    <Card className={`hover:shadow-lg transition-all border-l-8 ${colorClass} shadow-sm`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-5 w-5 opacity-50" />
+    <Card className={`border-none shadow-sm overflow-hidden bg-white border-l-4 ${color}`}>
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-xs font-black text-muted-foreground uppercase flex items-center gap-2">
+          <Icon className="h-3 w-3" /> {title}
+        </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="text-3xl font-black text-primary">{value}</div>
-        <p className="text-xs font-medium text-muted-foreground mt-1">{sub}</p>
+      <CardContent className="p-2 pt-0 space-y-1">
+        {children}
       </CardContent>
     </Card>
+  );
+}
+
+function ShortcutLink({ href, label, sub }: { href: string; label: string; sub: string }) {
+  return (
+    <Link href={href} className="block group">
+      <div className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition-colors">
+        <div className="flex flex-col">
+          <span className="text-sm font-bold text-primary group-hover:text-blue-600 transition-colors">{label}</span>
+          <span className="text-[10px] text-muted-foreground uppercase tracking-tighter">{sub}</span>
+        </div>
+        <ArrowRight className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all translate-x-[-4px] group-hover:translate-x-0" />
+      </div>
+    </Link>
   );
 }
