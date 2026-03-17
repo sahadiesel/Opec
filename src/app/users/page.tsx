@@ -10,19 +10,15 @@ import {
   ShieldCheck, 
   UserCog, 
   Filter, 
-  ShieldAlert, 
   CheckCircle2, 
   XCircle, 
   Loader2, 
-  RefreshCw,
   UserCheck,
   Save,
   MoreHorizontal,
-  Wand2,
   Info,
   Shield,
   Clock,
-  ArrowRight,
   Mail,
   AlertTriangle
 } from 'lucide-react';
@@ -53,7 +49,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { 
   BUSINESS_ROLES, 
   isAdminUser, 
-  getMigratedUserFields, 
   getFieldsForBusinessRole,
   deriveBusinessRoleKey
 } from '@/lib/auth-mapping';
@@ -71,7 +66,7 @@ export default function UsersPage() {
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [isRepairing, setIsRepairing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -86,6 +81,14 @@ export default function UsersPage() {
   }, [firestore, currentUser, isUserAdmin]);
 
   const { data: users, isLoading: isCollectionLoading } = useCollection<User>(usersQuery as any);
+
+  const filteredUsers = useMemo(() => {
+    if (!users) return [];
+    return users.filter(u => 
+      u.displayName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      u.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [users, searchTerm]);
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
@@ -104,6 +107,7 @@ export default function UsersPage() {
     
     const updateData: Partial<User> = {
       ...roleFields,
+      assignedRoleKey: editedRole,
       approvalStatus: editedStatus,
       isActive: editedStatus === 'ACTIVE',
       notes: notes,
@@ -114,26 +118,6 @@ export default function UsersPage() {
     toast({ title: "บันทึกข้อมูลสำเร็จ", description: "ข้อมูลสิทธิ์เข้าถึงถูกอัปเดตเรียบร้อยแล้ว" });
     setIsSaving(false);
     setIsEditDialogOpen(false);
-  };
-
-  const handleAutoRepair = async () => {
-    if (!firestore || !users || !isUserAdmin) return;
-    setIsRepairing(true);
-    let count = 0;
-
-    try {
-      for (const u of users) {
-        // Repair users missing new business role key or structural fields
-        if (!u.assignedRoleKey || !u.department || !u.permissionProfileKey) {
-          const repairedData = getMigratedUserFields(u);
-          updateDocumentNonBlocking(doc(firestore, 'users', u.id), repairedData);
-          count++;
-        }
-      }
-      toast({ title: "Auto Repair Complete", description: `ได้ทำการซ่อมแซมสิทธิ์ผู้ใช้งานทั้งหมด ${count} รายเรียบร้อยแล้ว` });
-    } finally {
-      setIsRepairing(false);
-    }
   };
 
   const handleDelete = (id: string) => {
@@ -149,7 +133,7 @@ export default function UsersPage() {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <ShieldCheck className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Restricted</h2>
           <p className="text-muted-foreground">Only System Administrators can manage users.</p>
         </div>
@@ -162,39 +146,27 @@ export default function UsersPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ShieldCheck className="h-8 w-8" /> จัดการสิทธิ์ผู้ใช้งาน (User Access Management)
+            <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งาน (User Access Management)
           </h1>
           <p className="text-muted-foreground text-lg italic">
-            เลือกบทบาทหลักตามหน้าที่การทำงาน (Role-based access control simplified for OPEC staff)
+            เลือกบทบาทให้ผู้ใช้ ระบบจะกำหนดข้อมูลสิทธิ์ภายในให้อัตโนมัติ (Select a role and the system will apply internal access settings automatically).
           </p>
         </div>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามชื่อ หรือ อีเมล..." className="pl-9 h-11" />
-            </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+        <div className="flex items-center gap-3 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="relative w-full max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input 
+              placeholder="ค้นหาตามชื่อ หรือ อีเมล..." 
+              className="pl-9 h-11" 
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+            />
           </div>
-          <Button 
-            variant="outline" 
-            className="gap-2 border-primary text-primary hover:bg-primary/5 h-11" 
-            onClick={handleAutoRepair}
-            disabled={isRepairing}
-          >
-            {isRepairing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            ซ่อมสิทธิ์อัตโนมัติ (Auto Repair Access)
-          </Button>
+          <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
-          <CardHeader className="bg-muted/30 border-b">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">รายชื่อผู้ใช้งานระบบ</CardTitle>
-              <Badge variant="outline" className="bg-white px-3 py-1 font-bold">รวม: {users?.length || 0} ราย</Badge>
-            </div>
-          </CardHeader>
           <CardContent className="p-0">
             {isCollectionLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลผู้ใช้งาน...</div>
@@ -203,17 +175,15 @@ export default function UsersPage() {
                 <TableHeader className="bg-muted/50">
                   <TableRow>
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
-                    <TableHead>บทบาทหน้าที่ (Assigned Role)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
-                    <TableHead>สถานะสิทธิ์ (Health)</TableHead>
+                    <TableHead>บทบาทหน้าที่ (Assigned Role)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users?.map((u) => {
+                  {filteredUsers.map((u) => {
                     const roleKey = u.assignedRoleKey || deriveBusinessRoleKey(u);
                     const roleInfo = BUSINESS_ROLES[roleKey];
-                    const isHealthy = !!u.assignedRoleKey && !!u.department && !!u.permissionProfileKey;
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -226,26 +196,15 @@ export default function UsersPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{roleInfo?.labelTh || roleKey}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{roleInfo?.labelEn || 'Custom Role'}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
                           <Badge className={u.approvalStatus === 'ACTIVE' ? 'bg-green-600' : u.approvalStatus === 'PENDING' ? 'bg-amber-500' : 'bg-destructive'}>
                             {u.approvalStatus || 'PENDING'}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {isHealthy ? (
-                            <div className="flex items-center gap-1 text-[10px] text-green-600 font-bold">
-                              <CheckCircle2 className="h-3 w-3" /> ปกติ (Synced)
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1 text-[10px] text-amber-600 font-bold animate-pulse">
-                              <AlertTriangle className="h-3 w-3" /> ต้องซ่อม (Unsynced)
-                            </div>
-                          )}
+                          <div className="flex flex-col">
+                            <span className="font-bold text-sm text-primary">{roleInfo?.labelTh || roleKey}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase">{roleInfo?.labelEn || 'Custom Role'}</span>
+                          </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>
@@ -340,7 +299,7 @@ export default function UsersPage() {
                       </div>
                       
                       <div className="pt-2">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase mb-2">เข้าถึงโมดูลสำคัญ (Key Access):</p>
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase mb-2">โมดูลหลัก (Key Access):</p>
                         <div className="grid grid-cols-2 gap-2">
                           <AccessBadge roleKey={editedRole as BusinessRoleKey} module="Workers" />
                           <AccessBadge roleKey={editedRole as BusinessRoleKey} module="Payroll" />
@@ -393,7 +352,7 @@ function AccessBadge({ roleKey, module }: { roleKey: BusinessRoleKey, module: st
     if (module === 'Workers' && ['hr_manager', 'hr_officer', 'operations_manager', 'operations_officer'].includes(roleKey)) return true;
     if (module === 'Payroll' && ['hr_manager', 'accounting_manager', 'accounting_officer'].includes(roleKey)) return true;
     if (module === 'Sales' && ['sales_manager', 'sales_officer', 'accounting_manager'].includes(roleKey)) return true;
-    if (module === 'Accounting' && ['accounting_manager', 'accounting_officer'].includes(roleKey)) return true;
+    if (module === 'Accounting' && ['accounting_manager', 'accounting_officer', 'sales_manager'].includes(roleKey)) return true;
     return false;
   }, [roleKey, module]);
 
