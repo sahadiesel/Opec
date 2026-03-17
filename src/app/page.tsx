@@ -28,7 +28,8 @@ import {
   ClipboardCheck,
   CheckCircle2,
   Clock,
-  LayoutGrid
+  LayoutGrid,
+  TrendingUp
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -221,6 +222,15 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
+              {user.department === 'sales' && (
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/sales/dashboard')}>
+                  <div className="flex items-center gap-3">
+                    <TrendingUp className="h-4 w-4" />
+                    <span className="text-sm font-medium">ตรวจงาน Sales Dashboard</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
+                </div>
+              )}
               {user.department === 'operations' && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
                   <div className="flex items-center gap-3">
@@ -275,6 +285,7 @@ export default function Home() {
             {/* Sales Section */}
             {(check('customers', 'view') || check('main_contracts', 'view')) && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
+                <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
                 {check('customers', 'view') && <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />}
                 {check('main_contracts', 'view') && <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />}
                 {check('customer_pos', 'view') && <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />}
