@@ -24,6 +24,7 @@ import {
   Receipt,
   Coins,
   ArrowRight,
+  ChevronRight,
   ClipboardCheck,
   CheckCircle2,
   Clock,
@@ -205,7 +206,7 @@ export default function Home() {
           <Card className="border-none shadow-md bg-primary text-primary-foreground">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Info className="h-5 w-5 opacity-80" /> งานที่ต้องติดตาม (Pending Actions)
+                <Info className="h-5 w-5 opacity-80" /> งานที่ต้องติดตาม (My Pending Actions)
               </CardTitle>
               <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการในวันนี้</CardDescription>
             </CardHeader>
