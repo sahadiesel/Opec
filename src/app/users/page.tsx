@@ -117,21 +117,27 @@ export default function UsersPage() {
         updatedAt: Date.now()
       };
 
-      await updateDocumentNonBlocking(userRef, updateData);
+      // Initiate the update (non-blocking)
+      updateDocumentNonBlocking(userRef, updateData);
       
-      toast({ 
-        title: "บันทึกข้อมูลสำเร็จ", 
-        description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
-      });
-      setIsEditDialogOpen(false);
+      // We use a small delay before closing the UI to ensure the "isSaving" state
+      // is clearly visible and the UI state machine cleans up correctly.
+      setTimeout(() => {
+        setIsSaving(false);
+        setIsEditDialogOpen(false);
+        toast({ 
+          title: "บันทึกข้อมูลสำเร็จ (Saved)", 
+          description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
+        });
+      }, 150);
+
     } catch (err: any) {
+      setIsSaving(false);
       toast({ 
         variant: "destructive", 
-        title: "ไม่สามารถบันทึกได้", 
+        title: "ไม่สามารถบันทึกได้ (Save Failed)", 
         description: err.message 
       });
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -345,7 +351,7 @@ export default function UsersPage() {
             </div>
 
             <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-6 mt-4 gap-3">
-              <Button variant="outline" className="h-12 px-8" onClick={() => setIsEditDialogOpen(false)}>ยกเลิก</Button>
+              <Button variant="outline" className="h-12 px-8" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
               <Button 
                 onClick={handleSaveUser} 
                 disabled={isSaving || !editedRole} 

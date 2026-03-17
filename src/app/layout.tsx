@@ -2,6 +2,7 @@ import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import { FirebaseClientProvider } from '@/firebase/client-provider';
+import { FixStuckUI } from '@/components/FixStuckUI';
 
 export const metadata: Metadata = {
   title: 'OPEC OpsFlow - Manpower Supply Management',
@@ -22,6 +23,7 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <FirebaseClientProvider>
+          <FixStuckUI />
           {children}
           <Toaster />
         </FirebaseClientProvider>
