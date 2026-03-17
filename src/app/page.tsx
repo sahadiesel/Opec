@@ -213,10 +213,10 @@ export default function Home() {
             <CardContent className="space-y-3">
               {/* Role-specific pending actions */}
               {user.department === 'hr' && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Users className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจประวัติคนงานใหม่</span>
+                    <span className="text-sm font-medium">ตรวจงาน HR Dashboard</span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
@@ -264,6 +264,7 @@ export default function Home() {
             {/* HR Section */}
             {(check('workers', 'view') || check('positions', 'view')) && (
               <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
+                <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวมบุคคล" />
                 {check('workers', 'view') && <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />}
                 {check('positions', 'view') && <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />}
                 {check('office_staff', 'view') && <ShortcutLink href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Staff" />}
