@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { User, MainContract, Worker, Assignment } from '@/lib/types';
+import { User, MainContract, Worker, Assignment, DeptType, AccessLevel, BillingNote } from '@/lib/types';
 import { 
   Briefcase, 
   ShieldCheck, 
@@ -21,7 +21,8 @@ import {
   Settings2,
   Info,
   Wrench,
-  AlertTriangle
+  AlertTriangle,
+  FileText
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
@@ -104,14 +105,28 @@ export default function Home() {
     return true;
   }, [latestUserDoc, isDocLoading]);
 
-  const contractsQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'main_contracts') : null), [firestore, isInternalAuthorized]);
+  const { dept } = useMemo(() => {
+    if (!latestUserDoc) return { dept: 'hr' as DeptType, level: 'viewer' as AccessLevel };
+    return inferDeptAndLevel(latestUserDoc);
+  }, [latestUserDoc]);
+
+  // Permission-aware query guards
+  const canReadContracts = isInternalAuthorized; // Based on firestore.rules, signed in users can read
+  const canReadWorkers = isInternalAuthorized && (isAdminUser(latestUserDoc) || ['admin', 'hr', 'operations'].includes(dept));
+  const canReadMobs = isInternalAuthorized && (isAdminUser(latestUserDoc) || ['admin', 'hr', 'operations', 'sales'].includes(dept));
+  const canReadFinance = isInternalAuthorized && (isAdminUser(latestUserDoc) || ['accounting', 'sales'].includes(dept));
+
+  const contractsQuery = useMemoFirebase(() => (firestore && canReadContracts ? collection(firestore, 'main_contracts') : null), [firestore, canReadContracts]);
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'workers') : null), [firestore, isInternalAuthorized]);
+  const workersQuery = useMemoFirebase(() => (firestore && canReadWorkers ? collection(firestore, 'workers') : null), [firestore, canReadWorkers]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  const mobilizationQuery = useMemoFirebase(() => (firestore && isInternalAuthorized ? collection(firestore, 'mobilizations') : null), [firestore, isInternalAuthorized]);
+  const mobilizationQuery = useMemoFirebase(() => (firestore && canReadMobs ? collection(firestore, 'mobilizations') : null), [firestore, canReadMobs]);
   const { data: assignments } = useCollection<Assignment>(mobilizationQuery as any);
+
+  const billingNotesQuery = useMemoFirebase(() => (firestore && canReadFinance ? collection(firestore, 'billing_notes') : null), [firestore, canReadFinance]);
+  const { data: billingNotes } = useCollection<BillingNote>(billingNotesQuery as any);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,8 +251,6 @@ export default function Home() {
     );
   }
 
-  const { dept } = inferDeptAndLevel(user);
-
   return (
     <AppShell user={user} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto font-body">
@@ -277,10 +290,27 @@ export default function Home() {
               </Alert>
             ) : (
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                <StatCard title="Active Assignments" value={assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
-                <StatCard title="Total Manpower" value={workers?.length || 0} sub="Registered Workers" icon={Users} colorClass="border-l-orange-500" />
+                {/* Always show Contracts if authorized */}
                 <StatCard title="Active Contracts" value={contracts?.filter(c => c.status === 'active').length || 0} sub="Master Agreements" icon={Briefcase} colorClass="border-l-emerald-600" />
-                <StatCard title="Pending Review" value={assignments?.filter(a => a.deploymentStatus === 'CLIENT_SUBMITTED').length || 0} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
+                
+                {/* Role-specific cards */}
+                {canReadWorkers && (
+                  <StatCard title="Total Manpower" value={workers?.length || 0} sub="Registered Workers" icon={Users} colorClass="border-l-orange-500" />
+                )}
+
+                {canReadMobs && (
+                  <>
+                    <StatCard title="Active Assignments" value={assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0} sub="Workers On-site" icon={HardHat} colorClass="border-l-blue-600" />
+                    <StatCard title="Pending Review" value={assignments?.filter(a => a.deploymentStatus === 'CLIENT_SUBMITTED').length || 0} sub="Wait for Approval" icon={Activity} colorClass="border-l-red-500" />
+                  </>
+                )}
+
+                {canReadFinance && !canReadWorkers && (
+                  <>
+                    <StatCard title="Billing Notes" value={billingNotes?.filter(n => n.status !== 'PAID').length || 0} sub="Open Invoices" icon={FileText} colorClass="border-l-blue-600" />
+                    <StatCard title="Pending Approval" value={billingNotes?.filter(n => n.status === 'DRAFT').length || 0} sub="Draft Billings" icon={Activity} colorClass="border-l-amber-500" />
+                  </>
+                )}
               </div>
             )}
           </>
