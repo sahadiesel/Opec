@@ -5,37 +5,34 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { User, DeptType, AccessLevel, BusinessRoleKey } from '@/lib/types';
+import { User, BusinessRoleKey } from '@/lib/types';
 import { 
   ShieldCheck, 
-  UserPlus, 
-  ShoppingCart,
-  Users,
-  HardHat,
-  ShieldAlert,
-  Loader2,
-  Wrench,
-  Info,
-  FileText,
-  Briefcase,
-  Waves,
-  Truck,
-  Warehouse,
+  Users, 
+  HardHat, 
+  ShieldAlert, 
+  Loader2, 
+  Wrench, 
+  Info, 
+  Briefcase, 
+  Waves, 
+  Truck, 
+  Warehouse, 
+  Coins, 
+  ArrowRight, 
+  ChevronRight, 
+  CheckCircle2, 
+  Clock, 
+  LayoutGrid, 
+  TrendingUp,
   Receipt,
-  Coins,
-  ArrowRight,
-  ChevronRight,
-  ClipboardCheck,
-  CheckCircle2,
-  Clock,
-  LayoutGrid,
-  TrendingUp
+  FileText
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { inferDeptAndLevel, isAdminUser, BUSINESS_ROLES } from '@/lib/auth-mapping';
+import { isAdminUser, BUSINESS_ROLES, inferDeptAndLevel } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HELP_TEXTS } from '@/lib/constants/help-texts';
@@ -231,20 +228,11 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {user.department === 'operations' && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
-                  <div className="flex items-center gap-3">
-                    <Truck className="h-4 w-4" />
-                    <span className="text-sm font-medium">ยืนยันใบเบิกอุปกรณ์</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
-                </div>
-              )}
               {user.department === 'accounting' && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/accounting/dashboard')}>
                   <div className="flex items-center gap-3">
-                    <Receipt className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจสอบใบวางบิลค้างจ่าย</span>
+                    <Coins className="h-4 w-4" />
+                    <span className="text-sm font-medium">ตรวจงาน Accounting Dashboard</span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
@@ -304,6 +292,7 @@ export default function Home() {
             {/* Finance Section */}
             {(check('billing_notes', 'view') || check('cashbook', 'view')) && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
+                <ShortcutLink href="/accounting/dashboard" label="Accounting Dashboard" sub="ภาพรวมบัญชี" />
                 {check('billing_notes', 'view') && <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />}
                 {check('cashbook', 'view') && <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />}
                 {check('ap_bills', 'view') && <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />}
