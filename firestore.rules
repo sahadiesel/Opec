@@ -124,6 +124,22 @@ service cloud.firestore {
       match /documents/{id} { allow get, list, write: if isHRStaff(); }
     }
 
+    match /payroll_runs/{runId} {
+      allow get, list: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isFinanceStaff();
+      match /lines/{lineId} {
+        allow get, list, write: if isHRStaff() || isFinanceStaff();
+      }
+    }
+
+    match /office_payroll_runs/{runId} {
+      allow get, list: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isFinanceStaff();
+      match /lines/{lineId} {
+        allow get, list, write: if isHRStaff() || isFinanceStaff();
+      }
+    }
+
     match /vendors/{vendorId} {
       allow get, list: if isSignedIn();
       allow write: if isStoreStaff() || isFinanceStaff() || isOperationsStaff();
