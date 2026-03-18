@@ -13,15 +13,16 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    /** Fetches the user document. */
+    /** Safely fetches the user document if it exists. */
     function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : null;
     }
 
     /** Checks if the user has a specific role (supports legacy roleId and new roleIds array). */
     function hasRole(roleName) {
       let user = getUserData();
-      return isSignedIn() && (
+      return isSignedIn() && user != null && (
         user.roleId == roleName || 
         (user.roleIds != null && user.roleIds.hasAny([roleName]))
       );
@@ -69,7 +70,8 @@ service cloud.firestore {
     }
 
     match /positions/{positionId} {
-      allow get, list: if isSignedIn();
+      // HR, Operations, and Sales need to see positions for assignments, planning, and contracts
+      allow get, list: if isHRStaff() || isOperationsStaff() || isSalesStaff();
       allow write: if isHRStaff();
 
       match /certificate_requirements/{reqId} { allow get, list, write: if isHRStaff(); }
@@ -83,19 +85,19 @@ service cloud.firestore {
     }
 
     match /waves/{waveId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff());
       allow write: if isHRStaff() || isOperationsStaff();
     }
 
     match /customers/{customerId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (isSalesStaff() || isFinanceStaff() || isHRStaff() || isOperationsStaff());
       allow write: if isSalesStaff() || isFinanceStaff();
       
       match /contact_persons/{id} { allow get, list, write: if isSalesStaff(); }
     }
 
     match /main_contracts/{contractId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (isSalesStaff() || isFinanceStaff() || isHRStaff() || isOperationsStaff());
       allow write: if isSalesStaff() || isFinanceStaff();
       
       match /position_rates/{id} { allow get, list, write: if isSalesStaff() || isFinanceStaff(); }
@@ -108,13 +110,8 @@ service cloud.firestore {
       match /po_lines/{id} { allow get, list, write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff(); }
     }
 
-    // Collection Group rule for PO Lines (used in /waves list)
-    match /{path=**}/po_lines/{id} {
-      allow read: if isSignedIn();
-      allow write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
-    }
-
     match /workers/{workerId} {
+      // HR and Operations manage worker readiness and assignments
       allow get, list: if isHRStaff() || isOperationsStaff();
       allow write: if isHRStaff();
 
@@ -125,6 +122,7 @@ service cloud.firestore {
     }
 
     match /payroll_runs/{runId} {
+      // HR prepares, Finance pays
       allow get, list: if isHRStaff() || isFinanceStaff();
       allow write: if isHRStaff() || isFinanceStaff();
       match /lines/{lineId} {
@@ -133,6 +131,7 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{runId} {
+      // HR prepares, Finance pays
       allow get, list: if isHRStaff() || isFinanceStaff();
       allow write: if isHRStaff() || isFinanceStaff();
       match /lines/{lineId} {
