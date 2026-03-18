@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -24,7 +25,8 @@ import {
   ArrowRight,
   ClipboardList,
   CheckCircle2,
-  BookOpen
+  BookOpen,
+  ShieldAlert
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
@@ -44,20 +46,32 @@ export default function StoreDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  // 1. Data Fetching
+  const isOpsOrHR = useMemo(() => {
+    if (!currentUser) return false;
+    return ['operations', 'hr', 'admin'].includes(currentUser.department);
+  }, [currentUser]);
+
+  // 1. Data Fetching - Always safe for store staff
   const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
   const { data: items, isLoading: isItemsLoading } = useCollection<StoreItem>(itemsQuery as any);
 
   const txQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(50)) : null), [firestore]);
   const { data: transactions } = useCollection<StoreTransaction>(txQuery as any);
 
-  const mobQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'mobilizations') : null), [firestore]);
+  // 2. Restricted Data Fetching - Guarded by permission/department
+  const mobQuery = useMemoFirebase(() => {
+    if (!firestore || !isOpsOrHR) return null;
+    return collection(firestore, 'mobilizations');
+  }, [firestore, isOpsOrHR]);
   const { data: mobilizations } = useCollection<Assignment>(mobQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore || !isOpsOrHR) return null;
+    return collection(firestore, 'workers');
+  }, [firestore, isOpsOrHR]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  // 2. Calculated Stats
+  // 3. Calculated Stats
   const stats = useMemo(() => {
     if (!items) return { total: 0, low: 0, activePPE: 0, activeTools: 0 };
     return {
@@ -74,7 +88,9 @@ export default function StoreDashboardPage() {
   }, [items]);
 
   const pendingReturns = useMemo(() => {
-    if (!transactions || !mobilizations || !workers) return [];
+    // If user cannot read workers or mobilizations, we cannot resolve the names
+    // But we can still see raw transaction counts if we have access to transactions
+    if (!transactions) return [];
     
     // Group all transactions by assignment
     const balanceMap: Record<string, { assignmentId: string; itemCount: number; totalQty: number }> = {};
@@ -85,23 +101,23 @@ export default function StoreDashboardPage() {
         balanceMap[tx.assignmentId] = { assignmentId: tx.assignmentId, itemCount: 0, totalQty: 0 };
       }
       
-      const change = tx.transactionType === 'ISSUE' ? tx.quantity : -tx.quantity;
+      const change = tx.transactionType === 'ISSUE' ? tx.quantity : (tx.transactionType === 'RETURN' ? -tx.quantity : 0);
       balanceMap[tx.assignmentId].totalQty += change;
     });
 
     return Object.values(balanceMap)
       .filter(b => b.totalQty > 0)
       .map(b => {
-        const asgn = mobilizations.find(m => m.id === b.assignmentId);
-        const worker = workers.find(w => w.id === asgn?.workerId);
+        const asgn = mobilizations?.find(m => m.id === b.assignmentId);
+        const worker = workers?.find(w => w.id === asgn?.workerId);
         return {
           ...b,
-          workerName: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
-          projectName: asgn?.projectName || 'Unknown Project',
+          workerName: worker ? `${worker.firstName} ${worker.lastName}` : (isOpsOrHR ? 'Unknown' : 'Restricted Access'),
+          projectName: asgn?.projectName || (isOpsOrHR ? 'Unknown Project' : 'Restricted Access'),
           waveCode: asgn?.waveId || 'N/A'
         };
       });
-  }, [transactions, mobilizations, workers]);
+  }, [transactions, mobilizations, workers, isOpsOrHR]);
 
   if (!currentUser) return null;
 
@@ -246,6 +262,17 @@ export default function StoreDashboardPage() {
           </TabsContent>
 
           <TabsContent value="returns" className="mt-6">
+            {!isOpsOrHR && (
+              <div className="p-10 mb-6">
+                <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
+                  <ShieldAlert className="h-5 w-5" />
+                  <AlertTitle className="font-bold">จำกัดการเข้าถึง (Restricted Access)</AlertTitle>
+                  <AlertDescription>
+                    คุณไม่มีสิทธิ์เรียกดูรายชื่อคนงานและโครงการ กรุณาตรวจสอบประวัติการเบิกคืนจากสมุดบัญชีสินค้า (Inventory Ledger) แทน
+                  </AlertDescription>
+                </Alert>
+              </div>
+            )}
             <Card className="shadow-lg overflow-hidden border-none">
               <CardHeader className="bg-amber-50/50 border-b">
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -330,7 +357,7 @@ export default function StoreDashboardPage() {
                           <TableCell className="font-medium text-sm">{item?.itemName || 'N/A'}</TableCell>
                           <TableCell className="text-center font-bold">{tx.quantity}</TableCell>
                           <TableCell className="text-[10px] text-muted-foreground">
-                            {worker ? `${worker.firstName} ${worker.lastName}` : (tx.referenceId ? `Ref: ${tx.referenceId.substring(0,8)}` : '-')}
+                            {worker ? `${worker.firstName} ${worker.lastName}` : (tx.referenceId ? `Ref: ${tx.referenceId.substring(0,8)}` : (isOpsOrHR ? '-' : 'Restricted'))}
                           </TableCell>
                           <TableCell className="text-right pr-6 text-[10px] font-medium text-primary">{tx.createdBy}</TableCell>
                         </TableRow>
@@ -409,7 +436,7 @@ function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   );
 }
 
-function QuickActionCard({ title, sub, href, icon: Icon, color }: any) {
+function QuickActionCard({ title, sub, icon: Icon, href, color }: any) {
   return (
     <Link href={href} className="block group">
       <Card className="h-full hover:shadow-lg transition-all border-none shadow-md overflow-hidden">
