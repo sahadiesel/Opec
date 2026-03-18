@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { 
   Users, 
   CheckCircle2, 
@@ -33,6 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
+import { Separator } from '@/components/ui/separator';
 
 export default function HRDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -365,5 +366,3 @@ function ShortcutItem({ href, label, sub, icon: Icon }: any) {
     </Link>
   );
 }
-
-import { Separator } from '@/components/ui/separator';
