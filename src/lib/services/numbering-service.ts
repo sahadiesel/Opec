@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * @fileOverview Centralized document numbering service.
- * Ensures sequential, unique numbers using Firestore transactions.
- * Supports automated resets (Yearly/Monthly) based on policy.
+ * @fileOverview Centralized document numbering service with validation safeguards.
+ * Ensures sequential, unique numbers using Firestore transactions and existence checks.
+ * Supports automated resets (Yearly/Monthly) and prevents collisions.
  */
 
-import { Firestore, doc, runTransaction } from 'firebase/firestore';
+import { Firestore, doc, runTransaction, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { DeptType, NumberSequence } from '../types';
 
 export interface SequenceConfig {
@@ -15,39 +15,56 @@ export interface SequenceConfig {
   dept: DeptType;
   resetPolicy: 'none' | 'yearly' | 'monthly';
   label: string;
+  collectionName: string; // Target collection for uniqueness safeguard
+  fieldName: string;      // Target field for uniqueness safeguard
 }
 
 /**
  * Registry of standard sequence configurations for the platform.
- * Provides safe defaults for automatic numbering across all departments.
+ * Includes metadata for automated uniqueness validation.
  */
 export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
-  main_contract: { label: 'Main Contract', prefix: 'MC-', padding: 5, dept: 'sales', resetPolicy: 'yearly' },
-  customer: { label: 'Customer', prefix: 'CUS-', padding: 5, dept: 'sales', resetPolicy: 'none' },
-  customer_po: { label: 'Customer PO', prefix: 'PO-', padding: 5, dept: 'sales', resetPolicy: 'yearly' },
-  quotation: { label: 'Quotation', prefix: 'QT-', padding: 5, dept: 'sales', resetPolicy: 'monthly' },
-  billing_note: { label: 'Billing Note', prefix: 'BN-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
-  tax_invoice: { label: 'Tax Invoice', prefix: 'INV-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
-  receipt: { label: 'Receipt', prefix: 'RCT-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
-  ap_bill: { label: 'AP Bill', prefix: 'APB-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
-  ar: { label: 'Accounts Receivable', prefix: 'AR-', padding: 5, dept: 'accounting', resetPolicy: 'yearly' },
-  ap: { label: 'Accounts Payable', prefix: 'AP-', padding: 5, dept: 'accounting', resetPolicy: 'yearly' },
-  cashbook_entry: { label: 'Cashbook Entry', prefix: 'CB-', padding: 6, dept: 'accounting', resetPolicy: 'monthly' },
-  bank_account: { label: 'Bank Account', prefix: 'BANK-', padding: 3, dept: 'accounting', resetPolicy: 'none' },
-  office_staff: { label: 'Office Staff', prefix: 'OFF-', padding: 4, dept: 'hr', resetPolicy: 'none' },
-  worker: { label: 'Worker', prefix: 'WRK-', padding: 5, dept: 'hr', resetPolicy: 'none' },
-  position: { label: 'Position', prefix: 'POS-', padding: 3, dept: 'hr', resetPolicy: 'none' },
-  wave: { label: 'Wave', prefix: 'WV-', padding: 4, dept: 'operations', resetPolicy: 'yearly' },
-  assignment: { label: 'Assignment', prefix: 'ASG-', padding: 6, dept: 'operations', resetPolicy: 'yearly' },
-  purchase: { label: 'Purchase', prefix: 'PUR-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
-  vendor: { label: 'Vendor', prefix: 'VEN-', padding: 4, dept: 'store', resetPolicy: 'none' },
-  store_receive: { label: 'Store Receive', prefix: 'REC-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
-  store_issue: { label: 'Store Issue', prefix: 'ISS-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
-  store_return: { label: 'Store Return', prefix: 'RET-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
-  store_writeoff: { label: 'Store Write-off', prefix: 'WOF-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
-  payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly' },
-  office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly' },
+  main_contract: { label: 'Main Contract', prefix: 'MC-', padding: 5, dept: 'sales', resetPolicy: 'yearly', collectionName: 'main_contracts', fieldName: 'contractNumber' },
+  customer: { label: 'Customer', prefix: 'CUS-', padding: 5, dept: 'sales', resetPolicy: 'none', collectionName: 'customers', fieldName: 'customerCode' },
+  customer_po: { label: 'Customer PO', prefix: 'PO-', padding: 5, dept: 'sales', resetPolicy: 'yearly', collectionName: 'purchase_orders', fieldName: 'poCode' },
+  quotation: { label: 'Quotation', prefix: 'QT-', padding: 5, dept: 'sales', resetPolicy: 'monthly', collectionName: 'quotations', fieldName: 'quotationNo' },
+  billing_note: { label: 'Billing Note', prefix: 'BN-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'billing_notes', fieldName: 'billingNoteNo' },
+  tax_invoice: { label: 'Tax Invoice', prefix: 'INV-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'tax_invoices', fieldName: 'taxInvoiceNo' },
+  receipt: { label: 'Receipt', prefix: 'RCT-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'receipts', fieldName: 'receiptNo' },
+  ap_bill: { label: 'AP Bill', prefix: 'APB-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'ap_bills', fieldName: 'apBillNo' },
+  ar: { label: 'AR Reference', prefix: 'AR-', padding: 5, dept: 'accounting', resetPolicy: 'yearly', collectionName: 'accounts_receivable', fieldName: 'documentNo' },
+  ap: { label: 'AP Reference', prefix: 'AP-', padding: 5, dept: 'accounting', resetPolicy: 'yearly', collectionName: 'accounts_payable', fieldName: 'documentNo' },
+  cashbook_entry: { label: 'Cashbook Entry', prefix: 'CB-', padding: 6, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'cashbook_entries', fieldName: 'entryNo' },
+  bank_account: { label: 'Bank Account', prefix: 'BANK-', padding: 3, dept: 'accounting', resetPolicy: 'none', collectionName: 'bank_accounts', fieldName: 'accountCode' },
+  office_staff: { label: 'Office Staff', prefix: 'OFF-', padding: 4, dept: 'hr', resetPolicy: 'none', collectionName: 'office_staff', fieldName: 'staffCode' },
+  worker: { label: 'Worker', prefix: 'WRK-', padding: 5, dept: 'hr', resetPolicy: 'none', collectionName: 'workers', fieldName: 'workerCode' },
+  position: { label: 'Position', prefix: 'POS-', padding: 3, dept: 'hr', resetPolicy: 'none', collectionName: 'positions', fieldName: 'positionCode' },
+  wave: { label: 'Wave', prefix: 'WV-', padding: 4, dept: 'operations', resetPolicy: 'yearly', collectionName: 'waves', fieldName: 'waveCode' },
+  assignment: { label: 'Assignment', prefix: 'ASG-', padding: 6, dept: 'operations', resetPolicy: 'yearly', collectionName: 'mobilizations', fieldName: 'assignmentNo' },
+  purchase: { label: 'Purchase', prefix: 'PUR-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'purchases', fieldName: 'purchaseNo' },
+  vendor: { label: 'Vendor', prefix: 'VEN-', padding: 4, dept: 'store', resetPolicy: 'none', collectionName: 'vendors', fieldName: 'vendorCode' },
+  store_receive: { label: 'Store Receive', prefix: 'REC-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_receipts', fieldName: 'receiveNo' },
+  store_issue: { label: 'Store Issue', prefix: 'ISS-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_issue_slips', fieldName: 'issueNo' },
+  store_return: { label: 'Store Return', prefix: 'RET-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_return_slips', fieldName: 'returnNo' },
+  store_writeoff: { label: 'Store Write-off', prefix: 'WOF-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_writeoffs', fieldName: 'writeoffNo' },
+  payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'payroll_runs', fieldName: 'payrollRunNo' },
+  office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'office_payroll_runs', fieldName: 'payrollRunNo' },
 };
+
+/**
+ * Checks if a code is already in use in the target collection.
+ * This is an application-level safeguard against parallel non-transactional writes or manual entries.
+ */
+export async function isCodeInUse(
+  db: Firestore,
+  collectionName: string,
+  fieldName: string,
+  code: string
+): Promise<boolean> {
+  const q = query(collection(db, collectionName), where(fieldName, '==', code), limit(1));
+  const snap = await getDocs(q);
+  return !snap.empty;
+}
 
 /**
  * Utility to format a document code string based on configuration and context.
@@ -94,6 +111,7 @@ export function getPreviewPattern(sequenceKey: string): string {
 
 /**
  * Atomicly generates the next sequential number for a given document type.
+ * Includes a uniqueness check safeguard and retry logic.
  */
 export async function generateNextDocumentCode(
   db: Firestore,
@@ -109,76 +127,63 @@ export async function generateNextDocumentCode(
   const currentMonth = date.getMonth() + 1;
   const actor = options.actor || 'system';
 
-  return await runTransaction(db, async (transaction) => {
-    const seqSnap = await transaction.get(seqRef);
-    let lastNumber = 0;
-    let existingData: Partial<NumberSequence> = {};
+  let attempts = 0;
+  const MAX_ATTEMPTS = 5;
 
-    if (seqSnap.exists()) {
-      existingData = seqSnap.data() as NumberSequence;
-      lastNumber = existingData.lastNumber || 0;
+  while (attempts < MAX_ATTEMPTS) {
+    const result = await runTransaction(db, async (transaction) => {
+      const seqSnap = await transaction.get(seqRef);
+      let lastNumber = 0;
+      let existingData: any = {};
 
-      // Reset logic
-      if (config.resetPolicy === 'yearly' && existingData.year !== currentYear) {
-        lastNumber = 0;
-      } else if (config.resetPolicy === 'monthly' && (existingData.month !== currentMonth || existingData.year !== currentYear)) {
-        lastNumber = 0;
+      if (seqSnap.exists()) {
+        existingData = seqSnap.data();
+        lastNumber = existingData.lastNumber || 0;
+
+        // Reset logic
+        if (config.resetPolicy === 'yearly' && existingData.year !== currentYear) {
+          lastNumber = 0;
+        } else if (config.resetPolicy === 'monthly' && (existingData.month !== currentMonth || existingData.year !== currentYear)) {
+          lastNumber = 0;
+        }
       }
+
+      const nextNumber = lastNumber + 1;
+      const code = formatDocumentCode(config, nextNumber, date);
+
+      const metadata: NumberSequence = {
+        id: sequenceKey,
+        sequenceKey,
+        label: config.label,
+        prefix: config.prefix,
+        department: config.dept,
+        entityType: sequenceKey,
+        resetPolicy: config.resetPolicy,
+        year: currentYear,
+        month: currentMonth,
+        paddingLength: config.padding,
+        lastNumber: nextNumber,
+        lastIssuedCode: code,
+        isActive: true,
+        updatedAt: Date.now(),
+        updatedBy: actor
+      };
+
+      transaction.set(seqRef, metadata, { merge: true });
+
+      return { code, metadata };
+    });
+
+    // Safeguard: Verify if the generated code is truly unique in the target collection.
+    // If it's already in use (due to manual entry), loop will continue and get the next available number.
+    const inUse = await isCodeInUse(db, config.collectionName, config.fieldName, result.code);
+    if (!inUse) {
+      return result;
     }
 
-    const nextNumber = lastNumber + 1;
-    const finalCode = formatDocumentCode(config, nextNumber, date);
-
-    const metadata: NumberSequence = {
-      id: sequenceKey,
-      sequenceKey,
-      label: config.label,
-      prefix: config.prefix,
-      department: config.dept,
-      entityType: sequenceKey,
-      resetPolicy: config.resetPolicy,
-      year: currentYear,
-      month: currentMonth,
-      paddingLength: config.padding,
-      lastNumber: nextNumber,
-      lastIssuedCode: finalCode,
-      isActive: true,
-      updatedAt: Date.now(),
-      updatedBy: actor
-    };
-
-    transaction.set(seqRef, metadata, { merge: true });
-
-    return { code: finalCode, metadata };
-  });
-}
-
-/**
- * Basic incremental number generation.
- * @deprecated Use generateNextDocumentCode for standardized reset-aware numbering.
- */
-export async function generateNextNumber(
-  db: Firestore, 
-  sequenceKey: string, 
-  prefix: string, 
-  padding: number = 4
-): Promise<string> {
-  const regKey = Object.keys(SEQUENCE_REGISTRY).find(k => sequenceKey.startsWith(k));
-  if (regKey) {
-    const { code } = await generateNextDocumentCode(db, regKey);
-    return code;
+    attempts++;
+    console.warn(`Collision detected for ${result.code} in ${config.collectionName}. Retrying attempt ${attempts + 1}...`);
   }
-  
-  const seqRef = doc(db, 'number_sequences', sequenceKey);
-  return await runTransaction(db, async (transaction) => {
-    const seqSnap = await transaction.get(seqRef);
-    let nextNum = 1;
-    if (seqSnap.exists()) {
-      nextNum = (seqSnap.data().lastNumber || 0) + 1;
-      transaction.update(seqRef, { lastNumber: nextNum, updatedAt: Date.now() });
-    } else {
-      transaction.set(seqRef, { id: sequenceKey, prefix, lastNumber: nextNum, updatedAt: Date.now(), createdAt: Date.now() });
-    }
-    return `${prefix}${nextNum.toString().padStart(padding, '0')}`;
-  });
+
+  throw new Error(`Critical: Could not generate a unique code for ${sequenceKey} after ${MAX_ATTEMPTS} attempts. Please contact support.`);
 }
