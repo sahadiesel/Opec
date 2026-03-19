@@ -14,17 +14,14 @@ import {
   FileText, 
   Building2, 
   Calendar,
-  AlertTriangle,
   Info,
-  ArrowRight,
-  Loader2,
-  Receipt
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { BillingNote, BillingNoteStatus, User, Customer, MainContract, PurchaseOrder } from '@/lib/types';
+import { BillingNote, BillingNoteStatus, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, query, orderBy } from 'firebase/firestore';
+import { collection, query, orderBy } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -50,12 +47,18 @@ export default function BillingNotesPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
   const isAuthorized = useMemo(() => {
     const authRoles = ['system_admin', 'sales_officer', 'finance_officer'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
+    return currentUser?.roleIds?.some(r => authRoles.includes(r as any)) || false;
   }, [currentUser]);
 
   const notesQuery = useMemoFirebase(() => {
@@ -89,11 +92,13 @@ export default function BillingNotesPage() {
     setIsCreating(true);
     try {
       // Atomic Document Number Generation
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'billing_note', { actor: currentUser.displayName });
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'billing_note', { 
+        actor: currentUser.displayName 
+      });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), {
         ...newNote,
-        billingNoteNo: finalNo,
+        billingNoteNo: finalNo, // Apply the official sequential number
         amountBeforeTax: 0,
         vatAmount: 0,
         withholdingTaxAmount: 0,
@@ -172,7 +177,8 @@ export default function BillingNotesPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่ใบวางบิล (Billing Note No.)</Label>
-                  <Input value={newNote.billingNoteNo} disabled className="bg-muted/50 font-mono font-bold" />
+                  <Input value={newNote.billingNoteNo} disabled className="bg-muted/50 font-mono font-bold text-primary" />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>ลูกค้า (Customer)</Label>
