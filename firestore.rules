@@ -102,6 +102,16 @@ service cloud.firestore {
       allow write: if isSalesStaff() || isHRStaff() || isFinanceStaff();
     }
 
+    match /po_commercial_snapshots/{id} {
+      allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+      allow write: if isSalesStaff() || isFinanceStaff();
+    }
+
+    match /wave_rate_snapshots/{id} {
+      allow read: if isOperationsStaff() || isHRStaff() || isFinanceStaff();
+      allow write: if isOperationsStaff() || isHRStaff();
+    }
+
     match /main_contracts/{id} {
       allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
       allow write: if isSalesStaff();

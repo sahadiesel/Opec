@@ -91,3 +91,34 @@ export const RateConditionSchema = z.object({
   displayOrder: z.number().default(0),
   isActive: z.boolean().default(true),
 });
+
+/**
+ * Zod validation schema for PurchaseOrderCommercialSnapshot
+ */
+export const PurchaseOrderCommercialSnapshotSchema = z.object({
+  id: z.string().optional(),
+  purchaseOrderId: z.string().min(1),
+  effectiveDateContext: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  salesContractTermIdSnapshot: z.string(),
+  laborCostContractTermIdSnapshot: z.string(),
+  salesConditionsSnapshot: z.array(z.any()),
+  costConditionsSnapshot: z.array(z.any()),
+  currencySnapshot: z.string(),
+  summaryNote: z.string().optional(),
+  createdAt: z.number(),
+  createdBy: z.string(),
+});
+
+/**
+ * Zod validation schema for WaveRateSnapshot
+ */
+export const WaveRateSnapshotSchema = z.object({
+  id: z.string().optional(),
+  waveId: z.string().min(1),
+  poCommercialSnapshotId: z.string(),
+  appliedConditionsSnapshot: z.array(z.any()),
+  effectiveStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  effectiveEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  createdAt: z.number(),
+  createdBy: z.string(),
+});

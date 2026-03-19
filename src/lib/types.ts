@@ -949,6 +949,43 @@ export interface RateCondition {
 }
 
 /**
+ * Additive Snapshot Models for Pricing Stability
+ */
+
+/**
+ * Deep snapshot of all commercial and cost rules applicable to a PO.
+ */
+export interface PurchaseOrderCommercialSnapshot {
+  id: string;
+  purchaseOrderId: string;
+  effectiveDateContext: string; // YYYY-MM-DD
+  salesContractTermIdSnapshot: string;
+  laborCostContractTermIdSnapshot: string;
+  // Deep copies of conditions to prevent historical changes from affecting logic
+  salesConditionsSnapshot: RateCondition[];
+  costConditionsSnapshot: RateCondition[];
+  currencySnapshot: string;
+  summaryNote?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+/**
+ * Locks in the rates for a specific wave deployment.
+ */
+export interface WaveRateSnapshot {
+  id: string;
+  waveId: string;
+  poCommercialSnapshotId: string;
+  // Allows for wave-specific overrides if needed, otherwise derived from PO snapshot
+  appliedConditionsSnapshot: RateCondition[];
+  effectiveStartDate: string;
+  effectiveEndDate: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+/**
  * Worker Payment Profile for Payroll and Financial Tracking
  */
 export type WorkerPaymentMethod = 'BANK_TRANSFER' | 'CASH' | 'PROMPTPAY' | 'OTHER';

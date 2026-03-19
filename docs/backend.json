@@ -74,6 +74,31 @@
       },
       "required": ["id", "parentType", "parentId", "appliesTo", "eventType", "calculationMethod", "unitType"]
     },
+    "PurchaseOrderCommercialSnapshot": {
+      "title": "PurchaseOrderCommercialSnapshot",
+      "type": "object",
+      "description": "Locked-in pricing and cost rules for a specific PO, ensuring historical stability.",
+      "properties": {
+        "id": { "type": "string" },
+        "purchaseOrderId": { "type": "string" },
+        "effectiveDateContext": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "purchaseOrderId", "createdAt", "createdBy"]
+    },
+    "WaveRateSnapshot": {
+      "title": "WaveRateSnapshot",
+      "type": "object",
+      "description": "Locked-in rules specifically for a deployment wave.",
+      "properties": {
+        "id": { "type": "string" },
+        "waveId": { "type": "string" },
+        "poCommercialSnapshotId": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "waveId", "createdAt"]
+    },
     "PurchaseOrderProfitSnapshot": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "PurchaseOrderProfitSnapshot",
@@ -174,6 +199,24 @@
           "schema": { "$ref": "#/backend/entities/RateCondition" },
           "description": "Specific pricing and cost rules for contracts and POs.",
           "params": [{ "name": "conditionId", "description": "Unique ID of the rate condition." }]
+        }
+      },
+      {
+        "path": "/po_commercial_snapshots/{snapId}",
+        "definition": {
+          "entityName": "PurchaseOrderCommercialSnapshot",
+          "schema": { "$ref": "#/backend/entities/PurchaseOrderCommercialSnapshot" },
+          "description": "Historical snapshots of PO rules.",
+          "params": [{ "name": "snapId", "description": "Unique ID of the snapshot." }]
+        }
+      },
+      {
+        "path": "/wave_rate_snapshots/{snapId}",
+        "definition": {
+          "entityName": "WaveRateSnapshot",
+          "schema": { "$ref": "#/backend/entities/WaveRateSnapshot" },
+          "description": "Historical snapshots of Wave rules.",
+          "params": [{ "name": "snapId", "description": "Unique ID of the snapshot." }]
         }
       },
       {
