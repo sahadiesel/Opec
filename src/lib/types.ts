@@ -1127,3 +1127,21 @@ export interface PaymentExportBatch {
   createdBy: string;
   createdAt: number;
 }
+
+/**
+ * Profit estimation snapshots for commercial analysis
+ */
+export interface PurchaseOrderProfitSnapshot {
+  id: string;
+  purchaseOrderId: string;
+  waveId?: string | null;
+  periodStartDate: string;
+  periodEndDate: string;
+  estimatedRevenue: number;
+  estimatedLaborCost: number;
+  estimatedGrossProfit: number;
+  estimatedGrossMarginPercent: number;
+  calculationBasisSummary: string;
+  generatedAt: number;
+  generatedBy: string;
+}
