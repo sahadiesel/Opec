@@ -58,6 +58,22 @@
         "status": { "type": "string" }
       }
     },
+    "RateCondition": {
+      "title": "RateCondition",
+      "type": "object",
+      "description": "Structured rule for calculating billable revenue or payable labor cost based on events.",
+      "properties": {
+        "id": { "type": "string" },
+        "parentType": { "type": "string", "enum": ["SALES_CONTRACT", "LABOR_COST_CONTRACT", "PO_SNAPSHOT", "WAVE_SNAPSHOT"] },
+        "parentId": { "type": "string" },
+        "appliesTo": { "type": "string", "enum": ["SALES", "COST"] },
+        "eventType": { "type": "string" },
+        "calculationMethod": { "type": "string", "enum": ["FLAT", "MULTIPLIER", "PERCENTAGE", "FORMULA"] },
+        "unitType": { "type": "string", "enum": ["DAY", "HALF_DAY", "HOUR", "TRIP", "FIXED"] },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "parentType", "parentId", "appliesTo", "eventType", "calculationMethod", "unitType"]
+    },
     "PurchaseOrderProfitSnapshot": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "PurchaseOrderProfitSnapshot",
@@ -149,6 +165,15 @@
           "schema": { "$ref": "#/backend/entities/LaborCostContractTerm" },
           "description": "Stores project-specific cost/payroll rules.",
           "params": [{ "name": "termId", "description": "Unique ID of the cost term record." }]
+        }
+      },
+      {
+        "path": "/rate_conditions/{conditionId}",
+        "definition": {
+          "entityName": "RateCondition",
+          "schema": { "$ref": "#/backend/entities/RateCondition" },
+          "description": "Specific pricing and cost rules for contracts and POs.",
+          "params": [{ "name": "conditionId", "description": "Unique ID of the rate condition." }]
         }
       },
       {

@@ -97,6 +97,11 @@ service cloud.firestore {
       allow write: if isSalesStaff() || isHRStaff();
     }
 
+    match /rate_conditions/{id} {
+      allow read: if isSalesStaff() || isHRStaff() || isFinanceStaff() || isOperationsStaff();
+      allow write: if isSalesStaff() || isHRStaff() || isFinanceStaff();
+    }
+
     match /main_contracts/{id} {
       allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
       allow write: if isSalesStaff();
@@ -144,16 +149,6 @@ service cloud.firestore {
       allow update, delete: if hasRole('system_admin');
     }
 
-    match /vendors/{id} {
-      allow read: if isStoreStaff() || isFinanceStaff();
-      allow write: if isStoreStaff();
-    }
-
-    match /purchases/{id} {
-      allow read: if isStoreStaff() || isFinanceStaff();
-      allow write: if isStoreStaff();
-    }
-
     // Finance & Accounting
     match /billing_notes/{id} {
       allow read: if isFinanceStaff() || isSalesStaff();
@@ -185,16 +180,6 @@ service cloud.firestore {
       allow write: if isFinanceStaff();
     }
 
-    match /accounts_receivable/{id} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-    }
-
-    match /accounts_payable/{id} {
-      allow read: if isFinanceStaff();
-      allow write: if isFinanceStaff();
-    }
-
     // HR Payroll
     match /payroll_runs/{id} {
       allow read: if isHRStaff() || isFinanceStaff();
@@ -206,17 +191,6 @@ service cloud.firestore {
       allow write: if isHRStaff() || isFinanceStaff();
     }
 
-    match /office_staff/{id} {
-      allow read: if isHRStaff() || isFinanceStaff();
-      allow write: if isHRStaff();
-    }
-
-    // Permissions System
-    match /permission_profiles/{id} {
-      allow get: if isSignedIn();
-      allow list, write: if hasRole('system_admin');
-    }
-    
     // Default fallback
     match /{document=**} {
       allow read, write: if hasRole('system_admin');

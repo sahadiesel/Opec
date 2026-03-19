@@ -916,10 +916,10 @@ export type RateConditionEventType =
   | 'replacement_day' 
   | 'other';
 
-export type RateConditionParentType = 'SALES_CONTRACT' | 'LABOR_COST_CONTRACT' | 'GLOBAL';
-export type RateConditionAppliesTo = 'WORKER' | 'POSITION' | 'CATEGORY' | 'ALL';
-export type RateConditionUnitType = 'DAY' | 'HOUR' | 'LUMP_SUM' | 'MONTH' | 'HALF_DAY' | 'TRIP';
-export type RateConditionCalculationMethod = 'FIXED' | 'MULTIPLIER' | 'PERCENTAGE' | 'FLAT' | 'FORMULA';
+export type RateConditionParentType = 'SALES_CONTRACT' | 'LABOR_COST_CONTRACT' | 'PO_SNAPSHOT' | 'WAVE_SNAPSHOT';
+export type RateConditionAppliesTo = 'SALES' | 'COST';
+export type RateConditionUnitType = 'DAY' | 'HALF_DAY' | 'HOUR' | 'TRIP' | 'FIXED';
+export type RateConditionCalculationMethod = 'FLAT' | 'MULTIPLIER' | 'PERCENTAGE' | 'FORMULA';
 
 export interface RateCondition {
   id: string;
@@ -929,7 +929,7 @@ export interface RateCondition {
   workerCategoryId?: string;
   positionId?: string;
   siteId?: string;
-  workMode?: JobMode;
+  workMode: JobMode | 'BOTH';
   eventType: RateConditionEventType;
   unitType: RateConditionUnitType;
   calculationMethod: RateConditionCalculationMethod;
