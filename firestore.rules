@@ -48,6 +48,10 @@ service cloud.firestore {
       return hasRole('sales_officer') || hasRole('system_admin');
     }
 
+    function isClientUser() {
+      return hasRole('client') || hasRole('client_user');
+    }
+
     // --- COLLECTION RULES ---
 
     match /users/{userId} {
@@ -79,17 +83,23 @@ service cloud.firestore {
     }
 
     match /mobilizations/{mobId} {
-      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isSalesStaff());
+      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isSalesStaff() || isClientUser());
       allow write: if isSignedIn() && (isHRStaff() || isOperationsStaff());
     }
 
+    match /worker_wave_acceptances/{id} {
+      allow get, list: if isHRStaff() || isOperationsStaff() || isClientUser();
+      allow create: if isOperationsStaff();
+      allow update: if hasRole('client');
+    }
+
     match /waves/{waveId} {
-      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff());
+      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isClientUser());
       allow write: if isHRStaff() || isOperationsStaff();
     }
 
     match /customers/{customerId} {
-      allow get, list: if isSignedIn() && (isSalesStaff() || isFinanceStaff() || isHRStaff() || isOperationsStaff());
+      allow get, list: if isSignedIn() && (isSalesStaff() || isFinanceStaff() || isHRStaff() || isOperationsStaff() || isClientUser());
       allow write: if isSalesStaff() || isFinanceStaff();
       
       match /contact_persons/{id} { allow get, list, write: if isSalesStaff(); }
@@ -103,14 +113,14 @@ service cloud.firestore {
     }
 
     match /purchase_orders/{poId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (isSalesStaff() || isFinanceStaff() || isHRStaff() || isOperationsStaff() || isClientUser());
       allow write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
 
       match /po_lines/{id} { allow get, list, write: if isSalesStaff() || isFinanceStaff() || isOperationsStaff(); }
     }
 
     match /workers/{workerId} {
-      allow get, list: if isHRStaff() || isOperationsStaff();
+      allow get, list: if isHRStaff() || isOperationsStaff() || isClientUser();
       allow write: if isHRStaff();
 
       match /certificates/{id} { allow get, list, write: if isHRStaff(); }
@@ -124,7 +134,7 @@ service cloud.firestore {
     }
 
     match /daily_timesheets/{id} {
-      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isFinanceStaff());
+      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isFinanceStaff() || isClientUser());
       allow create: if isSignedIn() && (isHRStaff() || isOperationsStaff());
       allow update: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isFinanceStaff())
                     && resource.data.status != 'LOCKED'
