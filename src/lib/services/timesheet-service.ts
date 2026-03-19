@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { DailyTimesheet, User, DailyTimesheetStatus } from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
+import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing Daily Timesheets and their workflow transitions.
@@ -22,23 +23,14 @@ export class TimesheetService {
     return collection(this.db, 'daily_timesheets');
   }
 
-  /**
-   * Generates a deterministic ID to enforce uniqueness per worker/assignment/date.
-   */
   getTimesheetId(workerId: string, assignmentId: string, date: string): string {
     return `${workerId}_${assignmentId}_${date}`;
   }
 
-  /**
-   * Checks if a timesheet is in a status that allows editing.
-   */
   canEdit(status: DailyTimesheetStatus): boolean {
     return !['CLIENT_APPROVED', 'LOCKED'].includes(status);
   }
 
-  /**
-   * Creates a new daily timesheet.
-   */
   async createTimesheet(data: Partial<DailyTimesheet>, user: User) {
     if (!data.workerId || !data.assignmentId || !data.date) {
       throw new Error('Identity fields (worker, assignment, date) are required');
@@ -47,7 +39,6 @@ export class TimesheetService {
     const id = this.getTimesheetId(data.workerId, data.assignmentId, data.date);
     const docRef = doc(this.getCollection(), id);
     
-    // Check if exists
     const existing = await getDoc(docRef);
     if (existing.exists()) {
       throw new Error(`Timesheet already exists for this date: ${data.date}`);
@@ -64,34 +55,19 @@ export class TimesheetService {
     });
 
     await setDoc(docRef, validated);
+    
+    await writeAuditLog(this.db, user, {
+      actionType: 'CREATE',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      entityLabel: `${validated.workerNameSnapshot} - ${validated.date}`,
+      sourceModule: 'operations',
+      afterSummary: `Created timesheet for ${validated.date}`
+    });
+
     return id;
   }
 
-  /**
-   * Updates a timesheet draft.
-   */
-  async updateDraft(id: string, data: Partial<DailyTimesheet>, user: User) {
-    const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-    
-    const current = snap.data() as DailyTimesheet;
-    if (!this.canEdit(current.status)) {
-      throw new Error(`Cannot edit timesheet in status: ${current.status}`);
-    }
-
-    const updateData = {
-      ...data,
-      updatedBy: user.displayName,
-      updatedAt: Date.now(),
-    };
-
-    await updateDoc(docRef, updateData);
-  }
-
-  /**
-   * Transitions a timesheet to SUBMITTED.
-   */
   async submitTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -101,11 +77,15 @@ export class TimesheetService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'SUBMIT',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      sourceModule: 'operations'
+    });
   }
 
-  /**
-   * Transitions a timesheet to OPS_REVIEWED.
-   */
   async opsReview(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -115,12 +95,15 @@ export class TimesheetService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'REVIEW',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      sourceModule: 'operations'
+    });
   }
 
-  /**
-   * Transitions a timesheet to CLIENT_APPROVED.
-   * Prevents further destructive edits.
-   */
   async clientApprove(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -130,11 +113,16 @@ export class TimesheetService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'APPROVE',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      sourceModule: 'client',
+      reasonCode: 'CLIENT_SIGNOFF'
+    });
   }
 
-  /**
-   * Rejects a timesheet.
-   */
   async reject(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -143,11 +131,16 @@ export class TimesheetService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'REJECT',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      reasonText: reason,
+      sourceModule: 'operations'
+    });
   }
 
-  /**
-   * Requests a correction for a timesheet.
-   */
   async requestCorrection(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -156,12 +149,16 @@ export class TimesheetService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'CORRECTION_REQ',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      reasonText: reason,
+      sourceModule: 'operations'
+    });
   }
 
-  /**
-   * Transitions a timesheet to LOCKED.
-   * Final state for payroll/billing processing.
-   */
   async lockTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -170,6 +167,14 @@ export class TimesheetService {
       lockedAt: Date.now(),
       updatedBy: user.displayName,
       updatedAt: Date.now(),
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'LOCK',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      sourceModule: 'finance',
+      reasonCode: 'PERIOD_CLOSED'
     });
   }
 }

@@ -1,4 +1,3 @@
-
 {
   "entities": {
     "User": {
@@ -35,6 +34,22 @@
         "generatedBy": { "type": "string" }
       },
       "required": ["id", "purchaseOrderId", "periodStartDate", "periodEndDate", "estimatedRevenue", "estimatedLaborCost", "generatedAt"]
+    },
+    "AuditLog": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AuditLog",
+      "type": "object",
+      "description": "Detailed record of high-risk actions and data changes for security and compliance.",
+      "properties": {
+        "id": { "type": "string" },
+        "actionType": { "type": "string" },
+        "entityType": { "type": "string" },
+        "entityId": { "type": "string" },
+        "actorUserId": { "type": "string" },
+        "actorName": { "type": "string" },
+        "eventAt": { "type": "number" }
+      },
+      "required": ["id", "actionType", "entityType", "entityId", "actorUserId", "eventAt"]
     }
   },
   "auth": {
@@ -49,6 +64,15 @@
           "schema": { "$ref": "#/backend/entities/PurchaseOrderProfitSnapshot" },
           "description": "Stores estimated profitability analyses for POs and Waves.",
           "params": [{ "name": "snapshotId", "description": "Unique ID of the snapshot." }]
+        }
+      },
+      {
+        "path": "/audit_logs/{logId}",
+        "definition": {
+          "entityName": "AuditLog",
+          "schema": { "$ref": "#/backend/entities/AuditLog" },
+          "description": "Central collection for system-wide audit trails.",
+          "params": [{ "name": "logId", "description": "Unique ID of the audit entry." }]
         }
       }
     ]

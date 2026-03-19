@@ -5,7 +5,6 @@ import {
   collection, 
   doc, 
   CollectionReference, 
-  DocumentReference 
 } from 'firebase/firestore';
 import { 
   SalesContractTerm, 
@@ -23,6 +22,7 @@ import {
   updateDocumentNonBlocking, 
   deleteDocumentNonBlocking 
 } from '@/firebase/non-blocking-updates';
+import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing Sales and Labor Cost Contract Terms and their Rate Conditions.
@@ -44,7 +44,23 @@ export class ContractTermsService {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
-    return addDocumentNonBlocking(this.getSalesTermsCollection(), validated);
+    
+    const promise = addDocumentNonBlocking(this.getSalesTermsCollection(), validated);
+    
+    promise.then(docRef => {
+      if (docRef) {
+        writeAuditLog(this.db, user, {
+          actionType: 'CREATE',
+          entityType: 'SalesContractTerm',
+          entityId: docRef.id,
+          entityLabel: validated.contractNo,
+          sourceModule: 'commercial',
+          afterSummary: `Created sales term: ${validated.title}`
+        });
+      }
+    });
+
+    return promise;
   }
 
   async updateSalesTerm(id: string, data: Partial<SalesContractTerm>, user: User) {
@@ -54,13 +70,17 @@ export class ContractTermsService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     };
-    // Note: We don't parse the full schema on update to allow partial updates
-    return updateDocumentNonBlocking(docRef, updateData);
-  }
-
-  async deleteSalesTerm(id: string) {
-    const docRef = doc(this.getSalesTermsCollection(), id);
-    return deleteDocumentNonBlocking(docRef);
+    
+    updateDocumentNonBlocking(docRef, updateData);
+    
+    writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'SalesContractTerm',
+      entityId: id,
+      sourceModule: 'commercial',
+      changedFields: Object.keys(data),
+      afterSummary: `Updated sales term fields`
+    });
   }
 
   // --- Labor Cost Contract Terms ---
@@ -77,22 +97,23 @@ export class ContractTermsService {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
-    return addDocumentNonBlocking(this.getLaborCostTermsCollection(), validated);
-  }
+    
+    const promise = addDocumentNonBlocking(this.getLaborCostTermsCollection(), validated);
+    
+    promise.then(docRef => {
+      if (docRef) {
+        writeAuditLog(this.db, user, {
+          actionType: 'CREATE',
+          entityType: 'LaborCostContractTerm',
+          entityId: docRef.id,
+          entityLabel: validated.title,
+          sourceModule: 'commercial',
+          afterSummary: `Created labor cost term`
+        });
+      }
+    });
 
-  async updateLaborCostTerm(id: string, data: Partial<LaborCostContractTerm>, user: User) {
-    const docRef = doc(this.getLaborCostTermsCollection(), id);
-    const updateData = {
-      ...data,
-      updatedBy: user.displayName,
-      updatedAt: Date.now(),
-    };
-    return updateDocumentNonBlocking(docRef, updateData);
-  }
-
-  async deleteLaborCostTerm(id: string) {
-    const docRef = doc(this.getLaborCostTermsCollection(), id);
-    return deleteDocumentNonBlocking(docRef);
+    return promise;
   }
 
   // --- Rate Conditions ---
@@ -108,18 +129,22 @@ export class ContractTermsService {
       requiresApproval: data.requiresApproval ?? false,
       displayOrder: data.displayOrder ?? 0,
     });
-    return addDocumentNonBlocking(this.getRateConditionsCollection(), validated);
-  }
+    
+    const promise = addDocumentNonBlocking(this.getRateConditionsCollection(), validated);
+    
+    promise.then(docRef => {
+      if (docRef) {
+        writeAuditLog(this.db, user, {
+          actionType: 'CREATE',
+          entityType: 'RateCondition',
+          entityId: docRef.id,
+          entityLabel: `${validated.eventType} (${validated.calculationMethod})`,
+          linkedIds: [validated.parentId],
+          sourceModule: 'commercial'
+        });
+      }
+    });
 
-  async updateRateCondition(id: string, data: Partial<RateCondition>, user: User) {
-    const docRef = doc(this.getRateConditionsCollection(), id);
-    // Note: RateCondition doesn't have system fields like updatedAt in the type, 
-    // but we can add them if the model is expanded later.
-    return updateDocumentNonBlocking(docRef, data);
-  }
-
-  async deleteRateCondition(id: string) {
-    const docRef = doc(this.getRateConditionsCollection(), id);
-    return deleteDocumentNonBlocking(docRef);
+    return promise;
   }
 }

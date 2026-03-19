@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore';
 import { WorkerWaveAcceptance, User } from '@/lib/types';
 import { WorkerWaveAcceptanceSchema } from '@/lib/validations/acceptance-schemas';
+import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing Client-side Worker Acceptance for Waves.
@@ -21,10 +22,6 @@ export class WorkerWaveAcceptanceService {
     return collection(this.db, 'worker_wave_acceptances');
   }
 
-  /**
-   * Initializes a pending acceptance record.
-   * Usually called by Operations when submitting a candidate to a client.
-   */
   async createPendingAcceptance(data: Partial<WorkerWaveAcceptance>, user: User) {
     const id = data.id || `${data.waveId}_${data.assignmentId}`;
     const docRef = doc(this.getCollection(), id);
@@ -40,12 +37,19 @@ export class WorkerWaveAcceptanceService {
     });
 
     await setDoc(docRef, validated);
+    
+    await writeAuditLog(this.db, user, {
+      actionType: 'SUBMIT_CANDIDATE',
+      entityType: 'WorkerWaveAcceptance',
+      entityId: id,
+      linkedIds: [validated.waveId, validated.workerId],
+      sourceModule: 'operations',
+      afterSummary: 'Submitted candidate for client review'
+    });
+
     return id;
   }
 
-  /**
-   * Client accepts the worker for the wave.
-   */
   async acceptWorkerForWave(id: string, user: User, remark?: string) {
     const docRef = doc(this.getCollection(), id);
     const now = new Date().toISOString().split('T')[0];
@@ -58,11 +62,16 @@ export class WorkerWaveAcceptanceService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'ACCEPT',
+      entityType: 'WorkerWaveAcceptance',
+      entityId: id,
+      reasonText: remark,
+      sourceModule: 'client'
+    });
   }
 
-  /**
-   * Client rejects the worker for the wave.
-   */
   async rejectWorkerForWave(id: string, user: User, remark: string) {
     const docRef = doc(this.getCollection(), id);
     
@@ -73,11 +82,16 @@ export class WorkerWaveAcceptanceService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'REJECT',
+      entityType: 'WorkerWaveAcceptance',
+      entityId: id,
+      reasonText: remark,
+      sourceModule: 'client'
+    });
   }
 
-  /**
-   * Client requests a replacement for the worker.
-   */
   async requestReplacementForWave(id: string, user: User, remark: string) {
     const docRef = doc(this.getCollection(), id);
     
@@ -87,6 +101,14 @@ export class WorkerWaveAcceptanceService {
       customerPortalUserId: user.id,
       updatedBy: user.displayName,
       updatedAt: Date.now(),
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'REPLACEMENT_REQ',
+      entityType: 'WorkerWaveAcceptance',
+      entityId: id,
+      reasonText: remark,
+      sourceModule: 'client'
     });
   }
 }

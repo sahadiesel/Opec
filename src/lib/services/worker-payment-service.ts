@@ -18,8 +18,8 @@ import { WorkerPaymentProfileSchema } from '@/lib/validations/worker-payment-sch
 import { 
   addDocumentNonBlocking, 
   updateDocumentNonBlocking, 
-  deleteDocumentNonBlocking 
 } from '@/firebase/non-blocking-updates';
+import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing Worker Payment Profiles.
@@ -27,16 +27,10 @@ import {
 export class WorkerPaymentService {
   constructor(private db: Firestore) {}
 
-  /**
-   * Internal helper to get the collection reference.
-   */
   private getCollection(): CollectionReference {
     return collection(this.db, 'worker_payment_profiles');
   }
 
-  /**
-   * Creates a new payment profile for a worker.
-   */
   async createProfile(data: Partial<WorkerPaymentProfile>, user: User) {
     const validated = WorkerPaymentProfileSchema.parse({
       ...data,
@@ -45,12 +39,25 @@ export class WorkerPaymentService {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
-    return addDocumentNonBlocking(this.getCollection(), validated);
+    
+    const promise = addDocumentNonBlocking(this.getCollection(), validated);
+    
+    promise.then(docRef => {
+      if (docRef) {
+        writeAuditLog(this.db, user, {
+          actionType: 'CREATE',
+          entityType: 'WorkerPaymentProfile',
+          entityId: docRef.id,
+          entityLabel: `Worker: ${validated.workerId}`,
+          sourceModule: 'hr',
+          afterSummary: `Added ${validated.paymentMethod} for worker ${validated.workerId}`
+        });
+      }
+    });
+
+    return promise;
   }
 
-  /**
-   * Updates an existing payment profile.
-   */
   async updateProfile(id: string, data: Partial<WorkerPaymentProfile>, user: User) {
     const docRef = doc(this.getCollection(), id);
     const updateData = {
@@ -58,36 +65,16 @@ export class WorkerPaymentService {
       updatedBy: user.displayName,
       updatedAt: Date.now(),
     };
-    return updateDocumentNonBlocking(docRef, updateData);
-  }
-
-  /**
-   * Deletes a payment profile.
-   */
-  async deleteProfile(id: string) {
-    const docRef = doc(this.getCollection(), id);
-    return deleteDocumentNonBlocking(docRef);
-  }
-
-  /**
-   * Helper to get the current active primary payment profile for a worker.
-   * This is used for payroll processing and disbursement.
-   */
-  async getActivePrimaryProfile(workerId: string): Promise<WorkerPaymentProfile | null> {
-    const q = query(
-      this.getCollection(),
-      where('workerId', '==', workerId),
-      where('isPrimary', '==', true),
-      where('status', '==', 'ACTIVE'),
-      limit(1)
-    );
-
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) return null;
-
-    return { 
-      ...snapshot.docs[0].data(), 
-      id: snapshot.docs[0].id 
-    } as WorkerPaymentProfile;
+    
+    updateDocumentNonBlocking(docRef, updateData);
+    
+    writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'WorkerPaymentProfile',
+      entityId: id,
+      sourceModule: 'hr',
+      changedFields: Object.keys(data),
+      afterSummary: `Updated payment profile details`
+    });
   }
 }

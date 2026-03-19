@@ -18,14 +18,14 @@ import {
   PayrollBatchLine, 
   PayrollPeriod, 
   DailyTimesheet, 
-  Worker, 
   User, 
   WorkerPaymentProfile,
   RateCondition,
   LaborCostContractTerm
 } from '@/lib/types';
-import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
+import { PayrollBatchSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
+import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing official Payroll Batches and their transitions.
@@ -37,21 +37,16 @@ export class PayrollService {
     return collection(this.db, 'payroll_batches');
   }
 
-  /**
-   * Generates a new payroll batch by aggregating client-approved timesheets.
-   */
   async generatePayrollBatch(
     periodId: string, 
     user: User, 
     filters?: { workModeScope?: 'ONSHORE' | 'OFFSHORE' | 'BOTH' }
   ) {
-    // 1. Fetch Period Metadata
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
     if (!periodSnap.exists()) throw new Error('Payroll period not found');
     const period = periodSnap.data() as PayrollPeriod;
 
-    // 2. Fetch approved timesheets in range
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
@@ -61,7 +56,6 @@ export class PayrollService {
     const tsSnap = await getDocs(tsQuery);
     let timesheets = tsSnap.docs.map(d => ({ ...d.data(), id: d.id } as DailyTimesheet));
 
-    // Apply workMode filter if specified
     if (filters?.workModeScope && filters.workModeScope !== 'BOTH') {
       timesheets = timesheets.filter(ts => ts.workMode === filters.workModeScope);
     }
@@ -70,22 +64,18 @@ export class PayrollService {
       throw new Error('No client-approved timesheets found for this period');
     }
 
-    // 3. Group by worker
     const workerMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach(ts => {
       if (!workerMap[ts.workerId]) workerMap[ts.workerId] = [];
       workerMap[ts.workerId].push(ts);
     });
 
-    // 4. Fetch reference data (Workers, Cost Contracts, Rate Conditions)
-    // In a real large app, we'd chunk this or fetch selectively.
     const rateConditionsSnap = await getDocs(collection(this.db, 'rate_conditions'));
     const allConditions = rateConditionsSnap.docs.map(d => ({ ...d.data(), id: d.id } as RateCondition));
     
     const costTermsSnap = await getDocs(collection(this.db, 'labor_cost_contract_terms'));
     const allCostTerms = costTermsSnap.docs.map(d => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
 
-    // 5. Build Batch and Lines
     const batchId = `PAY-${Date.now().toString().slice(-6)}`;
     const batchRef = doc(this.getBatchCollection(), batchId);
     const lines: PayrollBatchLine[] = [];
@@ -97,7 +87,6 @@ export class PayrollService {
       const workerTs = workerMap[workerId];
       const workerName = workerTs[0].workerNameSnapshot;
       
-      // Get active primary payment profile
       const ppQuery = query(
         collection(this.db, 'worker_payment_profiles'),
         where('workerId', '==', workerId),
@@ -114,19 +103,16 @@ export class PayrollService {
       let workerDeductions = 0;
 
       for (const ts of workerTs) {
-        // Resolve Earning
         const contract = allCostTerms.find(ct => ct.id === ts.laborCostContractTermId);
         if (contract) {
           const condition = resolveApplicableCostRateCondition(allConditions, ts, contract);
           if (condition) {
-            const cost = calculateDailyDailyLaborCost(ts, condition);
+            const cost = calculateDailyLaborCost(ts, condition, 0);
             workerGross += cost;
             eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
             earningsBreakdown[ts.eventType] = (earningsBreakdown[ts.eventType] || 0) + cost;
           }
         }
-        // Deductions (Placeholder logic - typically fixed per month or calc'd separately)
-        // workerDeductions += 0; 
       }
 
       const line: PayrollBatchLine = {
@@ -167,34 +153,27 @@ export class PayrollService {
       updatedAt: Date.now(),
     };
 
-    // 6. Persist using Batch
     const writeBatchInstance = writeBatch(this.db);
     writeBatchInstance.set(batchRef, newBatch);
-    
     lines.forEach(line => {
       const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', line.id);
       writeBatchInstance.set(lineRef, line);
     });
 
     await writeBatchInstance.commit();
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'GENERATE',
+      entityType: 'PayrollBatch',
+      entityId: batchId,
+      entityLabel: `${period.label} (${newBatch.workModeScope})`,
+      sourceModule: 'hr',
+      afterSummary: `Generated payroll batch with ${lines.length} workers`
+    });
+
     return batchId;
   }
 
-  /**
-   * Transitions a batch to HR_REVIEW status.
-   */
-  async reviewPayrollBatch(id: string, user: User) {
-    const docRef = doc(this.getBatchCollection(), id);
-    await updateDoc(docRef, {
-      status: 'HR_REVIEW',
-      updatedBy: user.displayName,
-      updatedAt: Date.now()
-    });
-  }
-
-  /**
-   * HR Manager official approval of the batch.
-   */
   async approvePayrollBatchByHR(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
     await runTransaction(this.db, async (transaction) => {
@@ -209,11 +188,15 @@ export class PayrollService {
         updatedAt: Date.now()
       });
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'APPROVE',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      sourceModule: 'hr'
+    });
   }
 
-  /**
-   * Finance officer preparation after HR approval.
-   */
   async preparePayrollBatchForFinance(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
     await runTransaction(this.db, async (transaction) => {
@@ -228,14 +211,17 @@ export class PayrollService {
         updatedAt: Date.now()
       });
     });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'FINANCE_PREPARE',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      sourceModule: 'accounting'
+    });
   }
 
-  /**
-   * Final locking of the batch. Prevents all future edits.
-   */
   async lockPayrollBatch(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
-    // Blocking write as requested
     await updateDoc(docRef, {
       status: 'LOCKED',
       lockedBy: user.displayName,
@@ -243,10 +229,13 @@ export class PayrollService {
       updatedBy: user.displayName,
       updatedAt: Date.now()
     });
-  }
-}
 
-// Internal helper for labor cost calculation within the service
-function calculateDailyDailyLaborCost(ts: DailyTimesheet, condition: RateCondition): number {
-  return calculateDailyLaborCost(ts, condition, 0);
+    await writeAuditLog(this.db, user, {
+      actionType: 'LOCK',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      sourceModule: 'accounting',
+      reasonCode: 'PAYMENT_FINALIZED'
+    });
+  }
 }

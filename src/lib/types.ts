@@ -1,4 +1,3 @@
-
 /**
  * OPEC OpsFlow - Master TypeScript Data Models
  * Refined for Production Readiness with clear Staff vs Worker separation.
@@ -408,18 +407,28 @@ export interface Wave {
   updatedAt: number;
 }
 
+/** Central Audit Log for security and compliance */
 export interface AuditLog {
   id: string;
-  userId: string;
-  userName: string;
-  actionType: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN' | 'LOGOUT';
-  entityType: string;
+  actionType: string; // e.g., 'CREATE', 'APPROVE', 'REJECT', 'LOCK'
+  entityType: string; // e.g., 'DailyTimesheet', 'PayrollBatch'
   entityId: string;
-  timestamp: number;
-  details?: string;
-  changes?: any;
-  collection?: string;
-  documentId?: string;
+  entityLabel?: string; // Descriptive name for logs (e.g., Worker Name or PO Code)
+  actorUserId: string;
+  actorName: string;
+  actorRole: string;
+  permissionProfileKey?: string | null;
+  sourceModule?: string;
+  sourcePath?: string;
+  linkedIds?: string[];
+  beforeSummary?: string;
+  afterSummary?: string;
+  changedFields?: string[];
+  reasonCode?: string;
+  reasonText?: string;
+  eventAt: number;
+  requestId?: string;
+  sessionId?: string;
 }
 
 export interface ClientUser {
