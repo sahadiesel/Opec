@@ -14,6 +14,23 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       }
     },
+    "Quotation": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Quotation",
+      "type": "object",
+      "description": "Commercial proposal document sent to customers prior to PO or Contract.",
+      "properties": {
+        "id": { "type": "string" },
+        "quotationNo": { "type": "string" },
+        "customerId": { "type": "string" },
+        "title": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["DRAFT", "SENT", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"] },
+        "issueDate": { "type": "string", "format": "date" },
+        "expiryDate": { "type": "string", "format": "date" }
+      },
+      "required": ["id", "quotationNo", "customerId", "title"]
+    },
     "PurchaseOrderProfitSnapshot": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "PurchaseOrderProfitSnapshot",
@@ -80,6 +97,15 @@
   },
   "firestore": {
     "structure": [
+      {
+        "path": "/quotations/{quoId}",
+        "definition": {
+          "entityName": "Quotation",
+          "schema": { "$ref": "#/backend/entities/Quotation" },
+          "description": "Stores sales quotations sent to customers.",
+          "params": [{ "name": "quoId", "description": "Unique ID of the quotation." }]
+        }
+      },
       {
         "path": "/po_profit_snapshots/{snapshotId}",
         "definition": {

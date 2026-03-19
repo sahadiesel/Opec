@@ -1,4 +1,3 @@
-
 rules_version = '2';
 
 service cloud.firestore {
@@ -42,7 +41,7 @@ service cloud.firestore {
     }
 
     function isSalesStaff() {
-      return hasRole('sales_officer') || hasRole('system_admin');
+      return hasRole('sales_officer') || hasRole('sales_manager') || hasRole('system_admin');
     }
 
     // --- COLLECTION RULES ---
@@ -52,6 +51,12 @@ service cloud.firestore {
       allow list: if isHRStaff();
       allow create: if isOwner(userId);
       allow update: if isOwner(userId) || hasRole('system_admin');
+      allow delete: if hasRole('system_admin');
+    }
+
+    match /quotations/{id} {
+      allow get, list: if isSalesStaff() || isFinanceStaff();
+      allow create, update: if isSalesStaff();
       allow delete: if hasRole('system_admin');
     }
 

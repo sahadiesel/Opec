@@ -1175,3 +1175,32 @@ export interface NumberSequence {
   updatedAt: number;
   updatedBy: string;
 }
+
+export type QuotationStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
+
+export interface Quotation {
+  id: string;
+  quotationNo: string;
+  customerId: string;
+  title: string;
+  description: string;
+  totalAmount: number;
+  currency: string;
+  status: QuotationStatus;
+  issueDate: string;
+  expiryDate: string;
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+  updatedBy: string;
+}
+
+export interface QuotationLine {
+  id: string;
+  quotationId: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}

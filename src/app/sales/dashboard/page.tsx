@@ -18,7 +18,8 @@ import {
   Info,
   Calendar,
   Search,
-  BadgeCheck
+  BadgeCheck,
+  FileSignature
 } from 'lucide-react';
 import { 
   User, 
@@ -26,7 +27,8 @@ import {
   MainContract, 
   PurchaseOrder, 
   Assignment,
-  Worker
+  Worker,
+  Quotation
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
@@ -57,6 +59,12 @@ export default function SalesDashboardPage() {
     return collection(firestore, 'customers');
   }, [firestore, isSales]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
+
+  const quoQuery = useMemoFirebase(() => {
+    if (!firestore || !isSales) return null;
+    return query(collection(firestore, 'quotations'), where('status', 'in', ['DRAFT', 'SENT']), limit(10));
+  }, [firestore, isSales]);
+  const { data: activeQuotations } = useCollection<Quotation>(quoQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
     if (!firestore || !isSales) return null;
@@ -94,13 +102,14 @@ export default function SalesDashboardPage() {
 
     return {
       totalCustomers: customers?.length || 0,
+      activeQuos: activeQuotations?.length || 0,
       activeContracts: activeContracts?.length || 0,
       activePOs: activePOs?.length || 0,
       expiringSoon: activeContracts?.filter(c => c.endDate < sixtyDaysFromNow).length || 0,
       pendingClientReview: pendingApprovals?.filter(a => a.clientApprovalStatus === 'PENDING').length || 0,
       rejectedByClient: pendingApprovals?.filter(a => a.clientApprovalStatus === 'REJECTED').length || 0,
     };
-  }, [customers, activeContracts, activePOs, pendingApprovals]);
+  }, [customers, activeQuotations, activeContracts, activePOs, pendingApprovals]);
 
   const urgentActions = useMemo(() => {
     const actions = [];
@@ -170,11 +179,11 @@ export default function SalesDashboardPage() {
         {/* Top KPI Row */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard title="ลูกค้าทั้งหมด" value={stats.totalCustomers} sub="Total Customers" icon={Building2} colorClass="border-l-blue-600" />
+          <StatCard title="เสนอราคาค้าง" value={stats.activeQuos} sub="Active Quotations" icon={FileSignature} colorClass="border-l-amber-500" />
           <StatCard title="สัญญาที่ใช้งาน" value={stats.activeContracts} sub="Active Contracts" icon={FileText} colorClass="border-l-green-600" />
           <StatCard title="PO ที่ใช้งานอยู่" value={stats.activePOs} sub="Active POs" icon={ShoppingCart} colorClass="border-l-purple-600" />
-          <StatCard title="สัญญาใกล้หมดอายุ" value={stats.expiringSoon} sub="Expiring Soon" icon={Clock} colorClass={stats.expiringSoon > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
-          <StatCard title="รอลูกค้าอนุมัติ" value={stats.pendingClientReview} sub="Pending Approval" icon={UserCheck} colorClass="border-l-amber-500" />
-          <StatCard title="ลูกค้ายกเลิก/ขอเปลี่ยน" value={stats.rejectedByClient} sub="Rejections" icon={ShieldAlert} colorClass="border-l-red-500" />
+          <StatCard title="สัญญาใกล้หมด" value={stats.expiringSoon} sub="Expiring Soon" icon={Clock} colorClass={stats.expiringSoon > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
+          <StatCard title="รอลูกค้าอนุมัติ" value={stats.pendingClientReview} sub="Pending Approval" icon={UserCheck} colorClass="border-l-indigo-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -281,6 +290,7 @@ export default function SalesDashboardPage() {
               </CardHeader>
               <CardContent className="pt-4 space-y-2">
                 <ShortcutItem href="/customers" label="ทะเบียนลูกค้า" sub="Customer Directory" icon={Building2} />
+                <ShortcutItem href="/quotations" label="ใบเสนอราคา" sub="Quotations" icon={FileSignature} />
                 <ShortcutItem href="/main-contracts" label="สัญญาหลัก" sub="MSAs & Rates" icon={FileText} />
                 <ShortcutItem href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="Project POs" icon={ShoppingCart} />
                 <ShortcutItem href="/billing-notes" label="ใบวางบิล" sub="Billing Notes" icon={FileText} />

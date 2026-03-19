@@ -14,6 +14,7 @@ export type ModuleKey =
   | 'customers'
   | 'main_contracts'
   | 'customer_pos'
+  | 'quotations'
   | 'timesheets'
   | 'worker_payroll'
   | 'office_payroll'
@@ -50,6 +51,7 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
   customers: NO_ACCESS,
   main_contracts: NO_ACCESS,
   customer_pos: NO_ACCESS,
+  quotations: NO_ACCESS,
   timesheets: NO_ACCESS,
   worker_payroll: NO_ACCESS,
   office_payroll: NO_ACCESS,
@@ -181,6 +183,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       customers: { ...OFFICER_ACCESS, approve: true, delete: true },
       main_contracts: { ...OFFICER_ACCESS, approve: true, delete: true },
       customer_pos: { ...OFFICER_ACCESS, approve: true },
+      quotations: { ...OFFICER_ACCESS, approve: true, delete: true },
       billing_notes: READ_ONLY,
     }),
 

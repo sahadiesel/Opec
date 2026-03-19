@@ -9,6 +9,7 @@ export const UI_LABELS = {
   CUSTOMERS: 'ทะเบียนลูกค้า (Customers)',
   MAIN_CONTRACTS: 'สัญญาหลัก (Main Contracts)',
   CUSTOMER_POS: 'ใบสั่งซื้อลูกค้า (Customer POs)',
+  QUOTATIONS: 'ใบเสนอราคา (Quotations)',
   WORKERS: 'ทะเบียนคนงาน / ลูกจ้าง (Workers)',
   STAFF: 'พนักงานออฟฟิศ (Office Staff)',
   POSITIONS: 'ตำแหน่งงาน (Positions)',

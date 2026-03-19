@@ -32,7 +32,8 @@ import {
   LockKeyhole,
   Grid,
   SearchCheck,
-  Settings
+  Settings,
+  FileSignature
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -73,6 +74,7 @@ const navGroups: NavGroup[] = [
     label: 'งานขายและสัญญา (Commercial)',
     items: [
       { key: 'customers', title: UI_LABELS.CUSTOMERS, href: '/customers', icon: Users },
+      { key: 'quotations', title: UI_LABELS.QUOTATIONS, href: '/quotations', icon: FileSignature },
       { key: 'main_contracts', title: UI_LABELS.MAIN_CONTRACTS, href: '/main-contracts', icon: ClipboardList },
       { key: 'customer_pos', title: UI_LABELS.CUSTOMER_POS, href: '/purchase-orders', icon: ShoppingCart },
     ]
