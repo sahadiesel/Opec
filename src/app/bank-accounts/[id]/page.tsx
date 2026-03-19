@@ -27,6 +27,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function BankAccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -40,7 +41,7 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
   const { data: accData, isLoading: isAccLoading } = useDoc<BankAccount>(accRef as any);
 
   const [formData, setFormData] = useState<Partial<BankAccount>>({
-    accountCode: '',
+    accountCode: isNew ? getPreviewPattern('bank_account') : '',
     bankName: '',
     accountName: '',
     accountNumber: '',
@@ -68,8 +69,8 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
-    if (!formData.accountName || !formData.accountNumber || !formData.accountCode) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรหัสบัญชี ชื่อบัญชี และเลขที่บัญชี" });
+    if (!formData.accountName || !formData.accountNumber) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบัญชี และเลขที่บัญชี" });
       return;
     }
 
@@ -78,14 +79,18 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
     
     try {
       if (isNew) {
+        // Atomic Code Generation
+        const { code: finalCode } = await generateNextDocumentCode(firestore, 'bank_account', { actor: currentUser.displayName });
+
         const newRef = doc(collection(firestore, 'bank_accounts'));
         await setDoc(newRef, {
           ...formData,
+          accountCode: finalCode,
           id: newRef.id,
           createdAt: now,
           updatedAt: now
         });
-        toast({ title: "เพิ่มบัญชีธนาคารสำเร็จ" });
+        toast({ title: "เพิ่มบัญชีธนาคารสำเร็จ", description: `รหัสบัญชี: ${finalCode}` });
         router.push('/bank-accounts');
       } else {
         await updateDoc(accRef!, {
@@ -137,19 +142,26 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label>รหัสบัญชี (Account Code)</Label>
-                  <Input value={formData.accountCode} onChange={e => setFormData({...formData, accountCode: e.target.value})} placeholder="เช่น BBL-MAIN" />
+                  <Label className="font-bold">รหัสบัญชี (Account Code)</Label>
+                  <Input 
+                    value={formData.accountCode} 
+                    disabled={isNew} 
+                    onChange={e => setFormData({...formData, accountCode: e.target.value})} 
+                    className={isNew ? "bg-muted font-mono font-bold text-primary" : ""}
+                    placeholder="เช่น BBL-MAIN" 
+                  />
+                  {isNew && <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>}
                 </div>
                 <div className="space-y-2">
                   <Label>ธนาคาร (Bank Name)</Label>
                   <Input value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} placeholder="เช่น ธนาคารกรุงเทพ" />
                 </div>
                 <div className="space-y-2">
-                  <Label>ชื่อบัญชี (Account Name)</Label>
+                  <Label>ชื่อบัญชี (Account Name) *</Label>
                   <Input value={formData.accountName} onChange={e => setFormData({...formData, accountName: e.target.value})} />
                 </div>
                 <div className="space-y-2">
-                  <Label>เลขที่บัญชี (Account Number)</Label>
+                  <Label>เลขที่บัญชี (Account Number) *</Label>
                   <Input value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} placeholder="000-0-00000-0" />
                 </div>
                 <div className="space-y-2">

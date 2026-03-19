@@ -30,6 +30,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -43,7 +44,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const { data: vendorData, isLoading: isVendorLoading } = useDoc<Vendor>(vendorRef as any);
 
   const [formData, setFormData] = useState<Partial<Vendor>>({
-    vendorCode: '',
+    vendorCode: isNew ? getPreviewPattern('vendor') : '',
     vendorName: '',
     vendorType: 'GENERAL_SUPPLIER',
     taxId: '',
@@ -77,8 +78,8 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
-    if (!formData.vendorName || !formData.vendorCode) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรหัสคู่ค้าและชื่อบริษัท" });
+    if (!formData.vendorName) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบริษัท" });
       return;
     }
 
@@ -87,14 +88,18 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     
     try {
       if (isNew) {
+        // Atomic Code Generation
+        const { code: finalCode } = await generateNextDocumentCode(firestore, 'vendor', { actor: currentUser.displayName });
+
         const newRef = doc(collection(firestore, 'vendors'));
         await setDoc(newRef, {
           ...formData,
+          vendorCode: finalCode,
           id: newRef.id,
           createdAt: now,
           updatedAt: now
         });
-        toast({ title: "เพิ่มคู่ค้าสำเร็จ" });
+        toast({ title: "เพิ่มคู่ค้าสำเร็จ", description: `รหัสคู่ค้า: ${finalCode}` });
         router.push('/vendors');
       } else {
         await updateDoc(vendorRef!, {
@@ -105,6 +110,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         router.back();
       }
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
     } finally {
       setIsSubmitting(false);
@@ -149,11 +155,18 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="space-y-2">
-                    <Label>รหัสคู่ค้า (Vendor Code)</Label>
-                    <Input value={formData.vendorCode} onChange={e => setFormData({...formData, vendorCode: e.target.value})} placeholder=" เช่น VEND-001" />
+                    <Label className="font-bold">รหัสคู่ค้า (Vendor Code)</Label>
+                    <Input 
+                      value={formData.vendorCode} 
+                      disabled={isNew} 
+                      onChange={e => setFormData({...formData, vendorCode: e.target.value})} 
+                      className={isNew ? "bg-muted font-mono font-bold text-primary" : ""}
+                      placeholder=" เช่น VEND-001" 
+                    />
+                    {isNew && <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>}
                   </div>
                   <div className="space-y-2 md:col-span-2">
-                    <Label>ชื่อบริษัท / ร้านค้า (Vendor Name)</Label>
+                    <Label className="font-bold">ชื่อบริษัท / ร้านค้า (Vendor Name) *</Label>
                     <Input value={formData.vendorName} onChange={e => setFormData({...formData, vendorName: e.target.value})} />
                   </div>
                   <div className="space-y-2">
