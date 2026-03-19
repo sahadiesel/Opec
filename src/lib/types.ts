@@ -1160,8 +1160,18 @@ export interface PurchaseOrderProfitSnapshot {
  */
 export interface NumberSequence {
   id: string;
+  sequenceKey: string;
+  label: string;
   prefix: string;
+  department: DeptType;
+  entityType: string;
+  resetPolicy: 'none' | 'yearly' | 'monthly';
+  year?: number | null;
+  month?: number | null;
+  paddingLength: number;
   lastNumber: number;
+  lastIssuedCode?: string | null;
+  isActive: boolean;
   updatedAt: number;
-  createdAt: number;
+  updatedBy: string;
 }

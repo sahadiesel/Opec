@@ -54,13 +54,25 @@
     "NumberSequence": {
       "title": "NumberSequence",
       "type": "object",
-      "description": "State tracking for sequential document numbering (e.g. BN-0001, INV-0001).",
+      "description": "Configuration and state for automatic document numbering sequences (e.g., BN-2024-0001).",
       "properties": {
         "id": { "type": "string" },
+        "sequenceKey": { "type": "string" },
+        "label": { "type": "string" },
         "prefix": { "type": "string" },
+        "department": { "type": "string" },
+        "entityType": { "type": "string" },
+        "resetPolicy": { "type": "string", "enum": ["none", "yearly", "monthly"] },
+        "year": { "type": "number" },
+        "month": { "type": "number" },
+        "paddingLength": { "type": "number" },
         "lastNumber": { "type": "number" },
-        "updatedAt": { "type": "number" }
-      }
+        "lastIssuedCode": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "updatedAt": { "type": "number" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "sequenceKey", "prefix", "lastNumber", "updatedAt", "isActive"]
     }
   },
   "auth": {
