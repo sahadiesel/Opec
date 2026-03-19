@@ -9,6 +9,7 @@ import {
   Truck, 
   UserPlus, 
   AlertCircle, 
+  AlertTriangle,
   ClipboardCheck, 
   Clock, 
   ArrowRight, 
@@ -317,7 +318,7 @@ export default function OperationsDashboardPage() {
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 ตรวจสอบคนงานที่ใกล้จบภารกิจ (Nearing Demobilization) เพื่อวางแผนการส่งคนชุดใหม่ทดแทน (Rotation Planning)
               </CardContent>
-            </Card>
+            </div>
           </div>
         </div>
       </div>
