@@ -49,14 +49,14 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
  * 
  * @param db Firestore instance
  * @param sequenceKey Unique key from SEQUENCE_REGISTRY
- * @param actor Name or ID of the user performing the generation
- * @returns Final formatted document code (e.g. 'BN-2024-05-0042')
+ * @param options Configuration options (e.g. actor)
+ * @returns Object containing the final code and the updated sequence metadata
  */
-export async function generateNextSequenceCode(
-  db: Firestore, 
+export async function generateNextDocumentCode(
+  db: Firestore,
   sequenceKey: string,
-  actor: string = 'system'
-): Promise<string> {
+  options: { actor?: string } = {}
+): Promise<{ code: string; metadata: NumberSequence }> {
   const config = SEQUENCE_REGISTRY[sequenceKey];
   if (!config) throw new Error(`Sequence configuration not found for key: ${sequenceKey}`);
 
@@ -64,26 +64,28 @@ export async function generateNextSequenceCode(
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
+  const actor = options.actor || 'system';
 
   return await runTransaction(db, async (transaction) => {
     const seqSnap = await transaction.get(seqRef);
     let lastNumber = 0;
+    let existingData: Partial<NumberSequence> = {};
 
     if (seqSnap.exists()) {
-      const data = seqSnap.data() as NumberSequence;
-      lastNumber = data.lastNumber || 0;
+      existingData = seqSnap.data() as NumberSequence;
+      lastNumber = existingData.lastNumber || 0;
 
-      // Reset logic
-      if (config.resetPolicy === 'yearly' && data.year !== currentYear) {
+      // Reset logic: Start back at 0 if we crossed a year or month boundary based on policy
+      if (config.resetPolicy === 'yearly' && existingData.year !== currentYear) {
         lastNumber = 0;
-      } else if (config.resetPolicy === 'monthly' && (data.month !== currentMonth || data.year !== currentYear)) {
+      } else if (config.resetPolicy === 'monthly' && (existingData.month !== currentMonth || existingData.year !== currentYear)) {
         lastNumber = 0;
       }
     }
 
     const nextNumber = lastNumber + 1;
     
-    // Formatting logic
+    // Formatting logic: Inject year/month into code if policy requires
     let dynamicPart = '';
     if (config.resetPolicy === 'yearly') {
       dynamicPart = `${currentYear}-`;
@@ -94,8 +96,7 @@ export async function generateNextSequenceCode(
     const paddedNum = nextNumber.toString().padStart(config.padding, '0');
     const finalCode = `${config.prefix}${dynamicPart}${paddedNum}`;
 
-    // Prepare updated record
-    const updatePayload: Partial<NumberSequence> = {
+    const metadata: NumberSequence = {
       id: sequenceKey,
       sequenceKey,
       label: config.label,
@@ -113,15 +114,15 @@ export async function generateNextSequenceCode(
       updatedBy: actor
     };
 
-    transaction.set(seqRef, updatePayload, { merge: true });
+    transaction.set(seqRef, metadata, { merge: true });
 
-    return finalCode;
+    return { code: finalCode, metadata };
   });
 }
 
 /**
  * Basic incremental number generation.
- * @deprecated Use generateNextSequenceCode for standardized reset-aware numbering.
+ * @deprecated Use generateNextDocumentCode for standardized reset-aware numbering.
  */
 export async function generateNextNumber(
   db: Firestore, 
