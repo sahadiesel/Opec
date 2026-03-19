@@ -859,3 +859,25 @@ export interface WorkerCertificate {
 }
 
 export type MobilizationStatus = 'PENDING' | 'READY_TO_MOBILIZE' | 'MOBILIZING' | 'ACTIVE' | 'FAILED_CHECK';
+
+/**
+ * Additive models for Contract Terms
+ */
+export type LaborCostContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'CANCELLED';
+export type LaborScopeType = 'SPECIFIC_PO' | 'GENERAL_CUSTOMER' | 'PROJECT_BASED' | 'OTHER';
+
+export interface LaborCostContractTerm {
+  id: string;
+  title: string;
+  relatedCustomerId: string;
+  relatedPurchaseOrderId: string;
+  scopeType: LaborScopeType;
+  status: LaborCostContractStatus;
+  effectiveDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  notes?: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
