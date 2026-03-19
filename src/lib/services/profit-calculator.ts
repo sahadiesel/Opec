@@ -10,7 +10,8 @@ import {
   RateCondition,
   PurchaseOrderProfitSnapshot,
   User,
-  JobMode
+  JobMode,
+  RateConditionEventType
 } from '@/lib/types';
 import { calculateDailySalesValue, resolveApplicableSalesRateCondition } from './sales-calculator';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
@@ -58,11 +59,10 @@ export class ProfitCalculatorService {
       const dateStr = format(day, 'yyyy-MM-dd');
       
       // We simulate a generic work day for each planned slot
-      // In a real scenario, we might iterate through specific PO Lines within the wave
       const mockTs: any = {
         date: dateStr,
         workMode: 'OFFSHORE', // Default for estimation if not specified
-        eventType: 'work_day',
+        eventType: 'work_day' as RateConditionEventType,
         normalHours: 8,
         positionId: 'ESTIMATED_SLOT',
       };
@@ -144,7 +144,7 @@ export class ProfitCalculatorService {
         const mockTs: any = {
           date: dateStr,
           workMode: 'OFFSHORE',
-          eventType: 'work_day',
+          eventType: 'work_day' as RateConditionEventType,
           normalHours: 8,
           positionId: line.positionId,
         };

@@ -31,7 +31,7 @@ export function resolveApplicableCostRateCondition(
   applicable = applicable.filter(c => c.eventType === timesheet.eventType);
 
   // 3. Filter by workMode (ONSHORE / OFFSHORE) if specified in condition
-  applicable = applicable.filter(c => !c.workMode || c.workMode === timesheet.workMode);
+  applicable = applicable.filter(c => !c.workMode || c.workMode === timesheet.workMode || c.workMode === 'BOTH');
 
   // 4. Filter by position (if specified)
   applicable = applicable.filter(c => !c.positionId || c.positionId === timesheet.positionId);
@@ -104,14 +104,13 @@ function resolveQuantityForCostUnit(timesheet: DailyTimesheet, unitType: RateCon
     
     case 'HOUR':
       // Sum of all relevant hours
-      return timesheet.normalHours + timesheet.ot15Hours + timesheet.ot20Hours + timesheet.ot30Hours + timesheet.holidayHours;
+      return (timesheet.normalHours || 0) + (timesheet.ot15Hours || 0) + (timesheet.ot20Hours || 0) + (timesheet.ot30Hours || 0) + (timesheet.holidayHours || 0);
     
     case 'TRIP':
-    case 'LUMP_SUM':
       return 1;
       
-    case 'MONTH':
-      return 1 / 30; // Pro-rated day vs month approximation
+    case 'FIXED':
+      return 1;
       
     default:
       return 1;

@@ -34,7 +34,7 @@ export function resolveApplicableSalesRateCondition(
   applicable = applicable.filter(c => c.eventType === timesheet.eventType);
 
   // 3. Filter by workMode (if specified in condition)
-  applicable = applicable.filter(c => !c.workMode || c.workMode === timesheet.workMode);
+  applicable = applicable.filter(c => !c.workMode || c.workMode === timesheet.workMode || c.workMode === 'BOTH');
 
   // 4. Filter by position (if specified)
   applicable = applicable.filter(c => !c.positionId || c.positionId === timesheet.positionId);
@@ -108,14 +108,13 @@ function resolveQuantityForUnit(timesheet: DailyTimesheet, unitType: RateConditi
     
     case 'HOUR':
       // Sum of all worked hours for this entry
-      return timesheet.normalHours + timesheet.ot15Hours + timesheet.ot20Hours + timesheet.ot30Hours + timesheet.holidayHours;
+      return (timesheet.normalHours || 0) + (timesheet.ot15Hours || 0) + (timesheet.ot20Hours || 0) + (timesheet.ot30Hours || 0) + (timesheet.holidayHours || 0);
     
     case 'TRIP':
-    case 'LUMP_SUM':
       return 1;
       
-    case 'MONTH':
-      return 1 / 30; // Approximation if calculating daily from monthly
+    case 'FIXED':
+      return 1;
       
     default:
       return 1;
@@ -135,7 +134,7 @@ export function summarizeDailySalesBreakdown(
   const method = condition.calculationMethod;
   const rateUsed = condition.baseRate ?? 'contract_default';
   
-  let details = `[${timesheet.eventType}] `;
+  let details = `[REVENUE: ${timesheet.eventType}] `;
   details += `${qty} ${condition.unitType} x `;
   
   if (method === 'MULTIPLIER') {
