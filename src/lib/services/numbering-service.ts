@@ -22,10 +22,10 @@ export interface SequenceConfig {
  * Provides safe defaults for automatic numbering across all departments.
  */
 export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
-  main_contract: { label: 'Main Contract', prefix: 'MC-', padding: 4, dept: 'sales', resetPolicy: 'yearly' },
-  customer: { label: 'Customer', prefix: 'CUST-', padding: 4, dept: 'sales', resetPolicy: 'none' },
-  customer_po: { label: 'Customer PO', prefix: 'PO-', padding: 4, dept: 'sales', resetPolicy: 'yearly' },
-  quotation: { label: 'Quotation', prefix: 'QT-', padding: 4, dept: 'sales', resetPolicy: 'yearly' },
+  main_contract: { label: 'Main Contract', prefix: 'MC-', padding: 5, dept: 'sales', resetPolicy: 'yearly' },
+  customer: { label: 'Customer', prefix: 'CUS-', padding: 5, dept: 'sales', resetPolicy: 'none' },
+  customer_po: { label: 'Customer PO', prefix: 'PO-', padding: 5, dept: 'sales', resetPolicy: 'yearly' },
+  quotation: { label: 'Quotation', prefix: 'QT-', padding: 5, dept: 'sales', resetPolicy: 'monthly' },
   billing_note: { label: 'Billing Note', prefix: 'BN-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
   tax_invoice: { label: 'Tax Invoice', prefix: 'INV-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
   receipt: { label: 'Receipt', prefix: 'RCT-', padding: 4, dept: 'accounting', resetPolicy: 'monthly' },
@@ -35,13 +35,36 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   cashbook_entry: { label: 'Cashbook Entry', prefix: 'CB-', padding: 6, dept: 'accounting', resetPolicy: 'monthly' },
   bank_account: { label: 'Bank Account', prefix: 'BANK-', padding: 3, dept: 'accounting', resetPolicy: 'none' },
   office_staff: { label: 'Office Staff', prefix: 'OFF-', padding: 4, dept: 'hr', resetPolicy: 'none' },
-  worker: { label: 'Worker', prefix: 'WKR-', padding: 5, dept: 'hr', resetPolicy: 'none' },
+  worker: { label: 'Worker', prefix: 'WRK-', padding: 5, dept: 'hr', resetPolicy: 'none' },
   position: { label: 'Position', prefix: 'POS-', padding: 3, dept: 'hr', resetPolicy: 'none' },
   wave: { label: 'Wave', prefix: 'WV-', padding: 4, dept: 'operations', resetPolicy: 'yearly' },
   assignment: { label: 'Assignment', prefix: 'ASG-', padding: 6, dept: 'operations', resetPolicy: 'yearly' },
   purchase: { label: 'Purchase', prefix: 'PUR-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
   vendor: { label: 'Vendor', prefix: 'VEN-', padding: 4, dept: 'store', resetPolicy: 'none' },
 };
+
+/**
+ * Utility to format a document code string based on configuration and context.
+ * Supports patterns like MC-2026-00001 or QT-2026-03-00001.
+ */
+export function formatDocumentCode(
+  config: SequenceConfig,
+  runningNumber: number,
+  date: Date = new Date()
+): string {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  
+  let dynamicPart = '';
+  if (config.resetPolicy === 'yearly') {
+    dynamicPart = `${year}-`;
+  } else if (config.resetPolicy === 'monthly') {
+    dynamicPart = `${year}-${month.toString().padStart(2, '0')}-`;
+  }
+
+  const paddedNum = runningNumber.toString().padStart(config.padding, '0');
+  return `${config.prefix}${dynamicPart}${paddedNum}`;
+}
 
 /**
  * Atomicly generates the next sequential number for a given document type.
@@ -55,15 +78,15 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
 export async function generateNextDocumentCode(
   db: Firestore,
   sequenceKey: string,
-  options: { actor?: string } = {}
+  options: { actor?: string; date?: Date } = {}
 ): Promise<{ code: string; metadata: NumberSequence }> {
   const config = SEQUENCE_REGISTRY[sequenceKey];
   if (!config) throw new Error(`Sequence configuration not found for key: ${sequenceKey}`);
 
   const seqRef = doc(db, 'number_sequences', sequenceKey);
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
+  const date = options.date || new Date();
+  const currentYear = date.getFullYear();
+  const currentMonth = date.getMonth() + 1;
   const actor = options.actor || 'system';
 
   return await runTransaction(db, async (transaction) => {
@@ -84,17 +107,7 @@ export async function generateNextDocumentCode(
     }
 
     const nextNumber = lastNumber + 1;
-    
-    // Formatting logic: Inject year/month into code if policy requires
-    let dynamicPart = '';
-    if (config.resetPolicy === 'yearly') {
-      dynamicPart = `${currentYear}-`;
-    } else if (config.resetPolicy === 'monthly') {
-      dynamicPart = `${currentYear}-${currentMonth.toString().padStart(2, '0')}-`;
-    }
-
-    const paddedNum = nextNumber.toString().padStart(config.padding, '0');
-    const finalCode = `${config.prefix}${dynamicPart}${paddedNum}`;
+    const finalCode = formatDocumentCode(config, nextNumber, date);
 
     const metadata: NumberSequence = {
       id: sequenceKey,
