@@ -4,7 +4,11 @@ import {
   Firestore, 
   collection, 
   doc, 
-  CollectionReference, 
+  query, 
+  where, 
+  orderBy, 
+  CollectionReference,
+  Query
 } from 'firebase/firestore';
 import { 
   SalesContractTerm, 
@@ -30,11 +34,21 @@ import { writeAuditLog } from './audit-service';
 export class ContractTermsService {
   constructor(private db: Firestore) {}
 
-  // --- Sales Contract Terms ---
+  // --- Collection Accessors ---
 
-  getSalesTermsCollection(): CollectionReference {
+  private getSalesTermsCollection(): CollectionReference {
     return collection(this.db, 'sales_contract_terms');
   }
+
+  private getLaborCostTermsCollection(): CollectionReference {
+    return collection(this.db, 'labor_cost_contract_terms');
+  }
+
+  private getRateConditionsCollection(): CollectionReference {
+    return collection(this.db, 'rate_conditions');
+  }
+
+  // --- Sales Contract Terms ---
 
   async createSalesTerm(data: Partial<SalesContractTerm>, user: User) {
     const validated = SalesContractTermSchema.parse({
@@ -85,10 +99,6 @@ export class ContractTermsService {
 
   // --- Labor Cost Contract Terms ---
 
-  getLaborCostTermsCollection(): CollectionReference {
-    return collection(this.db, 'labor_cost_contract_terms');
-  }
-
   async createLaborCostTerm(data: Partial<LaborCostContractTerm>, user: User) {
     const validated = LaborCostContractTermSchema.parse({
       ...data,
@@ -118,16 +128,13 @@ export class ContractTermsService {
 
   // --- Rate Conditions ---
 
-  getRateConditionsCollection(): CollectionReference {
-    return collection(this.db, 'rate_conditions');
-  }
-
   async createRateCondition(data: Partial<RateCondition>, user: User) {
     const validated = RateConditionSchema.parse({
       ...data,
       isActive: data.isActive ?? true,
       requiresApproval: data.requiresApproval ?? false,
       displayOrder: data.displayOrder ?? 0,
+      effectiveDate: data.effectiveDate || new Date().toISOString().split('T')[0],
     });
     
     const promise = addDocumentNonBlocking(this.getRateConditionsCollection(), validated);
@@ -140,11 +147,49 @@ export class ContractTermsService {
           entityId: docRef.id,
           entityLabel: `${validated.eventType} (${validated.calculationMethod})`,
           linkedIds: [validated.parentId],
-          sourceModule: 'commercial'
+          sourceModule: 'commercial',
+          afterSummary: `Added rate condition for ${validated.parentType}`
         });
       }
     });
 
     return promise;
+  }
+
+  // --- Query Helpers (Reactive Hooks should consume these queries) ---
+
+  queryActiveSalesTermsByCustomer(customerId: string): Query {
+    return query(
+      this.getSalesTermsCollection(),
+      where('customerId', '==', customerId),
+      where('status', '==', 'ACTIVE'),
+      orderBy('effectiveDate', 'desc')
+    );
+  }
+
+  queryActiveSalesTermsByPO(poId: string): Query {
+    return query(
+      this.getSalesTermsCollection(),
+      where('purchaseOrderId', '==', poId),
+      where('status', '==', 'ACTIVE')
+    );
+  }
+
+  queryActiveLaborCostTermsByPO(poId: string): Query {
+    return query(
+      this.getLaborCostTermsCollection(),
+      where('relatedPurchaseOrderId', '==', poId),
+      where('status', '==', 'ACTIVE')
+    );
+  }
+
+  queryRateConditionsByParent(parentType: string, parentId: string): Query {
+    return query(
+      this.getRateConditionsCollection(),
+      where('parentType', '==', parentType),
+      where('parentId', '==', parentId),
+      where('isActive', '==', true),
+      orderBy('displayOrder', 'asc')
+    );
   }
 }
