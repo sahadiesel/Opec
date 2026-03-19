@@ -881,3 +881,57 @@ export interface LaborCostContractTerm {
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * Rate Calculation & Event Conditions
+ */
+export type RateConditionEventType = 
+  | 'work_day' 
+  | 'off_day_worked' 
+  | 'public_holiday_worked' 
+  | 'travel_day' 
+  | 'standby_day' 
+  | 'mobilization_day' 
+  | 'demobilization_day' 
+  | 'training_day' 
+  | 'sick_leave_paid' 
+  | 'vacation_paid' 
+  | 'unpaid_leave' 
+  | 'night_shift' 
+  | 'half_day' 
+  | 'early_return' 
+  | 'client_cancellation' 
+  | 'replacement_day' 
+  | 'other';
+
+export type RateConditionParentType = 'SALES_CONTRACT' | 'LABOR_COST_CONTRACT' | 'GLOBAL';
+export type RateConditionAppliesTo = 'WORKER' | 'POSITION' | 'CATEGORY' | 'ALL';
+export type RateConditionUnitType = 'DAY' | 'HOUR' | 'LUMP_SUM' | 'MONTH';
+export type RateConditionCalculationMethod = 'FIXED' | 'MULTIPLIER' | 'PERCENTAGE' | 'FLAT';
+
+export interface RateCondition {
+  id: string;
+  parentType: RateConditionParentType;
+  parentId: string;
+  appliesTo: RateConditionAppliesTo;
+  workerCategoryId?: string;
+  positionId?: string;
+  siteId?: string;
+  workMode?: JobMode;
+  eventType: RateConditionEventType;
+  unitType: RateConditionUnitType;
+  calculationMethod: RateConditionCalculationMethod;
+  baseRate?: number;
+  multiplier?: number;
+  percentageOfBase?: number;
+  fixedAmount?: number;
+  minimumUnits?: number;
+  roundingRule?: 'UP' | 'DOWN' | 'NEAREST';
+  payableConditionText?: string;
+  billableConditionText?: string;
+  requiresApproval: boolean;
+  effectiveDate: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD
+  displayOrder: number;
+  isActive: boolean;
+}
