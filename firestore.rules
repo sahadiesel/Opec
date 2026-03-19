@@ -121,6 +121,11 @@ service cloud.firestore {
       match /documents/{id} { allow get, list, write: if isHRStaff(); }
     }
 
+    match /worker_payment_profiles/{id} {
+      // Restricted to HR and Finance staff for sensitive bank details
+      allow get, list, write: if isHRStaff() || isFinanceStaff();
+    }
+
     match /payroll_runs/{runId} {
       // HR prepares, Finance pays
       allow get, list: if isHRStaff() || isFinanceStaff();
