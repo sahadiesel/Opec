@@ -3,7 +3,6 @@
 /**
  * @fileOverview Centralized document numbering service with validation safeguards and audit logging.
  * Ensures sequential, unique numbers using Firestore transactions and existence checks.
- * Supports automated resets (Yearly/Monthly) and prevents collisions.
  */
 
 import { Firestore, doc, runTransaction, collection, query, where, getDocs, limit } from 'firebase/firestore';
@@ -55,7 +54,6 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
 
 /**
  * Checks if a code is already in use in the target collection.
- * This is an application-level safeguard against parallel non-transactional writes or manual entries.
  */
 export async function isCodeInUse(
   db: Firestore,
@@ -113,7 +111,6 @@ export function getPreviewPattern(sequenceKey: string): string {
 
 /**
  * Atomicly generates the next sequential number for a given document type.
- * Includes a uniqueness check safeguard, retry logic, and audit logging.
  */
 export async function generateNextDocumentCode(
   db: Firestore,
@@ -172,10 +169,10 @@ export async function generateNextDocumentCode(
         updatedBy: actor
       };
 
-      // 1. Update the sequence metadata
+      // Update sequence metadata
       transaction.set(seqRef, metadata, { merge: true });
 
-      // 2. Log the issuance in the transaction for audit integrity
+      // Log issuance
       const auditRef = doc(collection(db, 'audit_logs'));
       transaction.set(auditRef, {
         id: auditRef.id,
@@ -194,16 +191,13 @@ export async function generateNextDocumentCode(
       return { code, metadata };
     });
 
-    // Safeguard: Verify if the generated code is truly unique in the target collection.
-    // If it's already in use (due to manual entry), loop will continue and get the next available number.
     const inUse = await isCodeInUse(db, config.collectionName, config.fieldName, result.code);
     if (!inUse) {
       return result;
     }
 
     attempts++;
-    console.warn(`Collision detected for ${result.code} in ${config.collectionName}. Retrying attempt ${attempts + 1}...`);
   }
 
-  throw new Error(`Critical: Could not generate a unique code for ${sequenceKey} after ${MAX_ATTEMPTS} attempts. Please contact support.`);
+  throw new Error(`Critical: Could not generate a unique code for ${sequenceKey}.`);
 }

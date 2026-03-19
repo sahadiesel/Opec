@@ -27,7 +27,10 @@ import {
   Coins,
   History,
   Info,
-  Loader2
+  Loader2,
+  Zap,
+  BarChart3,
+  Percent
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -52,18 +55,19 @@ import {
   Assignment, 
   Worker,
   SalesContractTerm,
-  LaborCostContractTerm
+  LaborCostContractTerm,
+  RateCondition
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { Separator } from '@/components/ui/separator';
+import { ProfitAnalysisTab } from '@/components/commercial/profit-analysis-tab';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -85,13 +89,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const { data: costTerms } = useCollection<LaborCostContractTerm>(costTermsQuery as any);
 
   const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser) return null;
+    if (!firestore) return null;
     return query(collection(firestore, 'mobilizations'), where('poId', '==', id));
-  }, [firestore, firebaseUser, isUserLoading, id]);
+  }, [firestore, id]);
   const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
-
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
-  const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
@@ -104,6 +105,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const conditionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'rate_conditions') : null), [firestore]);
+  const { data: allConditions } = useCollection<RateCondition>(conditionsQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedPO, setEditedPO] = useState<Partial<PurchaseOrder>>({});
@@ -123,6 +127,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     paymentTermsDays: 30,
     status: 'ACTIVE'
   });
+
+  useEffect(() => {
+    if (po) setEditedPO(po);
+  }, [po]);
 
   const handleSaveMaster = () => {
     if (!poRef) return;
@@ -238,10 +246,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         </div>
 
         <Tabs defaultValue="lines" className="w-full">
-          <TabsList className="grid grid-cols-4 w-full md:w-[800px] h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-5 w-full md:w-[900px] h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6">ข้อมูล PO</TabsTrigger>
             <TabsTrigger value="lines" className="gap-2 py-2 px-6">PO Lines (โควต้า)</TabsTrigger>
             <TabsTrigger value="terms" className="gap-2 py-2 px-6">Commercial Terms</TabsTrigger>
+            <TabsTrigger value="analysis" className="gap-2 py-2 px-6"><BarChart3 className="h-4 w-4" /> Profit Analysis</TabsTrigger>
             <TabsTrigger value="assignments" className="gap-2 py-2 px-6">Assignments (คนงาน)</TabsTrigger>
           </TabsList>
 
@@ -271,10 +280,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       <Label>วันที่สิ้นสุดงานตาม PO</Label>
                       <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.endDate || 0).toISOString().split('T')[0] : new Date(po.endDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, endDate: new Date(e.target.value).getTime()})} />
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>รายละเอียดโครงการ</Label>
-                    <Textarea disabled={!isEditing} value={isEditing ? editedPO.description : po.description} onChange={e => setEditedPO({...editedPO, description: e.target.value})} />
                   </div>
                   <div className="space-y-2">
                     <Label>สถานะใบสั่งซื้อ</Label>
@@ -502,6 +507,24 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             </div>
           </TabsContent>
 
+          <TabsContent value="analysis" className="mt-6">
+            {po && salesTerms && costTerms && allConditions && poLines ? (
+              <ProfitAnalysisTab 
+                po={po} 
+                poLines={poLines}
+                salesTerms={salesTerms}
+                costTerms={costTerms}
+                allConditions={allConditions}
+                user={currentUser}
+              />
+            ) : (
+              <div className="py-20 text-center text-muted-foreground italic">
+                <Info className="h-10 w-10 mx-auto mb-4 opacity-20" />
+                กรุณากำหนดเงื่อนไขการขายและต้นทุนให้ครบถ้วนเพื่อวิเคราะห์กำไร
+              </div>
+            )}
+          </TabsContent>
+
           <TabsContent value="assignments" className="mt-6">
             <Card>
               <CardHeader>
@@ -565,5 +588,20 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         </Tabs>
       </div>
     </AppShell>
+  );
+}
+
+function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
+  return (
+    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm`}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
+        <Icon className="h-4 w-4 opacity-50 text-primary" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-xl font-black text-primary truncate">{value}</div>
+        <p className="text-[10px] font-medium text-muted-foreground mt-1">{sub}</p>
+      </CardContent>
+    </Card>
   );
 }

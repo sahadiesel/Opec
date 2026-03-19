@@ -20,14 +20,15 @@ import {
   TrendingUp,
   FileText,
   Calculator,
-  Plus
+  Plus,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   SalesContractTerm, 
-  RateCondition, 
   User, 
   Customer, 
   PurchaseOrder,
@@ -222,7 +223,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
                       </Button>
                     )}
                     <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CANCELLED')}>
-                      ยกเลิกรายการนี้
+                      <XCircle className="h-4 w-4 mr-2" /> ยกเลิกรายการนี้
                     </Button>
                   </CardContent>
                 </Card>
