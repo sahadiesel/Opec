@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Building2, Trash2, ChevronRight, Filter, Info, ArrowRight } from 'lucide-react';
+import { Plus, Search, Building2, Trash2, ChevronRight, Filter, Info, ArrowRight, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Customer, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,7 @@ import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function CustomersPage() {
   const router = useRouter();
@@ -35,9 +36,10 @@ export default function CustomersPage() {
   const { toast } = useToast();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newCustomer, setNewCustomer] = useState<Partial<Customer>>({
     name: '',
-    customerCode: '',
+    customerCode: getPreviewPattern('customer'),
     taxId: '',
     registeredAddress: '',
     billingAddress: '',
@@ -73,12 +75,25 @@ export default function CustomersPage() {
   const { data: customers, isLoading } = useCollection<Customer>(customersQuery as any);
 
   const handleCreate = async () => {
-    if (!firestore) return;
-    const custRef = collection(firestore, 'customers');
+    if (!firestore || !user) return;
     
+    if (!newCustomer.name) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบริษัท" });
+      return;
+    }
+
+    setIsCreating(true);
     try {
+      // 1. Generate unique customer code atomically
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'customer', { 
+        actor: user.displayName 
+      });
+
+      // 2. Create the document
+      const custRef = collection(firestore, 'customers');
       const docRef = await addDocumentNonBlocking(custRef, {
         ...newCustomer,
+        customerCode: finalNo, // Apply the official sequence code
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -86,18 +101,21 @@ export default function CustomersPage() {
       setIsCreateOpen(false);
       toast({
         title: "ลงทะเบียนลูกค้าสำเร็จ",
-        description: "กำลังนำคุณไปที่หน้าจัดการข้อมูลผู้ติดต่อและสัญญา...",
+        description: `รหัสลูกค้า: ${finalNo}`,
       });
       
       if (docRef) {
         router.push(`/customers/${docRef.id}`);
       }
     } catch (error) {
+      console.error(error);
       toast({
         variant: "destructive",
         title: "เกิดข้อผิดพลาด",
         description: "ไม่สามารถบันทึกข้อมูลลูกค้าได้",
       });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -163,7 +181,12 @@ export default function CustomersPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>รหัสลูกค้า (Customer Code)</Label>
-                  <Input value={newCustomer.customerCode} onChange={e => setNewCustomer({...newCustomer, customerCode: e.target.value})} />
+                  <Input 
+                    value={newCustomer.customerCode} 
+                    disabled 
+                    className="bg-muted font-mono font-bold text-primary" 
+                  />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะรันเลขที่จริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="grid gap-2">
                   <Label>เลขประจำตัวผู้เสียภาษี (Tax ID)</Label>
@@ -187,8 +210,11 @@ export default function CustomersPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">บันทึกข้อมูลลูกค้า (Save Profile)</Button>
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึกข้อมูลลูกค้า (Save Profile)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -276,7 +302,7 @@ export default function CustomersPage() {
               <a href="/main-contracts">ไปยังระบบสัญญาหลัก (Main Contracts) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
-        </Card>
+        </div>
       </div>
     </AppShell>
   );
