@@ -330,6 +330,30 @@ export interface POLine {
   status: 'active' | 'cancelled' | 'completed';
 }
 
+export type SalesContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'CANCELLED';
+
+export interface SalesContractTerm {
+  id: string;
+  customerId: string;
+  mainContractId: string;
+  purchaseOrderId: string;
+  title: string;
+  contractNo: string;
+  status: SalesContractStatus;
+  effectiveDate: string; // Date-only string (e.g., YYYY-MM-DD)
+  endDate: string; // Date-only string (e.g., YYYY-MM-DD)
+  currency: string;
+  billingCycle: string;
+  paymentTermsDays: number;
+  vatPercent: number;
+  withholdingTaxPercent: number;
+  notes?: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Assignment {
   id: string;
   workerId: string;
