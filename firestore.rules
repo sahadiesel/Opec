@@ -24,7 +24,8 @@ service cloud.firestore {
       let user = getUserData();
       return isSignedIn() && user != null && (
         user.roleId == roleName || 
-        (user.roleIds != null && user.roleIds.hasAny([roleName]))
+        (user.roleIds != null && user.roleIds.hasAny([roleName])) ||
+        user.assignedRoleKey == roleName
       );
     }
 
@@ -33,15 +34,19 @@ service cloud.firestore {
     }
 
     function isOperationsStaff() {
-      return hasRole('operations_officer') || hasRole('system_admin');
+      return hasRole('operations_officer') || hasRole('operations_manager') || hasRole('system_admin');
     }
 
     function isFinanceStaff() {
-      return hasRole('finance_officer') || hasRole('system_admin');
+      return hasRole('accounting_manager') || hasRole('accounting_officer') || hasRole('finance_officer') || hasRole('system_admin');
     }
 
     function isSalesStaff() {
       return hasRole('sales_officer') || hasRole('sales_manager') || hasRole('system_admin');
+    }
+
+    function isStoreStaff() {
+      return hasRole('store_officer') || hasRole('system_admin');
     }
 
     // --- COLLECTION RULES ---
@@ -49,9 +54,33 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isHRStaff();
-      allow create: if isOwner(userId);
+      allow create: if isOwner(userId) || hasRole('system_admin');
       allow update: if isOwner(userId) || hasRole('system_admin');
       allow delete: if hasRole('system_admin');
+    }
+
+    // Centralized Numbering System
+    match /number_sequences/{id} {
+      allow get: if isSignedIn();
+      allow list: if hasRole('system_admin');
+      // Authorized staff can update (increment) lastNumber during doc creation transactions
+      allow update: if isFinanceStaff() || isHRStaff() || isSalesStaff() || isOperationsStaff() || isStoreStaff();
+      // Structural changes (create/delete) are admin-only
+      allow create, delete: if hasRole('system_admin');
+    }
+
+    // Audit Trail
+    match /audit_logs/{id} {
+      allow get: if isSignedIn();
+      allow list: if hasRole('system_admin');
+      allow create: if isSignedIn(); // Authorized users can write logs
+      allow update, delete: if false; // Logs are immutable
+    }
+
+    // Commercial & Sales
+    match /customers/{id} {
+      allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+      allow write: if isSalesStaff();
     }
 
     match /quotations/{id} {
@@ -60,30 +89,124 @@ service cloud.firestore {
       allow delete: if hasRole('system_admin');
     }
 
-    match /po_profit_snapshots/{id} {
-      allow get, list: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
-      allow create: if isSalesStaff() || isFinanceStaff();
-      allow update, delete: if hasRole('system_admin');
-    }
-
-    match /number_sequences/{id} {
-      allow get: if isSignedIn();
-      allow write: if isFinanceStaff() || isHRStaff() || isSalesStaff() || isOperationsStaff();
-    }
-
-    match /workers/{workerId} {
-      allow get, list: if isHRStaff() || isOperationsStaff();
-      allow write: if isHRStaff();
+    match /main_contracts/{id} {
+      allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+      allow write: if isSalesStaff();
     }
 
     match /purchase_orders/{poId} {
       allow get, list: if isSignedIn();
       allow write: if isSalesStaff() || isFinanceStaff();
     }
+    
+    match /purchase_orders/{poId}/po_lines/{lineId} {
+      allow read, write: if isSalesStaff() || isFinanceStaff();
+    }
 
-    match /mobilizations/{mobId} {
+    // Operations & Mobilization
+    match /waves/{id} {
+      allow read: if isOperationsStaff() || isHRStaff() || isFinanceStaff();
+      allow write: if isOperationsStaff();
+    }
+
+    match /mobilizations/{id} {
       allow get, list: if isSignedIn();
       allow write: if isHRStaff() || isOperationsStaff();
+    }
+
+    match /workers/{workerId} {
+      allow get, list: if isHRStaff() || isOperationsStaff() || isStoreStaff();
+      allow write: if isHRStaff();
+    }
+
+    match /positions/{id} {
+      allow read: if isSignedIn();
+      allow write: if isHRStaff();
+    }
+
+    // Store & Inventory
+    match /store_items/{id} {
+      allow read: if isStoreStaff() || isOperationsStaff();
+      allow write: if isStoreStaff();
+    }
+
+    match /store_transactions/{id} {
+      allow read: if isStoreStaff() || isOperationsStaff() || isFinanceStaff();
+      allow create: if isStoreStaff() || isOperationsStaff();
+      allow update, delete: if hasRole('system_admin');
+    }
+
+    match /vendors/{id} {
+      allow read: if isStoreStaff() || isFinanceStaff();
+      allow write: if isStoreStaff();
+    }
+
+    match /purchases/{id} {
+      allow read: if isStoreStaff() || isFinanceStaff();
+      allow write: if isStoreStaff();
+    }
+
+    // Finance & Accounting
+    match /billing_notes/{id} {
+      allow read: if isFinanceStaff() || isSalesStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /tax_invoices/{id} {
+      allow read: if isFinanceStaff() || isSalesStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /receipts/{id} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /ap_bills/{id} {
+      allow read: if isFinanceStaff() || isStoreStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /bank_accounts/{id} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /cashbook_entries/{id} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /accounts_receivable/{id} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    match /accounts_payable/{id} {
+      allow read: if isFinanceStaff();
+      allow write: if isFinanceStaff();
+    }
+
+    // HR Payroll
+    match /payroll_runs/{id} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isFinanceStaff();
+    }
+
+    match /office_payroll_runs/{id} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isFinanceStaff();
+    }
+
+    match /office_staff/{id} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff();
+    }
+
+    // Permissions System
+    match /permission_profiles/{id} {
+      allow get: if isSignedIn();
+      allow list, write: if hasRole('system_admin');
     }
     
     // Default fallback
