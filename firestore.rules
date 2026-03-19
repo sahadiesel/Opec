@@ -63,9 +63,7 @@ service cloud.firestore {
     match /number_sequences/{id} {
       allow get: if isSignedIn();
       allow list: if hasRole('system_admin');
-      // Authorized staff can update (increment) lastNumber during doc creation transactions
       allow update: if isFinanceStaff() || isHRStaff() || isSalesStaff() || isOperationsStaff() || isStoreStaff();
-      // Structural changes (create/delete) are admin-only
       allow create, delete: if hasRole('system_admin');
     }
 
@@ -73,8 +71,8 @@ service cloud.firestore {
     match /audit_logs/{id} {
       allow get: if isSignedIn();
       allow list: if hasRole('system_admin');
-      allow create: if isSignedIn(); // Authorized users can write logs
-      allow update, delete: if false; // Logs are immutable
+      allow create: if isSignedIn();
+      allow update, delete: if false;
     }
 
     // Commercial & Sales
@@ -87,6 +85,16 @@ service cloud.firestore {
       allow get, list: if isSalesStaff() || isFinanceStaff();
       allow create, update: if isSalesStaff();
       allow delete: if hasRole('system_admin');
+    }
+
+    match /sales_contract_terms/{id} {
+      allow read: if isSalesStaff() || isFinanceStaff();
+      allow write: if isSalesStaff();
+    }
+
+    match /labor_cost_contract_terms/{id} {
+      allow read: if isSalesStaff() || isHRStaff() || isFinanceStaff();
+      allow write: if isSalesStaff() || isHRStaff();
     }
 
     match /main_contracts/{id} {

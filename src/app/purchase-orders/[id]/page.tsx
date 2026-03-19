@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,7 +22,12 @@ import {
   Users,
   Calendar,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  TrendingUp,
+  Coins,
+  History,
+  Info,
+  Loader2
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -34,12 +39,26 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { PurchaseOrder, POLine, Customer, MainContract, Position, PositionRate, User, Assignment, Worker } from '@/lib/types';
+import { 
+  PurchaseOrder, 
+  POLine, 
+  Customer, 
+  MainContract, 
+  Position, 
+  PositionRate, 
+  User, 
+  Assignment, 
+  Worker,
+  SalesContractTerm,
+  LaborCostContractTerm
+} from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { Separator } from '@/components/ui/separator';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -58,6 +77,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const poLinesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders', id, 'po_lines') : null), [firestore, id]);
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
+
+  const salesTermsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'sales_contract_terms'), where('purchaseOrderId', '==', id)) : null), [firestore, id]);
+  const { data: salesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
+
+  const costTermsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'labor_cost_contract_terms'), where('relatedPurchaseOrderId', '==', id)) : null), [firestore, id]);
+  const { data: costTerms } = useCollection<LaborCostContractTerm>(costTermsQuery as any);
 
   const assignmentsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser) return null;
@@ -87,6 +112,16 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const [newLine, setNewLine] = useState<Partial<POLine>>({ 
     quantity: 1,
     status: 'active'
+  });
+
+  const [isCreatingSalesTerm, setIsCreatingSalesTerm] = useState(false);
+  const [newSalesTerm, setNewSalesTerm] = useState<Partial<SalesContractTerm>>({
+    currency: 'THB',
+    vatPercent: 7,
+    withholdingTaxPercent: 3,
+    billingCycle: 'Monthly',
+    paymentTermsDays: 30,
+    status: 'ACTIVE'
   });
 
   const handleSaveMaster = () => {
@@ -123,6 +158,35 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     toast({ title: "เพิ่ม PO Line สำเร็จ" });
   };
 
+  const handleCreateSalesTerm = async () => {
+    if (!firestore || !currentUser || !po) return;
+    setIsCreatingSalesTerm(true);
+    try {
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'sales_term', { actor: currentUser.displayName });
+      
+      await addDocumentNonBlocking(collection(firestore, 'sales_contract_terms'), {
+        ...newSalesTerm,
+        contractNo: finalNo,
+        title: `Sales Terms for ${po.poCode}`,
+        customerId: po.customerId,
+        mainContractId: po.contractId,
+        purchaseOrderId: po.id,
+        effectiveDate: new Date(po.startDate).toISOString().split('T')[0],
+        endDate: new Date(po.endDate).toISOString().split('T')[0],
+        createdBy: currentUser.displayName,
+        updatedBy: currentUser.displayName,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+
+      toast({ title: "สร้างเงื่อนไขการขายสำเร็จ", description: `รหัส: ${finalNo}` });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
+    } finally {
+      setIsCreatingSalesTerm(false);
+    }
+  };
+
   const deleteLine = (lineId: string) => {
     if (!firestore) return;
     if (confirm('ยืนยันการลบรายการนี้? รายการมอบหมายที่เชื่อมโยงอยู่จะยังคงอยู่แต่จะเสียการอ้างอิง')) {
@@ -134,7 +198,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูล Customer PO...</div>
+          <Loader2 className="h-12 w-12 text-primary animate-spin" />
         </div>
       </AppShell>
     );
@@ -174,10 +238,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         </div>
 
         <Tabs defaultValue="lines" className="w-full">
-          <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
-            <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูล PO</TabsTrigger>
-            <TabsTrigger value="lines" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> PO Lines (จองโควต้า)</TabsTrigger>
-            <TabsTrigger value="assignments" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> Assignments (คนงาน)</TabsTrigger>
+          <TabsList className="grid grid-cols-4 w-full md:w-[800px] h-auto p-1 bg-muted/50">
+            <TabsTrigger value="info" className="gap-2 py-2 px-6">ข้อมูล PO</TabsTrigger>
+            <TabsTrigger value="lines" className="gap-2 py-2 px-6">PO Lines (โควต้า)</TabsTrigger>
+            <TabsTrigger value="terms" className="gap-2 py-2 px-6">Commercial Terms</TabsTrigger>
+            <TabsTrigger value="assignments" className="gap-2 py-2 px-6">Assignments (คนงาน)</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6">
@@ -353,6 +418,88 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </Table>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="terms" className="mt-6 space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2 text-primary"><TrendingUp className="h-5 w-5" /> เงื่อนไขการขาย (Sales Terms)</CardTitle>
+                    <CardDescription>ระบุนโยบายการวางบิล ภาษี และสกุลเงินสำหรับโครงการนี้</CardDescription>
+                  </div>
+                  {salesTerms?.length === 0 && (
+                    <Button onClick={handleCreateSalesTerm} disabled={isCreatingSalesTerm}>
+                      {isCreatingSalesTerm ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                      Initialize Terms
+                    </Button>
+                  )}
+                </CardHeader>
+                <CardContent className="pt-6">
+                  {salesTerms?.map(term => (
+                    <div key={term.id} className="space-y-6">
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">เลขที่สัญญา/ข้อกำหนด:</Label>
+                          <p className="font-mono text-sm font-bold text-primary">{term.contractNo}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">รอบการวางบิล:</Label>
+                          <p className="font-medium">{term.billingCycle}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">VAT (%):</Label>
+                          <p className="font-medium">{term.vatPercent}%</p>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">WHT (%):</Label>
+                          <p className="font-medium text-amber-600">{term.withholdingTaxPercent}%</p>
+                        </div>
+                      </div>
+                      <Separator />
+                      <div className="p-4 bg-muted/30 rounded-lg space-y-2">
+                        <p className="text-[10px] font-black uppercase text-muted-foreground">Status & Meta</p>
+                        <div className="flex justify-between items-center text-xs">
+                          <Badge variant="outline" className="bg-green-50 text-green-700">{term.status}</Badge>
+                          <span className="text-muted-foreground">Issued: {new Date(term.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {salesTerms?.length === 0 && (
+                    <div className="py-10 text-center text-muted-foreground italic text-sm">ยังไม่มีการกำหนดเงื่อนไขการขายสำหรับ PO นี้</div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2 text-primary"><Coins className="h-5 w-5" /> เงื่อนไขต้นทุน (Labor Cost Terms)</CardTitle>
+                    <CardDescription>ระบุโครงสร้างการจ่ายเงินคนงานภายใต้โครงการนี้</CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-6">
+                  {costTerms?.length === 0 ? (
+                    <div className="py-10 text-center text-muted-foreground italic text-sm">ยังไม่มีการกำหนดเงื่อนไขต้นทุนแรงงาน</div>
+                  ) : (
+                    <div className="space-y-4">
+                      {costTerms.map(term => (
+                        <div key={term.id} className="p-4 border rounded-lg hover:bg-muted/20 transition-all group">
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-1">
+                              <p className="font-bold text-primary">{term.title}</p>
+                              <p className="text-[10px] text-muted-foreground">Scope: {term.scopeType}</p>
+                            </div>
+                            <Badge variant="outline">{term.status}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="assignments" className="mt-6">

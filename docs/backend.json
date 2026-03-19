@@ -31,6 +31,33 @@
       },
       "required": ["id", "quotationNo", "customerId", "title"]
     },
+    "SalesContractTerm": {
+      "title": "SalesContractTerm",
+      "type": "object",
+      "description": "Detailed billing and commercial rules linked to a PO or project.",
+      "properties": {
+        "id": { "type": "string" },
+        "contractNo": { "type": "string" },
+        "customerId": { "type": "string" },
+        "purchaseOrderId": { "type": "string" },
+        "billingCycle": { "type": "string" },
+        "vatPercent": { "type": "number" },
+        "withholdingTaxPercent": { "type": "number" },
+        "status": { "type": "string" }
+      }
+    },
+    "LaborCostContractTerm": {
+      "title": "LaborCostContractTerm",
+      "type": "object",
+      "description": "Detailed cost and payroll rules for specific project deployments.",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "relatedPurchaseOrderId": { "type": "string" },
+        "scopeType": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
     "PurchaseOrderProfitSnapshot": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "PurchaseOrderProfitSnapshot",
@@ -104,6 +131,24 @@
           "schema": { "$ref": "#/backend/entities/Quotation" },
           "description": "Stores sales quotations sent to customers.",
           "params": [{ "name": "quoId", "description": "Unique ID of the quotation." }]
+        }
+      },
+      {
+        "path": "/sales_contract_terms/{termId}",
+        "definition": {
+          "entityName": "SalesContractTerm",
+          "schema": { "$ref": "#/backend/entities/SalesContractTerm" },
+          "description": "Stores project-specific billing rules.",
+          "params": [{ "name": "termId", "description": "Unique ID of the sales term record." }]
+        }
+      },
+      {
+        "path": "/labor_cost_contract_terms/{termId}",
+        "definition": {
+          "entityName": "LaborCostContractTerm",
+          "schema": { "$ref": "#/backend/entities/LaborCostContractTerm" },
+          "description": "Stores project-specific cost/payroll rules.",
+          "params": [{ "name": "termId", "description": "Unique ID of the cost term record." }]
         }
       },
       {

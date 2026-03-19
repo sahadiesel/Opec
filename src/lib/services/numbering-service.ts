@@ -28,6 +28,8 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   customer: { label: 'Customer', prefix: 'CUS-', padding: 5, dept: 'sales', resetPolicy: 'none', collectionName: 'customers', fieldName: 'customerCode' },
   customer_po: { label: 'Customer PO', prefix: 'PO-', padding: 5, dept: 'sales', resetPolicy: 'yearly', collectionName: 'purchase_orders', fieldName: 'poCode' },
   quotation: { label: 'Quotation', prefix: 'QT-', padding: 5, dept: 'sales', resetPolicy: 'monthly', collectionName: 'quotations', fieldName: 'quotationNo' },
+  sales_term: { label: 'Sales Term', prefix: 'SLT-', padding: 4, dept: 'sales', resetPolicy: 'yearly', collectionName: 'sales_contract_terms', fieldName: 'contractNo' },
+  cost_term: { label: 'Cost Term', prefix: 'CST-', padding: 4, dept: 'sales', resetPolicy: 'yearly', collectionName: 'labor_cost_contract_terms', fieldName: 'id' },
   billing_note: { label: 'Billing Note', prefix: 'BN-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'billing_notes', fieldName: 'billingNoteNo' },
   tax_invoice: { label: 'Tax Invoice', prefix: 'INV-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'tax_invoices', fieldName: 'taxInvoiceNo' },
   receipt: { label: 'Receipt', prefix: 'RCT-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'receipts', fieldName: 'receiptNo' },
