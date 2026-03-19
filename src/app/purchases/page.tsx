@@ -38,6 +38,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function PurchasesPage() {
   const router = useRouter();
@@ -67,8 +68,9 @@ export default function PurchasesPage() {
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newPurchase, setNewPurchase] = useState<Partial<Purchase>>({
-    purchaseNo: `PUR-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
+    purchaseNo: '(Auto-generated)',
     purchaseDate: new Date().toISOString().split('T')[0],
     purchaseType: 'CREDIT',
     storeReceiptStatus: 'PENDING',
@@ -79,14 +81,22 @@ export default function PurchasesPage() {
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!newPurchase.vendorId || !newPurchase.purchaseNo) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขที่การซื้อและคู่ค้า" });
+    if (!newPurchase.vendorId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุคู่ค้า" });
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const year = new Date().getFullYear();
+      const prefix = `PUR-${year}-`;
+      const sequenceKey = `purchase_${year}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'purchases'), {
         ...newPurchase,
+        purchaseNo: finalNo,
         amountBeforeTax: 0,
         vatAmount: 0,
         totalAmount: 0,
@@ -95,10 +105,23 @@ export default function PurchasesPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างรายการซื้อสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายการสินค้า..." });
+      toast({ title: "สร้างรายการซื้อสำเร็จ", description: `เลขที่: ${finalNo}` });
       if (docRef) router.push(`/purchases/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างรายการซื้อได้" });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const getStatusBadge = (status: PurchaseStatus) => {
+    switch (status) {
+      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
+      case 'ISSUED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">ISSUED</Badge>;
+      case 'COMPLETED': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">COMPLETED</Badge>;
+      case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
+      default: return <Badge variant="outline">{status}</Badge>;
     }
   };
 
@@ -134,12 +157,12 @@ export default function PurchasesPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างรายการซื้อใหม่ (Record Purchase)</DialogTitle>
-                <DialogDescription>ระบุข้อมูลเบื้องต้นและคู่ค้าเพื่อเริ่มต้นบันทึกการซื้อ</DialogDescription>
+                <DialogDescription>ระบุข้อมูลเบื้องต้นและคู่ค้า ระบบจะรันเลขที่อัตโนมัติเมื่อยืนยัน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่การซื้อ (Purchase No.)</Label>
-                  <Input value={newPurchase.purchaseNo} onChange={e => setNewPurchase({...newPurchase, purchaseNo: e.target.value})} />
+                  <Input value={newPurchase.purchaseNo} disabled className="bg-muted/50 font-mono font-bold" />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>คู่ค้า / ผู้ขาย (Vendor)</Label>
@@ -168,8 +191,11 @@ export default function PurchasesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">เริ่มบันทึกรายการ (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  เริ่มบันทึกรายการ (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

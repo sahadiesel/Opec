@@ -1154,3 +1154,14 @@ export interface PurchaseOrderProfitSnapshot {
   generatedAt: number;
   generatedBy: string;
 }
+
+/**
+ * Document Numbering Sequence tracking
+ */
+export interface NumberSequence {
+  id: string;
+  prefix: string;
+  lastNumber: number;
+  updatedAt: number;
+  createdAt: number;
+}

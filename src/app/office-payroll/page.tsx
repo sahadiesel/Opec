@@ -39,6 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function OfficePayrollPage() {
   const router = useRouter();
@@ -55,8 +56,9 @@ export default function OfficePayrollPage() {
   const { data: runs, isLoading } = useCollection<OfficePayrollRun>(runsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>({
-    payrollRunNo: `O-PR-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+    payrollRunNo: '(Auto-generated)',
     payrollMonth: new Date().toISOString().slice(0, 7),
     payrollPeriodStart: '',
     payrollPeriodEnd: '',
@@ -70,9 +72,17 @@ export default function OfficePayrollPage() {
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const year = new Date().getFullYear();
+      const prefix = `O-PR-${year}-`;
+      const sequenceKey = `office_payroll_run_${year}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 3);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'office_payroll_runs'), {
         ...newRun,
+        payrollRunNo: finalNo,
         status: 'DRAFT',
         staffCount: 0,
         grossAmount: 0,
@@ -84,10 +94,13 @@ export default function OfficePayrollPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างงวดเงินเดือนสำเร็จ", description: "กำลังนำคุณไปที่หน้าคำนวณและตรวจสอบ..." });
+      toast({ title: "สร้างงวดเงินเดือนสำเร็จ", description: `เลขที่: ${finalNo}` });
       if (docRef) router.push(`/office-payroll/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างงวดการจ่ายเงินได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -144,7 +157,7 @@ export default function OfficePayrollPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
                 <Plus className="h-5 w-5" /> สร้างงวดเงินเดือน (New Office Payroll)
@@ -153,12 +166,12 @@ export default function OfficePayrollPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างงวดเงินเดือนพนักงานใหม่</DialogTitle>
-                <DialogDescription>ระบุเดือนและช่วงเวลาสำหรับคำนวณเงินเดือน ระบบจะดึงพนักงานที่มีสถานะ ACTIVE มาโดยอัตโนมัติ</DialogDescription>
+                <DialogDescription>ระบุเดือนและช่วงเวลาสำหรับคำนวณเงินเดือน ระบบจะรันเลขที่อัตโนมัติเมื่อบันทึก</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่งวด (Run No.)</Label>
-                  <Input value={newRun.payrollRunNo} onChange={e => setNewRun({...newRun, payrollRunNo: e.target.value})} />
+                  <Input value={newRun.payrollRunNo} disabled className="bg-muted/50 font-mono font-bold" />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>เดือนที่จ่าย (Payroll Month)</Label>
@@ -178,8 +191,11 @@ export default function OfficePayrollPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreateRun} className="bg-primary font-bold">สร้างงวดเงินเดือน (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreateRun} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  สร้างงวดเงินเดือน (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

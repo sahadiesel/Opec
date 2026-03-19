@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function ReceiptsPage() {
   const router = useRouter();
@@ -67,8 +68,9 @@ export default function ReceiptsPage() {
   const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newReceipt, setNewReceipt] = useState<Partial<ReceiptType>>({
-    receiptNo: `RCT-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
+    receiptNo: '(Auto-generated)',
     receiptDate: new Date().toISOString().split('T')[0],
     paymentMethod: 'TRANSFER',
     receivedAmount: 0,
@@ -83,19 +85,30 @@ export default function ReceiptsPage() {
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const year = new Date().getFullYear();
+      const prefix = `RCT-${year}-`;
+      const sequenceKey = `receipt_${year}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'receipts'), {
         ...newReceipt,
+        receiptNo: finalNo,
         receivedAmount: Number(newReceipt.receivedAmount),
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
 
       setIsDialogOpen(false);
-      toast({ title: "บันทึกใบเสร็จสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดสรรยอดเงิน..." });
+      toast({ title: "บันทึกใบเสร็จสำเร็จ", description: `เลขที่: ${finalNo}` });
       if (docRef) router.push(`/receipts/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกใบเสร็จได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -140,9 +153,13 @@ export default function ReceiptsPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>บันทึกการรับเงินใหม่ (Record Receipt)</DialogTitle>
-                <DialogDescription>ระบุรายละเอียดการรับชำระเงินเพื่อนำไปตัดยอดลูกหนี้</DialogDescription>
+                <DialogDescription>ระบุรายละเอียดการรับชำระเงิน ระบบจะรันเลขที่เอกสารให้อัตโนมัติ</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                <div className="space-y-2 md:col-span-2">
+                  <Label>เลขที่ใบเสร็จ (Receipt No.)</Label>
+                  <Input value={newReceipt.receiptNo} disabled className="bg-muted/50 font-mono font-bold" />
+                </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>ลูกค้า (Customer)</Label>
                   <Select onValueChange={v => setNewReceipt({...newReceipt, customerId: v})}>
@@ -153,10 +170,6 @@ export default function ReceiptsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>เลขที่ใบเสร็จ (Receipt No.)</Label>
-                  <Input value={newReceipt.receiptNo} onChange={e => setNewReceipt({...newReceipt, receiptNo: e.target.value})} />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่รับเงิน (Date)</Label>
@@ -191,8 +204,11 @@ export default function ReceiptsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">บันทึกและจัดสรรยอด (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึกข้อมูล (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

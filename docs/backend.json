@@ -50,6 +50,17 @@
         "eventAt": { "type": "number" }
       },
       "required": ["id", "actionType", "entityType", "entityId", "actorUserId", "eventAt"]
+    },
+    "NumberSequence": {
+      "title": "NumberSequence",
+      "type": "object",
+      "description": "State tracking for sequential document numbering (e.g. BN-0001, INV-0001).",
+      "properties": {
+        "id": { "type": "string" },
+        "prefix": { "type": "string" },
+        "lastNumber": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      }
     }
   },
   "auth": {
@@ -73,6 +84,15 @@
           "schema": { "$ref": "#/backend/entities/AuditLog" },
           "description": "Central collection for system-wide audit trails.",
           "params": [{ "name": "logId", "description": "Unique ID of the audit entry." }]
+        }
+      },
+      {
+        "path": "/number_sequences/{seqId}",
+        "definition": {
+          "entityName": "NumberSequence",
+          "schema": { "$ref": "#/backend/entities/NumberSequence" },
+          "description": "State for automatic document numbering.",
+          "params": [{ "name": "seqId", "description": "Key identifying the specific numbering sequence." }]
         }
       }
     ]

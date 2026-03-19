@@ -37,6 +37,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function APBillsPage() {
   const router = useRouter();
@@ -69,8 +70,9 @@ export default function APBillsPage() {
   const { data: purchases } = useCollection<Purchase>(purchasesQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newBill, setNewBill] = useState<Partial<APBill>>({
-    apBillNo: `APB-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
+    apBillNo: '(Auto-generated)',
     billReceivedDate: new Date().toISOString().split('T')[0],
     invoiceDate: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // 30 days
@@ -86,9 +88,17 @@ export default function APBillsPage() {
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const year = new Date().getFullYear();
+      const prefix = `APB-${year}-`;
+      const sequenceKey = `ap_bill_${year}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'ap_bills'), {
         ...newBill,
+        apBillNo: finalNo,
         amountBeforeTax: 0,
         vatAmount: 0,
         totalAmount: 0,
@@ -98,10 +108,13 @@ export default function APBillsPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "บันทึกใบวางบิลเจ้าหนี้สำเร็จ" });
+      toast({ title: "บันทึกใบวางบิลเจ้าหนี้สำเร็จ", description: `เลขที่: ${finalNo}` });
       if (docRef) router.push(`/ap-bills/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -149,6 +162,10 @@ export default function APBillsPage() {
               <DialogHeader><DialogTitle>บันทึกใบวางบิลเจ้าหนี้</DialogTitle></DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
+                  <Label>เลขที่บันทึกภายใน (Internal Ref)</Label>
+                  <Input value={newBill.apBillNo} disabled className="bg-muted/50 font-mono font-bold" />
+                </div>
+                <div className="space-y-2 md:col-span-2">
                   <Label>คู่ค้า / ผู้ขาย (Vendor)</Label>
                   <Select onValueChange={v => setNewBill({...newBill, vendorId: v})}>
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทคู่ค้า..." /></SelectTrigger>
@@ -160,7 +177,7 @@ export default function APBillsPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>เลขที่ใบแจ้งหนี้คู่ค้า</Label>
+                  <Label>เลขที่ใบแจ้งหนี้คู่ค้า (Supplier Invoice No.)</Label>
                   <Input value={newBill.supplierInvoiceNo} onChange={e => setNewBill({...newBill, supplierInvoiceNo: e.target.value})} />
                 </div>
                 <div className="space-y-2">
@@ -188,8 +205,11 @@ export default function APBillsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">บันทึกข้อมูล (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึกข้อมูล (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -203,7 +223,7 @@ export default function APBillsPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">เลขที่บิล (AP Bill No.)</TableHead>
+                    <TableHead className="font-bold py-4 pl-6">เลขที่บันทึก (Internal No.)</TableHead>
                     <TableHead className="font-bold">คู่ค้า (Vendor)</TableHead>
                     <TableHead className="font-bold">เลขที่ใบแจ้งหนี้</TableHead>
                     <TableHead className="font-bold">ครบกำหนด</TableHead>

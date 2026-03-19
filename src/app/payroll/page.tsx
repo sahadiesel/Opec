@@ -17,14 +17,16 @@ import {
   Info,
   Clock,
   CheckCircle2,
-  FileText
+  FileText,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PayrollRun, PayrollRunStatus, PayrollType, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
   DialogContent, 
@@ -36,8 +38,7 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { useToast } from '@/hooks/use-toast';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function PayrollPage() {
   const router = useRouter();
@@ -54,8 +55,9 @@ export default function PayrollPage() {
   const { data: runs, isLoading } = useCollection<PayrollRun>(runsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newRun, setNewRun] = useState<Partial<PayrollRun>>({
-    payrollRunNo: `PR-${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`,
+    payrollRunNo: '(Auto-generated)',
     payrollPeriodStart: '',
     payrollPeriodEnd: '',
     payrollType: 'MONTHLY',
@@ -70,9 +72,18 @@ export default function PayrollPage() {
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const year = new Date().getFullYear();
+      const month = String(new Date().getMonth() + 1).padStart(2, '0');
+      const prefix = `PR-${year}-${month}-`;
+      const sequenceKey = `payroll_run_${year}_${month}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 3);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'payroll_runs'), {
         ...newRun,
+        payrollRunNo: finalNo,
         status: 'DRAFT',
         workerCount: 0,
         grossAmount: 0,
@@ -87,10 +98,13 @@ export default function PayrollPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างงวดการจ่ายเงินสำเร็จ", description: "กำลังนำคุณไปที่หน้าคำนวณและตรวจสอบ..." });
+      toast({ title: "สร้างงวดการจ่ายเงินสำเร็จ", description: `เลขที่: ${finalNo}` });
       if (docRef) router.push(`/payroll/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างงวดการจ่ายเงินได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -147,7 +161,7 @@ export default function PayrollPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
                 <Plus className="h-5 w-5" /> สร้างงวดการจ่ายเงิน (New Payroll)
@@ -156,19 +170,19 @@ export default function PayrollPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างงวดการจ่ายเงินใหม่ (Worker Payroll Entry)</DialogTitle>
-                <DialogDescription>ระบุช่วงเวลาและประเภทการจ่ายเงิน ระบบจะดึงข้อมูล Timesheet ที่อนุมัติแล้วมาคำนวณ</DialogDescription>
+                <DialogDescription>ระบุช่วงเวลาและประเภทการจ่ายเงิน ระบบจะรันเลขที่อัตโนมัติเมื่อกดยืนยัน</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่งวดการจ่าย (Run No.)</Label>
-                  <Input value={newRun.payrollRunNo} onChange={e => setNewRun({...newRun, payrollRunNo: e.target.value})} />
+                  <Input value={newRun.payrollRunNo} disabled className="bg-muted/50 font-mono font-bold" />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่เริ่มงวด (Period Start)</Label>
                   <Input type="date" value={newRun.payrollPeriodStart} onChange={e => setNewRun({...newRun, payrollPeriodStart: e.target.value})} />
                 </div>
                 <div className="space-y-2">
-                  <Label>วันที่สิ้นงวด (Period End)</Label>
+                  <Label>วันที่สิ้นสุดงวด (Period End)</Label>
                   <Input type="date" value={newRun.payrollPeriodEnd} onChange={e => setNewRun({...newRun, payrollPeriodEnd: e.target.value})} />
                 </div>
                 <div className="space-y-2">
@@ -195,8 +209,11 @@ export default function PayrollPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreateRun} className="bg-primary font-bold">สร้างงวดงาน (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreateRun} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  สร้างงวดงาน (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

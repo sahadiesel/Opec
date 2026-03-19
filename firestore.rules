@@ -61,9 +61,10 @@ service cloud.firestore {
       allow update, delete: if hasRole('system_admin');
     }
 
-    // (Remaining rules preserved but omitted for brevity in thought process - usually full content is required)
-    // IMPORTANT: In real execution I would repeat all necessary matches. 
-    // Here I will provide the core rule logic for the new path within the match block.
+    match /number_sequences/{id} {
+      allow get: if isSignedIn();
+      allow write: if isFinanceStaff() || isHRStaff() || isSalesStaff() || isOperationsStaff();
+    }
 
     match /workers/{workerId} {
       allow get, list: if isHRStaff() || isOperationsStaff();

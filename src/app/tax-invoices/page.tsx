@@ -22,7 +22,7 @@ import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
-import { addDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
@@ -36,6 +36,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function TaxInvoicesPage() {
   const router = useRouter();
@@ -68,8 +69,9 @@ export default function TaxInvoicesPage() {
   const { data: billingNotes } = useCollection<BillingNote>(billingNotesQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newInvoice, setNewInvoice] = useState<Partial<TaxInvoice>>({
-    taxInvoiceNo: `INV-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
+    taxInvoiceNo: '(Auto-generated)',
     issueDate: new Date().toISOString().split('T')[0],
     currency: 'THB',
     status: 'DRAFT',
@@ -78,17 +80,25 @@ export default function TaxInvoicesPage() {
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!newInvoice.billingNoteId || !newInvoice.taxInvoiceNo) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขที่ใบกำกับภาษีและใบวางบิลอ้างอิง" });
+    if (!newInvoice.billingNoteId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุใบวางบิลอ้างอิง" });
       return;
     }
 
     const sourceNote = billingNotes?.find(n => n.id === newInvoice.billingNoteId);
     if (!sourceNote) return;
 
+    setIsCreating(true);
     try {
+      // Atomic Document Number Generation
+      const year = new Date().getFullYear();
+      const prefix = `INV-${year}-`;
+      const sequenceKey = `tax_invoice_${year}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'tax_invoices'), {
         ...newInvoice,
+        taxInvoiceNo: finalNo,
         customerId: sourceNote.customerId,
         taxableAmount: sourceNote.amountBeforeTax,
         vatAmount: sourceNote.vatAmount,
@@ -103,7 +113,7 @@ export default function TaxInvoicesPage() {
         customerId: sourceNote.customerId,
         referenceType: 'TAX_INVOICE',
         referenceId: docRef?.id || '',
-        documentNo: newInvoice.taxInvoiceNo,
+        documentNo: finalNo,
         issueDate: newInvoice.issueDate,
         dueDate: sourceNote.dueDate,
         debitAmount: sourceNote.netAmount,
@@ -115,10 +125,13 @@ export default function TaxInvoicesPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างใบกำกับภาษีสำเร็จ" });
+      toast({ title: "สร้างใบกำกับภาษีสำเร็จ", description: `เลขที่เอกสาร: ${finalNo}` });
       if (docRef) router.push(`/tax-invoices/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างใบกำกับภาษีได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -171,9 +184,13 @@ export default function TaxInvoicesPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างใบกำกับภาษีใหม่ (Create Tax Invoice)</DialogTitle>
-                <DialogDescription>เลือกใบวางบิลต้นทางเพื่อดึงข้อมูลรายการและยอดเงิน</DialogDescription>
+                <DialogDescription>เลือกใบวางบิลต้นทางเพื่อดึงข้อมูลรายการและยอดเงิน ระบบจะรันเลขที่อัตโนมัติ</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                <div className="space-y-2 md:col-span-2">
+                  <Label>เลขที่ใบกำกับภาษี (Tax Invoice No.)</Label>
+                  <Input value={newInvoice.taxInvoiceNo} disabled className="bg-muted/50 font-mono font-bold" />
+                </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>อ้างอิงใบวางบิล (Source Billing Note)</Label>
                   <Select onValueChange={v => setNewInvoice({...newInvoice, billingNoteId: v})}>
@@ -186,17 +203,16 @@ export default function TaxInvoicesPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>เลขที่ใบกำกับภาษี (Tax Invoice No.)</Label>
-                  <Input value={newInvoice.taxInvoiceNo} onChange={e => setNewInvoice({...newInvoice, taxInvoiceNo: e.target.value})} />
-                </div>
-                <div className="space-y-2">
                   <Label>วันที่ออกเอกสาร (Issue Date)</Label>
                   <Input type="date" value={newInvoice.issueDate} onChange={e => setNewInvoice({...newInvoice, issueDate: e.target.value})} />
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">ยืนยันการออกเอกสาร (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  ยืนยันการออกเอกสาร (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

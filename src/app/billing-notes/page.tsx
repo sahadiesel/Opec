@@ -39,6 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextNumber } from '@/lib/services/numbering-service';
 
 export default function BillingNotesPage() {
   const router = useRouter();
@@ -68,8 +69,9 @@ export default function BillingNotesPage() {
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newNote, setNewNote] = useState<Partial<BillingNote>>({
-    billingNoteNo: `BN-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`,
+    billingNoteNo: '(Auto-generated)',
     billingDate: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // +30 days
     currency: 'THB',
@@ -79,14 +81,22 @@ export default function BillingNotesPage() {
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!newNote.customerId || !newNote.billingNoteNo) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขที่ใบวางบิลและลูกค้า" });
+    if (!newNote.customerId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุลูกค้า" });
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Document Number Generation
+      const year = new Date().getFullYear();
+      const prefix = `BN-${year}-`;
+      const sequenceKey = `billing_note_${year}`;
+      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), {
         ...newNote,
+        billingNoteNo: finalNo,
         amountBeforeTax: 0,
         vatAmount: 0,
         withholdingTaxAmount: 0,
@@ -98,10 +108,13 @@ export default function BillingNotesPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างใบวางบิลสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายการสินค้า..." });
+      toast({ title: "สร้างใบวางบิลสำเร็จ", description: `เลขที่เอกสาร: ${finalNo}` });
       if (docRef) router.push(`/billing-notes/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างใบวางบิลได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -148,7 +161,7 @@ export default function BillingNotesPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
                 <Plus className="h-5 w-5" /> สร้างใบวางบิลใหม่ (New Billing Note)
@@ -157,12 +170,12 @@ export default function BillingNotesPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างใบวางบิลใหม่ (Create Billing Note)</DialogTitle>
-                <DialogDescription>ระบุข้อมูลพื้นฐานและลูกค้า ระบบจะสร้างร่างเอกสารเพื่อให้คุณเพิ่มรายการบรรทัดในขั้นตอนถัดไป</DialogDescription>
+                <DialogDescription>ระบุข้อมูลพื้นฐานและลูกค้า ระบบจะรันเลขที่เอกสารให้อัตโนมัติเมื่อกดบันทึก</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่ใบวางบิล (Billing Note No.)</Label>
-                  <Input value={newNote.billingNoteNo} onChange={e => setNewNote({...newNote, billingNoteNo: e.target.value})} />
+                  <Input value={newNote.billingNoteNo} disabled className="bg-muted/50 font-mono font-bold" />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>ลูกค้า (Customer)</Label>
@@ -195,8 +208,11 @@ export default function BillingNotesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">เริ่มจัดทำรายการ (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  ยืนยันสร้างเอกสาร (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
