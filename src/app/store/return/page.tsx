@@ -32,6 +32,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function StoreReturnPage() {
   const router = useRouter();
@@ -126,15 +127,17 @@ export default function StoreReturnPage() {
     setIsSubmitting(true);
 
     try {
+      // Atomic Sequence Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'store_return', { actor: currentUser.displayName });
+
       const batch = writeBatch(firestore);
       const returnSlipsRef = collection(firestore, 'store_return_slips');
       const newReturnRef = doc(returnSlipsRef);
-      const returnNo = `RET-${Date.now().toString().slice(-6)}`;
 
       // 1. Create Return Slip Header
       batch.set(newReturnRef, {
         id: newReturnRef.id,
-        returnNo,
+        returnNo: finalNo,
         workerId: selectedWorkerId,
         assignmentId: activeAsgn.id,
         waveId: activeAsgn.waveId,
@@ -172,7 +175,7 @@ export default function StoreReturnPage() {
           assignmentId: activeAsgn.id,
           waveId: activeAsgn.waveId,
           transactionDate: returnDate,
-          notes: `Ref Return: ${returnNo}. Condition: ${item.condition}. ${item.remarks}`,
+          notes: `Ref Return: ${finalNo}. Condition: ${item.condition}. ${item.remarks}`,
           createdAt: Date.now(),
           createdBy: currentUser.displayName
         });
@@ -180,7 +183,7 @@ export default function StoreReturnPage() {
 
       await batch.commit();
 
-      toast({ title: "บันทึกการคืนสำเร็จ", description: `เลขที่ใบรับคืน: ${returnNo}` });
+      toast({ title: "บันทึกการคืนสำเร็จ", description: `เลขที่ใบรับคืน: ${finalNo}` });
       router.push('/store');
     } catch (e) {
       console.error(e);
@@ -411,20 +414,5 @@ export default function StoreReturnPage() {
         </div>
       </div>
     </AppShell>
-  );
-}
-
-function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
-  return (
-    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-4 w-4 opacity-50 text-primary" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-black text-primary">{value}</div>
-        <p className="text-[10px] font-medium text-muted-foreground mt-1">{sub}</p>
-      </CardContent>
-    </Card>
   );
 }

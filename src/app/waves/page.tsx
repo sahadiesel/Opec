@@ -18,7 +18,8 @@ import {
   AlertCircle,
   Users,
   MapPin,
-  ArrowRight
+  ArrowRight,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Wave, User, Customer, PurchaseOrder, POLine, WaveStatus } from '@/lib/types';
@@ -39,6 +40,7 @@ import { collection, doc, collectionGroup } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function WavesPage() {
   const router = useRouter();
@@ -89,8 +91,9 @@ export default function WavesPage() {
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newWave, setNewWave] = useState<Partial<Wave>>({
-    waveCode: '',
+    waveCode: getPreviewPattern('wave'),
     status: 'PLANNING',
     plannedWorkers: 1,
     siteLocation: '',
@@ -105,13 +108,17 @@ export default function WavesPage() {
       return;
     }
 
-    const po = allPOs?.find(p => p.id === newWave.poId);
-    const poLine = allPOLines?.find(l => l.id === newWave.poLineId);
-
-    const waveRef = collection(firestore, 'waves');
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'wave', { actor: currentUser.displayName });
+
+      const po = allPOs?.find(p => p.id === newWave.poId);
+      const waveRef = collection(firestore, 'waves');
+      
       const docRef = await addDocumentNonBlocking(waveRef, {
         ...newWave,
+        waveCode: finalNo,
         customerId: po?.customerId || '',
         projectName: po?.projectName || po?.title || '',
         assignedWorkers: 0,
@@ -122,10 +129,13 @@ export default function WavesPage() {
       });
 
       setIsCreateOpen(false);
-      toast({ title: "สร้างเวฟงานสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด..." });
+      toast({ title: "สร้างเวฟงานสำเร็จ", description: `รหัสเวฟ: ${finalNo}` });
       if (docRef) router.push(`/waves/${docRef.id}`);
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างเวฟงานได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -177,7 +187,7 @@ export default function WavesPage() {
           
           <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!isStaff}>
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!isStaff}>
                 <Plus className="h-5 w-5" /> สร้างเวฟงานใหม่ (Create Wave)
               </Button>
             </DialogTrigger>
@@ -189,7 +199,8 @@ export default function WavesPage() {
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2">
                   <Label>รหัสเวฟงาน (Wave Code)</Label>
-                  <Input placeholder="WAVE-2024-XXX" value={newWave.waveCode} onChange={e => setNewWave({...newWave, waveCode: e.target.value})} />
+                  <Input value={newWave.waveCode} disabled className="bg-muted font-mono font-bold text-primary" />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="grid gap-2">
                   <Label>สถานที่ปฏิบัติงาน (Site / Location)</Label>
@@ -235,8 +246,11 @@ export default function WavesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">ยืนยันการสร้าง (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  ยืนยันการสร้าง (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

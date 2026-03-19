@@ -40,6 +40,7 @@ import {
   AlertDialogTitle, 
   AlertDialogTrigger 
 } from '@/components/ui/alert-dialog';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 interface WriteOffLine {
   id: string;
@@ -58,7 +59,7 @@ export default function StoreWriteOffPage() {
   const { toast } = useToast();
 
   // Header State
-  const [writeoffNo, setWriteoffNo] = useState(`WOF-${Date.now().toString().slice(-6)}`);
+  const [writeoffNo, setWriteoffNo] = useState(getPreviewPattern('store_writeoff'));
   const [writeoffDate, setWriteoffDate] = useState(new Date().toISOString().split('T')[0]);
   const [reason, setReason] = useState('DAMAGED');
   const [reasonNote, setReasonNote] = useState('');
@@ -124,12 +125,15 @@ export default function StoreWriteOffPage() {
     setIsSubmitting(true);
 
     try {
+      // Atomic Sequence Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'store_writeoff', { actor: currentUser.displayName });
+
       const batch = writeBatch(firestore);
       const headerRef = doc(collection(firestore, 'store_writeoffs'));
       
       // 1. Create Header
       batch.set(headerRef, {
-        writeoffNo,
+        writeoffNo: finalNo,
         writeoffDate,
         reason,
         reasonNote,
@@ -161,7 +165,7 @@ export default function StoreWriteOffPage() {
           transactionType: 'WRITEOFF',
           quantity: line.quantity,
           transactionDate: writeoffDate,
-          notes: `Reason: ${reason}. Ref: ${writeoffNo}. ${reasonNote}`,
+          notes: `Reason: ${reason}. Ref: ${finalNo}. ${reasonNote}`,
           createdAt: Date.now(),
           createdBy: currentUser.displayName
         });
@@ -169,7 +173,7 @@ export default function StoreWriteOffPage() {
 
       await batch.commit();
 
-      toast({ title: "ตัดจ่ายอุปกรณ์สำเร็จ", description: `บันทึกรายการเลขที่ ${writeoffNo} เรียบร้อยแล้ว` });
+      toast({ title: "ตัดจ่ายอุปกรณ์สำเร็จ", description: `บันทึกรายการเลขที่ ${finalNo} เรียบร้อยแล้ว` });
       router.push('/store');
     } catch (e) {
       console.error(e);
@@ -214,7 +218,7 @@ export default function StoreWriteOffPage() {
               <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label className="font-bold">เลขที่เอกสาร (Write-off No.)</Label>
-                  <Input value={writeoffNo} onChange={e => setWriteoffNo(e.target.value)} className="h-11 font-mono font-bold text-destructive" />
+                  <Input value={writeoffNo} disabled className="h-11 font-mono font-bold text-destructive bg-muted/50" />
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">วันที่ทำรายการ (Date)</Label>

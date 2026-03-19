@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight, ShieldAlert } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Position, User } from '@/lib/types';
 import { 
@@ -27,6 +27,7 @@ import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/no
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function PositionsPage() {
   const router = useRouter();
@@ -43,13 +44,14 @@ export default function PositionsPage() {
   const { data: positions, isLoading } = useCollection<Position>(positionsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newPosition, setNewPosition] = useState<Partial<Position>>({
     positionName: '',
-    positionCode: '',
-    category: 'Offshore',
+    positionCode: getPreviewPattern('position'),
+    category: 'OFFSHORE',
     active: true,
     description: '',
-    payrollBasis: 'Daily',
+    payrollBasis: 'DAILY',
     notes: ''
   });
 
@@ -59,12 +61,17 @@ export default function PositionsPage() {
   }, []);
 
   const handleCreate = async () => {
-    if (!firestore) return;
-    const posRef = collection(firestore, 'positions');
+    if (!firestore || !user) return;
     
+    setIsCreating(true);
     try {
+      // Atomic Number Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'position', { actor: user.displayName });
+
+      const posRef = collection(firestore, 'positions');
       const docRef = await addDocumentNonBlocking(posRef, {
         ...newPosition,
+        positionCode: finalNo,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -72,18 +79,21 @@ export default function PositionsPage() {
       setIsCreateOpen(false);
       toast({
         title: "สร้างตำแหน่งงานสำเร็จ",
-        description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียดและเกณฑ์มาตรฐาน...",
+        description: `รหัสตำแหน่ง: ${finalNo}`,
       });
       
       if (docRef) {
         router.push(`/positions/${docRef.id}`);
       }
     } catch (error) {
+      console.error(error);
       toast({
         variant: "destructive",
         title: "เกิดข้อผิดพลาด",
         description: "ไม่สามารถสร้างตำแหน่งงานได้",
       });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -148,19 +158,19 @@ export default function PositionsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="code">รหัสตำแหน่ง (Code)</Label>
-                  <Input id="code" value={newPosition.positionCode} onChange={e => setNewPosition({...newPosition, positionCode: e.target.value})} />
+                  <Input id="code" value={newPosition.positionCode} disabled className="bg-muted font-mono font-bold text-primary" />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="grid gap-2">
                   <Label>หมวดหมู่ (Category)</Label>
-                  <Select onValueChange={v => setNewPosition({...newPosition, category: v})} value={newPosition.category}>
+                  <Select onValueChange={v => setNewPosition({...newPosition, category: v as any})} value={newPosition.category}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Offshore">Offshore</SelectItem>
-                      <SelectItem value="Onshore">Onshore</SelectItem>
-                      <SelectItem value="Technical">Technical</SelectItem>
-                      <SelectItem value="Administrative">Administrative</SelectItem>
+                      <SelectItem value="OFFSHORE">Offshore</SelectItem>
+                      <SelectItem value="ONSHORE">Onshore</SelectItem>
+                      <SelectItem value="OFFICE">Office</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -171,9 +181,9 @@ export default function PositionsPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Daily">Daily</SelectItem>
-                      <SelectItem value="Monthly">Monthly</SelectItem>
-                      <SelectItem value="Hourly">Hourly</SelectItem>
+                      <SelectItem value="DAILY">Daily</SelectItem>
+                      <SelectItem value="MONTHLY">Monthly</SelectItem>
+                      <SelectItem value="HOURLY">Hourly</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -183,8 +193,11 @@ export default function PositionsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary">บันทึกและจัดการเกณฑ์มาตรฐาน (Save)</Button>
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึกและจัดการเกณฑ์มาตรฐาน (Save)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

@@ -34,6 +34,7 @@ import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 interface ReceiveLine {
   id: string;
@@ -53,7 +54,7 @@ export default function StoreReceivePage() {
   const { toast } = useToast();
 
   // Header State
-  const [receiveNo, setReceiveNo] = useState(`REC-${Date.now().toString().slice(-6)}`);
+  const [receiveNo, setReceiveNo] = useState(getPreviewPattern('store_receive'));
   const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split('T')[0]);
   const [vendorId, setVendorId] = useState('');
   const [refPurchaseId, setRefPurchaseId] = useState('');
@@ -116,12 +117,15 @@ export default function StoreReceivePage() {
     setIsSubmitting(true);
 
     try {
+      // Atomic Sequence Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'store_receive', { actor: currentUser.displayName });
+
       const batch = writeBatch(firestore);
       const receiptRef = doc(collection(firestore, 'store_receipts'));
       
       // 1. Create Header
       batch.set(receiptRef, {
-        receiveNo,
+        receiveNo: finalNo,
         receiveDate,
         vendorId,
         referencePurchaseId: refPurchaseId,
@@ -158,7 +162,7 @@ export default function StoreReceivePage() {
           transactionDate: receiveDate,
           referenceType: 'RECEIPT',
           referenceId: receiptRef.id,
-          notes: `Receive No: ${receiveNo}. ${notes}`,
+          notes: `Receive No: ${finalNo}. ${notes}`,
           createdAt: Date.now(),
           createdBy: currentUser.displayName
         });
@@ -166,7 +170,7 @@ export default function StoreReceivePage() {
 
       await batch.commit();
 
-      toast({ title: "รับของเข้าคลังสำเร็จ", description: `บันทึกรายการเลขที่ ${receiveNo} เรียบร้อยแล้ว` });
+      toast({ title: "รับของเข้าคลังสำเร็จ", description: `บันทึกรายการเลขที่ ${finalNo} เรียบร้อยแล้ว` });
       router.push('/store');
     } catch (e) {
       console.error(e);
@@ -203,7 +207,7 @@ export default function StoreReceivePage() {
               <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <Label className="font-bold">เลขที่ใบรับ (Receive No.)</Label>
-                  <Input value={receiveNo} onChange={e => setReceiveNo(e.target.value)} className="h-11 font-mono font-bold text-primary" />
+                  <Input value={receiveNo} disabled className="h-11 font-mono font-bold text-primary bg-muted/50" />
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">วันที่รับของ (Date)</Label>

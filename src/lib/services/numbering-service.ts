@@ -41,6 +41,10 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   assignment: { label: 'Assignment', prefix: 'ASG-', padding: 6, dept: 'operations', resetPolicy: 'yearly' },
   purchase: { label: 'Purchase', prefix: 'PUR-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
   vendor: { label: 'Vendor', prefix: 'VEN-', padding: 4, dept: 'store', resetPolicy: 'none' },
+  store_receive: { label: 'Store Receive', prefix: 'REC-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
+  store_issue: { label: 'Store Issue', prefix: 'ISS-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
+  store_return: { label: 'Store Return', prefix: 'RET-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
+  store_writeoff: { label: 'Store Write-off', prefix: 'WOF-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
   payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly' },
   office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly' },
 };

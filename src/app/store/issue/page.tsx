@@ -32,6 +32,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function IssueItemsPage() {
   const router = useRouter();
@@ -132,15 +133,17 @@ export default function IssueItemsPage() {
     setIsSubmitting(true);
 
     try {
+      // Atomic Sequence Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'store_issue', { actor: currentUser.displayName });
+
       const batch = writeBatch(firestore);
       const issueSlipsRef = collection(firestore, 'store_issue_slips');
       const newIssueRef = doc(issueSlipsRef);
-      const issueNo = `ISS-${Date.now().toString().slice(-6)}`;
 
       // 1. Create Header
       const headerData = {
         id: newIssueRef.id,
-        issueNo,
+        issueNo: finalNo,
         workerId: selectedWorkerId,
         assignmentId: activeAsgn.id,
         waveId: activeAsgn.waveId,
@@ -179,7 +182,7 @@ export default function IssueItemsPage() {
           assignmentId: activeAsgn.id,
           waveId: activeAsgn.waveId,
           transactionDate: issueDate,
-          notes: `Ref Slip: ${issueNo}. ${item.remarks}`,
+          notes: `Ref Slip: ${finalNo}. ${item.remarks}`,
           createdAt: Date.now(),
           createdBy: currentUser.displayName
         });
@@ -187,7 +190,7 @@ export default function IssueItemsPage() {
 
       await batch.commit();
 
-      toast({ title: "บันทึกการเบิกสำเร็จ", description: `เลขที่ใบเบิก: ${issueNo}` });
+      toast({ title: "บันทึกการเบิกสำเร็จ", description: `เลขที่ใบเบิก: ${finalNo}` });
       router.push('/store');
     } catch (e) {
       console.error(e);
