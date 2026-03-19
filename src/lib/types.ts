@@ -1021,3 +1021,23 @@ export interface DailyTimesheet {
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * Worker Wave Acceptance for detailed tracking of client approvals/rejections per assignment.
+ */
+export type WorkerWaveAcceptanceStatus = 'pending' | 'accepted' | 'rejected' | 'replacement_requested';
+
+export interface WorkerWaveAcceptance {
+  id: string;
+  waveId: string;
+  assignmentId: string;
+  workerId: string;
+  customerPortalUserId: string;
+  status: WorkerWaveAcceptanceStatus;
+  remark?: string;
+  approvedDate?: string; // YYYY-MM-DD
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
