@@ -142,6 +142,37 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isHRStaff() && resource.data.status == 'DRAFT';
     }
 
+    match /payroll_batches/{batchId} {
+      allow get, list: if isHRStaff() || isFinanceStaff();
+      allow create: if isHRStaff();
+      allow update: if (isHRStaff() || isFinanceStaff()) && resource.data.status != 'LOCKED';
+      
+      match /lines/{lineId} {
+        allow get, list: if isHRStaff() || isFinanceStaff();
+        allow write: if isHRStaff() && get(/databases/$(database)/documents/payroll_batches/$(batchId)).data.status == 'DRAFT';
+      }
+    }
+
+    match /payroll_periods/{periodId} {
+      allow get, list: if isSignedIn();
+      allow write: if isHRStaff();
+    }
+
+    match /labor_cost_contract_terms/{id} {
+      allow get, list: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff();
+    }
+
+    match /sales_contract_terms/{id} {
+      allow get, list: if isSalesStaff() || isFinanceStaff() || isAccountingStaff();
+      allow write: if isSalesStaff();
+    }
+
+    match /rate_conditions/{id} {
+      allow get, list: if isSignedIn();
+      allow write: if isHRStaff() || isSalesStaff();
+    }
+
     match /payroll_runs/{runId} {
       allow get, list: if isHRStaff() || isFinanceStaff();
       allow write: if isHRStaff() || isFinanceStaff();
