@@ -28,6 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -47,7 +48,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const { data: allOfficeStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
   const [formData, setFormData] = useState<Partial<OfficeStaff>>({
-    staffCode: '',
+    staffCode: isNew ? getPreviewPattern('office_staff') : '',
     fullName: '',
     nickname: '',
     department: '',
@@ -80,8 +81,8 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
-    if (!formData.fullName || !formData.staffCode || !formData.department) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรหัสพนักงาน ชื่อ และแผนก" });
+    if (!formData.fullName || !formData.department) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อ และแผนก" });
       return;
     }
 
@@ -90,16 +91,20 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     
     try {
       if (isNew) {
+        // Atomic Code Generation
+        const { code: finalCode } = await generateNextDocumentCode(firestore, 'office_staff', { actor: currentUser.displayName });
+
         const newRef = doc(collection(firestore, 'office_staff'));
         await setDoc(newRef, {
           ...formData,
+          staffCode: finalCode,
           id: newRef.id,
           createdAt: now,
           createdBy: currentUser.displayName,
           updatedAt: now,
           updatedBy: currentUser.id
         });
-        toast({ title: "เพิ่มพนักงานสำเร็จ" });
+        toast({ title: "เพิ่มพนักงานสำเร็จ", description: `รหัสพนักงาน: ${finalCode}` });
         router.push('/office-staff');
       } else {
         await updateDoc(staffRef!, {
@@ -111,6 +116,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
         router.back();
       }
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
     } finally {
       setIsSubmitting(false);
@@ -166,7 +172,13 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="space-y-2">
                     <Label className="font-bold">รหัสพนักงาน (Staff Code) *</Label>
-                    <Input value={formData.staffCode} onChange={e => setFormData({...formData, staffCode: e.target.value})} placeholder="OFF-XXX" />
+                    <Input 
+                      value={formData.staffCode} 
+                      disabled={isNew} 
+                      onChange={e => setFormData({...formData, staffCode: e.target.value})} 
+                      className={isNew ? "bg-muted font-mono font-bold text-primary" : ""}
+                    />
+                    {isNew && <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>}
                   </div>
                   <div className="space-y-2 md:col-span-2">
                     <Label className="font-bold">ชื่อ-นามสกุล (Full Name) *</Label>
