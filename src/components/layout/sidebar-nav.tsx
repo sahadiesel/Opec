@@ -33,7 +33,8 @@ import {
   Grid,
   SearchCheck,
   Settings,
-  FileSignature
+  FileSignature,
+  Hash
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -119,6 +120,7 @@ const navGroups: NavGroup[] = [
     items: [
       { key: 'system_admin', title: 'จัดการสิทธิ์ผู้ใช้งาน (User Access)', href: '/users', icon: ShieldCheck },
       { key: 'system_admin', title: 'เมทริกซ์สิทธิ์ (Advanced)', href: '/system-admin/permissions', icon: LockKeyhole },
+      { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'client_portal', title: 'Client Portal', href: '/client-portal', icon: ShieldAlert },
     ]
   },

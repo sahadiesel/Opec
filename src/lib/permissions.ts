@@ -36,7 +36,8 @@ export type ModuleKey =
   | 'cashbook'
   | 'bank_accounts'
   | 'system_admin'
-  | 'client_portal';
+  | 'client_portal'
+  | 'document_numbering';
 
 /**
  * Default Permission Templates
@@ -74,6 +75,7 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
   bank_accounts: NO_ACCESS,
   system_admin: NO_ACCESS,
   client_portal: NO_ACCESS,
+  document_numbering: NO_ACCESS,
 };
 
 /**
