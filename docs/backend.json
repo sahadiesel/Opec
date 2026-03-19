@@ -619,6 +619,21 @@
         "exportStatus": { "type": "string", "enum": ["pending", "exported", "failed"] }
       },
       "required": ["id", "payrollBatchId", "workerId", "grossAmount", "netAmount", "exportStatus"]
+    },
+    "PaymentExportBatch": {
+      "title": "PaymentExportBatch",
+      "type": "object",
+      "description": "Record of a generated bank payment file for a payroll batch.",
+      "properties": {
+        "id": { "type": "string" },
+        "payrollBatchId": { "type": "string" },
+        "exportTemplateCode": { "type": "string" },
+        "companyBankAccountId": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "generated", "downloaded", "superseded"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "payrollBatchId", "exportTemplateCode", "companyBankAccountId", "totalAmount", "status", "createdAt"]
     }
   },
   "auth": {
@@ -911,6 +926,17 @@
           "params": [
             { "name": "batchId", "description": "Parent batch ID." },
             { "name": "lineId", "description": "Unique line ID." }
+          ]
+        }
+      },
+      {
+        "path": "/payment_export_batches/{exportId}",
+        "definition": {
+          "entityName": "PaymentExportBatch",
+          "schema": { "$ref": "#/backend/entities/PaymentExportBatch" },
+          "description": "Audit records for bank payment export files.",
+          "params": [
+            { "name": "exportId", "description": "Unique ID of the export batch." }
           ]
         }
       }

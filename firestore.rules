@@ -1,3 +1,4 @@
+
 rules_version = '2';
 
 service cloud.firestore {
@@ -151,6 +152,11 @@ service cloud.firestore {
         allow get, list: if isHRStaff() || isFinanceStaff();
         allow write: if isHRStaff() && get(/databases/$(database)/documents/payroll_batches/$(batchId)).data.status == 'DRAFT';
       }
+    }
+
+    match /payment_export_batches/{batchId} {
+      allow get, list: if isFinanceStaff();
+      allow write: if isFinanceStaff();
     }
 
     match /payroll_periods/{periodId} {

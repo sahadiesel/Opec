@@ -1106,3 +1106,24 @@ export interface PayrollBatchLine {
   exportStatus: 'pending' | 'exported' | 'failed';
   remarks?: string;
 }
+
+/**
+ * Batch for managing payment files for banks
+ */
+export type PaymentExportStatus = 'draft' | 'generated' | 'downloaded' | 'superseded';
+
+export interface PaymentExportBatch {
+  id: string;
+  payrollBatchId: string;
+  exportTemplateCode: string; // e.g., 'KBANK_PAYROLL_V1', 'SCB_DIRECT_DEBIT'
+  companyBankAccountId: string;
+  fileName?: string;
+  fileUrl?: string;
+  totalLines: number;
+  totalAmount: number;
+  status: PaymentExportStatus;
+  generatedBy?: string;
+  generatedAt?: number;
+  createdBy: string;
+  createdAt: number;
+}
