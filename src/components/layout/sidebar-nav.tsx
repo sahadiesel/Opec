@@ -34,7 +34,9 @@ import {
   SearchCheck,
   Settings,
   FileSignature,
-  Hash
+  Hash,
+  Scale,
+  Calculator
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -77,6 +79,7 @@ const navGroups: NavGroup[] = [
       { key: 'customers', title: UI_LABELS.CUSTOMERS, href: '/customers', icon: Users },
       { key: 'quotations', title: UI_LABELS.QUOTATIONS, href: '/quotations', icon: FileSignature },
       { key: 'main_contracts', title: UI_LABELS.MAIN_CONTRACTS, href: '/main-contracts', icon: ClipboardList },
+      { key: 'sales_contract_terms', title: 'เงื่อนไขการขาย (Sales Terms)', href: '/sales-terms', icon: Scale },
       { key: 'customer_pos', title: UI_LABELS.CUSTOMER_POS, href: '/purchase-orders', icon: ShoppingCart },
     ]
   },
@@ -85,6 +88,7 @@ const navGroups: NavGroup[] = [
     items: [
       { key: 'timesheets', title: UI_LABELS.TIMESHEETS, href: '/timesheets', icon: Clock },
       { key: 'worker_payroll', title: UI_LABELS.WORKER_PAYROLL, href: '/payroll', icon: CircleDollarSign },
+      { key: 'labor_cost_contract_terms', title: 'เงื่อนไขต้นทุน (Cost Terms)', href: '/labor-cost-terms', icon: Calculator },
       { key: 'office_payroll', title: UI_LABELS.OFFICE_PAYROLL, href: '/office-payroll', icon: Coins },
       { key: 'positions', title: UI_LABELS.POSITIONS, href: '/positions', icon: Activity },
       { key: 'workers', title: UI_LABELS.WORKERS, href: '/workers', icon: HardHat },
