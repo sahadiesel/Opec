@@ -40,6 +40,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { SEQUENCE_REGISTRY } from '@/lib/services/numbering-service';
+import { writeAuditLog } from '@/lib/services/audit-service';
 
 export default function NumberingAdminPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -99,15 +100,27 @@ export default function NumberingAdminPage() {
   };
 
   const handleSave = async () => {
-    if (!firestore || !selectedSequence || !can('document_numbering').edit) return;
+    if (!firestore || !selectedSequence || !currentUser || !can('document_numbering').edit) return;
     setIsSaving(true);
 
     try {
       const seqRef = doc(firestore, 'number_sequences', selectedSequence.id);
-      await updateDoc(seqRef, {
+      const updatePayload = {
         ...editData,
         updatedAt: Date.now(),
-        updatedBy: currentUser?.displayName || 'System Admin'
+        updatedBy: currentUser.displayName
+      };
+
+      await updateDoc(seqRef, updatePayload);
+
+      // Log the maintenance action
+      await writeAuditLog(firestore, currentUser, {
+        actionType: 'UPDATE_SEQUENCE',
+        entityType: 'NumberSequence',
+        entityId: selectedSequence.id,
+        entityLabel: selectedSequence.label,
+        afterSummary: `Updated sequence settings: prefix=${editData.prefix}, lastNumber=${editData.lastNumber}`,
+        sourceModule: 'system'
       });
 
       toast({ title: "อัปเดตลำดับสำเร็จ", description: `แก้ไขข้อมูลลำดับ ${selectedSequence.label} เรียบร้อยแล้ว` });
@@ -155,6 +168,16 @@ export default function NumberingAdminPage() {
       }
 
       await batch.commit();
+
+      // Log bulk initialization
+      await writeAuditLog(firestore, currentUser, {
+        actionType: 'INIT_SEQUENCES',
+        entityType: 'NumberSequence',
+        entityId: 'registry',
+        afterSummary: `Initialized ${missingSequences.length} missing sequences from registry`,
+        sourceModule: 'system'
+      });
+
       toast({ 
         title: "ตั้งค่าลำดับเริ่มต้นสำเร็จ", 
         description: `สร้างตัวนับลำดับใหม่จำนวน ${missingSequences.length} รายการ` 
@@ -229,13 +252,13 @@ export default function NumberingAdminPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-amber-700">100%</div>
-              <p className="text-[10px] text-amber-600 mt-1">สถานะความพร้อมของระบบรันเลขที่</p>
+              <p className="text-[10px] text-green-600 mt-1">สถานะความพร้อมของระบบรันเลขที่</p>
             </CardContent>
           </Card>
         </div>
 
         <div className="flex items-center gap-3 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="relative w-full max-w-md">
+          <div className="relative w-full max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input 
               placeholder="ค้นหาชื่อเอกสาร หรือ Prefix..." 

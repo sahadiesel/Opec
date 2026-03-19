@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * @fileOverview Centralized document numbering service with validation safeguards.
+ * @fileOverview Centralized document numbering service with validation safeguards and audit logging.
  * Ensures sequential, unique numbers using Firestore transactions and existence checks.
  * Supports automated resets (Yearly/Monthly) and prevents collisions.
  */
@@ -111,12 +111,12 @@ export function getPreviewPattern(sequenceKey: string): string {
 
 /**
  * Atomicly generates the next sequential number for a given document type.
- * Includes a uniqueness check safeguard and retry logic.
+ * Includes a uniqueness check safeguard, retry logic, and audit logging.
  */
 export async function generateNextDocumentCode(
   db: Firestore,
   sequenceKey: string,
-  options: { actor?: string; date?: Date } = {}
+  options: { actor?: string; userId?: string; date?: Date } = {}
 ): Promise<{ code: string; metadata: NumberSequence }> {
   const config = SEQUENCE_REGISTRY[sequenceKey];
   if (!config) throw new Error(`Sequence configuration not found for key: ${sequenceKey}`);
@@ -126,6 +126,7 @@ export async function generateNextDocumentCode(
   const currentYear = date.getFullYear();
   const currentMonth = date.getMonth() + 1;
   const actor = options.actor || 'system';
+  const userId = options.userId || 'system';
 
   let attempts = 0;
   const MAX_ATTEMPTS = 5;
@@ -169,7 +170,24 @@ export async function generateNextDocumentCode(
         updatedBy: actor
       };
 
+      // 1. Update the sequence metadata
       transaction.set(seqRef, metadata, { merge: true });
+
+      // 2. Log the issuance in the transaction for audit integrity
+      const auditRef = doc(collection(db, 'audit_logs'));
+      transaction.set(auditRef, {
+        id: auditRef.id,
+        actionType: 'ISSUE_CODE',
+        entityType: 'NumberSequence',
+        entityId: sequenceKey,
+        entityLabel: `${config.label}: ${code}`,
+        actorUserId: userId,
+        actorName: actor,
+        actorRole: 'system',
+        eventAt: Date.now(),
+        afterSummary: `Issued code ${code} for ${sequenceKey}`,
+        sourceModule: 'system'
+      });
 
       return { code, metadata };
     });
