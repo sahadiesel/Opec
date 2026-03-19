@@ -1,3 +1,4 @@
+
 /**
  * OPEC OpsFlow - Master TypeScript Data Models
  * Refined for Production Readiness with clear Staff vs Worker separation.
@@ -1057,4 +1058,51 @@ export interface PayrollPeriod {
   status: PayrollPeriodStatus;
   generatedBy: string;
   generatedAt: number;
+}
+
+/**
+ * Payroll Batch for collective processing
+ */
+export interface PayrollBatch {
+  id: string;
+  payrollPeriodId: string;
+  workModeScope: JobMode | 'BOTH';
+  status: PayrollRunStatus;
+  totalWorkers: number;
+  grossAmount: number;
+  totalDeductions: number;
+  netAmount: number;
+  notes?: string;
+  hrApprovedBy?: string;
+  hrApprovedAt?: number;
+  financePreparedBy?: string;
+  financePreparedAt?: number;
+  lockedBy?: string;
+  lockedAt?: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Payroll Batch Line for individual calculation snapshots
+ */
+export interface PayrollBatchLine {
+  id: string;
+  payrollBatchId: string;
+  workerId: string;
+  workerNameSnapshot: string;
+  workerPaymentProfileSnapshot: Partial<WorkerPaymentProfile>;
+  assignmentIds: string[];
+  sourceTimesheetIds: string[];
+  periodStartDate: string;
+  periodEndDate: string;
+  eventBreakdown: Record<string, number>; // Maps eventType to count/units
+  earningsBreakdown: Record<string, number>; // Maps specific earning category to amount
+  deductionsBreakdown: Record<string, number>; // Maps specific deduction category to amount
+  grossAmount: number;
+  netAmount: number;
+  exportStatus: 'pending' | 'exported' | 'failed';
+  remarks?: string;
 }
