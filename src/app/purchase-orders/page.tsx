@@ -6,14 +6,10 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter } from 'lucide-react';
+import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PurchaseOrder, User, Customer, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, where } from 'firebase/firestore';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
   DialogContent, 
@@ -27,6 +23,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { collection, query, where } from 'firebase/firestore';
+import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { useToast } from '@/hooks/use-toast';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function CustomerPOsPage() {
   const router = useRouter();
@@ -36,9 +37,10 @@ export default function CustomerPOsPage() {
   const { toast } = useToast();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newPO, setNewPO] = useState<Partial<PurchaseOrder>>({
     title: '',
-    poCode: '',
+    poCode: getPreviewPattern('customer_po'),
     customerId: '',
     contractId: '',
     projectName: '',
@@ -89,24 +91,40 @@ export default function CustomerPOsPage() {
   const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
 
   const handleCreate = async () => {
-    if (!firestore) return;
-    const colRef = collection(firestore, 'purchase_orders');
+    if (!firestore || !currentUser) return;
     
+    if (!newPO.title || !newPO.customerId || !newPO.contractId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อโครงการ ลูกค้า และสัญญาหลัก" });
+      return;
+    }
+
+    setIsCreating(true);
     try {
+      // 1. Atomic Number Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'customer_po', { 
+        actor: currentUser.displayName 
+      });
+
+      // 2. Create the document
+      const colRef = collection(firestore, 'purchase_orders');
       const docRef = await addDocumentNonBlocking(colRef, {
         ...newPO,
+        poCode: finalNo, // Apply final unique code
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
       
       setIsCreateOpen(false);
-      toast({ title: "สร้างใบสั่งซื้อสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียด Customer PO..." });
+      toast({ title: "สร้างใบสั่งซื้อสำเร็จ", description: `Internal Code: ${finalNo}` });
       
       if (docRef) {
         router.push(`/purchase-orders/${docRef.id}`);
       }
     } catch (error) {
+      console.error(error);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างใบสั่งซื้อได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -146,7 +164,7 @@ export default function CustomerPOsPage() {
           
           <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!isStaff}>
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!isStaff}>
                 <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
               </Button>
             </DialogTrigger>
@@ -161,8 +179,13 @@ export default function CustomerPOsPage() {
                   <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น โครงการบำรุงรักษา Shutdown ประจำปี 2024" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>เลขที่ใบสั่งซื้อของลูกค้า (Customer PO Code)</Label>
-                  <Input value={newPO.poCode} onChange={e => setNewPO({...newPO, poCode: e.target.value})} placeholder="PO-XXXXX-XXXX" />
+                  <Label>เลขที่อ้างอิงภายใน (Internal PO Code)</Label>
+                  <Input 
+                    value={newPO.poCode} 
+                    disabled 
+                    className="bg-muted font-mono font-bold text-primary" 
+                  />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะรันเลขที่จริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="grid gap-2">
                   <Label>ชื่อโครงการเฉพาะทาง (Project Name)</Label>
@@ -204,9 +227,10 @@ export default function CustomerPOsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={!newPO.title || !newPO.customerId || !newPO.contractId || !newPO.poCode}>
-                  ยืนยันและไปจัดการรายการโควต้า (Confirm & Manage Lines)
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating || !newPO.title || !newPO.customerId || !newPO.contractId}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  ยืนยันและไปจัดการรายการโควต้า (Confirm)
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -222,7 +246,7 @@ export default function CustomerPOsPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4">รหัส PO (Code)</TableHead>
+                    <TableHead className="font-bold py-4 pl-6">รหัส PO (Code)</TableHead>
                     <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
                     <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
                     <TableHead className="font-bold">ระยะเวลาปฏิบัติงาน (Period)</TableHead>
@@ -239,7 +263,7 @@ export default function CustomerPOsPage() {
                         className="cursor-pointer hover:bg-muted/50 group transition-all"
                         onClick={() => router.push(`/purchase-orders/${po.id}`)}
                       >
-                        <TableCell className="py-4 font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
+                        <TableCell className="py-4 pl-6 font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-sm text-primary font-bold">
                             <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
