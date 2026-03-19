@@ -187,6 +187,7 @@ export default function TaxInvoicesPage() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่ใบกำกับภาษี (Tax Invoice No.)</Label>
                   <Input value={newInvoice.taxInvoiceNo} disabled className="bg-muted/50 font-mono font-bold" />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>อ้างอิงใบวางบิล (Source Billing Note)</Label>

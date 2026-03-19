@@ -156,6 +156,7 @@ export default function ReceiptsPage() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่ใบเสร็จ (Receipt No.)</Label>
                   <Input value={newReceipt.receiptNo} disabled className="bg-muted/50 font-mono font-bold" />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>ลูกค้า (Customer)</Label>
