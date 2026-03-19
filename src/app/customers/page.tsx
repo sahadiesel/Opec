@@ -302,7 +302,7 @@ export default function CustomersPage() {
               <a href="/main-contracts">ไปยังระบบสัญญาหลัก (Main Contracts) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
-        </div>
+        </Card>
       </div>
     </AppShell>
   );
