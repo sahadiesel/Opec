@@ -17,7 +17,8 @@ import {
   Calendar,
   Waves,
   AlertTriangle,
-  Info
+  Info,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
@@ -38,6 +39,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function AssignmentsPage() {
   const router = useRouter();
@@ -73,6 +75,7 @@ export default function AssignmentsPage() {
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedWaveId, setSelectedWaveId] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -80,7 +83,7 @@ export default function AssignmentsPage() {
   const [notes, setNotes] = useState('');
 
   const handleCreateAssignment = async () => {
-    if (!firestore || !selectedWorkerId || !selectedWaveId || !startDate || !endDate) {
+    if (!firestore || !currentUser || !selectedWorkerId || !selectedWaveId || !startDate || !endDate) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุข้อมูลที่จำเป็นให้ครบถ้วน" });
       return;
     }
@@ -88,49 +91,63 @@ export default function AssignmentsPage() {
     const wave = allWaves?.find(w => w.id === selectedWaveId);
     if (!wave) return;
 
-    // Create in top-level 'mobilizations' collection
-    const mobCollectionRef = collection(firestore, 'mobilizations');
-    const newMobRef = doc(mobCollectionRef);
-    
-    const newAssignment: Assignment = {
-      id: newMobRef.id,
-      workerId: selectedWorkerId,
-      poLineId: wave.poLineId,
-      poId: wave.poId,
-      contractId: '', 
-      waveId: selectedWaveId,
-      positionId: '', 
-      customerId: wave.customerId,
-      projectName: wave.projectName,
-      startDate: startDate,
-      endDate: endDate,
-      deploymentStatus: 'DRAFT',
-      clientApprovalStatus: 'NOT_SUBMITTED',
-      readinessStatus: 'incomplete',
-      readinessSummary: {
-        passportValid: 'missing',
-        medicalValid: 'missing',
-        certificatesComplete: 'missing',
-        safetyTrainingComplete: 'missing',
-        fitToWork: 'missing',
-        ppeIssued: 'missing',
-        toolsIssued: 'missing',
-        overlapClear: 'missing',
-        clientApproved: 'missing'
-      },
-      notes: notes,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    setIsCreating(true);
+    try {
+      // Atomic Number Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'assignment', { 
+        actor: currentUser.displayName 
+      });
 
-    setDocumentNonBlocking(newMobRef, newAssignment, { merge: true });
-    
-    // Update wave assignedWorkers count
-    const waveRef = doc(firestore, 'waves', selectedWaveId);
-    updateDoc(waveRef, { assignedWorkers: increment(1), updatedAt: Date.now() });
+      // Create in top-level 'mobilizations' collection
+      const mobCollectionRef = collection(firestore, 'mobilizations');
+      const newMobRef = doc(mobCollectionRef);
+      
+      const newAssignment: Assignment = {
+        id: newMobRef.id,
+        assignmentNo: finalNo, // Apply unique sequential code
+        workerId: selectedWorkerId,
+        poLineId: wave.poLineId,
+        poId: wave.poId,
+        contractId: '', 
+        waveId: selectedWaveId,
+        positionId: '', 
+        customerId: wave.customerId,
+        projectName: wave.projectName,
+        startDate: startDate,
+        endDate: endDate,
+        deploymentStatus: 'DRAFT',
+        clientApprovalStatus: 'NOT_SUBMITTED',
+        readinessStatus: 'incomplete',
+        readinessSummary: {
+          passportValid: 'missing',
+          medicalValid: 'missing',
+          certificatesComplete: 'missing',
+          safetyTrainingComplete: 'missing',
+          fitToWork: 'missing',
+          ppeIssued: 'missing',
+          toolsIssued: 'missing',
+          overlapClear: 'missing',
+          clientApproved: 'missing'
+        },
+        notes: notes,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
 
-    toast({ title: "มอบหมายงานสำเร็จ", description: `คนงานถูกเพิ่มเข้าสู่ Wave เรียบร้อยแล้ว` });
-    setIsDialogOpen(false);
+      setDocumentNonBlocking(newMobRef, newAssignment, { merge: true });
+      
+      // Update wave assigned workers count
+      const waveRef = doc(firestore, 'waves', selectedWaveId);
+      updateDoc(waveRef, { assignedWorkers: increment(1), updatedAt: Date.now() });
+
+      toast({ title: "มอบหมายงานสำเร็จ", description: `รหัสการมอบหมาย: ${finalNo}` });
+      setIsDialogOpen(false);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกการมอบหมายได้" });
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const getDeploymentStatusBadge = (status: DeploymentStatus) => {
@@ -195,6 +212,11 @@ export default function AssignmentsPage() {
                   </DialogHeader>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                     <div className="space-y-2 md:col-span-2">
+                      <Label>เลขที่การมอบหมาย (Internal Ref)</Label>
+                      <Input value={getPreviewPattern('assignment')} disabled className="bg-muted/50 font-mono font-bold text-primary" />
+                      <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
                       <Label>เลือกรอบการทำงาน (Active Wave)</Label>
                       <Select onValueChange={setSelectedWaveId}>
                         <SelectTrigger className="h-11"><SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." /></SelectTrigger>
@@ -226,8 +248,11 @@ export default function AssignmentsPage() {
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                    <Button onClick={handleCreateAssignment} className="bg-primary font-bold">ยืนยันการมอบหมาย (Confirm)</Button>
+                    <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                    <Button onClick={handleCreateAssignment} className="bg-primary font-bold" disabled={isCreating}>
+                      {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      ยืนยันการมอบหมาย (Confirm)
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -241,7 +266,7 @@ export default function AssignmentsPage() {
                   <Table>
                     <TableHeader className="bg-muted/50">
                       <TableRow>
-                        <TableHead className="font-bold py-4 pl-6">คนงาน</TableHead>
+                        <TableHead className="font-bold py-4 pl-6">เลขที่ / คนงาน</TableHead>
                         <TableHead className="font-bold">Wave & โครงการ</TableHead>
                         <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
                         <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
@@ -258,6 +283,7 @@ export default function AssignmentsPage() {
                           <TableRow key={asgn.id} className="cursor-pointer hover:bg-muted/30 group transition-all" onClick={() => router.push(`/assignments/${asgn.id}`)}>
                             <TableCell className="py-4 pl-6">
                               <div className="flex flex-col">
+                                <span className="text-[10px] font-mono font-bold text-primary mb-1">{asgn.assignmentNo || asgn.id.substring(0,8)}</span>
                                 <span className="font-bold text-base text-primary">{worker?.firstName} {worker?.lastName}</span>
                                 <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {asgn.positionId}</span>
                               </div>

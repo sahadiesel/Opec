@@ -111,15 +111,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} เรียบร้อยแล้ว` });
   };
 
-  const handleUpdateClientStatus = (newStatus: ClientApprovalStatus) => {
-    if (!firestore) return;
-    const mobRef = doc(firestore, 'mobilizations', id);
-    const updateData: any = { clientApprovalStatus: newStatus, updatedAt: Date.now() };
-    updateDocumentNonBlocking(mobRef, updateData);
-    setAssignment(prev => prev ? ({ ...prev, ...updateData }) : null);
-    toast({ title: "อัปเดตการอนุมัติสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} เรียบร้อยแล้ว` });
-  };
-
   if (isLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Clock className="h-12 w-12 text-primary animate-pulse" /></div>;
   }
@@ -155,7 +146,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Assignment Detail (รายละเอียดการมอบหมาย)</h1>
-              <p className="text-sm text-muted-foreground font-mono">ID: {assignment.id}</p>
+              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                <span className="font-mono font-bold text-primary">{assignment.assignmentNo || assignment.id}</span>
+                <Separator orientation="vertical" className="h-3" />
+                <span>คนงาน: {worker?.firstName} {worker?.lastName}</span>
+              </p>
             </div>
           </div>
           <div className="flex gap-2">

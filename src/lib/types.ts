@@ -356,6 +356,7 @@ export interface SalesContractTerm {
 
 export interface Assignment {
   id: string;
+  assignmentNo: string;
   workerId: string;
   waveId: string;
   poId: string;

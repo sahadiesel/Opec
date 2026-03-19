@@ -144,7 +144,7 @@ export default function MobilizationPage() {
                   <Table>
                     <TableHeader className="bg-muted/50">
                       <TableRow>
-                        <TableHead className="font-bold py-4">คนงาน & ตำแหน่ง</TableHead>
+                        <TableHead className="font-bold py-4">รหัส / คนงาน & ตำแหน่ง</TableHead>
                         <TableHead className="font-bold">เวฟ & โครงการ</TableHead>
                         <TableHead className="font-bold">กำหนดเดินทาง</TableHead>
                         <TableHead className="font-bold text-center">Compliance (ความพร้อม)</TableHead>
@@ -166,6 +166,7 @@ export default function MobilizationPage() {
                           >
                             <TableCell className="py-4">
                               <div className="flex flex-col">
+                                <span className="text-[10px] font-mono font-bold text-primary mb-1">{asgn.assignmentNo || asgn.id.substring(0,8)}</span>
                                 <span className="font-bold text-base text-primary">{worker?.firstName} {worker?.lastName}</span>
                                 <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {pos?.positionName}</span>
                               </div>
