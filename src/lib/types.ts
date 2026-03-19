@@ -962,3 +962,62 @@ export interface WorkerPaymentProfile {
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * Daily Timesheet for precise tracking of worker activity
+ */
+export type DailyTimesheetStatus = 
+  | 'DRAFT' 
+  | 'SUBMITTED' 
+  | 'OPS_REVIEWED' 
+  | 'CLIENT_APPROVED' 
+  | 'LOCKED' 
+  | 'REJECTED' 
+  | 'CORRECTION_REQUIRED';
+
+export interface DailyTimesheet {
+  id: string;
+  date: string; // YYYY-MM-DD
+  workerId: string;
+  workerNameSnapshot: string;
+  assignmentId: string;
+  waveId: string;
+  contractId: string;
+  salesContractTermId?: string;
+  laborCostContractTermId?: string;
+  purchaseOrderId: string;
+  siteId: string;
+  positionId: string;
+  workMode: JobMode;
+  eventType: RateConditionEventType;
+  shiftType: 'DAY' | 'NIGHT';
+  normalHours: number;
+  ot15Hours: number;
+  ot20Hours: number;
+  ot30Hours: number;
+  holidayHours: number;
+  standbyUnits: number;
+  travelUnits: number;
+  mobUnits: number;
+  demobUnits: number;
+  paidLeaveUnits: number;
+  unpaidLeaveUnits: number;
+  quantityOverride?: number;
+  remark?: string;
+  evidenceAttachments: string[];
+  status: DailyTimesheetStatus;
+  submittedBy?: string;
+  submittedAt?: number;
+  opsReviewedBy?: string;
+  opsReviewedAt?: number;
+  clientApprovedBy?: string;
+  clientApprovedAt?: number;
+  lockedBy?: string;
+  lockedAt?: number;
+  rejectionReason?: string;
+  correctionReason?: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
