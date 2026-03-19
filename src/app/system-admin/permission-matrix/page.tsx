@@ -64,7 +64,7 @@ const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'operations', label: 'Operations (ปฏิบัติการ)' },
   { id: 'sales', label: 'Sales (การขาย)' },
   { id: 'accounting', label: 'Accounting (บัญชี)' },
-  { id: 'store', label: 'Store (คลัง)' },
+  { id: id: 'store', label: 'Store (คลัง)' },
   { id: 'client', label: 'Client (ลูกค้า)' },
 ];
 
@@ -80,6 +80,11 @@ const MODULE_LIST = [
   { group: 'Commercial', key: 'customers', label: 'Customers' },
   { group: 'Commercial', key: 'main_contracts', label: 'Contracts' },
   { group: 'Commercial', key: 'customer_pos', label: 'Customer POs' },
+  { group: 'Commercial', key: 'quotations', label: 'Quotations' },
+  { group: 'Commercial', key: 'sales_contract_terms', label: 'Sales Terms' },
+  { group: 'Commercial', key: 'labor_cost_contract_terms', label: 'Labor Cost Terms' },
+  { group: 'Commercial', key: 'rate_conditions', label: 'Rate Conditions' },
+  { group: 'Commercial', key: 'profit_estimates', label: 'Profit Estimates' },
   { group: 'HR & Payroll', key: 'timesheets', label: 'Timesheets' },
   { group: 'HR & Payroll', key: 'worker_payroll', label: 'Worker Payroll' },
   { group: 'HR & Payroll', key: 'office_payroll', label: 'Office Payroll' },
@@ -102,6 +107,7 @@ const MODULE_LIST = [
   { group: 'Finance', key: 'bank_accounts', label: 'Bank Accounts' },
   { group: 'System', key: 'system_admin', label: 'System Admin' },
   { group: 'System', key: 'client_portal', label: 'Client Portal' },
+  { group: 'System', key: 'document_numbering', label: 'Numbering Admin' },
 ];
 
 export default function PermissionMatrixPage() {

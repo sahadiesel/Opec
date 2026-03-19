@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * OPEC OpsFlow - Permissions & UI Access Utility
  * Primary source of truth for what a user can see and do.
@@ -37,7 +39,11 @@ export type ModuleKey =
   | 'bank_accounts'
   | 'system_admin'
   | 'client_portal'
-  | 'document_numbering';
+  | 'document_numbering'
+  | 'sales_contract_terms'
+  | 'labor_cost_contract_terms'
+  | 'rate_conditions'
+  | 'profit_estimates';
 
 /**
  * Default Permission Templates
@@ -76,6 +82,10 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
   system_admin: NO_ACCESS,
   client_portal: NO_ACCESS,
   document_numbering: NO_ACCESS,
+  sales_contract_terms: NO_ACCESS,
+  labor_cost_contract_terms: NO_ACCESS,
+  rate_conditions: NO_ACCESS,
+  profit_estimates: NO_ACCESS,
 };
 
 /**
@@ -117,6 +127,9 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       waves: OFFICER_ACCESS,
       assignments: OFFICER_ACCESS,
       mobilization: OFFICER_ACCESS,
+      labor_cost_contract_terms: { ...OFFICER_ACCESS, approve: true, delete: true },
+      rate_conditions: { ...OFFICER_ACCESS, approve: true, delete: true },
+      profit_estimates: READ_ONLY,
     }),
 
     // 3. HR Officer
@@ -129,6 +142,9 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       waves: OFFICER_ACCESS,
       assignments: OFFICER_ACCESS,
       mobilization: OFFICER_ACCESS,
+      labor_cost_contract_terms: OFFICER_ACCESS,
+      rate_conditions: OFFICER_ACCESS,
+      profit_estimates: READ_ONLY,
     }),
 
     // 4. Operations Manager
@@ -140,6 +156,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       timesheets: OFFICER_ACCESS,
       workers: READ_ONLY,
       positions: READ_ONLY,
+      profit_estimates: READ_ONLY,
     }),
 
     // 5. Operations Officer
@@ -165,6 +182,10 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       accounts_payable: READ_ONLY,
       worker_payroll: READ_ONLY,
       office_payroll: READ_ONLY,
+      sales_contract_terms: READ_ONLY,
+      labor_cost_contract_terms: READ_ONLY,
+      rate_conditions: READ_ONLY,
+      profit_estimates: READ_ONLY,
     }),
 
     // 7. Accounting Officer
@@ -177,6 +198,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       cashbook: OFFICER_ACCESS,
       accounts_receivable: READ_ONLY,
       accounts_payable: READ_ONLY,
+      sales_contract_terms: READ_ONLY,
+      labor_cost_contract_terms: READ_ONLY,
     }),
 
     // 8. Sales Manager
@@ -186,10 +209,24 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       main_contracts: { ...OFFICER_ACCESS, approve: true, delete: true },
       customer_pos: { ...OFFICER_ACCESS, approve: true },
       quotations: { ...OFFICER_ACCESS, approve: true, delete: true },
+      sales_contract_terms: { ...OFFICER_ACCESS, approve: true, delete: true },
+      rate_conditions: OFFICER_ACCESS,
+      profit_estimates: READ_ONLY,
       billing_notes: READ_ONLY,
     }),
 
-    // 9. Store Officer
+    // 9. Sales Officer
+    baseline('sales_officer', 'Sales Officer', 'เจ้าหน้าที่ฝ่ายขาย', 'sales', 'officer', {
+      overview_dashboard: READ_ONLY,
+      customers: OFFICER_ACCESS,
+      main_contracts: OFFICER_ACCESS,
+      customer_pos: OFFICER_ACCESS,
+      quotations: OFFICER_ACCESS,
+      sales_contract_terms: OFFICER_ACCESS,
+      profit_estimates: READ_ONLY,
+    }),
+
+    // 10. Store Officer
     baseline('store_officer', 'Store & Procurement Officer', 'เจ้าหน้าที่คลังและจัดซื้อ', 'store', 'officer', {
       overview_dashboard: READ_ONLY,
       vendors: OFFICER_ACCESS,
@@ -198,12 +235,12 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       ap_bills: READ_ONLY,
     }),
 
-    // 10. Client Approver
+    // 11. Client Approver
     baseline('client_approver', 'Client Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
       client_portal: { ...READ_ONLY, approve: true },
     }),
 
-    // 11. Client Viewer
+    // 12. Client Viewer
     baseline('client_viewer', 'Client Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
       client_portal: READ_ONLY,
     })
