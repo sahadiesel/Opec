@@ -70,7 +70,6 @@ service cloud.firestore {
     }
 
     match /positions/{positionId} {
-      // HR, Operations, and Sales need to see positions for assignments, planning, and contracts
       allow get, list: if isHRStaff() || isOperationsStaff() || isSalesStaff();
       allow write: if isHRStaff();
 
@@ -111,7 +110,6 @@ service cloud.firestore {
     }
 
     match /workers/{workerId} {
-      // HR and Operations manage worker readiness and assignments
       allow get, list: if isHRStaff() || isOperationsStaff();
       allow write: if isHRStaff();
 
@@ -122,12 +120,19 @@ service cloud.firestore {
     }
 
     match /worker_payment_profiles/{id} {
-      // Restricted to HR and Finance staff for sensitive bank details
       allow get, list, write: if isHRStaff() || isFinanceStaff();
     }
 
+    match /daily_timesheets/{id} {
+      allow get, list: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isFinanceStaff());
+      allow create: if isSignedIn() && (isHRStaff() || isOperationsStaff());
+      allow update: if isSignedIn() && (isHRStaff() || isOperationsStaff() || isFinanceStaff())
+                    && resource.data.status != 'LOCKED'
+                    && resource.data.status != 'CLIENT_APPROVED';
+      allow delete: if isSignedIn() && isHRStaff() && resource.data.status == 'DRAFT';
+    }
+
     match /payroll_runs/{runId} {
-      // HR prepares, Finance pays
       allow get, list: if isHRStaff() || isFinanceStaff();
       allow write: if isHRStaff() || isFinanceStaff();
       match /lines/{lineId} {
@@ -136,7 +141,6 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{runId} {
-      // HR prepares, Finance pays
       allow get, list: if isHRStaff() || isFinanceStaff();
       allow write: if isHRStaff() || isFinanceStaff();
       match /lines/{lineId} {
