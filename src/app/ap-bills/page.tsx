@@ -90,8 +90,11 @@ export default function APBillsPage() {
 
     setIsCreating(true);
     try {
-      // Atomic Number Generation
+      // 1. Atomic Number Generation for the Bill
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'ap_bill', { actor: currentUser.displayName });
+
+      // 2. Atomic Number Generation for the AP sub-ledger entry
+      const { code: apNo } = await generateNextDocumentCode(firestore, 'ap', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'ap_bills'), {
         ...newBill,
@@ -100,6 +103,22 @@ export default function APBillsPage() {
         vatAmount: 0,
         totalAmount: 0,
         outstandingAmount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+
+      // 3. Automatically create an Accounts Payable record
+      await addDocumentNonBlocking(collection(firestore, 'accounts_payable'), {
+        vendorId: newBill.vendorId,
+        documentNo: apNo, // Sequential AP- number
+        referenceId: docRef?.id || '',
+        referenceNo: finalNo, // Original Bill No
+        billDate: newBill.invoiceDate,
+        dueDate: newBill.dueDate,
+        debitAmount: 0, 
+        creditAmount: 0, // Will be updated when lines are added
+        outstandingAmount: 0,
+        status: 'OPEN',
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -185,7 +204,7 @@ export default function APBillsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ในใบแจ้งหนี้</Label>
-                  <Input type="date" value={newBill.invoiceDate} onChange={e => setNewBill({...newInvoiceDate, invoiceDate: e.target.value})} />
+                  <Input type="date" value={newBill.invoiceDate} onChange={e => setNewBill({...newBill, invoiceDate: e.target.value})} />
                 </div>
                 <div className="space-y-2">
                   <Label>วันครบกำหนด (Due Date)</Label>

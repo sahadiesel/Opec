@@ -559,6 +559,7 @@ export type BillingNoteReferenceType = 'CONTRACT' | 'PO' | 'TIMESHEET' | 'SERVIC
 
 export interface CashbookEntry {
   id: string;
+  entryNo: string;
   bankAccountId: string;
   entryDate: string;
   direction: 'IN' | 'OUT';

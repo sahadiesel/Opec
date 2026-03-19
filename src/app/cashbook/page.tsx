@@ -18,7 +18,8 @@ import {
   ChevronRight,
   TrendingUp,
   TrendingDown,
-  Info
+  Info,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { CashbookEntry, User, BankAccount } from '@/lib/types';
@@ -39,6 +40,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function CashbookPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -67,7 +69,9 @@ export default function CashbookPage() {
   const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newEntry, setNewEntry] = useState<Partial<CashbookEntry>>({
+    entryNo: getPreviewPattern('cashbook_entry'),
     entryDate: new Date().toISOString().split('T')[0],
     direction: 'OUT',
     paymentMethod: 'TRANSFER',
@@ -90,18 +94,27 @@ export default function CashbookPage() {
       return;
     }
 
+    setIsCreating(true);
     try {
+      // Atomic Document Number Generation
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'cashbook_entry', { 
+        actor: currentUser.displayName 
+      });
+
       await addDocumentNonBlocking(collection(firestore, 'cashbook_entries'), {
         ...newEntry,
+        entryNo: finalNo,
         amount: Number(newEntry.amount),
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
 
       setIsDialogOpen(false);
-      toast({ title: "บันทึกรายการสำเร็จ" });
+      toast({ title: "บันทึกรายการสำเร็จ", description: `เลขที่รายการ: ${finalNo}` });
     } catch (e) {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -174,6 +187,10 @@ export default function CashbookPage() {
                 <DialogDescription>บันทึกความเคลื่อนไหวทางการเงินที่ไม่ได้เกิดจากใบแจ้งหนี้โดยตรง</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                <div className="space-y-2 md:col-span-2">
+                  <Label>เลขที่รายการ (Entry No.)</Label>
+                  <Input value={newEntry.entryNo} disabled className="bg-muted font-mono font-bold text-primary" />
+                </div>
                 <div className="space-y-2">
                   <Label>ทิศทางเงิน</Label>
                   <Select onValueChange={(v: any) => setNewEntry({...newEntry, direction: v})} defaultValue={newEntry.direction}>
@@ -220,8 +237,11 @@ export default function CashbookPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold">บันทึกข้อมูล (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึกข้อมูล (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -235,7 +255,7 @@ export default function CashbookPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">วันที่ (Date)</TableHead>
+                    <TableHead className="font-bold py-4 pl-6">เลขที่ / วันที่</TableHead>
                     <TableHead className="font-bold">รายละเอียด (Description)</TableHead>
                     <TableHead className="font-bold">บัญชีธนาคาร</TableHead>
                     <TableHead className="font-bold">วิธีชำระ</TableHead>
@@ -250,9 +270,11 @@ export default function CashbookPage() {
                     return (
                       <TableRow key={entry.id} className="hover:bg-muted/20">
                         <TableCell className="py-4 pl-6 font-medium text-xs">
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-3 w-3 text-muted-foreground" />
-                            {entry.entryDate}
+                          <div className="flex flex-col gap-1">
+                            <span className="font-mono font-bold text-primary">{entry.entryNo || entry.id.substring(0,8)}</span>
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <Calendar className="h-3 w-3" /> {entry.entryDate}
+                            </span>
                           </div>
                         </TableCell>
                         <TableCell>

@@ -90,8 +90,11 @@ export default function TaxInvoicesPage() {
 
     setIsCreating(true);
     try {
-      // Atomic Document Number Generation
+      // 1. Generate unique Tax Invoice number
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'tax_invoice', { actor: currentUser.displayName });
+
+      // 2. Generate unique AR number for the sub-ledger
+      const { code: arNo } = await generateNextDocumentCode(firestore, 'ar', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'tax_invoices'), {
         ...newInvoice,
@@ -105,12 +108,13 @@ export default function TaxInvoicesPage() {
         updatedAt: Date.now()
       });
 
-      // Also create an AR record automatically
+      // 3. Create an AR record automatically with sequential AR- number
       await addDocumentNonBlocking(collection(firestore, 'accounts_receivable'), {
         customerId: sourceNote.customerId,
         referenceType: 'TAX_INVOICE',
         referenceId: docRef?.id || '',
-        documentNo: finalNo,
+        referenceNo: finalNo, // Store Invoice No as reference
+        documentNo: arNo, // Use official AR sequential number
         issueDate: newInvoice.issueDate,
         dueDate: sourceNote.dueDate,
         debitAmount: sourceNote.netAmount,
