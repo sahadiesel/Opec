@@ -935,3 +935,30 @@ export interface RateCondition {
   displayOrder: number;
   isActive: boolean;
 }
+
+/**
+ * Worker Payment Profile for Payroll and Financial Tracking
+ */
+export type WorkerPaymentMethod = 'BANK_TRANSFER' | 'CASH' | 'PROMPTPAY' | 'OTHER';
+export type WorkerPaymentProfileStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING_VERIFICATION';
+
+export interface WorkerPaymentProfile {
+  id: string;
+  workerId: string;
+  paymentMethod: WorkerPaymentMethod;
+  bankCode?: string;
+  bankName?: string;
+  accountName?: string;
+  accountNumber?: string;
+  branchName?: string;
+  promptPayId?: string;
+  isPrimary: boolean;
+  effectiveDate: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD
+  attachmentUrl?: string;
+  status: WorkerPaymentProfileStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
