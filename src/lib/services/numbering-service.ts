@@ -41,11 +41,12 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   assignment: { label: 'Assignment', prefix: 'ASG-', padding: 6, dept: 'operations', resetPolicy: 'yearly' },
   purchase: { label: 'Purchase', prefix: 'PUR-', padding: 5, dept: 'store', resetPolicy: 'monthly' },
   vendor: { label: 'Vendor', prefix: 'VEN-', padding: 4, dept: 'store', resetPolicy: 'none' },
+  payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly' },
+  office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly' },
 };
 
 /**
  * Utility to format a document code string based on configuration and context.
- * Supports patterns like MC-2026-00001 or QT-2026-03-00001.
  */
 export function formatDocumentCode(
   config: SequenceConfig,
@@ -67,13 +68,28 @@ export function formatDocumentCode(
 }
 
 /**
+ * Provides a non-final preview pattern for a sequence.
+ */
+export function getPreviewPattern(sequenceKey: string): string {
+  const config = SEQUENCE_REGISTRY[sequenceKey];
+  if (!config) return "(Auto-generated)";
+  
+  const year = new Date().getFullYear();
+  const month = new Date().getMonth() + 1;
+  
+  let dynamicPart = '';
+  if (config.resetPolicy === 'yearly') {
+    dynamicPart = `${year}-`;
+  } else if (config.resetPolicy === 'monthly') {
+    dynamicPart = `${year}-${month.toString().padStart(2, '0')}-`;
+  }
+
+  const placeholder = 'X'.repeat(config.padding);
+  return `${config.prefix}${dynamicPart}${placeholder}`;
+}
+
+/**
  * Atomicly generates the next sequential number for a given document type.
- * Handles reset policies (Yearly/Monthly) automatically.
- * 
- * @param db Firestore instance
- * @param sequenceKey Unique key from SEQUENCE_REGISTRY
- * @param options Configuration options (e.g. actor)
- * @returns Object containing the final code and the updated sequence metadata
  */
 export async function generateNextDocumentCode(
   db: Firestore,
@@ -98,7 +114,7 @@ export async function generateNextDocumentCode(
       existingData = seqSnap.data() as NumberSequence;
       lastNumber = existingData.lastNumber || 0;
 
-      // Reset logic: Start back at 0 if we crossed a year or month boundary based on policy
+      // Reset logic
       if (config.resetPolicy === 'yearly' && existingData.year !== currentYear) {
         lastNumber = 0;
       } else if (config.resetPolicy === 'monthly' && (existingData.month !== currentMonth || existingData.year !== currentYear)) {
@@ -143,30 +159,22 @@ export async function generateNextNumber(
   prefix: string, 
   padding: number = 4
 ): Promise<string> {
-  const seqRef = doc(db, 'number_sequences', sequenceKey);
+  const regKey = Object.keys(SEQUENCE_REGISTRY).find(k => sequenceKey.startsWith(k));
+  if (regKey) {
+    const { code } = await generateNextDocumentCode(db, regKey);
+    return code;
+  }
   
+  const seqRef = doc(db, 'number_sequences', sequenceKey);
   return await runTransaction(db, async (transaction) => {
     const seqSnap = await transaction.get(seqRef);
     let nextNum = 1;
-    
     if (seqSnap.exists()) {
-      const data = seqSnap.data();
-      nextNum = (data.lastNumber || 0) + 1;
-      transaction.update(seqRef, {
-        lastNumber: nextNum,
-        updatedAt: Date.now()
-      });
+      nextNum = (seqSnap.data().lastNumber || 0) + 1;
+      transaction.update(seqRef, { lastNumber: nextNum, updatedAt: Date.now() });
     } else {
-      transaction.set(seqRef, {
-        id: sequenceKey,
-        prefix,
-        lastNumber: nextNum,
-        updatedAt: Date.now(),
-        createdAt: Date.now()
-      });
+      transaction.set(seqRef, { id: sequenceKey, prefix, lastNumber: nextNum, updatedAt: Date.now(), createdAt: Date.now() });
     }
-    
-    const paddedNum = nextNum.toString().padStart(padding, '0');
-    return `${prefix}${paddedNum}`;
+    return `${prefix}${nextNum.toString().padStart(padding, '0')}`;
   });
 }

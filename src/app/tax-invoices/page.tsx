@@ -36,7 +36,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function TaxInvoicesPage() {
   const router = useRouter();
@@ -71,7 +71,7 @@ export default function TaxInvoicesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newInvoice, setNewInvoice] = useState<Partial<TaxInvoice>>({
-    taxInvoiceNo: '(Auto-generated)',
+    taxInvoiceNo: getPreviewPattern('tax_invoice'),
     issueDate: new Date().toISOString().split('T')[0],
     currency: 'THB',
     status: 'DRAFT',
@@ -91,10 +91,7 @@ export default function TaxInvoicesPage() {
     setIsCreating(true);
     try {
       // Atomic Document Number Generation
-      const year = new Date().getFullYear();
-      const prefix = `INV-${year}-`;
-      const sequenceKey = `tax_invoice_${year}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'tax_invoice', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'tax_invoices'), {
         ...newInvoice,

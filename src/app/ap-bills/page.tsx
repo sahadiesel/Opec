@@ -37,7 +37,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function APBillsPage() {
   const router = useRouter();
@@ -72,7 +72,7 @@ export default function APBillsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newBill, setNewBill] = useState<Partial<APBill>>({
-    apBillNo: '(Auto-generated)',
+    apBillNo: getPreviewPattern('ap_bill'),
     billReceivedDate: new Date().toISOString().split('T')[0],
     invoiceDate: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // 30 days
@@ -91,10 +91,7 @@ export default function APBillsPage() {
     setIsCreating(true);
     try {
       // Atomic Number Generation
-      const year = new Date().getFullYear();
-      const prefix = `APB-${year}-`;
-      const sequenceKey = `ap_bill_${year}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'ap_bill', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'ap_bills'), {
         ...newBill,
@@ -159,7 +156,9 @@ export default function APBillsPage() {
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
-              <DialogHeader><DialogTitle>บันทึกใบวางบิลเจ้าหนี้</DialogTitle></DialogHeader>
+              <DialogHeader>
+                <DialogTitle>บันทึกใบวางบิลเจ้าหนี้</DialogTitle>
+              </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่บันทึกภายใน (Internal Ref)</Label>
@@ -186,7 +185,7 @@ export default function APBillsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ในใบแจ้งหนี้</Label>
-                  <Input type="date" value={newBill.invoiceDate} onChange={e => setNewBill({...newBill, invoiceDate: e.target.value})} />
+                  <Input type="date" value={newBill.invoiceDate} onChange={e => setNewBill({...newInvoiceDate, invoiceDate: e.target.value})} />
                 </div>
                 <div className="space-y-2">
                   <Label>วันครบกำหนด (Due Date)</Label>

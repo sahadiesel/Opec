@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { PayrollRun, PayrollRunStatus, PayrollType, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, query, orderBy } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -38,7 +38,7 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function PayrollPage() {
   const router = useRouter();
@@ -51,13 +51,13 @@ export default function PayrollPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const runsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'payroll_runs') : null), [firestore]);
+  const runsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'payroll_runs'), orderBy('createdAt', 'desc')) : null), [firestore]);
   const { data: runs, isLoading } = useCollection<PayrollRun>(runsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newRun, setNewRun] = useState<Partial<PayrollRun>>({
-    payrollRunNo: '(Auto-generated)',
+    payrollRunNo: getPreviewPattern('payroll_run'),
     payrollPeriodStart: '',
     payrollPeriodEnd: '',
     payrollType: 'MONTHLY',
@@ -75,11 +75,7 @@ export default function PayrollPage() {
     setIsCreating(true);
     try {
       // Atomic Number Generation
-      const year = new Date().getFullYear();
-      const month = String(new Date().getMonth() + 1).padStart(2, '0');
-      const prefix = `PR-${year}-${month}-`;
-      const sequenceKey = `payroll_run_${year}_${month}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 3);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'payroll_run', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'payroll_runs'), {
         ...newRun,

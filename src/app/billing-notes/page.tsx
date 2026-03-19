@@ -39,7 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function BillingNotesPage() {
   const router = useRouter();
@@ -71,7 +71,7 @@ export default function BillingNotesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newNote, setNewNote] = useState<Partial<BillingNote>>({
-    billingNoteNo: '(Auto-generated)',
+    billingNoteNo: getPreviewPattern('billing_note'),
     billingDate: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // +30 days
     currency: 'THB',
@@ -89,10 +89,7 @@ export default function BillingNotesPage() {
     setIsCreating(true);
     try {
       // Atomic Document Number Generation
-      const year = new Date().getFullYear();
-      const prefix = `BN-${year}-`;
-      const sequenceKey = `billing_note_${year}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'billing_note', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), {
         ...newNote,

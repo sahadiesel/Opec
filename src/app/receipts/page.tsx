@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function ReceiptsPage() {
   const router = useRouter();
@@ -70,7 +70,7 @@ export default function ReceiptsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newReceipt, setNewReceipt] = useState<Partial<ReceiptType>>({
-    receiptNo: '(Auto-generated)',
+    receiptNo: getPreviewPattern('receipt'),
     receiptDate: new Date().toISOString().split('T')[0],
     paymentMethod: 'TRANSFER',
     receivedAmount: 0,
@@ -88,10 +88,7 @@ export default function ReceiptsPage() {
     setIsCreating(true);
     try {
       // Atomic Number Generation
-      const year = new Date().getFullYear();
-      const prefix = `RCT-${year}-`;
-      const sequenceKey = `receipt_${year}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'receipt', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'receipts'), {
         ...newReceipt,

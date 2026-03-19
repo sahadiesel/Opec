@@ -20,7 +20,7 @@ import {
   Wallet
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Purchase, PurchaseType, User, Vendor } from '@/lib/types';
+import { Purchase, PurchaseType, User, Vendor, PurchaseStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy } from 'firebase/firestore';
@@ -38,7 +38,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function PurchasesPage() {
   const router = useRouter();
@@ -70,7 +70,7 @@ export default function PurchasesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newPurchase, setNewPurchase] = useState<Partial<Purchase>>({
-    purchaseNo: '(Auto-generated)',
+    purchaseNo: getPreviewPattern('purchase'),
     purchaseDate: new Date().toISOString().split('T')[0],
     purchaseType: 'CREDIT',
     storeReceiptStatus: 'PENDING',
@@ -89,10 +89,7 @@ export default function PurchasesPage() {
     setIsCreating(true);
     try {
       // Atomic Number Generation
-      const year = new Date().getFullYear();
-      const prefix = `PUR-${year}-`;
-      const sequenceKey = `purchase_${year}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 4);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'purchase', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'purchases'), {
         ...newPurchase,

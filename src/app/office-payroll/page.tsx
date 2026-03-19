@@ -39,7 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
-import { generateNextNumber } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function OfficePayrollPage() {
   const router = useRouter();
@@ -58,7 +58,7 @@ export default function OfficePayrollPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>({
-    payrollRunNo: '(Auto-generated)',
+    payrollRunNo: getPreviewPattern('office_payroll_run'),
     payrollMonth: new Date().toISOString().slice(0, 7),
     payrollPeriodStart: '',
     payrollPeriodEnd: '',
@@ -75,10 +75,7 @@ export default function OfficePayrollPage() {
     setIsCreating(true);
     try {
       // Atomic Number Generation
-      const year = new Date().getFullYear();
-      const prefix = `O-PR-${year}-`;
-      const sequenceKey = `office_payroll_run_${year}`;
-      const finalNo = await generateNextNumber(firestore, sequenceKey, prefix, 3);
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'office_payroll_run', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'office_payroll_runs'), {
         ...newRun,
