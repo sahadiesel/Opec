@@ -18,7 +18,8 @@ import {
   ChevronRight, 
   Filter, 
   ArrowRight,
-  Info
+  Info,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Worker, ReadinessStatus, User, Position } from '@/lib/types';
@@ -40,6 +41,7 @@ import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function WorkersPage() {
   const router = useRouter();
@@ -75,32 +77,49 @@ export default function WorkersPage() {
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newWorker, setNewWorker] = useState<Partial<Worker>>({
+    workerCode: getPreviewPattern('worker'),
     firstName: '',
     lastName: '',
-    workerStatus: 'available',
-    readinessStatus: 'DOCUMENT_MISSING',
+    workerStatus: 'AVAILABLE',
+    readinessStatus: 'INCOMPLETE',
     nationality: 'Thai',
-    gender: 'Male'
+    gender: 'MALE'
   });
 
   const handleCreate = async () => {
-    if (!firestore) return;
-    const workerRef = collection(firestore, 'workers');
+    if (!firestore || !currentUser) return;
     
+    if (!newWorker.firstName || !newWorker.lastName || !newWorker.thaiNationalId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อ นามสกุล และเลขบัตรประชาชน" });
+      return;
+    }
+
+    setIsCreating(true);
     try {
+      // Atomic Worker Code Generation
+      const { code: finalCode } = await generateNextDocumentCode(firestore, 'worker', { 
+        actor: currentUser.displayName 
+      });
+
+      const workerRef = collection(firestore, 'workers');
       const docRef = await addDocumentNonBlocking(workerRef, {
         ...newWorker,
+        workerCode: finalCode,
         dateOfBirth: newWorker.dateOfBirth ? new Date(newWorker.dateOfBirth).getTime() : Date.now(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
       
       setIsCreateOpen(false);
-      toast({ title: "ลงทะเบียนคนงานสำเร็จ", description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียดและเอกสาร..." });
+      toast({ title: "ลงทะเบียนคนงานสำเร็จ", description: `รหัสคนงาน: ${finalCode}` });
       if (docRef) router.push(`/workers/${docRef.id}`);
     } catch (error) {
+      console.error(error);
       toast({ variant: "destructive", title: "เกิดข้อผิดพลาด", description: "ไม่สามารถบันทึกข้อมูลได้" });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -172,6 +191,11 @@ export default function WorkersPage() {
                     <DialogDescription>กรอกข้อมูลพื้นฐานตามบัตรประชาชนและพาสปอร์ตเพื่อเริ่มบันทึกประวัติ</DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-2 gap-4 py-4">
+                    <div className="grid gap-2 col-span-2">
+                      <Label>รหัสคนงาน (Worker Code)</Label>
+                      <Input value={newWorker.workerCode} disabled className="bg-muted font-mono font-bold text-primary" />
+                      <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
+                    </div>
                     <div className="grid gap-2">
                       <Label>ชื่อ (First Name)</Label>
                       <Input value={newWorker.firstName} onChange={e => setNewWorker({...newWorker, firstName: e.target.value})} />
@@ -195,8 +219,11 @@ export default function WorkersPage() {
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                    <Button onClick={handleCreate} className="bg-primary">บันทึกประวัติ (Save Profile)</Button>
+                    <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                    <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                      {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      บันทึกประวัติ (Save Profile)
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -212,9 +239,9 @@ export default function WorkersPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4">คนงาน (Worker Name)</TableHead>
-                    <TableHead className="font-bold">ตำแหน่งหลัก (Primary Position)</TableHead>
-                    <TableHead className="font-bold">ความพร้อม (Readiness Matrix)</TableHead>
+                    <TableHead className="font-bold py-4 pl-6">รหัส / ชื่อคนงาน (Worker)</TableHead>
+                    <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
+                    <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
                     <TableHead className="text-right font-bold pr-6">การจัดการ</TableHead>
                   </TableRow>
@@ -224,10 +251,11 @@ export default function WorkersPage() {
                     const position = positions?.find(p => p.id === worker.currentPositionId);
                     return (
                       <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group transition-colors" onClick={() => router.push(`/workers/${worker.id}`)}>
-                        <TableCell className="py-4">
+                        <TableCell className="py-4 pl-6">
                           <div className="flex flex-col">
+                            <span className="text-[10px] font-mono font-bold text-primary bg-primary/5 w-fit px-1.5 rounded border border-primary/10 mb-1">{worker.workerCode || 'NO CODE'}</span>
                             <span className="font-bold text-base text-primary">{worker.firstName} {worker.lastName}</span>
-                            <span className="text-xs text-muted-foreground font-mono">{worker.thaiNationalId}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">{worker.thaiNationalId}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -237,7 +265,7 @@ export default function WorkersPage() {
                         </TableCell>
                         <TableCell>{getReadinessBadge(worker.readinessStatus)}</TableCell>
                         <TableCell>
-                          <Badge variant={worker.workerStatus === 'available' ? 'outline' : 'secondary'} className={worker.workerStatus === 'available' ? 'text-green-600 border-green-200' : ''}>
+                          <Badge variant={worker.workerStatus === 'AVAILABLE' ? 'outline' : 'secondary'} className={worker.workerStatus === 'AVAILABLE' ? 'text-green-600 border-green-200' : ''}>
                             {worker.workerStatus.toUpperCase()}
                           </Badge>
                         </TableCell>
@@ -262,7 +290,7 @@ export default function WorkersPage() {
 
         <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2 text-primary">
+            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
               <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Next-Step Guidance)
             </CardTitle>
           </CardHeader>

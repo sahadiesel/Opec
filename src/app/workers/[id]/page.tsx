@@ -27,7 +27,8 @@ import {
   User,
   Phone,
   History,
-  Info
+  Info,
+  HardHat
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -97,14 +98,12 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลประวัติคนงานถูกอัปเดตแล้ว" });
   };
 
-  // --- Readiness Calculation Logic ---
   const calculateAndStoreReadiness = async () => {
     if (!firestore || !worker) return;
 
     let newStatus: ReadinessStatus = 'READY';
     const now = Date.now();
 
-    // 1. Check Position Requirements
     if (worker.currentPositionId) {
       const reqsRef = collection(firestore, 'positions', worker.currentPositionId, 'certificate_requirements');
       const reqsSnap = await getDocs(query(reqsRef, where('required', '==', true)));
@@ -123,7 +122,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       }
     }
 
-    // 2. Check Medical
     if (newStatus === 'READY') {
       const latestMedical = medicals?.sort((a, b) => b.expiryDate - a.expiryDate)[0];
       if (!latestMedical || latestMedical.expiryDate < now || latestMedical.fitStatus === 'unfit') {
@@ -131,7 +129,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       }
     }
 
-    // 3. Check Drug Test (valid 6 months)
     if (newStatus === 'READY') {
       const latestDrug = drugTests?.sort((a, b) => b.testDate - a.testDate)[0];
       if (!latestDrug || latestDrug.expiryDate < now || latestDrug.result === 'positive') {
@@ -139,7 +136,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       }
     }
 
-    // 4. Update Worker
     if (worker.readinessStatus !== newStatus) {
       updateDocumentNonBlocking(workerRef!, { readinessStatus: newStatus });
     }
@@ -173,11 +169,14 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
               <h1 className="text-3xl font-bold tracking-tight text-primary">
                 {worker.firstName} {worker.lastName}
               </h1>
-              <Badge variant="outline" className="font-mono text-primary border-primary/20">
+              <Badge variant="outline" className="font-mono text-primary border-primary/20 bg-primary/5">
+                CODE: {worker.workerCode || 'N/A'}
+              </Badge>
+              <Badge variant="secondary" className="font-mono">
                 ID: {worker.thaiNationalId}
               </Badge>
               {worker.readinessStatus === 'READY' ? (
-                <Badge className="bg-green-600 gap-1 text-white"><CheckCircle2 className="h-3 w-3" /> READY (พร้อมทำงาน)</Badge>
+                <Badge className="bg-green-600 gap-1 text-white"><CheckCircle2 className="h-3 w-3" /> READY</Badge>
               ) : (
                 <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> {worker.readinessStatus}</Badge>
               )}
@@ -209,7 +208,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
           <TabsContent value="info" className="mt-6 space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left Column: Personal & Contact */}
               <div className="lg:col-span-2 space-y-6">
                 <Card className="shadow-sm">
                   <CardHeader className="bg-primary/5 border-b">
@@ -219,6 +217,10 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   </CardHeader>
                   <CardContent className="pt-6 space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="space-y-2">
+                        <Label className="font-bold">รหัสคนงาน (Worker Code)</Label>
+                        <Input disabled value={worker.workerCode || '(Auto-generated)'} className="bg-muted font-mono font-bold" />
+                      </div>
                       <div className="space-y-2">
                         <Label className="font-bold">ชื่อจริง (First Name) *</Label>
                         <Input disabled={!isEditing} value={isEditing ? editedWorker.firstName : worker.firstName} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
@@ -298,7 +300,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                 </Card>
               </div>
 
-              {/* Right Column: Financial & Meta */}
               <div className="space-y-6">
                 <Card className="shadow-sm border-blue-100 bg-blue-50/20">
                   <CardHeader className="bg-blue-100/50 border-b border-blue-100">
@@ -347,11 +348,11 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   </CardHeader>
                   <CardContent className="pt-4 space-y-2 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">ลงทะเบียนเมื่อ (Registered At):</span>
+                      <span className="text-muted-foreground">ลงทะเบียนเมื่อ:</span>
                       <span className="font-medium">{new Date(worker.createdAt).toLocaleDateString('th-TH')}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">อัปเดตล่าสุด (Last Update):</span>
+                      <span className="text-muted-foreground">อัปเดตล่าสุด:</span>
                       <span className="font-medium">{new Date(worker.updatedAt).toLocaleString('th-TH')}</span>
                     </div>
                     <div className="flex justify-between border-t pt-2 mt-2">
@@ -364,8 +365,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
             </div>
           </TabsContent>
 
-          {/* ... Rest of the tabs (certs, medical, drug, docs) remain with bilingual labels ... */}
-          
           <TabsContent value="certs" className="mt-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between border-b bg-primary/5 pb-4">
