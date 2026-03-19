@@ -77,7 +77,7 @@ export default function OperationsDashboardPage() {
   // --- Computed Operations Stats ---
 
   const stats = useMemo(() => {
-    if (!assignments || !waves) return { activeAsgn: 0, activeWaves: 0, pendingMob: 0, incompleteReadiness: 0, replacements: 0 };
+    if (!assignments || !waves) return { activeAsgn: 0, activeWaves: 0, pendingMob: 0, incompleteReadiness: 0, replacements: 0, planningWaves: 0 };
     
     return {
       activeAsgn: assignments.filter(a => a.deploymentStatus === 'ACTIVE').length,
@@ -318,7 +318,7 @@ export default function OperationsDashboardPage() {
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 ตรวจสอบคนงานที่ใกล้จบภารกิจ (Nearing Demobilization) เพื่อวางแผนการส่งคนชุดใหม่ทดแทน (Rotation Planning)
               </CardContent>
-            </div>
+            </Card>
           </div>
         </div>
       </div>
