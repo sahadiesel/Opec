@@ -7,14 +7,10 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter, ShieldAlert } from 'lucide-react';
+import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter, ShieldAlert, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MainContract, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
   DialogContent, 
@@ -26,7 +22,12 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { collection, doc, query, orderBy } from 'firebase/firestore';
+import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
 export default function MainContractsPage() {
   const router = useRouter();
@@ -36,9 +37,10 @@ export default function MainContractsPage() {
   const { toast } = useToast();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [newContract, setNewContract] = useState<Partial<MainContract>>({
     title: '',
-    contractNumber: '',
+    contractNumber: getPreviewPattern('main_contract'),
     customerId: '',
     projectId: '',
     startDate: Date.now(),
@@ -81,7 +83,7 @@ export default function MainContractsPage() {
   // Firestore Queries - Only initiate if staff to prevent permission errors on collection list
   const contractsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isStaff) return null;
-    return collection(firestore, 'main_contracts');
+    return query(collection(firestore, 'main_contracts'), orderBy('createdAt', 'desc'));
   }, [firestore, isUserLoading, firebaseUser, currentUser, isStaff]);
 
   const { data: contracts, isLoading } = useCollection<MainContract>(contractsQuery as any);
@@ -93,12 +95,25 @@ export default function MainContractsPage() {
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const handleCreate = async () => {
-    if (!firestore) return;
-    const colRef = collection(firestore, 'main_contracts');
+    if (!firestore || !currentUser) return;
     
+    if (!newContract.title || !newContract.customerId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อสัญญาและลูกค้า" });
+      return;
+    }
+
+    setIsCreating(true);
     try {
+      // 1. Generate unique code atomically
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'main_contract', { 
+        actor: currentUser.displayName 
+      });
+
+      // 2. Create the document
+      const colRef = collection(firestore, 'main_contracts');
       const docRef = await addDocumentNonBlocking(colRef, {
         ...newContract,
+        contractNumber: finalNo, // Use official sequential number
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -106,18 +121,21 @@ export default function MainContractsPage() {
       setIsCreateOpen(false);
       toast({
         title: "สร้างสัญญาหลักสำเร็จ",
-        description: "กำลังนำคุณไปที่หน้าจัดการรายละเอียดและอัตราราคา...",
+        description: `เลขที่สัญญา: ${finalNo}`,
       });
       
       if (docRef) {
         router.push(`/main-contracts/${docRef.id}`);
       }
     } catch (error) {
+      console.error(error);
       toast({
         variant: "destructive",
         title: "เกิดข้อผิดพลาด",
         description: "ไม่สามารถสร้างสัญญาได้",
       });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -170,9 +188,12 @@ export default function MainContractsPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => {
+            if (!open) setIsCreating(false);
+            setIsCreateOpen(open);
+          }}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold">
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!isStaff}>
                 <Plus className="h-5 w-5" /> สร้างสัญญาหลักใหม่ (New Main Contract)
               </Button>
             </DialogTrigger>
@@ -187,8 +208,13 @@ export default function MainContractsPage() {
                   <Input value={newContract.title} onChange={e => setNewContract({...newContract, title: e.target.value})} placeholder="เช่น สัญญาจ้างกำลังคนโครงการบำรุงรักษาแท่น X" />
                 </div>
                 <div className="grid gap-2">
-                  <Label>เลขที่สัญญา/รหัสสัญญา (Contract Code)</Label>
-                  <Input value={newContract.contractNumber} onChange={e => setNewContract({...newContract, contractNumber: e.target.value})} placeholder="OPEC-MC-2024-XXX" />
+                  <Label>เลขที่สัญญา (Contract No.)</Label>
+                  <Input 
+                    value={newContract.contractNumber} 
+                    disabled 
+                    className="bg-muted font-mono font-bold text-primary" 
+                  />
+                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะรันเลขที่จริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="grid gap-2">
                   <Label>ลูกค้า (Customer)</Label>
@@ -231,8 +257,11 @@ export default function MainContractsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={!newContract.title || !newContract.customerId || !newContract.contractNumber}>สร้างสัญญาและจัดการอัตราราคา (Confirm)</Button>
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating || !newContract.title || !newContract.customerId}>
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  สร้างสัญญาและจัดการอัตราราคา (Confirm)
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -247,7 +276,7 @@ export default function MainContractsPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4">รหัสสัญญา (Contract Code)</TableHead>
+                    <TableHead className="font-bold py-4 pl-6">รหัสสัญญา (Contract Code)</TableHead>
                     <TableHead className="font-bold">ชื่อสัญญา (Contract Title)</TableHead>
                     <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
                     <TableHead className="font-bold">ระยะเวลา (Contract Period)</TableHead>
@@ -264,7 +293,7 @@ export default function MainContractsPage() {
                         className="cursor-pointer hover:bg-muted/50 group transition-all"
                         onClick={() => router.push(`/main-contracts/${contract.id}`)}
                       >
-                        <TableCell className="py-4 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
+                        <TableCell className="py-4 pl-6 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
                         <TableCell className="font-bold text-base text-primary">{contract.title}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground font-medium">
@@ -317,7 +346,7 @@ export default function MainContractsPage() {
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
                   <p className="font-bold">ออกใบสั่งซื้ออ้างอิง (Link Customer POs)</p>
-                  <p className="text-muted-foreground text-xs">เมื่ออัตราราคาพร้อมแล้ว คุณสามารถสร้าง Customer PO เพื่อจองโควต้าคนงานภายใต้ราคาสัญญานี้ได้</p>
+                  <p className="text-muted-foreground text-xs">เมื่ออัตราราคาพร้อมแล้ว คุณสามารถสร้าง Customer PO เพื่อจองโควต้าพนักงานภายใต้ราคาสัญญานี้ได้</p>
                 </div>
               </div>
             </div>
