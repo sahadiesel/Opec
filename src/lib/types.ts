@@ -906,8 +906,8 @@ export type RateConditionEventType =
 
 export type RateConditionParentType = 'SALES_CONTRACT' | 'LABOR_COST_CONTRACT' | 'GLOBAL';
 export type RateConditionAppliesTo = 'WORKER' | 'POSITION' | 'CATEGORY' | 'ALL';
-export type RateConditionUnitType = 'DAY' | 'HOUR' | 'LUMP_SUM' | 'MONTH';
-export type RateConditionCalculationMethod = 'FIXED' | 'MULTIPLIER' | 'PERCENTAGE' | 'FLAT';
+export type RateConditionUnitType = 'DAY' | 'HOUR' | 'LUMP_SUM' | 'MONTH' | 'HALF_DAY' | 'TRIP';
+export type RateConditionCalculationMethod = 'FIXED' | 'MULTIPLIER' | 'PERCENTAGE' | 'FLAT' | 'FORMULA';
 
 export interface RateCondition {
   id: string;

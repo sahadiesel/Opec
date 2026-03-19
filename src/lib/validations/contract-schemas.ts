@@ -62,8 +62,8 @@ export const RateConditionSchema = z.object({
     'vacation_paid', 'unpaid_leave', 'night_shift', 'half_day', 'early_return', 
     'client_cancellation', 'replacement_day', 'other'
   ]),
-  unitType: z.enum(['DAY', 'HOUR', 'LUMP_SUM', 'MONTH']),
-  calculationMethod: z.enum(['FIXED', 'MULTIPLIER', 'PERCENTAGE', 'FLAT']),
+  unitType: z.enum(['DAY', 'HOUR', 'LUMP_SUM', 'MONTH', 'HALF_DAY', 'TRIP']),
+  calculationMethod: z.enum(['FIXED', 'MULTIPLIER', 'PERCENTAGE', 'FLAT', 'FORMULA']),
   baseRate: z.number().optional().nullable(),
   multiplier: z.number().optional().nullable(),
   percentageOfBase: z.number().optional().nullable(),
