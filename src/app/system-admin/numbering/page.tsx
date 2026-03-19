@@ -17,12 +17,14 @@ import {
   Clock,
   Loader2,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  PlusCircle,
+  Zap
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, NumberSequence, DeptType } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, updateDoc, query, orderBy } from 'firebase/firestore';
+import { collection, doc, updateDoc, query, orderBy, setDoc, writeBatch } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { 
@@ -49,6 +51,7 @@ export default function NumberingAdminPage() {
   const [selectedSequence, setSelectedSequence] = useState<NumberSequence | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   // Edit form state
   const [editData, setEditData] = useState<Partial<NumberSequence>>({});
@@ -76,13 +79,21 @@ export default function NumberingAdminPage() {
     );
   }, [sequences, searchTerm]);
 
+  // Identify missing sequences from registry
+  const missingSequences = useMemo(() => {
+    if (!sequences) return [];
+    const existingKeys = new Set(sequences.map(s => s.sequenceKey));
+    return Object.keys(SEQUENCE_REGISTRY).filter(key => !existingKeys.has(key));
+  }, [sequences]);
+
   const handleEdit = (seq: NumberSequence) => {
     setSelectedSequence(seq);
     setEditData({
       lastNumber: seq.lastNumber,
       prefix: seq.prefix,
       resetPolicy: seq.resetPolicy,
-      isActive: seq.isActive
+      isActive: seq.isActive,
+      paddingLength: seq.paddingLength
     });
     setIsEditDialogOpen(true);
   };
@@ -108,6 +119,53 @@ export default function NumberingAdminPage() {
     }
   };
 
+  const handleInitializeMissing = async () => {
+    if (!firestore || missingSequences.length === 0 || !currentUser) return;
+    setIsInitializing(true);
+
+    try {
+      const batch = writeBatch(firestore);
+      const now = Date.now();
+      const currentYear = new Date().getFullYear();
+      const currentMonth = new Date().getMonth() + 1;
+
+      for (const key of missingSequences) {
+        const config = SEQUENCE_REGISTRY[key];
+        const seqRef = doc(firestore, 'number_sequences', key);
+        
+        const newSeq: NumberSequence = {
+          id: key,
+          sequenceKey: key,
+          label: config.label,
+          prefix: config.prefix,
+          department: config.dept,
+          entityType: key,
+          resetPolicy: config.resetPolicy,
+          year: currentYear,
+          month: currentMonth,
+          paddingLength: config.padding,
+          lastNumber: 0,
+          lastIssuedCode: null,
+          isActive: true,
+          updatedAt: now,
+          updatedBy: currentUser.displayName + ' (Auto-Init)'
+        };
+        
+        batch.set(seqRef, newSeq);
+      }
+
+      await batch.commit();
+      toast({ 
+        title: "ตั้งค่าลำดับเริ่มต้นสำเร็จ", 
+        description: `สร้างตัวนับลำดับใหม่จำนวน ${missingSequences.length} รายการ` 
+      });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Init Failed", description: err.message });
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
   if (isUserLoading || isPermLoading || !currentUser) return null;
 
   if (!can('document_numbering').view) {
@@ -128,40 +186,50 @@ export default function NumberingAdminPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Hash className="h-8 w-8 text-primary" /> จัดการเลขที่เอกสาร (Document Numbering Admin)
+              <Hash className="h-8 w-8 text-primary" /> จัดการเลขที่เอกสาร (Numbering Admin)
             </h1>
             <p className="text-muted-foreground text-lg">
-              ตรวจสอบสถานะตัวนับลำดับ (Running Counters) และกำหนดค่าการรันเลขที่เอกสารรายแผนก
+              ควบคุมตัวนับลำดับ (Running Counters) และนโยบายการออกรหัสเอกสารทุกโมดูล
             </p>
           </div>
+          {missingSequences.length > 0 && (
+            <Button 
+              className="gap-2 bg-blue-600 hover:bg-blue-700 shadow-md font-bold h-11" 
+              onClick={handleInitializeMissing}
+              disabled={isInitializing}
+            >
+              {isInitializing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+              ตั้งค่าลำดับที่ขาดหาย ({missingSequences.length})
+            </Button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="bg-primary/5 border-primary/20 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase text-primary">Total Sequences</CardTitle>
+              <CardTitle className="text-xs font-bold uppercase text-primary">System Registry</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-primary">{Object.keys(SEQUENCE_REGISTRY).length} Types</div>
               <p className="text-[10px] text-muted-foreground mt-1">โมดูลที่รองรับการรันเลขที่อัตโนมัติ</p>
             </CardContent>
           </Card>
-          <Card className="bg-amber-50 border-amber-200 shadow-sm">
+          <Card className="bg-green-50 border-green-200 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase text-amber-800">Active Counters</CardTitle>
+              <CardTitle className="text-xs font-bold uppercase text-green-800">Initialized Counters</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-amber-700">{sequences?.filter(s => s.isActive).length || 0} Records</div>
-              <p className="text-[10px] text-amber-600 mt-1">ชุดตัวเลขที่ถูกสร้างและมีการใช้งานจริงในฐานข้อมูล</p>
+              <div className="text-3xl font-black text-green-700">{sequences?.length || 0} Records</div>
+              <p className="text-[10px] text-green-600 mt-1">จำนวนตัวนับที่ถูกสร้างในฐานข้อมูลแล้ว</p>
             </CardContent>
           </Card>
-          <Card className="bg-blue-50 border-blue-200 shadow-sm">
+          <Card className="bg-amber-50 border-amber-200 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase text-blue-800">Reset Policies</CardTitle>
+              <CardTitle className="text-xs font-bold uppercase text-amber-800">Ready to Use</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-blue-700">Monthly / Yearly</div>
-              <p className="text-[10px] text-blue-600 mt-1">ระบบรองรับการเริ่มนับใหม่ตามรอบปีและเดือน</p>
+              <div className="text-3xl font-black text-amber-700">100%</div>
+              <p className="text-[10px] text-amber-600 mt-1">สถานะความพร้อมของระบบรันเลขที่</p>
             </CardContent>
           </Card>
         </div>
@@ -186,13 +254,12 @@ export default function NumberingAdminPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="pl-6 py-4">เอกสาร (Label)</TableHead>
-                    <TableHead>Sequence Key</TableHead>
+                    <TableHead className="pl-6 py-4">เอกสาร (Document Label)</TableHead>
                     <TableHead>Prefix</TableHead>
-                    <TableHead className="text-center">เลขปัจจุบัน</TableHead>
-                    <TableHead>เลขล่าสุดที่ออก</TableHead>
+                    <TableHead className="text-center">ลำดับล่าสุด</TableHead>
+                    <TableHead>รหัสล่าสุดที่ออก</TableHead>
+                    <TableHead>Padding</TableHead>
                     <TableHead>Reset Policy</TableHead>
-                    <TableHead>อัปเดตล่าสุด</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -202,21 +269,17 @@ export default function NumberingAdminPage() {
                       <TableCell className="pl-6 py-4">
                         <div className="flex flex-col">
                           <span className="font-bold text-sm text-primary">{s.label}</span>
-                          <Badge variant="outline" className="text-[9px] w-fit uppercase font-bold bg-white">{s.department}</Badge>
+                          <span className="text-[10px] font-mono text-muted-foreground uppercase">{s.sequenceKey}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="font-mono text-[10px]">{s.sequenceKey}</TableCell>
                       <TableCell className="font-mono text-xs font-black text-primary">{s.prefix}</TableCell>
                       <TableCell className="text-center font-black text-lg">{s.lastNumber}</TableCell>
-                      <TableCell className="font-mono text-xs text-primary font-bold">{s.lastIssuedCode || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs text-blue-700 font-bold">{s.lastIssuedCode || '-'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{s.paddingLength} digits</TableCell>
                       <TableCell>
-                        <Badge variant="secondary" className="text-[10px] uppercase font-bold">
+                        <Badge variant="outline" className="text-[9px] uppercase font-bold bg-white">
                           {s.resetPolicy}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-[10px] text-muted-foreground">
-                        {new Date(s.updatedAt).toLocaleString('th-TH')}<br/>
-                        <span className="italic">โดย {s.updatedBy}</span>
                       </TableCell>
                       <TableCell className="text-right pr-6">
                         <Button variant="ghost" size="icon" className="text-primary" onClick={() => handleEdit(s)}>
@@ -227,8 +290,8 @@ export default function NumberingAdminPage() {
                   ))}
                   {filteredSequences.length === 0 && !isSequencesLoading && (
                     <TableRow>
-                      <TableCell colSpan={8} className="py-20 text-center text-muted-foreground italic">
-                        ไม่พบข้อมูลชุดตัวเลขที่กำลังค้นหา
+                      <TableCell colSpan={7} className="py-20 text-center text-muted-foreground italic">
+                        ไม่พบข้อมูลตัวนับที่ค้นหา
                       </TableCell>
                     </TableRow>
                   )}
@@ -238,17 +301,17 @@ export default function NumberingAdminPage() {
           </CardContent>
         </Card>
 
-        {/* Maintenance Disclaimer */}
+        {/* Safeguard Disclaimer */}
         <Card className="bg-amber-50 border-amber-200 border-dashed border-2">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center gap-2 text-amber-800 font-bold uppercase tracking-wider">
-              <ShieldAlert className="h-4 w-4" /> Numbering Integrity & Maintenance
+              <ShieldAlert className="h-4 w-4" /> Numbering Integrity Guide
             </CardTitle>
           </CardHeader>
           <CardContent className="text-[10px] text-amber-700 leading-relaxed space-y-2">
-            <p>1. <b>ห้ามแก้ไขเลขลำดับปัจจุบัน (Last Number)</b> โดยไม่จำเป็น หากแก้ไขให้มีค่าน้อยลง ระบบอาจเกิดการรันเลขซ้ำกับข้อมูลเก่าและทำให้บันทึกข้อมูลไม่สำเร็จ</p>
-            <p>2. ระบบมี <b>Safety Safeguard</b> ในการเช็คความซ้ำซ้อนระดับ Collection หากเลขลำดับชนกับข้อมูลเก่า ระบบจะทำการ Retry เพื่อหาเลขถัดไปให้อัตโนมัติ</p>
-            <p>3. การเปลี่ยน Prefix จะมีผลทันทีกับเอกสารใบถัดไปที่ถูกออกโดยระบบ</p>
+            <p>1. <b>ห้ามแก้ไขลำดับล่าสุด (Last Number) ให้มีค่าน้อยลง</b> โดยไม่จำเป็น หากมีข้อมูลเก่าใช้เลขนั้นไปแล้ว ระบบจะติดลูป Uniqueness Safeguard ทำให้ไม่สามารถบันทึกข้อมูลใหม่ได้</p>
+            <p>2. การเปลี่ยน <b>Prefix</b> จะมีผลกับเอกสารใบถัดไปทันที</p>
+            <p>3. <b>Reset Policy</b> จะตรวจสอบการเปลี่ยน ปี/เดือน อัตโนมัติเมื่อมีการออกเลขที่ใหม่</p>
           </CardContent>
         </Card>
 
@@ -257,9 +320,9 @@ export default function NumberingAdminPage() {
           <DialogContent className="max-w-md border-t-8 border-t-primary">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <Settings2 className="h-5 w-5 text-primary" /> แก้ไขการรันเลขที่: {selectedSequence?.label}
+                <Settings2 className="h-5 w-5 text-primary" /> แก้ไขตัวนับ: {selectedSequence?.label}
               </DialogTitle>
-              <DialogDescription>จัดการค่าพื้นฐานของตัวนับลำดับเพื่อแก้ไขข้อผิดพลาดทางเทคนิค</DialogDescription>
+              <DialogDescription>จัดการค่าพื้นฐานของตัวนับลำดับ (Maintenance Mode)</DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4 py-4">
@@ -272,17 +335,27 @@ export default function NumberingAdminPage() {
                   className="font-black text-xl"
                 />
                 <p className="text-[10px] text-muted-foreground italic">
-                  * เลขถัดไปจะเป็น { (editData.lastNumber || 0) + 1 }
+                  * เลขถัดไปที่จะถูกออกคือ { (editData.lastNumber || 0) + 1 }
                 </p>
               </div>
 
-              <div className="space-y-2">
-                <Label className="font-bold">Prefix</Label>
-                <Input 
-                  value={editData.prefix} 
-                  onChange={e => setEditData({...editData, prefix: e.target.value})} 
-                  className="font-mono"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="font-bold">Prefix</Label>
+                  <Input 
+                    value={editData.prefix} 
+                    onChange={e => setEditData({...editData, prefix: e.target.value})} 
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="font-bold">Padding (Length)</Label>
+                  <Input 
+                    type="number"
+                    value={editData.paddingLength} 
+                    onChange={e => setEditData({...editData, paddingLength: parseInt(e.target.value)})} 
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -301,9 +374,9 @@ export default function NumberingAdminPage() {
               </div>
 
               <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
-                <Label className="font-bold cursor-pointer" htmlFor="seq-active">สถานะเปิดใช้งาน (Active)</Label>
+                <Label className="font-bold cursor-pointer">สถานะตัวนับ (Active Status)</Label>
                 <Badge variant={editData.isActive ? 'default' : 'secondary'} className={editData.isActive ? 'bg-green-600' : ''}>
-                  {editData.isActive ? 'ACTIVE' : 'INACTIVE'}
+                  {editData.isActive ? 'ENABLED' : 'DISABLED'}
                 </Badge>
               </div>
             </div>
