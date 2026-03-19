@@ -39,6 +39,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePermissions } from '@/hooks/use-permissions';
+import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
 
 export default function SalesTermDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -56,12 +57,6 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
 
   const termRef = useMemoFirebase(() => (firestore ? doc(firestore, 'sales_contract_terms', id) : null), [firestore, id]);
   const { data: term, isLoading: isTermLoading } = useDoc<SalesContractTerm>(termRef as any);
-
-  const conditionsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
-    return query(collection(firestore, 'rate_conditions'), where('parentId', '==', id), where('parentType', '==', 'SALES_CONTRACT'));
-  }, [firestore, id]);
-  const { data: conditions } = useCollection<RateCondition>(conditionsQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
   const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
@@ -256,19 +251,19 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
           </TabsContent>
 
           <TabsContent value="rates" className="mt-6">
+            <RateConditionsEditor 
+              parentType="SALES_CONTRACT" 
+              parentId={id} 
+              appliesTo="SALES" 
+              user={currentUser} 
+            />
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-6">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
-                <div>
-                  <CardTitle>อัตราและเงื่อนไขการคิดเงิน (Specific Rate Conditions)</CardTitle>
-                  <CardDescription>ระบุอัตราพิเศษนอกเหนือจากราคากลาง เช่น ค่าเบี้ยเลี้ยง, ค่าเดินทาง, หรือ OT พิเศษ</CardDescription>
-                </div>
-                <Button className="gap-2 bg-primary font-bold">
-                  <Plus className="h-4 w-4" /> เพิ่มเงื่อนไข (Add Rate)
-                </Button>
-              </CardHeader>
+              <CardHeader><CardTitle>Audit History</CardTitle></CardHeader>
               <CardContent className="py-20 text-center text-muted-foreground italic">
-                <Calculator className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                โมดูลจัดการ Rate Conditions กำลังอยู่ระหว่างการพัฒนา UI โปรดตรวจสอบข้อมูลผ่านเมนู Advanced
+                Logs will appear here once transactional data is established.
               </CardContent>
             </Card>
           </TabsContent>

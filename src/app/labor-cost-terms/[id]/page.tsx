@@ -20,7 +20,8 @@ import {
   Coins,
   FileText,
   Plus,
-  Briefcase
+  Briefcase,
+  CheckCircle2
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, query, where } from 'firebase/firestore';
@@ -40,6 +41,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePermissions } from '@/hooks/use-permissions';
+import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
 
 export default function LaborCostTermDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -57,12 +59,6 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
 
   const termRef = useMemoFirebase(() => (firestore ? doc(firestore, 'labor_cost_contract_terms', id) : null), [firestore, id]);
   const { data: term, isLoading: isTermLoading } = useDoc<LaborCostContractTerm>(termRef as any);
-
-  const conditionsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
-    return query(collection(firestore, 'rate_conditions'), where('parentId', '==', id), where('parentType', '==', 'LABOR_COST_CONTRACT'));
-  }, [firestore, id]);
-  const { data: conditions } = useCollection<RateCondition>(conditionsQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
   const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
@@ -230,19 +226,19 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
           </TabsContent>
 
           <TabsContent value="costs" className="mt-6">
+            <RateConditionsEditor 
+              parentType="LABOR_COST_CONTRACT" 
+              parentId={id} 
+              appliesTo="COST" 
+              user={currentUser} 
+            />
+          </TabsContent>
+
+          <TabsContent value="history" className="mt-6">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
-                <div>
-                  <CardTitle>เงื่อนไขอัตราจ่ายคนงาน (Cost Rules)</CardTitle>
-                  <CardDescription>ระบุกฎการจ่าย OT, เบี้ยเลี้ยงหน้างาน และค่าเดินทางสำหรับพนักงานภายใต้โครงการนี้</CardDescription>
-                </div>
-                <Button className="gap-2 bg-primary font-bold">
-                  <Plus className="h-4 w-4" /> เพิ่มกฎการจ่าย (Add Cost Rule)
-                </Button>
-              </CardHeader>
+              <CardHeader><CardTitle>Audit Trail</CardTitle></CardHeader>
               <CardContent className="py-20 text-center text-muted-foreground italic">
-                <Coins className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                โมดูลจัดการ Rate Conditions กำลังอยู่ระหว่างการพัฒนา UI โปรดตรวจสอบข้อมูลผ่านเมนู Advanced
+                Detailed cost adjustment logs will appear here.
               </CardContent>
             </Card>
           </TabsContent>
