@@ -569,6 +569,23 @@
         "entityId",
         "timestamp"
       ]
+    },
+    "PayrollPeriod": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "PayrollPeriod",
+      "type": "object",
+      "description": "Defines a specific window of time for payroll processing and cost allocation.",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string", "description": "Display label for the period (e.g., 'January 2026')." },
+        "startDate": { "type": "string", "format": "date", "description": "The start date of the period (YYYY-MM-DD)." },
+        "endDate": { "type": "string", "format": "date", "description": "The end date of the period (YYYY-MM-DD)." },
+        "cycleType": { "type": "string", "enum": ["MONTHLY", "FORTNIGHTLY", "WEEKLY", "CUSTOM"] },
+        "status": { "type": "string", "enum": ["OPEN", "PROCESSING", "LOCKED", "CLOSED"] },
+        "generatedBy": { "type": "string", "description": "UID or name of the user who generated this period." },
+        "generatedAt": { "type": "number", "description": "Timestamp of when the period was generated." }
+      },
+      "required": ["id", "label", "startDate", "endDate", "cycleType", "status"]
     }
   },
   "auth": {
@@ -823,6 +840,22 @@
             {
               "name": "auditLogId",
               "description": "The unique ID of the audit log entry."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/payroll_periods/{periodId}",
+        "definition": {
+          "entityName": "PayrollPeriod",
+          "schema": {
+            "$ref": "#/backend/entities/PayrollPeriod"
+          },
+          "description": "Stores the windows of time defined for payroll cycles.",
+          "params": [
+            {
+              "name": "periodId",
+              "description": "The unique ID of the payroll period."
             }
           ]
         }
