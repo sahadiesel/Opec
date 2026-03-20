@@ -206,6 +206,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </div>
         </div>
 
+        {/* Summary Row */}
+        <div className="flex gap-8 px-2 py-1 text-xs font-medium text-muted-foreground border-b border-dashed pb-4 mb-2">
+          <span>ผู้ใช้งานพอร์ทัล: <b className="text-primary">{portalUsers?.filter(u => u.isActive).length || 0}</b></span>
+          <span>สัญญาที่ใช้งาน: <b className="text-primary">{customerContracts?.filter(c => c.status === 'active').length || 0}</b></span>
+          <span>ใบสั่งซื้อที่ใช้งาน: <b className="text-primary">{customerPOs?.filter(p => p.status === 'active').length || 0}</b></span>
+        </div>
+
         {/* Dashboard Tabs */}
         <Tabs defaultValue="info" className="w-full">
           <TabsList className="grid grid-cols-5 w-full md:w-fit h-auto p-1 bg-muted/50">
