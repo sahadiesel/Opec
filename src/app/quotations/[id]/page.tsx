@@ -224,10 +224,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </Button>
             <div className="flex flex-col">
               <h1 className="text-2xl font-bold tracking-tight text-primary">Quotation Workspace</h1>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span className="font-mono font-bold text-primary">{quotation.quotationNo}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1">
                   <span>ลูกค้า: {quotation.customerNameSnapshot || '...'}</span>
                   {quotation.customerId && (
                     <Button variant="link" className="h-auto p-0 text-xs text-blue-600 font-bold" asChild>
@@ -244,7 +244,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <Button variant="outline" className="gap-2 border-primary text-primary hover:bg-primary/5 h-11 px-6 shadow-sm" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
-            <Badge variant={isFinalized ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isFinalized ? "bg-slate-900" : "border-primary/20 bg-primary/5 text-primary"}`}>
+            <Badge variant={isFinalized ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isFinalized ? "bg-slate-900 text-white" : "border-primary/20 bg-primary/5 text-primary"}`}>
               {isFinalized && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {quotation.status}
             </Badge>
@@ -348,10 +348,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               <span className="text-sm font-bold">{line.quantity}</span> <span className="text-[10px] text-muted-foreground uppercase font-medium">{line.unit}</span>
                             </TableCell>
                             <TableCell className="text-right text-sm font-medium">
-                              ฿{(line.unitPrice || 0).toLocaleString()}
+                              ฿{(line.unitPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </TableCell>
                             <TableCell className="text-right font-black text-primary">
-                              ฿{(line.lineTotal || 0).toLocaleString()}
+                              ฿{(line.lineTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </TableCell>
                             <TableCell className="text-right pr-6">
                               {isEditable && (
@@ -427,7 +427,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
                     {isFinalized && (
                       <div className="text-center py-4 bg-white/5 rounded-lg border border-dashed border-white/10">
-                        <Lock className="h-5 w-5 mx-auto mb-2 opacity-40" />
+                        <Lock className="h-5 w-5 mx-auto mb-2 opacity-40 text-white" />
                         <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Locked: {quotation.status}</p>
                       </div>
                     )}
@@ -628,7 +628,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </div>
           </TabsContent>
 
-          {/* Document Preview Tab - Printable Layout */}
           <TabsContent value="history" className="mt-6 print:hidden">
             <Card className="shadow-sm border-none bg-white">
               <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" /> ประวัติกิจกรรม (Audit Log)</CardTitle></CardHeader>

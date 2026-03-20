@@ -224,7 +224,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               <h1 className="text-3xl font-bold tracking-tight">{customer.name}</h1>
               <Badge variant="outline" className="font-mono text-primary bg-primary/5">{customer.customerCode || 'NO CODE'}</Badge>
               {customer.isActive ? (
-                <Badge className="bg-green-600">Active</Badge>
+                <Badge className="bg-green-600 text-white border-none">Active</Badge>
               ) : (
                 <Badge variant="secondary">Inactive</Badge>
               )}
@@ -346,7 +346,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="text-xs">{contact.phone}</TableCell>
                         <TableCell className="text-xs">{contact.email}</TableCell>
                         <TableCell className="text-right pr-6">
-                          {contact.isPrimary && <Badge className="bg-blue-600">Primary</Badge>}
+                          {contact.isPrimary && <Badge className="bg-blue-600 text-white border-none">Primary</Badge>}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -388,9 +388,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="pl-6 font-mono font-bold text-primary">{quo.quotationNo}</TableCell>
                         <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
                         <TableCell className="text-xs">{quo.issueDate}</TableCell>
-                        <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell className="text-right pr-6">
-                          <Badge variant={quo.status === 'accepted' ? 'default' : 'outline'} className={quo.status === 'accepted' ? 'bg-green-600' : ''}>
+                          <Badge variant={quo.status === 'accepted' ? 'default' : 'outline'} className={quo.status === 'accepted' ? 'bg-green-600 text-white border-none' : ''}>
                             {quo.status.toUpperCase()}
                           </Badge>
                         </TableCell>
@@ -438,7 +438,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         </TableCell>
                         <TableCell>{contract.currency}</TableCell>
                         <TableCell className="text-right pr-6">
-                          <Badge variant={contract.status === 'active' ? 'default' : 'secondary'}>{contract.status.toUpperCase()}</Badge>
+                          <Badge variant={contract.status === 'active' ? 'default' : 'secondary'} className={contract.status === 'active' ? 'bg-green-600 text-white border-none' : ''}>{contract.status.toUpperCase()}</Badge>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -482,7 +482,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
+                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600 text-white border-none' : ''}>{po.status.toUpperCase()}</Badge>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -499,7 +499,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               tips={[
                 "คุณสามารถสร้างบัญชีผู้ใช้ให้พนักงานฝั่งลูกค้าเพื่อเข้าดูความพร้อมของคนงาน (Candidate Review) หรืออนุมัติเวลา (Timesheet)",
                 "บัญชีประเภท 'Approver' จะสามารถกดยืนยันรายการสำคัญได้ ส่วน 'Viewer' จะอ่านข้อมูลได้เพียงอย่างเดียว",
-                "สิทธิ์ของลูกค้าถูกจำกัดให้เห็นเฉพาะข้อมูลที่มี Customer ID ตรงกันเท่านั้น เพื่อความปลอดภัยของข้อมูลโครงการอื่น"
+                "สิทธิ์ของลูกค้าถูกจำกัดให้เห็นเฉพาะข้อมูลใน Customer ID ของตนเองเท่านั้น เพื่อความปลอดภัยของข้อมูลโครงการอื่น"
               ]}
             />
 
@@ -507,7 +507,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <Lock className="h-5 w-5" /> บัญชีผู้ใช้งานระบบลูกค้า (Customer Accounts)
+                    <Lock className="h-5 w-5 text-primary" /> บัญชีผู้ใช้งานระบบลูกค้า (Customer Accounts)
                   </CardTitle>
                   <CardDescription>จัดการการเข้าถึงระบบ Customer Portal สำหรับบริษัทนี้</CardDescription>
                 </div>
@@ -581,12 +581,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="pl-6 font-bold text-primary">{user.displayName}</TableCell>
                         <TableCell className="text-xs font-medium">{user.email}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700 border-blue-200">
+                          <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700 border-blue-200 text-[10px] font-bold">
                             {user.portalRole || 'viewer'}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge className={user.isActive ? "bg-green-600" : "bg-slate-300"}>
+                          <Badge className={user.isActive ? "bg-green-600 text-white border-none" : "bg-slate-300"}>
                             {user.isActive ? 'Active' : 'Inactive'}
                           </Badge>
                         </TableCell>

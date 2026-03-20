@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -49,12 +48,18 @@ export default function QuotationsPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
+    if (stored) {
+      try {
+        setCurrentUser(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse user session', e);
+      }
+    }
   }, []);
 
   const isAuthorized = useMemo(() => {
     const authRoles = ['system_admin', 'sales_officer', 'sales_manager', 'finance_officer'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
+    return currentUser?.roleIds?.some(r => authRoles.includes(r as any)) || false;
   }, [currentUser]);
 
   const quotationsQuery = useMemoFirebase(() => {
@@ -126,7 +131,7 @@ export default function QuotationsPage() {
     switch (status) {
       case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
       case 'sent': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">SENT</Badge>;
-      case 'accepted': return <Badge className="bg-green-600">ACCEPTED</Badge>;
+      case 'accepted': return <Badge className="bg-green-600 text-white">ACCEPTED</Badge>;
       case 'rejected': return <Badge variant="destructive">REJECTED</Badge>;
       case 'cancelled': return <Badge variant="secondary">CANCELLED</Badge>;
       case 'expired': return <Badge variant="outline" className="text-orange-600 border-orange-200">EXPIRED</Badge>;

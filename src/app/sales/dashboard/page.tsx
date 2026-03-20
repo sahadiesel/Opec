@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -63,7 +62,7 @@ export default function SalesDashboardPage() {
 
   const quoQuery = useMemoFirebase(() => {
     if (!firestore || !isSales) return null;
-    // Lowercase statuses to match the updated model
+    // Query active quotations (draft or sent)
     return query(collection(firestore, 'quotations'), where('status', 'in', ['draft', 'sent']), limit(10));
   }, [firestore, isSales]);
   const { data: activeQuotations } = useCollection<Quotation>(quoQuery as any);
@@ -330,7 +329,7 @@ export default function SalesDashboardPage() {
 
 function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   return (
-    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm bg-white`}>
+    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm bg-white h-full`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
         <Icon className="h-4 w-4 opacity-30 text-primary" />
