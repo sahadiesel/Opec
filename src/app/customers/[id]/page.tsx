@@ -50,7 +50,11 @@ import {
   MainContract, 
   PurchaseOrder, 
   User, 
-  PortalRole
+  PortalRole,
+  Assignment,
+  Wave,
+  WorkerWaveAcceptance,
+  DailyTimesheet
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -109,6 +113,32 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     return query(collection(firestore, 'users'), where('customerId', '==', id), where('userType', '==', 'customer_portal'));
   }, [firestore, id]);
   const { data: portalUsers } = useCollection<User>(portalUsersQuery as any);
+
+  // --- Operational Queries for Summary ---
+
+  const asgnQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'mobilizations'), where('customerId', '==', id), where('deploymentStatus', '==', 'ACTIVE'));
+  }, [firestore, id]);
+  const { data: activeAssignments } = useCollection<Assignment>(asgnQuery as any);
+
+  const wavesQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'waves'), where('customerId', '==', id), where('status', '==', 'ACTIVE'));
+  }, [firestore, id]);
+  const { data: activeWaves } = useCollection<Wave>(wavesQuery as any);
+
+  const acceptQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'worker_wave_acceptances'), where('customerId', '==', id), where('status', '==', 'pending'));
+  }, [firestore, id]);
+  const { data: pendingAcceptances } = useCollection<WorkerWaveAcceptance>(acceptQuery as any);
+
+  const tsQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'daily_timesheets'), where('customerId', '==', id), where('status', '==', 'OPS_REVIEWED'));
+  }, [firestore, id]);
+  const { data: pendingTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
 
   // --- Actions ---
 
@@ -206,11 +236,20 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </div>
         </div>
 
-        {/* Summary Row */}
-        <div className="flex gap-8 px-2 py-1 text-xs font-medium text-muted-foreground border-b border-dashed pb-4 mb-2">
-          <span>ผู้ใช้งานพอร์ทัล: <b className="text-primary">{portalUsers?.filter(u => u.isActive).length || 0}</b></span>
-          <span>สัญญาที่ใช้งาน: <b className="text-primary">{customerContracts?.filter(c => c.status === 'active').length || 0}</b></span>
-          <span>ใบสั่งซื้อที่ใช้งาน: <b className="text-primary">{customerPOs?.filter(p => p.status === 'active').length || 0}</b></span>
+        {/* Summary Area */}
+        <div className="space-y-1.5 border-b border-dashed pb-4 mb-2">
+          {/* Commercial Summary */}
+          <div className="flex gap-8 px-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground/60">
+            <span>Portal Users: <b className="text-primary">{portalUsers?.filter(u => u.isActive).length || 0}</b></span>
+            <span>Active Contracts: <b className="text-primary">{customerContracts?.filter(c => c.status === 'active').length || 0}</b></span>
+            <span>Active POs: <b className="text-primary">{customerPOs?.filter(p => p.status === 'active').length || 0}</b></span>
+          </div>
+          {/* Operations Summary */}
+          <div className="flex gap-8 px-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground/60">
+            <span>Active Headcount: <b className="text-blue-600">{activeAssignments?.length || 0}</b></span>
+            <span>Active Waves: <b className="text-blue-600">{activeWaves?.length || 0}</b></span>
+            <span>Pending Approvals: <b className="text-amber-600">{(pendingAcceptances?.length || 0) + (pendingTimesheets?.length || 0)}</b></span>
+          </div>
         </div>
 
         {/* Dashboard Tabs */}
@@ -411,7 +450,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <ShieldAlert className="h-5 w-5" /> บัญชีผู้ใช้งานระบบลูกค้า (Customer Accounts)
+                    <Lock className="h-5 w-5" /> บัญชีผู้ใช้งานระบบลูกค้า (Customer Accounts)
                   </CardTitle>
                   <CardDescription>จัดการการเข้าถึงระบบ Customer Portal สำหรับบริษัทนี้</CardDescription>
                 </div>
@@ -527,4 +566,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       </div>
     </AppShell>
   );
+}
+
+function UserMinus(props: any) {
+  return <Users {...props} className={props.className + " text-destructive"} />;
 }
