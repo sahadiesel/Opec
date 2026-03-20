@@ -21,14 +21,16 @@ import {
   User, 
   WorkerPaymentProfile,
   RateCondition,
-  LaborCostContractTerm
+  LaborCostContractTerm,
+  PayrollRunStatus
 } from '@/lib/types';
-import { PayrollBatchSchema } from '@/lib/validations/payroll-schemas';
+import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
 import { writeAuditLog } from './audit-service';
 
 /**
- * Service for managing official Payroll Batches and their transitions.
+ * Service for managing official Payroll Batches and their workflow transitions.
+ * Enforces financial integrity through snapshots and blocking state changes.
  */
 export class PayrollService {
   constructor(private db: Firestore) {}
@@ -37,16 +39,22 @@ export class PayrollService {
     return collection(this.db, 'payroll_batches');
   }
 
+  /**
+   * Generates a new Payroll Batch from client-approved timesheets.
+   * Snapshots worker data and rates to ensure historical stability.
+   */
   async generatePayrollBatch(
     periodId: string, 
     user: User, 
     filters?: { workModeScope?: 'ONSHORE' | 'OFFSHORE' | 'BOTH' }
-  ) {
+  ): Promise<string> {
+    // 1. Fetch Source Context
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
     if (!periodSnap.exists()) throw new Error('Payroll period not found');
     const period = periodSnap.data() as PayrollPeriod;
 
+    // 2. Fetch Eligible Source Data (Only Client Approved)
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
@@ -64,29 +72,33 @@ export class PayrollService {
       throw new Error('No client-approved timesheets found for this period');
     }
 
-    const workerMap: Record<string, DailyTimesheet[]> = {};
-    timesheets.forEach(ts => {
-      if (!workerMap[ts.workerId]) workerMap[ts.workerId] = [];
-      workerMap[ts.workerId].push(ts);
-    });
-
+    // 3. Resolve Master Rules for Calculation
     const rateConditionsSnap = await getDocs(collection(this.db, 'rate_conditions'));
     const allConditions = rateConditionsSnap.docs.map(d => ({ ...d.data(), id: d.id } as RateCondition));
     
     const costTermsSnap = await getDocs(collection(this.db, 'labor_cost_contract_terms'));
     const allCostTerms = costTermsSnap.docs.map(d => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
 
-    const batchId = `PAY-${Date.now().toString().slice(-6)}`;
+    // 4. Organize by Worker
+    const workerMap: Record<string, DailyTimesheet[]> = {};
+    timesheets.forEach(ts => {
+      if (!workerMap[ts.workerId]) workerMap[ts.workerId] = [];
+      workerMap[ts.workerId].push(ts);
+    });
+
+    const batchId = `PAY-${Date.now().toString().slice(-8)}`;
     const batchRef = doc(this.getBatchCollection(), batchId);
     const lines: PayrollBatchLine[] = [];
 
     let batchGross = 0;
     let batchDeductions = 0;
 
+    // 5. Build Lines with Snapshots
     for (const workerId in workerMap) {
       const workerTs = workerMap[workerId];
       const workerName = workerTs[0].workerNameSnapshot;
       
+      // Resolve Worker Payment Profile (Snapshotting for history)
       const ppQuery = query(
         collection(this.db, 'worker_payment_profiles'),
         where('workerId', '==', workerId),
@@ -94,7 +106,7 @@ export class PayrollService {
         where('status', '==', 'ACTIVE')
       );
       const ppSnap = await getDocs(ppQuery);
-      const ppSnapshot = ppSnap.empty ? {} : ppSnap.docs[0].data();
+      const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' } : ppSnap.docs[0].data();
 
       const eventBreakdown: Record<string, number> = {};
       const earningsBreakdown: Record<string, number> = {};
@@ -109,7 +121,7 @@ export class PayrollService {
           if (condition) {
             const cost = calculateDailyLaborCost(ts, condition, 0);
             workerGross += cost;
-            eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
+            eventBreakdown[ts.eventType] = (acc(eventBreakdown[ts.eventType]) || 0) + 1;
             earningsBreakdown[ts.eventType] = (earningsBreakdown[ts.eventType] || 0) + cost;
           }
         }
@@ -133,16 +145,20 @@ export class PayrollService {
         exportStatus: 'pending'
       };
 
+      // Internal validation check
+      PayrollBatchLineSchema.parse(line);
       lines.push(line);
+      
       batchGross += workerGross;
       batchDeductions += workerDeductions;
     }
 
+    // 6. Finalize Batch Header
     const newBatch: PayrollBatch = {
       id: batchId,
       payrollPeriodId: periodId,
       workModeScope: filters?.workModeScope || 'BOTH',
-      status: 'DRAFT',
+      status: 'GENERATED',
       totalWorkers: lines.length,
       grossAmount: batchGross,
       totalDeductions: batchDeductions,
@@ -153,29 +169,54 @@ export class PayrollService {
       updatedAt: Date.now(),
     };
 
-    const writeBatchInstance = writeBatch(this.db);
-    writeBatchInstance.set(batchRef, newBatch);
+    // 7. Atomic Commit
+    const batchOperation = writeBatch(this.db);
+    batchOperation.set(batchRef, PayrollBatchSchema.parse(newBatch));
     lines.forEach(line => {
       const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', line.id);
-      writeBatchInstance.set(lineRef, line);
+      batchOperation.set(lineRef, line);
     });
 
-    await writeBatchInstance.commit();
+    await batchOperation.commit();
 
     await writeAuditLog(this.db, user, {
       actionType: 'GENERATE',
       entityType: 'PayrollBatch',
       entityId: batchId,
-      entityLabel: `${period.label} (${newBatch.workModeScope})`,
+      entityLabel: `${period.label} - ${newBatch.workModeScope}`,
       sourceModule: 'hr',
-      afterSummary: `Generated payroll batch with ${lines.length} workers`
+      afterSummary: `Generated payroll batch with ${lines.length} workers. Total Net: ${newBatch.netAmount}`
     });
 
     return batchId;
   }
 
+  /**
+   * Internal review by HR Officer.
+   */
+  async reviewPayrollBatch(id: string, user: User) {
+    const docRef = doc(this.getBatchCollection(), id);
+    await updateDoc(docRef, {
+      status: 'HR_REVIEWED',
+      updatedBy: user.displayName,
+      updatedAt: Date.now(),
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'REVIEW',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      sourceModule: 'hr'
+    });
+  }
+
+  /**
+   * Final HR Manager approval. Blocking write.
+   */
   async approvePayrollBatchByHR(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
+    
+    // Using runTransaction to ensure atomic status check
     await runTransaction(this.db, async (transaction) => {
       const snap = await transaction.get(docRef);
       if (!snap.exists()) throw new Error('Batch not found');
@@ -193,18 +234,28 @@ export class PayrollService {
       actionType: 'APPROVE',
       entityType: 'PayrollBatch',
       entityId: id,
-      sourceModule: 'hr'
+      sourceModule: 'hr',
+      afterSummary: 'Final HR approval granted'
     });
   }
 
+  /**
+   * Finance team preparation for actual payment.
+   */
   async preparePayrollBatchForFinance(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
+    
     await runTransaction(this.db, async (transaction) => {
       const snap = await transaction.get(docRef);
-      if (snap.data()?.status !== 'HR_APPROVED') throw new Error('Batch must be HR Approved before Finance preparation');
+      if (!snap.exists()) throw new Error('Batch not found');
+      const data = snap.data() as PayrollBatch;
+      
+      if (data.status !== 'HR_APPROVED') {
+        throw new Error('Batch must be approved by HR before Finance can prepare it');
+      }
       
       transaction.update(docRef, {
-        status: 'FINANCE_APPROVED',
+        status: 'FINANCE_PREPARED',
         financePreparedBy: user.displayName,
         financePreparedAt: Date.now(),
         updatedBy: user.displayName,
@@ -220,8 +271,33 @@ export class PayrollService {
     });
   }
 
+  /**
+   * Marks the batch as Paid (Payment executed).
+   */
+  async markPayrollBatchPaid(id: string, user: User) {
+    const docRef = doc(this.getBatchCollection(), id);
+    
+    await updateDoc(docRef, {
+      status: 'PAID',
+      updatedBy: user.displayName,
+      updatedAt: Date.now()
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'PAY',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      sourceModule: 'accounting',
+      afterSummary: 'Marked as paid'
+    });
+  }
+
+  /**
+   * Final lock of the payroll batch. No further changes allowed.
+   */
   async lockPayrollBatch(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
+    
     await updateDoc(docRef, {
       status: 'LOCKED',
       lockedBy: user.displayName,
@@ -235,7 +311,11 @@ export class PayrollService {
       entityType: 'PayrollBatch',
       entityId: id,
       sourceModule: 'accounting',
-      reasonCode: 'PAYMENT_FINALIZED'
+      reasonCode: 'PAYMENT_FINALIZED',
+      afterSummary: 'Payroll batch locked'
     });
   }
 }
+
+// Utility helper for safe aggregation access
+function acc(val: any) { return val; }
