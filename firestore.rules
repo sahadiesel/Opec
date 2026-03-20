@@ -62,8 +62,8 @@ service cloud.firestore {
     // Daily Activity Tracking
     match /daily_timesheets/{id} {
       allow read: if isSignedIn();
-      allow create: if isOperationsStaff();
-      allow update: if isOperationsStaff() || hasRole('client_approver');
+      allow create: if isOperationsStaff() || isHRStaff();
+      allow update: if isOperationsStaff() || isHRStaff() || hasRole('client_approver');
       allow delete: if hasRole('system_admin');
     }
 
@@ -84,6 +84,12 @@ service cloud.firestore {
       allow write: if isHRStaff() || isFinanceStaff();
     }
 
+    // Worker Payment Profiles (Sensitive Bank Data)
+    match /worker_payment_profiles/{id} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff();
+    }
+
     // Payment Export Batches
     match /payment_export_batches/{id} {
       allow read: if isHRStaff() || isFinanceStaff();
@@ -98,7 +104,7 @@ service cloud.firestore {
       allow create, delete: if hasRole('system_admin');
     }
 
-    // Audit Trail
+    // Audit Trail (Immutable once created)
     match /audit_logs/{id} {
       allow get: if isSignedIn();
       allow list: if hasRole('system_admin');
@@ -182,7 +188,7 @@ service cloud.firestore {
     match /worker_wave_acceptances/{id} {
       allow read: if isSignedIn();
       allow create: if isOperationsStaff() || hasRole('client_approver');
-      allow update: if isOperationsStaff() || hasRole('client_approver') || isOwner(resource.data.customerPortalUserId);
+      allow update: if isOperationsStaff() || hasRole('client_approver');
       allow delete: if hasRole('system_admin');
     }
 
