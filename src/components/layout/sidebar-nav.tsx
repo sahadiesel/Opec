@@ -36,7 +36,10 @@ import {
   FileSignature,
   Hash,
   Scale,
-  Calculator
+  Calculator,
+  CalendarDays,
+  UserCheck,
+  ClipboardCheck
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -86,8 +89,9 @@ const navGroups: NavGroup[] = [
   {
     label: 'บุคคลและเงินเดือน (HR & Payroll)',
     items: [
-      { key: 'timesheets', title: UI_LABELS.TIMESHEETS, href: '/timesheets', icon: Clock },
-      { key: 'worker_payroll', title: UI_LABELS.WORKER_PAYROLL, href: '/payroll', icon: CircleDollarSign },
+      { key: 'timesheets', title: 'ลงเวลารายวัน (Daily Timesheets)', href: '/timesheets/daily', icon: Clock },
+      { key: 'worker_payroll', title: 'งวดการจ่ายเงิน (Payroll Batches)', href: '/payroll/batches', icon: Coins },
+      { key: 'worker_payroll', title: 'จัดการรอบบัญชี (Periods)', href: '/payroll/periods', icon: CalendarDays },
       { key: 'labor_cost_contract_terms', title: 'เงื่อนไขต้นทุน (Cost Terms)', href: '/labor-cost-terms', icon: Calculator },
       { key: 'office_payroll', title: UI_LABELS.OFFICE_PAYROLL, href: '/office-payroll', icon: Coins },
       { key: 'positions', title: UI_LABELS.POSITIONS, href: '/positions', icon: Activity },
@@ -128,6 +132,13 @@ const navGroups: NavGroup[] = [
       { key: 'client_portal', title: 'Client Portal', href: '/client-portal', icon: ShieldAlert },
     ]
   },
+  {
+    label: 'ลูกค้า (Customer Portal)',
+    items: [
+      { key: 'client_portal', title: 'อนุมัติพนักงาน (Candidate Acceptance)', href: '/client-portal/waves', icon: UserCheck },
+      { key: 'client_portal', title: 'อนุมัติใบลงเวลา (Timesheet Approval)', href: '/client-portal/timesheets', icon: ClipboardCheck },
+    ]
+  }
 ];
 
 export function SidebarNav({ user, profile }: { user: User; profile?: PermissionProfile | null }) {
