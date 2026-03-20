@@ -197,6 +197,12 @@ export class PayrollService {
    */
   async reviewPayrollBatch(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Batch not found');
+    const current = snap.data() as PayrollBatch;
+
+    if (current.status === 'LOCKED') throw new Error('Integrity Error: Cannot review a locked batch');
+
     await updateDoc(docRef, {
       status: 'HR_REVIEWED',
       updatedBy: user.displayName,
@@ -223,6 +229,9 @@ export class PayrollService {
     await runTransaction(this.db, async (transaction) => {
       const snap = await transaction.get(docRef);
       if (!snap.exists()) throw new Error('Batch not found');
+      const current = snap.data() as PayrollBatch;
+
+      if (current.status === 'LOCKED') throw new Error('Integrity Error: Cannot approve a locked batch');
       
       transaction.update(docRef, {
         status: 'HR_APPROVED',
@@ -257,6 +266,8 @@ export class PayrollService {
       if (data.status !== 'HR_APPROVED') {
         throw new Error('Batch must be approved by HR before Finance can prepare it');
       }
+
+      if (data.status === 'LOCKED') throw new Error('Integrity Error: Cannot modify a locked batch');
       
       transaction.update(docRef, {
         status: 'FINANCE_PREPARED',
@@ -279,9 +290,15 @@ export class PayrollService {
 
   /**
    * Marks the batch as Paid (Payment executed).
+   * Business Rule: Blocks status change if already locked.
    */
   async markPayrollBatchPaid(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Batch not found');
+    const current = snap.data() as PayrollBatch;
+
+    if (current.status === 'LOCKED') throw new Error('Integrity Error: Locked batches cannot be marked as paid.');
     
     await updateDoc(docRef, {
       status: 'PAID',
@@ -301,6 +318,7 @@ export class PayrollService {
 
   /**
    * Final lock of the payroll batch. No further changes allowed.
+   * Business Rule: This is a terminal state.
    */
   async lockPayrollBatch(id: string, user: User) {
     const docRef = doc(this.getBatchCollection(), id);

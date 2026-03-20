@@ -32,10 +32,17 @@ export class TimesheetService {
   }
 
   /**
-   * Guard helper to check if a record is in a modifiable state
+   * Business Control: Defines which states allow for direct field modification.
    */
   canEdit(status: DailyTimesheetStatus): boolean {
     return ['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(status);
+  }
+
+  /**
+   * Business Control: Defines states that are considered finalized for financial use.
+   */
+  isFinalized(status: DailyTimesheetStatus): boolean {
+    return ['CLIENT_APPROVED', 'LOCKED'].includes(status);
   }
 
   /**
@@ -50,10 +57,10 @@ export class TimesheetService {
     const id = this.getTimesheetId(data.workerId, data.assignmentId, data.date);
     const docRef = doc(this.getCollection(), id);
     
-    // Uniqueness check
+    // Uniqueness check: Prevent silent overwrite of existing daily records
     const existing = await getDoc(docRef);
     if (existing.exists()) {
-      throw new Error(`Timesheet already exists for this date: ${data.date}`);
+      throw new Error(`Timesheet record already exists for this identity and date: ${data.date}. Use the update or correction flow instead.`);
     }
 
     const validated = DailyTimesheetSchema.parse({
@@ -66,7 +73,7 @@ export class TimesheetService {
       updatedAt: Date.now(),
     });
 
-    // High integrity write
+    // High integrity write: Blocking
     await setDoc(docRef, validated);
     
     await writeAuditLog(this.db, user, {
@@ -86,6 +93,7 @@ export class TimesheetService {
 
   /**
    * Updates an existing draft or rejected timesheet.
+   * Business Rule: Blocks updates if the record is approved or locked.
    */
   async updateTimesheetDraft(id: string, data: Partial<DailyTimesheet>, user: User) {
     const docRef = doc(this.getCollection(), id);
@@ -95,7 +103,7 @@ export class TimesheetService {
     const current = snap.data() as DailyTimesheet;
 
     if (!this.canEdit(current.status)) {
-      throw new Error(`Cannot edit timesheet in ${current.status} status`);
+      throw new Error(`Integrity Error: Cannot edit timesheet in current status: ${current.status}. To make changes, the record must be rejected or marked for correction.`);
     }
 
     const updateData = {
@@ -123,10 +131,11 @@ export class TimesheetService {
   async submitTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Timesheet not found');
     const current = snap.data() as DailyTimesheet;
 
     if (!['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(current.status)) {
-      throw new Error('Only drafts or rejected items can be submitted');
+      throw new Error('Invalid Transition: Only drafts or rejected items can be submitted for review');
     }
 
     await updateDoc(docRef, {
@@ -153,6 +162,7 @@ export class TimesheetService {
   async opsReview(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Timesheet not found');
     if (snap.data()?.status !== 'SUBMITTED') throw new Error('Only submitted items can be reviewed by Ops');
 
     await updateDoc(docRef, {
@@ -175,11 +185,13 @@ export class TimesheetService {
 
   /**
    * Client final sign-off.
+   * Business Control: Blocking write ensures the approval state is settled.
    */
   async approveTimesheetByClient(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
-    if (snap.data()?.status !== 'OPS_REVIEWED') throw new Error('Only ops-reviewed items can be approved by Client');
+    if (!snap.exists()) throw new Error('Timesheet not found');
+    if (snap.data()?.status !== 'OPS_REVIEWED') throw new Error('Client Approval Failed: Only ops-reviewed items can be approved');
 
     await updateDoc(docRef, {
       status: 'CLIENT_APPROVED',
@@ -205,6 +217,14 @@ export class TimesheetService {
    */
   async rejectTimesheet(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Timesheet not found');
+    
+    // Cannot reject once locked for financial period
+    if (snap.data()?.status === 'LOCKED') {
+      throw new Error('Integrity Violation: Cannot reject a record that is already locked for a financial period.');
+    }
+
     await updateDoc(docRef, {
       status: 'REJECTED',
       rejectionReason: reason,
@@ -228,6 +248,13 @@ export class TimesheetService {
    */
   async requestCorrection(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Timesheet not found');
+
+    if (snap.data()?.status === 'LOCKED') {
+      throw new Error('Integrity Violation: Locked records cannot be marked for correction.');
+    }
+
     await updateDoc(docRef, {
       status: 'CORRECTION_REQUIRED',
       correctionReason: reason,
@@ -248,11 +275,13 @@ export class TimesheetService {
 
   /**
    * Locks the timesheet for final payroll processing.
+   * Business Control: Mandatory blocking write.
    */
   async lockTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
-    if (snap.data()?.status !== 'CLIENT_APPROVED') throw new Error('Only client-approved items can be locked');
+    if (!snap.exists()) throw new Error('Timesheet not found');
+    if (snap.data()?.status !== 'CLIENT_APPROVED') throw new Error('Only client-approved items can be locked for financial periods');
 
     await updateDoc(docRef, {
       status: 'LOCKED',
