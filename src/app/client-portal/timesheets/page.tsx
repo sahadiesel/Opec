@@ -24,6 +24,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, query, where, doc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { CustomerQueryService } from '@/lib/services/customer-query-service';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work)',
@@ -43,17 +44,21 @@ export default function ClientTimesheetApprovalPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const customerId = currentUser?.customerId || '';
-
-  // 1. Data Queries
+  // 1. Data Queries using Scoping Service
   const tsQuery = useMemoFirebase(() => {
-    if (!firestore || !customerId) return null;
+    if (!firestore || !currentUser) return null;
+    const service = new CustomerQueryService(firestore);
+    const baseQuery = service.getScopedTimesheetsQuery(currentUser);
+    
+    if (!baseQuery) return null;
+
+    // Filter for relevant approval statuses
     return query(
-      collection(firestore, 'daily_timesheets'),
-      where('customerId', '==', customerId),
+      baseQuery,
       where('status', 'in', ['OPS_REVIEWED', 'CLIENT_APPROVED', 'LOCKED'])
     );
-  }, [firestore, customerId]);
+  }, [firestore, currentUser]);
+  
   const { data: timesheets, isLoading: isTsLoading } = useCollection<DailyTimesheet>(tsQuery as any);
 
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);

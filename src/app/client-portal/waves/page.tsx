@@ -39,6 +39,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkerWaveAcceptanceService } from '@/lib/services/acceptance-service';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { CustomerQueryService } from '@/lib/services/customer-query-service';
 
 export default function ClientWaveAcceptancePage() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -51,18 +52,18 @@ export default function ClientWaveAcceptancePage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const customerId = currentUser?.customerId || '';
-
   const wavesQuery = useMemoFirebase(() => {
-    if (!firestore || !customerId) return null;
-    return query(collection(firestore, 'waves'), where('customerId', '==', customerId));
-  }, [firestore, customerId]);
+    if (!firestore || !currentUser) return null;
+    const service = new CustomerQueryService(firestore);
+    return service.getScopedWavesQuery(currentUser);
+  }, [firestore, currentUser]);
   const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
   const acceptQuery = useMemoFirebase(() => {
-    if (!firestore || !customerId) return null;
-    return collection(firestore, 'worker_wave_acceptances');
-  }, [firestore, customerId]);
+    if (!firestore || !currentUser) return null;
+    const service = new CustomerQueryService(firestore);
+    return service.getScopedAcceptancesQuery(currentUser);
+  }, [firestore, currentUser]);
   const { data: acceptances, isLoading: isAcceptLoading } = useCollection<WorkerWaveAcceptance>(acceptQuery as any);
 
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);

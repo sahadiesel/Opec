@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ShieldCheck, Eye, FileText, CheckCircle2, XCircle, Users, AlertCircle } from 'lucide-react';
 import { User, Assignment, Worker } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, query, where } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -23,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
+import { CustomerQueryService } from '@/lib/services/customer-query-service';
 
 export default function ClientPortalPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -39,13 +40,21 @@ export default function ClientPortalPage() {
   }, []);
 
   const isClientAccess = useMemo(() => {
-    return currentUser?.department === 'client' || currentUser?.department === 'admin';
+    return currentUser?.department === 'client' || currentUser?.department === 'admin' || currentUser?.userType === 'customer_portal';
   }, [currentUser]);
 
-  // Standardized to 'mobilizations' top-level collection
+  // Standardized to scoped 'mobilizations' collection
   const mobilizationQuery = useMemoFirebase(() => {
     if (!firestore || !currentUser || !isClientAccess) return null;
-    return collection(firestore, 'mobilizations');
+    const service = new CustomerQueryService(firestore);
+    const baseQuery = service.getScopedAssignmentsQuery(currentUser);
+    
+    // Add additional status filter for candidate review portal
+    if (!baseQuery) return null;
+    return query(
+      baseQuery, 
+      where('deploymentStatus', 'in', ['CLIENT_SUBMITTED', 'CLIENT_APPROVED', 'ACTIVE', 'MOBILIZING', 'READY'])
+    );
   }, [firestore, currentUser, isClientAccess]);
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(mobilizationQuery as any);
@@ -56,19 +65,6 @@ export default function ClientPortalPage() {
   }, [firestore, currentUser, isClientAccess]);
   
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
-
-  // Filter assignments by customerId if user is a client
-  const clientAssignments = useMemo(() => {
-    if (!assignments || !currentUser) return [];
-    
-    return assignments.filter(a => {
-      const isRelevantStatus = ['CLIENT_SUBMITTED', 'CLIENT_APPROVED', 'ACTIVE', 'MOBILIZING', 'READY'].includes(a.deploymentStatus);
-      if (currentUser.department === 'client' && currentUser.customerId) {
-        return a.customerId === currentUser.customerId && isRelevantStatus;
-      }
-      return isRelevantStatus;
-    });
-  }, [assignments, currentUser]);
 
   const handleApprove = (asgn: Assignment) => {
     if (!firestore) return;
@@ -119,64 +115,87 @@ export default function ClientPortalPage() {
               <ShieldCheck className="h-6 w-6" /> Client Portal: การพิจารณาตัวบุคคล
             </h1>
             <p className="text-muted-foreground">
-              {currentUser.department === 'admin' ? 'Admin Monitoring View' : `Customer: ${currentUser.displayName}`}
+              {currentUser.userType === 'internal' ? 'Internal Monitoring View' : `Customer Account: ${currentUser.displayName}`}
             </p>
           </div>
         </div>
 
-        <Card>
-          <CardHeader><CardTitle>รายการพิจารณาผู้สมัคร (Candidate Review)</CardTitle></CardHeader>
-          <CardContent>
+        <Card className="shadow-lg border-none overflow-hidden">
+          <CardHeader className="bg-primary/5 border-b pb-4">
+            <CardTitle className="text-lg">รายการพิจารณาผู้สมัคร (Candidate Review)</CardTitle>
+            <CardDescription>ตรวจสอบประวัติและอนุมัติพนักงานเพื่อเริ่มงานตามรอบเวฟที่กำหนด</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
             {isAssignmentsLoading ? (
-              <div className="py-10 text-center text-muted-foreground italic">กำลังโหลด...</div>
+              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลผู้สมัคร...</div>
             ) : (
               <Table>
-                <TableHeader>
+                <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead>คนงาน</TableHead>
-                    <TableHead>ตำแหน่งงาน</TableHead>
-                    <TableHead>สถานะ</TableHead>
-                    <TableHead className="text-right">จัดการ</TableHead>
+                    <TableHead className="pl-6 py-4 font-bold">คนงาน (Candidate)</TableHead>
+                    <TableHead className="font-bold">ตำแหน่งงาน</TableHead>
+                    <TableHead className="font-bold">สถานะโครงการ</TableHead>
+                    <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {clientAssignments.map((asgn) => {
+                  {assignments?.map((asgn) => {
                     const worker = allWorkers?.find(w => w.id === asgn.workerId);
                     return (
-                      <TableRow key={asgn.id}>
-                        <TableCell>
+                      <TableRow key={asgn.id} className="hover:bg-muted/20 transition-all">
+                        <TableCell className="pl-6 py-4">
                           <div className="flex flex-col">
-                            <span className="font-semibold">{worker ? `${worker.firstName} ${worker.lastName}` : 'N/A'}</span>
-                            <span className="text-[10px] text-muted-foreground font-mono">{asgn.projectName}</span>
+                            <span className="font-bold text-sm text-primary">{worker ? `${worker.firstName} ${worker.lastName}` : 'N/A'}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono uppercase">{asgn.projectName}</span>
                           </div>
                         </TableCell>
-                        <TableCell><Badge variant="outline">{asgn.positionId}</Badge></TableCell>
-                        <TableCell>{asgn.deploymentStatus}</TableCell>
-                        <TableCell className="text-right">
+                        <TableCell>
+                          <Badge variant="outline" className="bg-white text-primary border-primary/20 text-[10px] font-bold">
+                            {asgn.positionId}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="text-[9px] font-black uppercase tracking-tighter">
+                            {asgn.deploymentStatus}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
                           <Dialog>
                             <DialogTrigger asChild>
-                              <Button size="sm" variant="ghost" onClick={() => setSelectedAssignment(asgn)}>
-                                <Eye className="h-4 w-4 mr-2" /> ดูประวัติ
+                              <Button size="sm" variant="outline" onClick={() => setSelectedAssignment(asgn)} className="font-bold text-xs h-8">
+                                <Eye className="h-3.5 w-3.5 mr-1.5" /> พิจารณาประวัติ
                               </Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-2xl">
                               <DialogHeader>
                                 <DialogTitle>พิจารณาคุณสมบัติ: {worker?.firstName} {worker?.lastName}</DialogTitle>
+                                <DialogDescription>ตรวจสอบรายละเอียดและความพร้อมก่อนยืนยันรับคนงานเข้าโครงการ</DialogDescription>
                               </DialogHeader>
                               <div className="space-y-4 py-4">
-                                <Label>ความเห็น / คำร้องขอ (Optional)</Label>
-                                <Textarea 
-                                  placeholder="ระบุข้อความหากต้องการขอเปลี่ยนตัว..." 
-                                  value={reviewComment}
-                                  onChange={(e) => setReviewComment(e.target.value)}
-                                />
+                                <div className="p-4 bg-muted/30 rounded-lg space-y-2">
+                                  <p className="text-xs font-bold text-muted-foreground uppercase">ข้อมูลตำแหน่ง:</p>
+                                  <p className="text-sm font-bold text-primary">{asgn.positionId} - {asgn.projectName}</p>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label className="font-bold">ความเห็นจากลูกค้า / คำร้องขอ (Client Remarks)</Label>
+                                  <Textarea 
+                                    placeholder="ระบุข้อความหากต้องการขอเปลี่ยนตัว หรือระบุเงื่อนไขเพิ่มเติม..." 
+                                    value={reviewComment}
+                                    onChange={(e) => setReviewComment(e.target.value)}
+                                    className="min-h-[100px]"
+                                  />
+                                </div>
                               </div>
-                              <DialogFooter className="gap-2">
+                              <DialogFooter className="gap-2 sm:gap-0">
                                 {asgn.deploymentStatus === 'CLIENT_SUBMITTED' && (
-                                  <>
-                                    <Button variant="outline" className="text-destructive" onClick={() => handleReject(asgn)}>ขอเปลี่ยนตัว</Button>
-                                    <Button className="bg-green-600" onClick={() => handleApprove(asgn)}>อนุมัติผู้สมัคร</Button>
-                                  </>
+                                  <div className="flex w-full gap-2">
+                                    <Button variant="outline" className="flex-1 text-destructive border-destructive hover:bg-destructive/5" onClick={() => handleReject(asgn)}>
+                                      <XCircle className="h-4 w-4 mr-2" /> ขอเปลี่ยนตัวคนงาน
+                                    </Button>
+                                    <Button className="flex-1 bg-green-600 hover:bg-green-700 font-bold" onClick={() => handleApprove(asgn)}>
+                                      <CheckCircle2 className="h-4 w-4 mr-2" /> อนุมัติผู้สมัครรายนี้
+                                    </Button>
+                                  </div>
                                 )}
                               </DialogFooter>
                             </DialogContent>
@@ -185,6 +204,11 @@ export default function ClientPortalPage() {
                       </TableRow>
                     );
                   })}
+                  {(!assignments || assignments.length === 0) && !isAssignmentsLoading && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-20 text-muted-foreground italic">ไม่มีผู้สมัครที่รอดำเนินการในขณะนี้</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             )}
