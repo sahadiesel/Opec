@@ -24,15 +24,24 @@ export class TimesheetService {
     return collection(this.db, 'daily_timesheets');
   }
 
+  /**
+   * Generates a deterministic ID to enforce uniqueness: worker + assignment + date
+   */
   getTimesheetId(workerId: string, assignmentId: string, date: string): string {
     return `${workerId}_${assignmentId}_${date}`;
   }
 
+  /**
+   * Guard helper to check if a record is in a modifiable state
+   */
   canEdit(status: DailyTimesheetStatus): boolean {
-    // Once locked or approved by client, internal staff shouldn't edit without unlocking
-    return !['CLIENT_APPROVED', 'LOCKED'].includes(status);
+    return ['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(status);
   }
 
+  /**
+   * Creates a new daily timesheet entry.
+   * Enforces uniqueness via deterministic ID.
+   */
   async createTimesheet(data: Partial<DailyTimesheet>, user: User) {
     if (!data.workerId || !data.assignmentId || !data.date) {
       throw new Error('Identity fields (worker, assignment, date) are required');
@@ -41,6 +50,7 @@ export class TimesheetService {
     const id = this.getTimesheetId(data.workerId, data.assignmentId, data.date);
     const docRef = doc(this.getCollection(), id);
     
+    // Uniqueness check
     const existing = await getDoc(docRef);
     if (existing.exists()) {
       throw new Error(`Timesheet already exists for this date: ${data.date}`);
@@ -56,6 +66,7 @@ export class TimesheetService {
       updatedAt: Date.now(),
     });
 
+    // High integrity write
     await setDoc(docRef, validated);
     
     await writeAuditLog(this.db, user, {
@@ -70,8 +81,41 @@ export class TimesheetService {
     return id;
   }
 
+  /**
+   * Updates an existing draft or rejected timesheet.
+   */
+  async updateTimesheetDraft(id: string, data: Partial<DailyTimesheet>, user: User) {
+    const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    
+    if (!snap.exists()) throw new Error('Timesheet not found');
+    const current = snap.data() as DailyTimesheet;
+
+    if (!this.canEdit(current.status)) {
+      throw new Error(`Cannot edit timesheet in ${current.status} status`);
+    }
+
+    const updateData = {
+      ...data,
+      updatedBy: user.displayName,
+      updatedAt: Date.now()
+    };
+
+    await updateDoc(docRef, updateData);
+  }
+
+  /**
+   * Submits a timesheet for Operations review.
+   */
   async submitTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    const current = snap.data() as DailyTimesheet;
+
+    if (!['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(current.status)) {
+      throw new Error('Only drafts or rejected items can be submitted');
+    }
+
     await updateDoc(docRef, {
       status: 'SUBMITTED',
       submittedBy: user.displayName,
@@ -89,8 +133,14 @@ export class TimesheetService {
     });
   }
 
+  /**
+   * Operations internal verification.
+   */
   async opsReview(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (snap.data()?.status !== 'SUBMITTED') throw new Error('Only submitted items can be reviewed by Ops');
+
     await updateDoc(docRef, {
       status: 'OPS_REVIEWED',
       opsReviewedBy: user.displayName,
@@ -108,8 +158,14 @@ export class TimesheetService {
     });
   }
 
-  async clientApprove(id: string, user: User) {
+  /**
+   * Client final sign-off.
+   */
+  async approveTimesheetByClient(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (snap.data()?.status !== 'OPS_REVIEWED') throw new Error('Only ops-reviewed items can be approved by Client');
+
     await updateDoc(docRef, {
       status: 'CLIENT_APPROVED',
       clientApprovedBy: user.displayName,
@@ -128,7 +184,10 @@ export class TimesheetService {
     });
   }
 
-  async reject(id: string, reason: string, user: User) {
+  /**
+   * Generic rejection by Ops or Client.
+   */
+  async rejectTimesheet(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'REJECTED',
@@ -147,6 +206,9 @@ export class TimesheetService {
     });
   }
 
+  /**
+   * Request correction from the submitter.
+   */
   async requestCorrection(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -166,8 +228,14 @@ export class TimesheetService {
     });
   }
 
+  /**
+   * Locks the timesheet for final payroll processing.
+   */
   async lockTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (snap.data()?.status !== 'CLIENT_APPROVED') throw new Error('Only client-approved items can be locked');
+
     await updateDoc(docRef, {
       status: 'LOCKED',
       lockedBy: user.displayName,
@@ -182,7 +250,7 @@ export class TimesheetService {
       entityId: id,
       sourceModule: 'finance',
       reasonCode: 'PERIOD_CLOSED',
-      afterSummary: 'Locked for payroll processing'
+      afterSummary: 'Locked for final payroll processing'
     });
   }
 }
