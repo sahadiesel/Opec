@@ -214,30 +214,30 @@ export default function Home() {
       <div 
         className="flex items-center justify-center min-h-screen p-4 bg-cover bg-center bg-no-repeat relative"
         style={{ backgroundImage: loginBg ? `url(${loginBg})` : 'none' }}
-        data-ai-hint="offshore platform"
+        data-ai-hint="offshore oil rig"
       >
-        <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px]" />
+        <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-[3px]" />
         <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary relative z-10 bg-white/95">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
               <ShieldCheck className="h-10 w-10 text-primary" />
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight text-primary">OPEC OpsFlow</CardTitle>
-            <CardDescription className="text-base">Enterprise Manpower Supply Operations</CardDescription>
+            <CardDescription className="text-base font-medium">Enterprise Manpower Supply Operations</CardDescription>
           </CardHeader>
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">อีเมลใช้งาน (Email)</Label>
+                <Label htmlFor="email" className="font-bold">อีเมลใช้งาน (Email)</Label>
                 <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" required className="h-11" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">รหัสผ่าน (Password)</Label>
+                <Label htmlFor="password" title="password" className="font-bold">รหัสผ่าน (Password)</Label>
                 <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="h-11" />
               </div>
             </CardContent>
             <CardFooter>
-              <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg" disabled={isLoggingIn}>
+              <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg bg-primary" disabled={isLoggingIn}>
                 {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
                 เข้าสู่ระบบ
               </Button>
