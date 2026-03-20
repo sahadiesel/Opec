@@ -221,7 +221,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div className="flex flex-col">
-              <h1 className="text-2xl font-bold tracking-tight">Quotation Workspace (ระบบจัดการใบเสนอราคา)</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-primary">Quotation Workspace</h1>
               <div className="flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{quotation.quotationNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -230,8 +230,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" className="gap-2" onClick={() => window.print()}>
-              <Printer className="h-4 w-4" /> พิมพ์ (Print)
+            <Button variant="outline" className="gap-2 border-primary text-primary hover:bg-primary/5 h-11 px-6 shadow-sm" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
             <Badge variant={isFinalized ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isFinalized ? "bg-slate-900" : "border-primary/20 bg-primary/5 text-primary"}`}>
               {isFinalized && <Lock className="h-3 w-3 mr-2" />}
@@ -386,7 +386,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3">
                     {isDraft && (
-                      <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('sent')}>
+                      <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold h-12" onClick={() => handleUpdateStatus('sent')}>
                         <Send className="h-4 w-4 mr-2" /> ส่งให้ลูกค้า (Mark as Sent)
                       </Button>
                     )}
@@ -394,22 +394,22 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     {isSent && (
                       <>
                         <div className="grid grid-cols-2 gap-2">
-                          <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs" onClick={() => handleUpdateStatus('accepted')}>
+                          <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11" onClick={() => handleUpdateStatus('accepted')}>
                             <CheckCircle2 className="h-3 w-3 mr-1" /> Accepted
                           </Button>
-                          <Button variant="outline" className="bg-transparent border-white/20 text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('rejected')}>
+                          <Button variant="outline" className="bg-transparent border-white/20 text-white hover:bg-white/10 text-xs h-11" onClick={() => handleUpdateStatus('rejected')}>
                             <XCircle className="h-3 w-3 mr-1" /> Rejected
                           </Button>
                         </div>
                         <Separator className="bg-white/10" />
-                        <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('draft')}>
+                        <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs h-11" onClick={() => handleUpdateStatus('draft')}>
                           <RefreshCw className="h-3 w-3 mr-2" /> แก้ไขใหม่ (Revise Draft)
                         </Button>
                       </>
                     )}
 
                     {!isFinalized && (
-                      <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('cancelled')}>
+                      <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs h-11" onClick={() => handleUpdateStatus('cancelled')}>
                         <Trash2 className="h-3 w-3 mr-2" /> ยกเลิกใบเสนอราคา
                       </Button>
                     )}
@@ -501,9 +501,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </div>
           </TabsContent>
 
-          {/* Document Preview Tab */}
+          {/* Document Preview Tab - Printable Layout */}
           <TabsContent value="preview" className="mt-6">
-            <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-12 space-y-10 min-h-[29.7cm] font-serif text-slate-900 overflow-hidden print-container">
+            <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-12 space-y-10 min-h-[29.7cm] font-serif text-slate-900 overflow-hidden print-container print:shadow-none print:border-none">
               <div className="flex justify-between items-start border-b-4 border-primary pb-6">
                 <div className="space-y-1">
                   <h2 className="text-3xl font-black text-primary uppercase tracking-tighter">OPEC OpsFlow</h2>
@@ -716,6 +716,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
       <style jsx global>{`
         @media print {
+          /* Hide everything except the print container */
           body * {
             visibility: hidden;
           }
@@ -728,12 +729,22 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             top: 0 !important;
             width: 100% !important;
             margin: 0 !important;
-            padding: 2cm !important;
+            padding: 1.5cm !important;
             box-shadow: none !important;
             border: none !important;
           }
-          header, nav, .sidebar, .print\\:hidden, [role="tablist"], button {
+          /* Remove layout elements during print */
+          header, nav, [data-sidebar="sidebar"], .print\\:hidden, [role="tablist"], button {
             display: none !important;
+          }
+          /* Reset backgrounds for clarity */
+          .bg-slate-50 {
+            background-color: #f8fafc !important;
+            -webkit-print-color-adjust: exact;
+          }
+          .bg-slate-100 {
+            background-color: #f1f5f9 !important;
+            -webkit-print-color-adjust: exact;
           }
         }
       `}</style>
