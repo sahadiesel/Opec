@@ -110,16 +110,28 @@
         "id": { "type": "string" },
         "quotationNo": { "type": "string" },
         "customerId": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
-        "totalAmount": { "type": "number" },
-        "currency": { "type": "string" },
-        "status": { "type": "string", "enum": ["DRAFT", "SENT", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"] },
+        "customerNameSnapshot": { "type": "string" },
         "issueDate": { "type": "string", "format": "date" },
-        "expiryDate": { "type": "string", "format": "date" },
-        "notes": { "type": "string" }
+        "validUntilDate": { "type": "string", "format": "date" },
+        "currency": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "sent", "accepted", "rejected", "expired", "cancelled"] },
+        "projectTitle": { "type": "string" },
+        "referenceNo": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "billingAddressSnapshot": { "type": "string" },
+        "notes": { "type": "string" },
+        "internalNotes": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "taxPercent": { "type": "number" },
+        "taxAmount": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
       },
-      "required": ["id", "quotationNo", "customerId", "title"]
+      "required": ["id", "quotationNo", "customerId", "projectTitle"]
     },
     "QuotationLine": {
       "title": "QuotationLine",
@@ -130,8 +142,11 @@
         "quotationId": { "type": "string" },
         "description": { "type": "string" },
         "quantity": { "type": "number" },
+        "unit": { "type": "string" },
         "unitPrice": { "type": "number" },
-        "amount": { "type": "number" }
+        "lineTotal": { "type": "number" },
+        "remarks": { "type": "string" },
+        "displayOrder": { "type": "number" }
       }
     },
     "SalesContractTerm": {

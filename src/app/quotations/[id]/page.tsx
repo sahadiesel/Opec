@@ -63,7 +63,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
   const [isAddingLine, setIsAddingLine] = useState(false);
-  const [newLine, setNewLine] = useState<Partial<QuotationLine>>({ description: '', quantity: 1, unitPrice: 0 });
+  const [newLine, setNewLine] = useState<Partial<QuotationLine>>({ description: '', quantity: 1, unit: 'EA', unitPrice: 0 });
 
   useEffect(() => {
     if (quotation) setEditedHeader(quotation);
@@ -85,18 +85,19 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const handleAddLine = async () => {
     if (!firestore || !newLine.description) return;
     const lineRef = collection(firestore, 'quotations', id, 'lines');
-    const amount = (newLine.quantity || 0) * (newLine.unitPrice || 0);
+    const lineTotal = (newLine.quantity || 0) * (newLine.unitPrice || 0);
     
     await addDocumentNonBlocking(lineRef, {
       ...newLine,
       quotationId: id,
-      amount,
+      lineTotal,
+      displayOrder: (lines?.length || 0) + 1,
       createdAt: Date.now()
     });
 
-    recalculateTotal([...(lines || []), { ...newLine, amount } as any]);
+    recalculateTotal([...(lines || []), { ...newLine, lineTotal } as any]);
     setIsAddingLine(false);
-    setNewLine({ description: '', quantity: 1, unitPrice: 0 });
+    setNewLine({ description: '', quantity: 1, unit: 'EA', unitPrice: 0 });
     toast({ title: "เพิ่มรายการสำเร็จ" });
   };
 
@@ -108,17 +109,24 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const recalculateTotal = (currentLines: QuotationLine[]) => {
-    if (!quotationRef) return;
-    const totalAmount = currentLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
-    updateDoc(quotationRef, { totalAmount, updatedAt: Date.now() });
+    if (!quotationRef || !quotation) return;
+    const subtotal = currentLines.reduce((sum, l) => sum + (Number(l.lineTotal) || 0), 0);
+    const taxPercent = quotation.taxPercent || 7;
+    const discountAmount = quotation.discountAmount || 0;
+    const taxAmount = (subtotal - discountAmount) * (taxPercent / 100);
+    const grandTotal = subtotal - discountAmount + taxAmount;
+    
+    updateDoc(quotationRef, { 
+      subtotal, 
+      taxAmount, 
+      grandTotal, 
+      updatedAt: Date.now() 
+    });
   };
 
   if (isQuoLoading || !quotation || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
-
-  const vatAmount = quotation.totalAmount * 0.07;
-  const grandTotal = quotation.totalAmount + vatAmount;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -129,12 +137,12 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <Button variant="ghost" size="icon" onClick={() => router.push('/quotations')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div>
+            <div className="flex flex-col">
               <h1 className="text-2xl font-bold tracking-tight">Quotation Workspace (ระบบจัดการใบเสนอราคา)</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{quotation.quotationNo}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <span>ลูกค้า: {customer?.name || '...'}</span>
+                <span>ลูกค้า: {quotation.customerNameSnapshot || '...'}</span>
               </div>
             </div>
           </div>
@@ -142,7 +150,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <Button variant="outline" className="gap-2" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> พิมพ์ (Print)
             </Button>
-            <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary">
+            <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary uppercase">
               STATUS: {quotation.status}
             </Badge>
           </div>
@@ -160,7 +168,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               <div className="lg:col-span-2 space-y-6">
                 {/* Header Editor */}
                 <Card>
-                  <CardHeader className="flex flex-row items-center justify-between">
+                  <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                     <div>
                       <CardTitle>ข้อมูลหัวเอกสาร (Header Info)</CardTitle>
                       <CardDescription>รายละเอียดลูกค้าและวันที่กำหนด</CardDescription>
@@ -169,28 +177,32 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       {isEditingHeader ? 'ยกเลิก' : 'แก้ไข'}
                     </Button>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-4 pt-6">
                     <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>หัวข้อโครงการ (Title)</Label>
-                        <Input disabled={!isEditingHeader} value={editedHeader.title || ''} onChange={e => setEditedHeader({...editedHeader, title: e.target.value})} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>เลขที่ใบเสนอราคา (Ref No.)</Label>
-                        <Input disabled value={quotation.quotationNo} className="bg-muted font-mono" />
+                      <div className="space-y-2 col-span-2">
+                        <Label>หัวข้อโครงการ (Project Title)</Label>
+                        <Input disabled={!isEditingHeader} value={editedHeader.projectTitle || ''} onChange={e => setEditedHeader({...editedHeader, projectTitle: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label>วันที่ออกเอกสาร (Issue Date)</Label>
                         <Input type="date" disabled={!isEditingHeader} value={editedHeader.issueDate || ''} onChange={e => setEditedHeader({...editedHeader, issueDate: e.target.value})} />
                       </div>
                       <div className="space-y-2">
-                        <Label>วันหมดอายุ (Expiry Date)</Label>
-                        <Input type="date" disabled={!isEditingHeader} value={editedHeader.expiryDate || ''} onChange={e => setEditedHeader({...editedHeader, expiryDate: e.target.value})} />
+                        <Label>วันหมดอายุข้อเสนอ (Valid Until)</Label>
+                        <Input type="date" disabled={!isEditingHeader} value={editedHeader.validUntilDate || ''} onChange={e => setEditedHeader({...editedHeader, validUntilDate: e.target.value})} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>รหัสอ้างอิงลูกค้า (Ref No.)</Label>
+                        <Input disabled={!isEditingHeader} value={editedHeader.referenceNo || ''} onChange={e => setEditedHeader({...editedHeader, referenceNo: e.target.value})} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ผู้ติดต่อฝั่งลูกค้า (Contact Person)</Label>
+                        <Input disabled={!isEditingHeader} value={editedHeader.contactPerson || ''} onChange={e => setEditedHeader({...editedHeader, contactPerson: e.target.value})} />
                       </div>
                     </div>
                     {isEditingHeader && (
                       <div className="flex justify-end pt-2">
-                        <Button className="gap-2" onClick={handleSaveHeader}><Save className="h-4 w-4" /> บันทึกหัวเอกสาร</Button>
+                        <Button className="gap-2 bg-primary font-bold shadow-md" onClick={handleSaveHeader}><Save className="h-4 w-4" /> บันทึกหัวเอกสาร</Button>
                       </div>
                     )}
                   </CardContent>
@@ -205,7 +217,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     </div>
                     <Dialog open={isAddingLine} onOpenChange={setIsAddingLine}>
                       <DialogTrigger asChild>
-                        <Button className="bg-primary font-bold"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ</Button>
+                        <Button className="bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ</Button>
                       </DialogTrigger>
                       <DialogContent>
                         <DialogHeader><DialogTitle>เพิ่มรายการในใบเสนอราคา</DialogTitle></DialogHeader>
@@ -220,13 +232,17 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               <Input type="number" value={newLine.quantity} onChange={e => setNewLine({...newLine, quantity: parseFloat(e.target.value)})} />
                             </div>
                             <div className="space-y-2">
+                              <Label>หน่วย (Unit)</Label>
+                              <Input value={newLine.unit} onChange={e => setNewLine({...newLine, unit: e.target.value})} placeholder="EA, Days, etc." />
+                            </div>
+                            <div className="space-y-2">
                               <Label>ราคาต่อหน่วย (Unit Price)</Label>
                               <Input type="number" value={newLine.unitPrice} onChange={e => setNewLine({...newLine, unitPrice: parseFloat(e.target.value)})} />
                             </div>
                           </div>
                         </div>
                         <DialogFooter>
-                          <Button onClick={handleAddLine} disabled={!newLine.description}>บันทึกรายการ</Button>
+                          <Button onClick={handleAddLine} disabled={!newLine.description} className="bg-primary font-bold">บันทึกรายการ</Button>
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
@@ -237,18 +253,20 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                         <TableRow>
                           <TableHead className="pl-6">รายละเอียด</TableHead>
                           <TableHead className="text-right">จำนวน</TableHead>
+                          <TableHead className="text-right">หน่วย</TableHead>
                           <TableHead className="text-right">ราคา/หน่วย</TableHead>
                           <TableHead className="text-right font-bold">รวม</TableHead>
                           <TableHead className="text-right pr-6">จัดการ</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {lines?.map(line => (
+                        {lines?.sort((a,b) => (a.displayOrder || 0) - (b.displayOrder || 0)).map(line => (
                           <TableRow key={line.id}>
                             <TableCell className="pl-6 text-sm font-medium">{line.description}</TableCell>
                             <TableCell className="text-right">{line.quantity}</TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground">{line.unit}</TableCell>
                             <TableCell className="text-right">฿{line.unitPrice.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-bold">฿{line.amount.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-bold">฿{line.lineTotal.toLocaleString()}</TableCell>
                             <TableCell className="text-right pr-6">
                               <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => handleDeleteLine(line.id)}>
                                 <Trash2 className="h-4 w-4" />
@@ -258,7 +276,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                         ))}
                         {(!lines || lines.length === 0) && (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ยังไม่มีรายการ กรุณากดเพิ่มรายการ</TableCell>
+                            <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ยังไม่มีรายการ กรุณากดเพิ่มรายการ</TableCell>
                           </TableRow>
                         )}
                       </TableBody>
@@ -274,42 +292,52 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ (Workflow)</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3">
-                    {quotation.status === 'DRAFT' && (
-                      <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('SENT')}>
+                    {quotation.status === 'draft' && (
+                      <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('sent')}>
                         <CheckCircle2 className="h-4 w-4 mr-2" /> ส่งให้ลูกค้า (Mark as Sent)
                       </Button>
                     )}
-                    {quotation.status === 'SENT' && (
+                    {quotation.status === 'sent' && (
                       <>
-                        <Button className="w-full bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => handleUpdateStatus('ACCEPTED')}>
+                        <Button className="w-full bg-green-600 hover:bg-green-700 text-white font-bold" onClick={() => handleUpdateStatus('accepted')}>
                           <CheckCircle2 className="h-4 w-4 mr-2" /> ลูกค้าตอบรับ (Accepted)
                         </Button>
-                        <Button variant="outline" className="w-full bg-transparent border-white/20 text-white hover:bg-white/10" onClick={() => handleUpdateStatus('REJECTED')}>
+                        <Button variant="outline" className="w-full bg-transparent border-white/20 text-white hover:bg-white/10" onClick={() => handleUpdateStatus('rejected')}>
                           <XCircle className="h-4 w-4 mr-2" /> ลูกค้าปฏิเสธ (Rejected)
                         </Button>
                       </>
                     )}
-                    <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CANCELLED')}>
+                    <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('cancelled')}>
                       ยกเลิกใบเสนอราคา
                     </Button>
                   </CardContent>
                 </Card>
 
-                <Card className="border-primary/10">
-                  <CardHeader><CardTitle className="text-base flex items-center gap-2">สรุปมูลค่า (Summary)</CardTitle></CardHeader>
-                  <CardContent className="space-y-3 text-sm">
+                <Card className="border-primary/10 shadow-md">
+                  <CardHeader className="bg-muted/30 border-b">
+                    <CardTitle className="text-base flex items-center gap-2 font-bold text-primary">
+                      <Calculator className="h-5 w-5" /> สรุปมูลค่า (Summary)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6 space-y-3 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">ยอดรวมก่อนภาษี:</span>
-                      <span className="font-bold">฿{quotation.totalAmount.toLocaleString()}</span>
+                      <span className="text-muted-foreground">รวมยอดสินค้า (Subtotal):</span>
+                      <span className="font-bold">฿{quotation.subtotal.toLocaleString()}</span>
                     </div>
+                    {quotation.discountAmount > 0 && (
+                      <div className="flex justify-between text-red-600">
+                        <span>ส่วนลด (Discount):</span>
+                        <span className="font-bold">- ฿{quotation.discountAmount.toLocaleString()}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม (7%):</span>
-                      <span className="font-bold">฿{vatAmount.toLocaleString()}</span>
+                      <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({quotation.taxPercent}%):</span>
+                      <span className="font-bold">฿{quotation.taxAmount.toLocaleString()}</span>
                     </div>
-                    <Separator />
+                    <Separator className="my-2" />
                     <div className="flex justify-between text-lg">
-                      <span className="font-black text-primary">ยอดสุทธิ:</span>
-                      <span className="font-black text-primary">฿{grandTotal.toLocaleString()}</span>
+                      <span className="font-black text-primary uppercase">ยอดสุทธิ (Total):</span>
+                      <span className="font-black text-2xl text-primary">฿{quotation.grandTotal.toLocaleString()}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -318,7 +346,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           </TabsContent>
 
           <TabsContent value="preview" className="mt-6">
-            {/* Formal Quotation Layout - Visible on Screen and Print */}
+            {/* Formal Quotation Layout */}
             <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-12 space-y-10 min-h-[29.7cm] font-serif text-slate-900">
               {/* Doc Header */}
               <div className="flex justify-between items-start border-b-4 border-primary pb-6">
@@ -337,9 +365,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 <div className="space-y-3">
                   <p className="font-black text-xs uppercase tracking-widest text-slate-400 border-b pb-1">Issued To:</p>
                   <div className="space-y-1">
-                    <p className="font-bold text-lg">{customer?.name}</p>
-                    <p className="text-slate-600 leading-relaxed">{customer?.registeredAddress || 'N/A'}</p>
-                    <p className="text-slate-600">Tax ID: {customer?.taxId || '-'}</p>
+                    <p className="font-bold text-lg">{quotation.customerNameSnapshot}</p>
+                    <p className="text-slate-600 leading-relaxed">{quotation.billingAddressSnapshot || 'N/A'}</p>
+                    <p className="text-slate-600">Contact: {quotation.contactPerson || '-'}</p>
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -347,8 +375,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <div className="grid grid-cols-2 gap-2">
                     <span className="text-slate-500">Date Issued:</span>
                     <span className="font-bold text-right">{quotation.issueDate}</span>
-                    <span className="text-slate-500">Expiry Date:</span>
-                    <span className="font-bold text-right text-red-600">{quotation.expiryDate}</span>
+                    <span className="text-slate-500">Valid Until:</span>
+                    <span className="font-bold text-right text-red-600">{quotation.validUntilDate}</span>
                     <span className="text-slate-500">Currency:</span>
                     <span className="font-bold text-right">{quotation.currency}</span>
                   </div>
@@ -358,7 +386,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               {/* Title Section */}
               <div className="bg-slate-50 p-4 border rounded">
                 <p className="text-xs font-black uppercase text-slate-400 mb-1">Subject / Project:</p>
-                <p className="font-bold text-lg text-primary">{quotation.title}</p>
+                <p className="font-bold text-lg text-primary">{quotation.projectTitle}</p>
               </div>
 
               {/* Items Table */}
@@ -367,18 +395,20 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <TableHeader className="bg-slate-100 border-y-2 border-slate-300">
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="font-black text-slate-800 py-4">Item Description</TableHead>
-                      <TableHead className="text-right font-black text-slate-800 w-[100px]">Qty</TableHead>
-                      <TableHead className="text-right font-black text-slate-800 w-[150px]">Unit Price</TableHead>
-                      <TableHead className="text-right font-black text-slate-800 w-[150px]">Total</TableHead>
+                      <TableHead className="text-right font-black text-slate-800 w-[80px]">Qty</TableHead>
+                      <TableHead className="text-center font-black text-slate-800 w-[80px]">Unit</TableHead>
+                      <TableHead className="text-right font-black text-slate-800 w-[120px]">Unit Price</TableHead>
+                      <TableHead className="text-right font-black text-slate-800 w-[120px]">Total</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map(line => (
+                    {lines?.sort((a,b) => (a.displayOrder || 0) - (b.displayOrder || 0)).map(line => (
                       <TableRow key={line.id} className="border-b border-slate-100 hover:bg-transparent">
                         <TableCell className="py-4 font-medium">{line.description}</TableCell>
                         <TableCell className="text-right">{line.quantity}</TableCell>
+                        <TableCell className="text-center text-xs">{line.unit}</TableCell>
                         <TableCell className="text-right">฿{line.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-bold text-slate-800">฿{line.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right font-bold text-slate-800">฿{line.lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -390,15 +420,21 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 <div className="w-[300px] space-y-2 text-sm">
                   <div className="flex justify-between text-slate-600">
                     <span>Subtotal:</span>
-                    <span className="font-bold text-slate-800">฿{quotation.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="font-bold text-slate-800">฿{quotation.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
+                  {quotation.discountAmount > 0 && (
+                    <div className="flex justify-between text-red-600 font-bold">
+                      <span>Discount:</span>
+                      <span>- ฿{quotation.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-slate-600">
-                    <span>VAT (7%):</span>
-                    <span className="font-bold text-slate-800">฿{vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span>VAT ({quotation.taxPercent}%):</span>
+                    <span className="font-bold text-slate-800">฿{quotation.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-xl border-t-2 border-slate-800 pt-2">
                     <span className="font-black text-primary">Grand Total:</span>
-                    <span className="font-black text-primary underline decoration-double">฿{grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="font-black text-primary underline decoration-double">฿{quotation.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>
@@ -406,7 +442,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               {/* Terms */}
               <div className="pt-12 space-y-4">
                 <p className="text-xs font-black uppercase text-slate-400 border-b pb-1">Notes & Conditions:</p>
-                <p className="text-xs text-slate-600 leading-relaxed italic">
+                <p className="text-xs text-slate-600 leading-relaxed italic whitespace-pre-line">
                   {quotation.notes || 'No special conditions mentioned. This quotation is subject to standard manpower supply terms and conditions of OPEC.'}
                 </p>
               </div>
@@ -467,11 +503,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             top: 0;
             width: 100%;
           }
-          /* Hide tabs and header on print */
           header, .sidebar, .print\\:hidden, [role="tablist"], button {
             display: none !important;
           }
-          /* Show preview content */
           [data-state="active"] > div {
             display: block !important;
             visibility: visible !important;

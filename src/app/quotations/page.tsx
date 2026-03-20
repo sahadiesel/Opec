@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -71,15 +72,20 @@ export default function QuotationsPage() {
   const [newQuotation, setNewQuotation] = useState<Partial<Quotation>>({
     quotationNo: getPreviewPattern('quotation'),
     issueDate: new Date().toISOString().split('T')[0],
-    expiryDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // 30 days
+    validUntilDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // 30 days
     currency: 'THB',
-    status: 'DRAFT',
-    title: ''
+    status: 'draft',
+    projectTitle: '',
+    subtotal: 0,
+    discountAmount: 0,
+    taxPercent: 7,
+    taxAmount: 0,
+    grandTotal: 0
   });
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!newQuotation.customerId || !newQuotation.title) {
+    if (!newQuotation.customerId || !newQuotation.projectTitle) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อใบเสนอราคาและลูกค้า" });
       return;
     }
@@ -91,11 +97,14 @@ export default function QuotationsPage() {
         actor: currentUser.displayName 
       });
 
+      const customer = customers?.find(c => c.id === newQuotation.customerId);
+
       // 2. Create the document
       const docRef = await addDocumentNonBlocking(collection(firestore, 'quotations'), {
         ...newQuotation,
         quotationNo: finalNo,
-        totalAmount: 0,
+        customerNameSnapshot: customer?.name || '',
+        billingAddressSnapshot: customer?.billingAddress || '',
         createdAt: Date.now(),
         createdBy: currentUser.displayName,
         updatedAt: Date.now(),
@@ -115,11 +124,12 @@ export default function QuotationsPage() {
 
   const getStatusBadge = (status: QuotationStatus) => {
     switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'SENT': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">SENT</Badge>;
-      case 'ACCEPTED': return <Badge className="bg-green-600">ACCEPTED</Badge>;
-      case 'REJECTED': return <Badge variant="destructive">REJECTED</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
+      case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
+      case 'sent': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">SENT</Badge>;
+      case 'accepted': return <Badge className="bg-green-600">ACCEPTED</Badge>;
+      case 'rejected': return <Badge variant="destructive">REJECTED</Badge>;
+      case 'cancelled': return <Badge variant="secondary">CANCELLED</Badge>;
+      case 'expired': return <Badge variant="outline" className="text-orange-600 border-orange-200">EXPIRED</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
@@ -169,7 +179,7 @@ export default function QuotationsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>ชื่อใบเสนอราคา / หัวข้อโครงการ</Label>
-                  <Input value={newQuotation.title} onChange={e => setNewQuotation({...newQuotation, title: e.target.value})} placeholder="เช่น โครงการ Maintenance Platform A" />
+                  <Input value={newQuotation.projectTitle} onChange={e => setNewQuotation({...newQuotation, projectTitle: e.target.value})} placeholder="เช่น โครงการ Maintenance Platform A" />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่เอกสาร (Internal Ref)</Label>
@@ -193,7 +203,7 @@ export default function QuotationsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันหมดอายุข้อเสนอ</Label>
-                  <Input type="date" value={newQuotation.expiryDate} onChange={e => setNewQuotation({...newQuotation, expiryDate: e.target.value})} />
+                  <Input type="date" value={newQuotation.validUntilDate} onChange={e => setNewQuotation({...newQuotation, validUntilDate: e.target.value})} />
                 </div>
               </div>
               <DialogFooter>
@@ -218,14 +228,13 @@ export default function QuotationsPage() {
                     <TableHead className="font-bold py-4 pl-6">เลขที่ (No.)</TableHead>
                     <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
                     <TableHead className="font-bold">รายละเอียด (Title)</TableHead>
-                    <TableHead className="font-bold text-right">มูลค่ารวม</TableHead>
+                    <TableHead className="font-bold text-right">มูลค่าสุทธิ</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {quotations?.map((q) => {
-                    const customer = customers?.find(c => c.id === q.customerId);
                     return (
                       <TableRow 
                         key={q.id} 
@@ -236,12 +245,12 @@ export default function QuotationsPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-sm font-bold text-primary">
                             <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            {customer?.name || 'N/A'}
+                            {q.customerNameSnapshot || 'N/A'}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm font-medium">{q.title}</TableCell>
+                        <TableCell className="text-sm font-medium">{q.projectTitle}</TableCell>
                         <TableCell className="text-right font-black text-primary">
-                          {q.currency} {q.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          {q.currency} {q.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell>{getStatusBadge(q.status)}</TableCell>
                         <TableCell className="text-right pr-6">

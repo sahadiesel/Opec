@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -62,7 +63,8 @@ export default function SalesDashboardPage() {
 
   const quoQuery = useMemoFirebase(() => {
     if (!firestore || !isSales) return null;
-    return query(collection(firestore, 'quotations'), where('status', 'in', ['DRAFT', 'SENT']), limit(10));
+    // Lowercase statuses to match the updated model
+    return query(collection(firestore, 'quotations'), where('status', 'in', ['draft', 'sent']), limit(10));
   }, [firestore, isSales]);
   const { data: activeQuotations } = useCollection<Quotation>(quoQuery as any);
 

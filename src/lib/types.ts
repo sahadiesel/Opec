@@ -1231,20 +1231,28 @@ export interface NumberSequence {
   updatedBy: string;
 }
 
-export type QuotationStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
+export type QuotationStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'cancelled';
 
 export interface Quotation {
   id: string;
   quotationNo: string;
   customerId: string;
-  title: string;
-  description: string;
-  totalAmount: number;
+  customerNameSnapshot?: string;
+  issueDate: string;
+  validUntilDate: string;
   currency: string;
   status: QuotationStatus;
-  issueDate: string;
-  expiryDate: string;
+  projectTitle: string;
+  referenceNo?: string;
+  contactPerson?: string;
+  billingAddressSnapshot?: string;
   notes?: string;
+  internalNotes?: string;
+  subtotal: number;
+  discountAmount: number;
+  taxPercent: number;
+  taxAmount: number;
+  grandTotal: number;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -1256,8 +1264,11 @@ export interface QuotationLine {
   quotationId: string;
   description: string;
   quantity: number;
+  unit: string;
   unitPrice: number;
-  amount: number;
+  lineTotal: number;
+  remarks?: string;
+  displayOrder: number;
 }
 
 /** Worker bank and payment detail snapshots */
