@@ -31,12 +31,14 @@ import {
   SearchCheck,
   Send,
   RefreshCw,
-  Lock
+  Lock,
+  ExternalLink
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Quotation, QuotationLine, QuotationStatus, User, Customer } from '@/lib/types';
+import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
@@ -225,7 +227,16 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               <div className="flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{quotation.quotationNo}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <span className="text-sm text-muted-foreground">ลูกค้า: {quotation.customerNameSnapshot || '...'}</span>
+                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <span>ลูกค้า: {quotation.customerNameSnapshot || '...'}</span>
+                  {quotation.customerId && (
+                    <Button variant="link" className="h-auto p-0 text-xs text-blue-600 font-bold" asChild>
+                      <Link href={`/customers/${quotation.customerId}`}>
+                        (View Profile <ExternalLink className="h-3 w-3 inline" />)
+                      </Link>
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -617,6 +628,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </div>
           </TabsContent>
 
+          {/* Document Preview Tab - Printable Layout */}
           <TabsContent value="history" className="mt-6 print:hidden">
             <Card className="shadow-sm border-none bg-white">
               <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" /> ประวัติกิจกรรม (Audit Log)</CardTitle></CardHeader>

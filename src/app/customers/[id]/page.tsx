@@ -31,7 +31,8 @@ import {
   CheckCircle2,
   Info,
   ChevronRight,
-  XCircle
+  XCircle,
+  FileSignature
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -55,7 +56,8 @@ import {
   Assignment,
   Wave,
   WorkerWaveAcceptance,
-  DailyTimesheet
+  DailyTimesheet,
+  Quotation
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -114,6 +116,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     return query(collection(firestore, 'users'), where('customerId', '==', id), where('userType', '==', 'customer_portal'));
   }, [firestore, id]);
   const { data: portalUsers } = useCollection<User>(portalUsersQuery as any);
+
+  const quosQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'quotations'), where('customerId', '==', id));
+  }, [firestore, id]);
+  const { data: customerQuos } = useCollection<Quotation>(quosQuery as any);
 
   // --- Operational Queries for Summary ---
 
@@ -241,9 +249,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         <div className="space-y-1.5 border-b border-dashed pb-4 mb-2">
           {/* Commercial Summary */}
           <div className="flex gap-8 px-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground/60">
-            <span>Portal Users: <b className="text-primary">{portalUsers?.filter(u => u.isActive).length || 0}</b></span>
+            <span>Quotations: <b className="text-primary">{customerQuos?.length || 0}</b></span>
             <span>Active Contracts: <b className="text-primary">{customerContracts?.filter(c => c.status === 'active').length || 0}</b></span>
             <span>Active POs: <b className="text-primary">{customerPOs?.filter(p => p.status === 'active').length || 0}</b></span>
+            <span>Portal Users: <b className="text-primary">{portalUsers?.filter(u => u.isActive).length || 0}</b></span>
           </div>
           {/* Operations Summary */}
           <div className="flex gap-8 px-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground/60">
@@ -255,9 +264,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
         {/* Dashboard Tabs */}
         <Tabs defaultValue="info" className="w-full">
-          <TabsList className="grid grid-cols-5 w-full md:w-fit h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-6 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><Building2 className="h-4 w-4" /> ข้อมูลบริษัท</TabsTrigger>
             <TabsTrigger value="contacts" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> ผู้ติดต่อ</TabsTrigger>
+            <TabsTrigger value="quotations" className="gap-2 py-2 px-6"><FileSignature className="h-4 w-4" /> ใบเสนอราคา</TabsTrigger>
             <TabsTrigger value="contracts" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> สัญญาหลัก</TabsTrigger>
             <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อ (POs)</TabsTrigger>
             <TabsTrigger value="portal" className="gap-2 py-2 px-6"><Lock className="h-4 w-4" /> Portal Access</TabsTrigger>
@@ -343,6 +353,52 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     {(!contacts || contacts.length === 0) && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ยังไม่มีข้อมูลผู้ติดต่อ</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Quotations Tab */}
+          <TabsContent value="quotations" className="mt-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>ประวัติการเสนอราคา (Quotation History)</CardTitle>
+                  <CardDescription>รายการใบเสนอราคาที่ส่งให้ลูกค้าเพื่อพิจารณา</CardDescription>
+                </div>
+                <Button variant="outline" asChild><Link href="/quotations">จัดการทั้งหมด <ExternalLink className="h-4 w-4 ml-2" /></Link></Button>
+              </CardHeader>
+              <CardContent className="p-0 border-t">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead className="pl-6">เลขที่</TableHead>
+                      <TableHead>หัวข้อโครงการ</TableHead>
+                      <TableHead>วันที่ออก</TableHead>
+                      <TableHead className="text-right">มูลค่ารวม</TableHead>
+                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customerQuos?.map(quo => (
+                      <TableRow key={quo.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/quotations/${quo.id}`)}>
+                        <TableCell className="pl-6 font-mono font-bold text-primary">{quo.quotationNo}</TableCell>
+                        <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
+                        <TableCell className="text-xs">{quo.issueDate}</TableCell>
+                        <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Badge variant={quo.status === 'accepted' ? 'default' : 'outline'} className={quo.status === 'accepted' ? 'bg-green-600' : ''}>
+                            {quo.status.toUpperCase()}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {(!customerQuos || customerQuos.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบประวัติใบเสนอราคา</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
