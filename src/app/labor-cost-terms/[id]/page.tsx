@@ -42,6 +42,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePermissions } from '@/hooks/use-permissions';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
+import { writeAuditLog } from '@/lib/services/audit-service';
 
 export default function LaborCostTermDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -78,14 +79,40 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
 
   const handleSave = () => {
     if (!termRef || !currentUser || !can('labor_cost_contract_terms').edit) return;
-    updateDocumentNonBlocking(termRef, { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName });
+    const updateData = { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName };
+    updateDocumentNonBlocking(termRef, updateData);
     setIsEditing(false);
+
+    // Add Audit Log
+    writeAuditLog(firestore, currentUser, {
+      actionType: 'UPDATE',
+      entityType: 'LaborCostContractTerm',
+      entityId: id,
+      entityLabel: term.title,
+      changedFields: Object.keys(formData),
+      sourceModule: 'commercial',
+      purchaseOrderId: term.relatedPurchaseOrderId,
+      afterSummary: 'Updated labor cost contract term details'
+    });
+
     toast({ title: "บันทึกข้อมูลสำเร็จ" });
   };
 
   const handleUpdateStatus = (newStatus: LaborCostContractStatus) => {
-    if (!termRef) return;
+    if (!termRef || !currentUser) return;
     updateDocumentNonBlocking(termRef, { status: newStatus, updatedAt: Date.now() });
+
+    // Add Audit Log
+    writeAuditLog(firestore, currentUser, {
+      actionType: 'UPDATE_STATUS',
+      entityType: 'LaborCostContractTerm',
+      entityId: id,
+      entityLabel: term.title,
+      afterSummary: `Changed status to ${newStatus}`,
+      sourceModule: 'commercial',
+      purchaseOrderId: term.relatedPurchaseOrderId
+    });
+
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 

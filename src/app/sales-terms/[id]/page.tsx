@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePermissions } from '@/hooks/use-permissions';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
+import { writeAuditLog } from '@/lib/services/audit-service';
 
 export default function SalesTermDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -77,14 +78,40 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
 
   const handleSave = () => {
     if (!termRef || !currentUser || !can('sales_contract_terms').edit) return;
-    updateDocumentNonBlocking(termRef, { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName });
+    const updateData = { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName };
+    updateDocumentNonBlocking(termRef, updateData);
     setIsEditing(false);
+
+    // Add Audit Log
+    writeAuditLog(firestore, currentUser, {
+      actionType: 'UPDATE',
+      entityType: 'SalesContractTerm',
+      entityId: id,
+      entityLabel: term.contractNo,
+      changedFields: Object.keys(formData),
+      sourceModule: 'commercial',
+      purchaseOrderId: term.purchaseOrderId,
+      afterSummary: 'Updated sales contract term details'
+    });
+
     toast({ title: "บันทึกข้อมูลสำเร็จ" });
   };
 
   const handleUpdateStatus = (newStatus: SalesContractStatus) => {
-    if (!termRef) return;
+    if (!termRef || !currentUser) return;
     updateDocumentNonBlocking(termRef, { status: newStatus, updatedAt: Date.now() });
+
+    // Add Audit Log
+    writeAuditLog(firestore, currentUser, {
+      actionType: 'UPDATE_STATUS',
+      entityType: 'SalesContractTerm',
+      entityId: id,
+      entityLabel: term.contractNo,
+      afterSummary: `Changed status to ${newStatus}`,
+      sourceModule: 'commercial',
+      purchaseOrderId: term.purchaseOrderId
+    });
+
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 
@@ -130,7 +157,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
                       <CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> รายละเอียดเงื่อนไขหลัก</CardTitle>
-                      <CardDescription>ระบุชื่อโครงการและข้อมูลอ้างอิงทางกฎหมาย</CardDescription>
+                      <CardDescription>ระบุโครงการและข้อมูลอ้างอิงทางกฎหมาย</CardDescription>
                     </div>
                     {can('sales_contract_terms').edit && (
                       <Button variant="outline" onClick={() => setIsEditing(!isEditing)}>

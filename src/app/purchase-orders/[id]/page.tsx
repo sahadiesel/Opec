@@ -64,6 +64,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { Separator } from '@/components/ui/separator';
 import { ProfitAnalysisTab } from '@/components/commercial/profit-analysis-tab';
+import { writeAuditLog } from '@/lib/services/audit-service';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -133,14 +134,27 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   }, [po]);
 
   const handleSaveMaster = () => {
-    if (!poRef) return;
+    if (!poRef || !currentUser) return;
     updateDocumentNonBlocking(poRef, { ...editedPO, updatedAt: Date.now() });
     setIsEditing(false);
+
+    // Audit Log
+    writeAuditLog(firestore, currentUser, {
+      actionType: 'UPDATE',
+      entityType: 'PurchaseOrder',
+      entityId: id,
+      entityLabel: po.poCode,
+      changedFields: Object.keys(editedPO),
+      sourceModule: 'commercial',
+      purchaseOrderId: id,
+      afterSummary: 'Updated purchase order header details'
+    });
+
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูล Customer PO ถูกอัปเดตแล้ว" });
   };
 
   const handleAddLine = () => {
-    if (!poLinesQuery || !newLine.positionId) return;
+    if (!poLinesQuery || !newLine.positionId || !currentUser) return;
     
     const rate = rates?.find(r => r.positionId === newLine.positionId);
     if (!rate) {
@@ -160,6 +174,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       overtimeRuleSnapshot: rate.overtimeRule,
       status: 'active'
     });
+
+    // Audit Log
+    writeAuditLog(firestore, currentUser, {
+      actionType: 'CREATE',
+      entityType: 'POLine',
+      entityId: 'new_line',
+      entityLabel: newLine.positionId,
+      sourceModule: 'commercial',
+      purchaseOrderId: id,
+      afterSummary: `Added PO line for ${newLine.positionId} x ${newLine.quantity}`
+    });
     
     setIsAddLineOpen(false);
     setNewLine({ quantity: 1, status: 'active' });
@@ -172,7 +197,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     try {
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'sales_term', { actor: currentUser.displayName });
       
-      await addDocumentNonBlocking(collection(firestore, 'sales_contract_terms'), {
+      const termData = {
         ...newSalesTerm,
         contractNo: finalNo,
         title: `Sales Terms for ${po.poCode}`,
@@ -185,7 +210,21 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         updatedBy: currentUser.displayName,
         createdAt: Date.now(),
         updatedAt: Date.now()
-      });
+      };
+
+      const docRef = await addDocumentNonBlocking(collection(firestore, 'sales_contract_terms'), termData);
+
+      if (docRef) {
+        writeAuditLog(firestore, currentUser, {
+          actionType: 'CREATE',
+          entityType: 'SalesContractTerm',
+          entityId: docRef.id,
+          entityLabel: finalNo,
+          sourceModule: 'commercial',
+          purchaseOrderId: id,
+          afterSummary: `Initialized sales terms for PO ${po.poCode}`
+        });
+      }
 
       toast({ title: "สร้างเงื่อนไขการขายสำเร็จ", description: `รหัส: ${finalNo}` });
     } catch (e) {
@@ -196,9 +235,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   };
 
   const deleteLine = (lineId: string) => {
-    if (!firestore) return;
+    if (!firestore || !currentUser) return;
     if (confirm('ยืนยันการลบรายการนี้? รายการมอบหมายที่เชื่อมโยงอยู่จะยังคงอยู่แต่จะเสียการอ้างอิง')) {
       deleteDocumentNonBlocking(doc(firestore, 'purchase_orders', id, 'po_lines', lineId));
+      
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'DELETE',
+        entityType: 'POLine',
+        entityId: lineId,
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: 'Deleted PO line item'
+      });
     }
   };
 

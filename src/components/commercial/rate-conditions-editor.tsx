@@ -65,6 +65,7 @@ import { addDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlo
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Separator } from '@/components/ui/separator';
+import { writeAuditLog } from '@/lib/services/audit-service';
 
 interface RateConditionsEditorProps {
   parentType: RateConditionParentType;
@@ -160,14 +161,40 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
       if (editingId) {
         const docRef = doc(firestore, 'rate_conditions', editingId);
         updateDocumentNonBlocking(docRef, { ...formData, updatedAt: Date.now() });
+        
+        writeAuditLog(firestore, user, {
+          actionType: 'UPDATE',
+          entityType: 'RateCondition',
+          entityId: editingId,
+          entityLabel: `${formData.eventType}`,
+          sourceModule: 'commercial',
+          linkedIds: [parentId],
+          contractTermId: parentType === 'SALES_CONTRACT' || parentType === 'LABOR_COST_CONTRACT' ? parentId : undefined,
+          afterSummary: `Updated rate condition for ${parentType}`
+        });
+        
         toast({ title: "อัปเดตเงื่อนไขสำเร็จ" });
       } else {
         const colRef = collection(firestore, 'rate_conditions');
-        await addDocumentNonBlocking(colRef, {
+        const docRef = await addDocumentNonBlocking(colRef, {
           ...formData,
           createdAt: Date.now(),
           createdBy: user.displayName
         });
+        
+        if (docRef) {
+          writeAuditLog(firestore, user, {
+            actionType: 'CREATE',
+            entityType: 'RateCondition',
+            entityId: docRef.id,
+            entityLabel: `${formData.eventType}`,
+            sourceModule: 'commercial',
+            linkedIds: [parentId],
+            contractTermId: parentType === 'SALES_CONTRACT' || parentType === 'LABOR_COST_CONTRACT' ? parentId : undefined,
+            afterSummary: `Created new rate condition for ${parentType}`
+          });
+        }
+        
         toast({ title: "เพิ่มเงื่อนไขสำเร็จ" });
       }
       setIsDialogOpen(false);
@@ -180,8 +207,21 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
 
   const handleDelete = (id: string) => {
     if (!firestore || !canEdit) return;
+    const condition = conditions?.find(c => c.id === id);
     if (confirm('ยืนยันการลบเงื่อนไขราคานี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'rate_conditions', id));
+      
+      writeAuditLog(firestore, user, {
+        actionType: 'DELETE',
+        entityType: 'RateCondition',
+        entityId: id,
+        entityLabel: condition?.eventType,
+        sourceModule: 'commercial',
+        linkedIds: [parentId],
+        contractTermId: parentType === 'SALES_CONTRACT' || parentType === 'LABOR_COST_CONTRACT' ? parentId : undefined,
+        afterSummary: `Deleted rate condition from ${parentType}`
+      });
+      
       toast({ title: "ลบข้อมูลสำเร็จ" });
     }
   };

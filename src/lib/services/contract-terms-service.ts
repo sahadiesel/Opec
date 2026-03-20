@@ -69,6 +69,7 @@ export class ContractTermsService {
           entityId: docRef.id,
           entityLabel: validated.contractNo,
           sourceModule: 'commercial',
+          purchaseOrderId: validated.purchaseOrderId,
           afterSummary: `Created sales term: ${validated.title}`
         });
       }
@@ -93,7 +94,7 @@ export class ContractTermsService {
       entityId: id,
       sourceModule: 'commercial',
       changedFields: Object.keys(data),
-      afterSummary: `Updated sales term fields`
+      afterSummary: `Updated sales contract term details`
     });
   }
 
@@ -118,12 +119,33 @@ export class ContractTermsService {
           entityId: docRef.id,
           entityLabel: validated.title,
           sourceModule: 'commercial',
+          purchaseOrderId: validated.relatedPurchaseOrderId,
           afterSummary: `Created labor cost term`
         });
       }
     });
 
     return promise;
+  }
+
+  async updateLaborCostTerm(id: string, data: Partial<LaborCostContractTerm>, user: User) {
+    const docRef = doc(this.getLaborCostTermsCollection(), id);
+    const updateData = {
+      ...data,
+      updatedBy: user.displayName,
+      updatedAt: Date.now(),
+    };
+    
+    updateDocumentNonBlocking(docRef, updateData);
+    
+    writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'LaborCostContractTerm',
+      entityId: id,
+      sourceModule: 'commercial',
+      changedFields: Object.keys(data),
+      afterSummary: `Updated labor cost term details`
+    });
   }
 
   // --- Rate Conditions ---
@@ -147,6 +169,7 @@ export class ContractTermsService {
           entityId: docRef.id,
           entityLabel: `${validated.eventType} (${validated.calculationMethod})`,
           linkedIds: [validated.parentId],
+          contractTermId: validated.parentType === 'SALES_CONTRACT' || validated.parentType === 'LABOR_COST_CONTRACT' ? validated.parentId : undefined,
           sourceModule: 'commercial',
           afterSummary: `Added rate condition for ${validated.parentType}`
         });
@@ -154,6 +177,26 @@ export class ContractTermsService {
     });
 
     return promise;
+  }
+
+  async updateRateCondition(id: string, data: Partial<RateCondition>, user: User) {
+    const docRef = doc(this.getRateConditionsCollection(), id);
+    const updateData = {
+      ...data,
+      updatedAt: Date.now(),
+    };
+    
+    updateDocumentNonBlocking(docRef, updateData);
+    
+    writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'RateCondition',
+      entityId: id,
+      sourceModule: 'commercial',
+      linkedIds: [data.parentId || 'unknown'],
+      changedFields: Object.keys(data),
+      afterSummary: `Updated rate condition details`
+    });
   }
 
   // --- Query Helpers (Reactive Hooks should consume these queries) ---
