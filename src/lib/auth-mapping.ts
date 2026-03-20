@@ -113,6 +113,24 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     legacyRoles: ['store_officer'],
     descriptionTh: 'จัดการสต็อกอุปกรณ์ PPE เครื่องมือช่าง และการสั่งซื้อพัสดุเข้าคลัง'
   },
+  customer_approver: {
+    key: 'customer_approver',
+    labelTh: 'ลูกค้า (ผู้มีอำนาจอนุมัติ)',
+    labelEn: 'Customer Approver',
+    dept: 'client',
+    level: 'manager',
+    legacyRoles: ['client'],
+    descriptionTh: 'เข้าดูประวัติพนักงานที่ส่งพิจารณา และกดยืนยันการรับตัวคนงานหรืออนุมัติเวลา'
+  },
+  customer_viewer: {
+    key: 'customer_viewer',
+    labelTh: 'ลูกค้า (ผู้เรียกดู)',
+    labelEn: 'Customer Viewer',
+    dept: 'client',
+    level: 'viewer',
+    legacyRoles: ['client_user'],
+    descriptionTh: 'เรียกดูสถานะโครงการและรายชื่อพนักงานที่กำลังปฏิบัติงาน'
+  },
   client_approver: {
     key: 'client_approver',
     labelTh: 'ลูกค้า (ผู้มีอำนาจอนุมัติ)',
@@ -199,7 +217,7 @@ export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
   
   // Use new identity fields to map to role
   if (user.userType === 'customer_portal') {
-    return user.portalRole === 'approver' ? 'client_approver' : 'client_viewer';
+    return user.portalRole === 'approver' ? 'customer_approver' : 'customer_viewer';
   }
 
   const { dept, level } = inferDeptAndLevel(user);
@@ -210,7 +228,7 @@ export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
 
   // Fallbacks
   if (dept === 'admin') return 'system_admin';
-  if (dept === 'client') return 'client_viewer';
+  if (dept === 'client') return 'customer_viewer';
   return `${dept}_officer` as BusinessRoleKey;
 }
 
@@ -293,7 +311,7 @@ export function getMigratedUserFields(user: Partial<User>): Partial<User> {
   return {
     ...getFieldsForBusinessRole(roleKey),
     userType: user.userType || (dept === 'client' ? 'customer_portal' : 'internal'),
-    portalRole: user.portalRole || (roleKey === 'client_approver' ? 'approver' : roleKey === 'client_viewer' ? 'viewer' : undefined),
+    portalRole: user.portalRole || (roleKey === 'customer_approver' || roleKey === 'client_approver' ? 'approver' : roleKey === 'customer_viewer' || roleKey === 'client_viewer' ? 'viewer' : undefined),
     assignedRoleKey: roleKey,
     isActive: isActive,
     approvalStatus: approvalStatus,

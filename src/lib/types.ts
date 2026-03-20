@@ -35,6 +35,8 @@ export type BusinessRoleKey =
   | 'accounting_manager'
   | 'accounting_officer'
   | 'store_officer'
+  | 'customer_approver'
+  | 'customer_viewer'
   | 'client_viewer'
   | 'client_approver';
 

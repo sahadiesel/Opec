@@ -243,14 +243,24 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       ap_bills: READ_ONLY,
     }),
 
-    // 11. Client Approver
-    baseline('client_approver', 'Client Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
-      client_portal: { view: true, approve: true }, // wave_accept, timesheet_approve
+    // 11. Customer Approver
+    baseline('customer_approver', 'Customer Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
+      overview_dashboard: READ_ONLY,
+      client_portal: { view: true, approve: true, edit: true }, 
+      timesheets: { view: true, approve: true },
+      workers: READ_ONLY,
+      quotations: READ_ONLY,
+      customer_pos: READ_ONLY,
     }),
 
-    // 12. Client Viewer
-    baseline('client_viewer', 'Client Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
-      client_portal: { view: true, approve: false }, // read-only
+    // 12. Customer Viewer
+    baseline('customer_viewer', 'Customer Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
+      overview_dashboard: READ_ONLY,
+      client_portal: READ_ONLY,
+      timesheets: READ_ONLY,
+      workers: READ_ONLY,
+      quotations: READ_ONLY,
+      customer_pos: READ_ONLY,
     })
   ];
 }
@@ -281,23 +291,31 @@ export function getPermissions(
     return profile.permissions[moduleKey];
   }
 
-  // 4. Graceful Fallback Logic (Legacy Support)
+  // 4. Graceful Fallback Logic (Legacy Support & Automated Scoping)
   const { dept, level } = inferDeptAndLevel(user);
   
   if (moduleKey === 'overview_dashboard') return READ_ONLY;
   
-  // Basic Operational Fallbacks (Safe defaults)
+  // 4a. Automated Customer Portal Fallbacks
+  if (user.userType === 'customer_portal' || dept === 'client') {
+    const isApprover = user.portalRole === 'approver' || level === 'manager';
+    
+    if (moduleKey === 'client_portal' || moduleKey === 'timesheets') {
+      return isApprover ? { ...READ_ONLY, approve: true, edit: true } : READ_ONLY;
+    }
+    if (['workers', 'quotations', 'customer_pos', 'main_contracts'].includes(moduleKey)) {
+      return READ_ONLY;
+    }
+    // Strict block on internal modules for customers
+    return NO_ACCESS;
+  }
+
+  // 4b. Basic Internal Operational Fallbacks
   if (dept === 'hr' && ['workers', 'positions', 'timesheets', 'worker_payroll'].includes(moduleKey)) return OFFICER_ACCESS;
   if (dept === 'store' && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) return OFFICER_ACCESS;
   if (dept === 'accounting' && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills'].includes(moduleKey)) return OFFICER_ACCESS;
   if (dept === 'operations' && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
   
-  // Automated access scoping for Customer Portal
-  if (dept === 'client' && moduleKey === 'client_portal') {
-    // If manager (approver), grant approval rights
-    return level === 'manager' ? { ...READ_ONLY, approve: true } : READ_ONLY;
-  }
-
   return NO_ACCESS;
 }
 
