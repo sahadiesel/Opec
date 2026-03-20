@@ -39,7 +39,8 @@ import {
   Clock,
   ChevronRight,
   TrendingUp,
-  UserCheck
+  UserCheck,
+  Truck
 } from 'lucide-react';
 import { 
   Dialog, 
