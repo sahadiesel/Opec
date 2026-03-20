@@ -155,6 +155,14 @@ service cloud.firestore {
       allow write: if isHRStaff();
     }
 
+    // Client-side Hiring/Mobilization Approvals
+    match /worker_wave_acceptances/{id} {
+      allow read: if isSignedIn();
+      allow create: if isOperationsStaff() || hasRole('client_approver');
+      allow update: if isOperationsStaff() || hasRole('client_approver') || isOwner(resource.data.customerPortalUserId);
+      allow delete: if hasRole('system_admin');
+    }
+
     // Default fallback
     match /{document=**} {
       allow read, write: if hasRole('system_admin');

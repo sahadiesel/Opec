@@ -90,6 +90,26 @@
         "isActive": { "type": "boolean" }
       },
       "required": ["id", "parentType", "parentId", "appliesTo", "eventType", "calculationMethod", "unitType"]
+    },
+    "WorkerWaveAcceptance": {
+      "title": "WorkerWaveAcceptance",
+      "type": "object",
+      "description": "Tracks client-side approval, rejection, or replacement requests for workers assigned to a wave.",
+      "properties": {
+        "id": { "type": "string" },
+        "waveId": { "type": "string" },
+        "assignmentId": { "type": "string" },
+        "workerId": { "type": "string" },
+        "customerPortalUserId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "replacement_requested"] },
+        "remark": { "type": "string" },
+        "approvedDate": { "type": "string", "format": "date" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "waveId", "assignmentId", "workerId", "status"]
     }
   },
   "auth": {
@@ -140,6 +160,15 @@
           "schema": { "$ref": "#/backend/entities/RateCondition" },
           "description": "Specific pricing and cost rules for contracts and POs.",
           "params": [{ "name": "conditionId", "description": "Unique ID of the rate condition." }]
+        }
+      },
+      {
+        "path": "/worker_wave_acceptances/{id}",
+        "definition": {
+          "entityName": "WorkerWaveAcceptance",
+          "schema": { "$ref": "#/backend/entities/WorkerWaveAcceptance" },
+          "description": "Stores client acceptance records for wave assignments.",
+          "params": [{ "name": "id", "description": "Unique ID for the acceptance record." }]
         }
       }
     ]
