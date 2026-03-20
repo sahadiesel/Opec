@@ -1,4 +1,3 @@
-
 /**
  * OPEC OpsFlow - Authorization & Menu Mapping Configuration
  * Centralized mapping from Business Roles to Dept + Level + Legacy Roles.
@@ -183,7 +182,7 @@ export const LEGACY_ROLE_MAP: Record<string, { dept: DeptType; level: AccessLeve
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
   if (!user) return { dept: 'hr', level: 'viewer' };
   
-  // New automated inference for customer portal users
+  // Automated inference for customer portal users
   if (user.userType === 'customer_portal') {
     const level: AccessLevel = user.portalRole === 'approver' ? 'manager' : 'viewer';
     return { dept: 'client', level };
@@ -215,7 +214,7 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
 export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
   if (user.assignedRoleKey) return user.assignedRoleKey;
   
-  // Use new identity fields to map to role
+  // Use identity fields to map to role
   if (user.userType === 'customer_portal') {
     return user.portalRole === 'approver' ? 'customer_approver' : 'customer_viewer';
   }
@@ -239,12 +238,17 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
   const role = BUSINESS_ROLES[roleKey];
   if (!role) throw new Error(`Invalid business role key: ${roleKey}`);
 
+  // Aligned keys for client profiles
+  const profileKey = role.dept === 'client' 
+    ? (role.level === 'manager' ? 'client_manager' : 'client_viewer')
+    : `${role.dept}_${role.level}`;
+
   return {
     assignedRoleKey: roleKey,
     department: role.dept,
     level: role.level,
     roleIds: role.legacyRoles,
-    permissionProfileKey: `${role.dept}_${role.level}`,
+    permissionProfileKey: profileKey,
     updatedAt: Date.now()
   };
 }
@@ -301,7 +305,7 @@ export function getMigratedUserFields(user: Partial<User>): Partial<User> {
     if (internalDepts.includes(dept)) {
       approvalStatus = 'ACTIVE';
     }
-    // Clients created via detail page are usually active immediately or handled by portal admin
+    // Clients created via detail page are usually active immediately
     if (dept === 'client') {
       approvalStatus = 'ACTIVE';
     }

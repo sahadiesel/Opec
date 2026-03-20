@@ -1,4 +1,3 @@
-
 'use client';
 
 /**
@@ -243,8 +242,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       ap_bills: READ_ONLY,
     }),
 
-    // 11. Customer Approver
-    baseline('customer_approver', 'Customer Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
+    // 11. Client Manager (Approver)
+    baseline('client_manager', 'Client Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
       overview_dashboard: READ_ONLY,
       client_portal: { view: true, approve: true, edit: true }, 
       timesheets: { view: true, approve: true },
@@ -253,8 +252,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       customer_pos: READ_ONLY,
     }),
 
-    // 12. Customer Viewer
-    baseline('customer_viewer', 'Customer Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
+    // 12. Client Viewer
+    baseline('client_viewer', 'Client Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
       overview_dashboard: READ_ONLY,
       client_portal: READ_ONLY,
       timesheets: READ_ONLY,
