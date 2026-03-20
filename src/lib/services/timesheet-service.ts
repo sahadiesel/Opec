@@ -1,4 +1,3 @@
-
 'use client';
 
 import { 
@@ -29,7 +28,7 @@ import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
 
 /**
  * Service for managing Daily Timesheets and their refined workflow transitions.
- * Ensures data integrity for downstream payroll and billing calculations.
+ * Prioritizes Wave-based bulk operations for high-volume manpower management.
  */
 export class TimesheetService {
   constructor(private db: Firestore) {}
@@ -85,14 +84,10 @@ export class TimesheetService {
 
   /**
    * Generates initial draft objects for an entire Wave roster.
-   * Useful for pre-populating the Wave Board UI.
    */
-  async generateDraftsForWave(waveId: string, date: string, user: User): Promise<Partial<DailyTimesheet>[]> {
+  async generateDraftsForWave(waveId: string, date: string): Promise<Partial<DailyTimesheet>[]> {
     const roster = await this.getWaveRosterForDate(waveId, date);
-    const waveRef = doc(this.db, 'waves', waveId);
-    const waveSnap = await getDoc(waveRef);
-    const wave = waveSnap.data() as Wave;
-
+    
     return roster.map(asgn => ({
       date,
       workerId: asgn.workerId,
@@ -105,14 +100,13 @@ export class TimesheetService {
       eventType: 'work_day' as RateConditionEventType,
       normalHours: 8,
       status: 'DRAFT',
-      workMode: 'OFFSHORE', // Default for Opec
+      workMode: 'OFFSHORE', 
       shiftType: 'DAY'
     }));
   }
 
   /**
    * Clones activity logs from the previous day for a specific wave.
-   * High-productivity feature for static offshore deployments.
    */
   async copyFromPreviousDay(waveId: string, targetDate: string, user: User) {
     const prevDate = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
@@ -124,13 +118,13 @@ export class TimesheetService {
     );
     
     const snap = await getDocs(q);
-    if (snap.empty) return { copied: 0, msg: 'No source data found for yesterday' };
+    if (snap.empty) return { created: 0, updated: 0, skipped: 0, msg: 'No source data found for yesterday' };
 
     const payloads = snap.docs.map(d => {
       const data = d.data() as DailyTimesheet;
       return {
         ...data,
-        id: undefined, // Let service generate new ID
+        id: undefined, 
         date: targetDate,
         status: 'DRAFT' as DailyTimesheetStatus,
         createdAt: undefined,
@@ -142,88 +136,8 @@ export class TimesheetService {
   }
 
   /**
-   * Validates a batch of timesheets before saving.
-   * Checks for assignment validity and potential compliance blockers.
-   */
-  async validateWaveBatch(timesheets: Partial<DailyTimesheet>[]) {
-    const warnings: string[] = [];
-    const errors: string[] = [];
-
-    for (const ts of timesheets) {
-      if (!ts.date || !ts.workerId || !ts.assignmentId) {
-        errors.push('Missing required identity fields in batch item');
-        continue;
-      }
-
-      // Check assignment validity period
-      const asgnRef = doc(this.db, 'mobilizations', ts.assignmentId);
-      const asgnSnap = await getDoc(asgnRef);
-      if (asgnSnap.exists()) {
-        const asgn = asgnSnap.data() as Assignment;
-        const targetDate = parseISO(ts.date);
-        const start = parseISO(asgn.startDate);
-        const end = parseISO(asgn.endDate);
-        
-        if (!isWithinInterval(targetDate, { start, end })) {
-          warnings.push(`Assignment for ${ts.workerNameSnapshot} does not cover ${ts.date}`);
-        }
-      }
-    }
-
-    return { 
-      isValid: errors.length === 0, 
-      errors, 
-      warnings 
-    };
-  }
-
-  /**
-   * Creates a new daily timesheet entry.
-   * Enforces uniqueness via deterministic ID.
-   */
-  async createTimesheet(data: Partial<DailyTimesheet>, user: User) {
-    if (!data.workerId || !data.assignmentId || !data.date) {
-      throw new Error('Identity fields (worker, assignment, date) are required');
-    }
-
-    const id = this.getTimesheetId(data.workerId, data.assignmentId, data.date);
-    const docRef = doc(this.getCollection(), id);
-    
-    const existing = await getDoc(docRef);
-    if (existing.exists()) {
-      throw new Error(`Timesheet record already exists for this identity and date: ${data.date}.`);
-    }
-
-    const validated = DailyTimesheetSchema.parse({
-      ...data,
-      id,
-      status: 'DRAFT',
-      createdBy: user.displayName,
-      updatedBy: user.displayName,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-
-    await setDoc(docRef, validated);
-    
-    await writeAuditLog(this.db, user, {
-      actionType: 'CREATE',
-      entityType: 'DailyTimesheet',
-      entityId: id,
-      timesheetId: id,
-      waveId: validated.waveId,
-      purchaseOrderId: validated.purchaseOrderId,
-      entityLabel: `${validated.workerNameSnapshot} - ${validated.date}`,
-      sourceModule: 'operations',
-      afterSummary: `Created daily activity log for ${validated.date}`
-    });
-
-    return id;
-  }
-
-  /**
    * Performs a bulk upsert of timesheets for a Wave.
-   * Skips approved/locked records to maintain integrity.
+   * Safeguard: Strictly skips any record already approved by client or locked.
    */
   async bulkUpsertTimesheets(timesheets: Partial<DailyTimesheet>[], user: User) {
     const batch = writeBatch(this.db);
@@ -234,11 +148,10 @@ export class TimesheetService {
 
       const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
       const docRef = doc(this.getCollection(), id);
-      const existing = await getDoc(docRef);
+      const existingSnap = await getDoc(docRef);
 
-      if (existing.exists()) {
-        const current = existing.data() as DailyTimesheet;
-        // Integrity Guard: Skip if already finalized (Client Approved or Locked)
+      if (existingSnap.exists()) {
+        const current = existingSnap.data() as DailyTimesheet;
         if (this.isFinalized(current.status)) {
           results.skipped++;
           continue;
@@ -271,7 +184,7 @@ export class TimesheetService {
       actionType: 'BULK_UPSERT',
       entityType: 'DailyTimesheet',
       entityId: 'batch',
-      afterSummary: `Bulk processed timesheets: Created ${results.created}, Updated ${results.updated}, Skipped ${results.skipped}`,
+      afterSummary: `Wave bulk upsert: ${results.created} new, ${results.updated} updated, ${results.skipped} skipped.`,
       sourceModule: 'operations'
     });
 
@@ -282,12 +195,7 @@ export class TimesheetService {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
-    const current = snap.data() as DailyTimesheet;
-
-    if (!['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(current.status)) {
-      throw new Error('Invalid Transition: Only drafts or rejected items can be submitted');
-    }
-
+    
     await updateDoc(docRef, {
       status: 'SUBMITTED',
       submittedBy: user.displayName,
@@ -302,31 +210,7 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Submitted daily log for operations review'
-    });
-  }
-
-  async opsReview(id: string, user: User) {
-    const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-    if (snap.data()?.status !== 'SUBMITTED') throw new Error('Only submitted items can be reviewed by Ops');
-
-    await updateDoc(docRef, {
-      status: 'OPS_REVIEWED',
-      opsReviewedBy: user.displayName,
-      opsReviewedAt: Date.now(),
-      updatedBy: user.displayName,
-      updatedAt: Date.now(),
-    });
-
-    await writeAuditLog(this.db, user, {
-      actionType: 'OPS_REVIEW',
-      entityType: 'DailyTimesheet',
-      entityId: id,
-      timesheetId: id,
-      sourceModule: 'operations',
-      afterSummary: 'Operations internal verification complete'
+      afterSummary: 'Submitted daily log for review'
     });
   }
 
@@ -334,7 +218,6 @@ export class TimesheetService {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
-    if (snap.data()?.status !== 'OPS_REVIEWED') throw new Error('Client Approval Failed');
 
     await updateDoc(docRef, {
       status: 'CLIENT_APPROVED',
@@ -350,34 +233,7 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'client',
-      afterSummary: 'Client final approval granted'
-    });
-  }
-
-  async rejectTimesheet(id: string, reason: string, user: User) {
-    const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-    
-    if (this.isFinalized(snap.data()?.status)) {
-      throw new Error('Integrity Violation: Cannot reject a locked record.');
-    }
-
-    await updateDoc(docRef, {
-      status: 'REJECTED',
-      rejectionReason: reason,
-      updatedBy: user.displayName,
-      updatedAt: Date.now(),
-    });
-
-    await writeAuditLog(this.db, user, {
-      actionType: 'REJECT',
-      entityType: 'DailyTimesheet',
-      entityId: id,
-      timesheetId: id,
-      reasonText: reason,
-      sourceModule: 'operations',
-      afterSummary: `Daily activity log rejected: ${reason}`
+      afterSummary: 'Client approved daily log'
     });
   }
 
@@ -386,7 +242,8 @@ export class TimesheetService {
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
 
-    if (this.isFinalized(snap.data()?.status)) {
+    // Rule: Cannot silently correct locked financial data
+    if (snap.data()?.status === 'LOCKED') {
       throw new Error('Integrity Violation: Locked records cannot be marked for correction.');
     }
 
@@ -404,31 +261,7 @@ export class TimesheetService {
       timesheetId: id,
       reasonText: reason,
       sourceModule: 'operations',
-      afterSummary: `Correction requested for daily log: ${reason}`
-    });
-  }
-
-  async lockTimesheet(id: string, user: User) {
-    const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-    if (snap.data()?.status !== 'CLIENT_APPROVED') throw new Error('Only approved items can be locked');
-
-    await updateDoc(docRef, {
-      status: 'LOCKED',
-      lockedBy: user.displayName,
-      lockedAt: Date.now(),
-      updatedBy: user.displayName,
-      updatedAt: Date.now(),
-    });
-
-    await writeAuditLog(this.db, user, {
-      actionType: 'LOCK',
-      entityType: 'DailyTimesheet',
-      entityId: id,
-      timesheetId: id,
-      sourceModule: 'finance',
-      afterSummary: 'Locked record for final financial processing'
+      afterSummary: `Correction requested: ${reason}`
     });
   }
 }
