@@ -129,6 +129,7 @@ const navGroups: NavGroup[] = [
     items: [
       { key: 'system_admin', title: 'จัดการสิทธิ์ผู้ใช้งาน (User Access)', href: '/users', icon: ShieldCheck },
       { key: 'system_admin', title: 'เมทริกซ์สิทธิ์ (Advanced)', href: '/system-admin/permissions', icon: LockKeyhole },
+      { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'audit_logs', title: 'ประวัติกิจกรรม (Audit Logs)', href: '/system-admin/audit-logs', icon: History },
       { key: 'client_portal', title: 'Client Portal', href: '/client-portal', icon: ShieldAlert },
