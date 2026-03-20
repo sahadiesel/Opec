@@ -96,6 +96,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     let msg = `เปลี่ยนสถานะเป็น ${newStatus.toUpperCase()}`;
     if (newStatus === 'sent') msg = "ทำเครื่องหมายว่าส่งเอกสารแล้ว (Marked as Sent)";
     if (newStatus === 'accepted') msg = "ลูกค้ายืนยันตกลง (Client Accepted)";
+    if (newStatus === 'draft') msg = "เปิดสิทธิ์แก้ไขเอกสาร (Revised to Draft)";
     
     toast({ title: "อัปเดตสถานะสำเร็จ", description: msg });
   };
@@ -402,7 +403,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                         </div>
                         <Separator className="bg-white/10" />
                         <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('draft')}>
-                          <RefreshCw className="h-3 w-3 mr-2" /> เปิดเพื่อแก้ไข (Revise Draft)
+                          <RefreshCw className="h-3 w-3 mr-2" /> แก้ไขใหม่ (Revise Draft)
                         </Button>
                       </>
                     )}
@@ -416,7 +417,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     {isFinalized && (
                       <div className="text-center py-4 bg-white/5 rounded-lg border border-dashed border-white/10">
                         <Lock className="h-5 w-5 mx-auto mb-2 opacity-40" />
-                        <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Status Finalized</p>
+                        <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Locked: {quotation.status}</p>
                       </div>
                     )}
                   </CardContent>
@@ -430,7 +431,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3 text-sm">
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center text-sm">
                       <span className="text-muted-foreground">ยอดรวมสินค้า (Subtotal):</span>
                       <span className="font-bold">฿{(quotation.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
@@ -452,7 +453,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                         />
                       </div>
                     </div>
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center text-sm">
                       <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({quotation.taxPercent || 7}%):</span>
                       <span className="font-bold">฿{(quotation.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
