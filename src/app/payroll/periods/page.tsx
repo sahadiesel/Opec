@@ -38,6 +38,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { PageGuidance } from '@/components/layout/page-guidance';
 
 export default function PayrollPeriodsPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -50,14 +51,12 @@ export default function PayrollPeriodsPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  // 1. Data Queries
   const periodsQuery = useMemoFirebase(() => {
     if (!firestore) return null;
     return query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc'), limit(50));
   }, [firestore]);
   const { data: periods, isLoading } = useCollection<PayrollPeriod>(periodsQuery as any);
 
-  // 2. Local State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState<Partial<PayrollPeriod>>({
     label: '',
@@ -67,7 +66,6 @@ export default function PayrollPeriodsPage() {
     status: 'DRAFT'
   });
 
-  // 3. Actions
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     try {
@@ -153,14 +151,14 @@ export default function PayrollPeriodsPage() {
           </Dialog>
         </div>
 
-        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
-          <Info className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold text-lg">หลักการปิดงวด (Cut-off Principles)</AlertTitle>
-          <AlertDescription className="text-sm">
-            รอบบัญชีใช้สำหรับรวบรวม <b>Daily Timesheets</b> ที่ผ่านการอนุมัติแล้วมาสรุปเป็น <b>Payroll Batch</b> เพื่อจ่ายเงิน 
-            และเป็นฐานในการออก <b>Billing Note</b> ให้กับลูกค้า กรุณาตรวจสอบวันที่ให้ครอบคลุมตามระเบียบของโครงการ
-          </AlertDescription>
-        </Alert>
+        <PageGuidance 
+          title="หลักการปิดงวด (Cut-off Principles)"
+          tips={[
+            "รอบบัญชีใช้สำหรับรวบรวม Daily Timesheets ที่ผ่านการอนุมัติแล้วมาสรุปเป็น Payroll และ Billing",
+            "กรุณาตรวจสอบวันที่เริ่มและสิ้นสุดงวดให้ครอบคลุมตามระเบียบของโครงการ (Cut-off date)",
+            "งวดที่ถูกล็อก (Locked) จะไม่สามารถแก้ไขข้อมูลเวลาที่เชื่อมโยงได้อีก"
+          ]}
+        />
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">

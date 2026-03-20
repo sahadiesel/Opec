@@ -41,6 +41,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { useRouter } from 'next/navigation';
+import { PageGuidance } from '@/components/layout/page-guidance';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
@@ -54,7 +55,6 @@ export default function PayrollBatchesPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  // 1. Data Queries
   const batchQuery = useMemoFirebase(() => {
     if (!firestore) return null;
     return query(collection(firestore, 'payroll_batches'), orderBy('createdAt', 'desc'), limit(50));
@@ -67,13 +67,11 @@ export default function PayrollBatchesPage() {
   }, [firestore]);
   const { data: periods } = useCollection<PayrollPeriod>(periodsQuery as any);
 
-  // 2. Local State
   const [isGenerateOpen, setIsGenerateOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [targetPeriodId, setTargetPeriodId] = useState('');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
 
-  // 3. Actions
   const handleGenerate = async () => {
     if (!firestore || !currentUser || !targetPeriodId) return;
     
@@ -125,7 +123,7 @@ export default function PayrollBatchesPage() {
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>ประมวลผล Payroll Batch ใหม่</DialogTitle>
-                <DialogDescription>ระบบจะรวบรวมเฉพาะ Daily Timesheets ที่มีสถานะ "Client Approved" เท่านั้น</DialogDescription>
+                <DialogDescription>ระบบจะรวนรวมเฉพาะ Daily Timesheets ที่มีสถานะ "Client Approved" เท่านั้น</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
@@ -161,14 +159,14 @@ export default function PayrollBatchesPage() {
           </Dialog>
         </div>
 
-        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
-          <ShieldCheck className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold text-lg">นโยบายการเบิกจ่าย (Disbursement Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            เฉพาะใบลงเวลาที่ได้รับการอนุมัติจากลูกค้า (Client Approved) เท่านั้นที่จะถูกนำมาคำนวณใน Batch นี้ 
-            ลำดับการอนุมัติ: <b>HR Review → HR Approval (Manager) → Finance Preparation → Paid</b>
-          </AlertDescription>
-        </Alert>
+        <PageGuidance 
+          title="นโยบายการเบิกจ่าย (Disbursement Policy)"
+          tips={[
+            "เฉพาะ timesheet ที่ลูกค้าอนุมัติแล้วเท่านั้นที่จะเข้าสู่รอบการคำนวณเงินเดือน (Payroll Batch)",
+            "ลำดับการอนุมัติ: HR จัดทำ → HR Manager อนุมัติ → บัญชีเตรียมจ่ายเงิน (Finance Prep)",
+            "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน"
+          ]}
+        />
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">

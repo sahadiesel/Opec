@@ -38,6 +38,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkerWaveAcceptanceService } from '@/lib/services/acceptance-service';
+import { PageGuidance } from '@/components/layout/page-guidance';
 
 export default function ClientWaveAcceptancePage() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -52,7 +53,6 @@ export default function ClientWaveAcceptancePage() {
 
   const customerId = currentUser?.customerId || '';
 
-  // 1. Data Queries
   const wavesQuery = useMemoFirebase(() => {
     if (!firestore || !customerId) return null;
     return query(collection(firestore, 'waves'), where('customerId', '==', customerId));
@@ -68,12 +68,10 @@ export default function ClientWaveAcceptancePage() {
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  // 2. Local State
   const [selectedAcceptance, setSelectedAcceptance] = useState<WorkerWaveAcceptance | null>(null);
   const [remark, setRemark] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // 3. Actions
   const handleAction = async (action: 'accept' | 'reject' | 'replace') => {
     if (!firestore || !currentUser || !selectedAcceptance) return;
     
@@ -106,14 +104,14 @@ export default function ClientWaveAcceptancePage() {
           <p className="text-muted-foreground text-lg italic">พิจารณาและอนุมัติรายชื่อลูกจ้างที่เตรียมส่งตัวเข้าหน้างานของท่าน (Candidate review portal).</p>
         </div>
 
-        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
-          <ShieldCheck className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold text-lg">คำแนะนำสำหรับลูกค้า (Client Portal Guide)</AlertTitle>
-          <AlertDescription className="text-sm">
-            กรุณาตรวจสอบประวัติและใบเซอร์ของคนงานก่อนกด <b>อนุมัติ (Accept)</b> 
-            หากท่านต้องการขอเปลี่ยนตัวพนักงานกรุณาระบุเหตุผลและเลือก <b>ขอเปลี่ยนตัว (Request Replacement)</b> เพื่อให้ฝ่ายบุคคลดำเนินการสรรหาใหม่
-          </AlertDescription>
-        </Alert>
+        <PageGuidance 
+          title="คำแนะนำสำหรับลูกค้า (Client Portal Guide)"
+          tips={[
+            "กรุณาตรวจสอบประวัติและใบเซอร์ของคนงานก่อนกด อนุมัติ (Accept) เพื่อยืนยันความพร้อมลงหน้างาน",
+            "หากท่านต้องการขอเปลี่ยนตัวพนักงาน กรุณาระบุเหตุผลและเลือก 'ขอเปลี่ยนตัว' (Request Replacement)",
+            "พนักงานที่ได้รับการอนุมัติจะเข้าสู่กระบวนการระดมพล (Mobilization) ทันทีเพื่อเริ่มงานตามกำหนด"
+          ]}
+        />
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardHeader className="bg-muted/30 border-b">

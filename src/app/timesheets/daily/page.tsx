@@ -41,14 +41,14 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { useRouter } from 'next/navigation';
+import { PageGuidance } from '@/components/layout/page-guidance';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work Day)',
   travel_day: 'วันเดินทาง (Travel)',
-  standby_day: 'สแตนด์บาย (Standby)',
+  standby_day: 'วันแสตนบาย (Standby)',
   off_day_worked: 'ทำงานวันหยุด (Off Day)',
   sick_leave_paid: 'ลาป่วย (Sick Leave)',
   vacation_paid: 'ลาพักร้อน (Vacation)',
@@ -67,7 +67,6 @@ export default function DailyTimesheetsPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  // 1. Data Queries
   const tsQuery = useMemoFirebase(() => {
     if (!firestore) return null;
     return query(collection(firestore, 'daily_timesheets'), orderBy('date', 'desc'), limit(100));
@@ -80,7 +79,6 @@ export default function DailyTimesheetsPage() {
   const mobQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'mobilizations') : null), [firestore]);
   const { data: assignments } = useCollection<Assignment>(mobQuery as any);
 
-  // 2. Local State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newTs, setNewTs] = useState<Partial<DailyTimesheet>>({
@@ -91,7 +89,6 @@ export default function DailyTimesheetsPage() {
     status: 'DRAFT'
   });
 
-  // 3. Actions
   const handleCreate = async () => {
     if (!firestore || !currentUser || !newTs.workerId || !newTs.assignmentId) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุคนงาน งาน และวันที่" });
@@ -111,8 +108,8 @@ export default function DailyTimesheetsPage() {
         contractId: asgn?.contractId || '',
         purchaseOrderId: asgn?.poId || '',
         positionId: asgn?.positionId || '',
-        siteId: asgn?.waveId || '', // site logic usually tied to wave
-        workMode: 'OFFSHORE', // default or derived from asgn
+        siteId: asgn?.waveId || '',
+        workMode: 'OFFSHORE', 
       }, currentUser);
 
       setIsCreateOpen(false);
@@ -227,14 +224,14 @@ export default function DailyTimesheetsPage() {
           </Dialog>
         </div>
 
-        <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
-          <Info className="h-5 w-5 text-blue-600" />
-          <AlertTitle className="font-bold text-lg">คำแนะนำการลงเวลา (Operational Guidance)</AlertTitle>
-          <AlertDescription className="text-sm space-y-2">
-            <p>กรุณาบันทึกการทำงานรายวันให้เป็นปัจจุบัน และตรวจสอบ <b>ประเภทเหตุการณ์ (Event Type)</b> ให้ถูกต้อง เพราะมีผลโดยตรงต่อการคิดเงินเบี้ยเลี้ยงและการจ่าย OT ตามสัญญา</p>
-            <p className="text-xs font-medium">ลำดับขั้นตอน: บันทึก (Draft) → ส่งตรวจ (Submit) → Ops ตรวจสอบ → ลูกค้าอนุมัติ (Client Approve)</p>
-          </AlertDescription>
-        </Alert>
+        <PageGuidance 
+          title="คำแนะนำการลงเวลา (Operational Guidance)"
+          tips={[
+            "บันทึกข้อมูลตามวันทำงานจริง และเลือกประเภทงานให้ถูกต้อง เช่น วันทำงาน, วันเดินทาง, standby, mobilization",
+            "ตรวจสอบจำนวนชั่วโมงทำงานปกติและ OT ให้ตรงกับหน้างานจริง เพราะมีผลต่อการคิดเบี้ยเลี้ยง",
+            "ลำดับขั้นตอน: บันทึก (Draft) → ส่งตรวจ (Submit) → Ops ตรวจสอบ → ลูกค้าอนุมัติ (Client Approve)"
+          ]}
+        />
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
