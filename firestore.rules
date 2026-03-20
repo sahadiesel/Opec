@@ -86,7 +86,7 @@ service cloud.firestore {
       allow write: if isHRStaff() || isFinanceStaff();
     }
 
-    // Payroll Batches & Lines
+    // Payroll Batches & Lines (Internal Financials)
     match /payroll_batches/{id} {
       allow read: if isHRStaff() || isFinanceStaff();
       allow write: if isHRStaff() || isFinanceStaff();
@@ -152,28 +152,19 @@ service cloud.firestore {
       allow write: if isSalesStaff() || isHRStaff() || isFinanceStaff();
     }
 
-    match /po_commercial_snapshots/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isSalesStaff() || isFinanceStaff();
-    }
-
-    match /wave_rate_snapshots/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isOperationsStaff() || isHRStaff();
-    }
-
     match /main_contracts/{id} {
-      allow read: if isInternalStaff();
+      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow write: if isSalesStaff();
     }
 
     match /purchase_orders/{poId} {
-      allow get, list: if isInternalStaff();
+      allow get, list: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow write: if isSalesStaff() || isFinanceStaff();
     }
     
     match /purchase_orders/{poId}/po_lines/{lineId} {
-      allow read, write: if isInternalStaff();
+      allow read: if isInternalStaff() || isClientOf(get(/databases/$(database)/documents/purchase_orders/$(poId)).data.customerId);
+      allow write: if isInternalStaff();
     }
 
     // Operations & Mobilization
@@ -204,6 +195,17 @@ service cloud.firestore {
       allow create: if isOperationsStaff();
       allow update: if isOperationsStaff() || (isClientOf(resource.data.customerId) && hasRole('client_approver'));
       allow delete: if hasRole('system_admin');
+    }
+
+    // Store & Inventory
+    match /store_items/{id} {
+      allow read: if isInternalStaff();
+      allow write: if isStoreStaff();
+    }
+
+    match /store_transactions/{id} {
+      allow read: if isInternalStaff();
+      allow create: if isStoreStaff() || isOperationsStaff();
     }
 
     // Default fallback
