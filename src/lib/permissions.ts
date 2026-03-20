@@ -1,8 +1,9 @@
 'use client';
 
 /**
- * OPEC OpsFlow - Permissions & UI Access Utility
+ * @fileOverview OPEC OpsFlow - Permissions & UI Access Utility
  * Primary source of truth for what a user can see and do.
+ * Maps operational intents (e.g., "Generate Payroll") to the ModulePermission matrix.
  */
 
 import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel } from './types';
@@ -43,7 +44,8 @@ export type ModuleKey =
   | 'sales_contract_terms'
   | 'labor_cost_contract_terms'
   | 'rate_conditions'
-  | 'profit_estimates';
+  | 'profit_estimates'
+  | 'payment_export_batches';
 
 /**
  * Default Permission Templates
@@ -86,10 +88,12 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
   labor_cost_contract_terms: NO_ACCESS,
   rate_conditions: NO_ACCESS,
   profit_estimates: NO_ACCESS,
+  payment_export_batches: NO_ACCESS,
 };
 
 /**
  * Baseline Permission Profile Definitions
+ * Defines standard role-to-module mappings for the Opec OpsFlow platform.
  */
 export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   const baseline = (key: string, nameEn: string, nameTh: string, dept: DeptType, level: AccessLevel, perms: Record<string, Partial<ModulePermission>>) => ({
@@ -120,13 +124,13 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       overview_dashboard: READ_ONLY,
       positions: { ...OFFICER_ACCESS, approve: true, delete: true },
       workers: { ...OFFICER_ACCESS, approve: true, delete: true },
-      timesheets: { ...OFFICER_ACCESS, approve: true },
-      worker_payroll: { ...OFFICER_ACCESS, approve: true },
-      office_payroll: { ...OFFICER_ACCESS, approve: true },
+      timesheets: { view: true, approve: true }, // can view and review_ops
+      worker_payroll: { view: true, create: true, approve: true }, // generate, hr_approve
+      office_payroll: { view: true, create: true, approve: true },
       office_staff: { ...OFFICER_ACCESS, approve: true },
-      waves: OFFICER_ACCESS,
-      assignments: OFFICER_ACCESS,
-      mobilization: OFFICER_ACCESS,
+      waves: READ_ONLY,
+      assignments: READ_ONLY,
+      mobilization: READ_ONLY,
       labor_cost_contract_terms: { ...OFFICER_ACCESS, approve: true, delete: true },
       rate_conditions: { ...OFFICER_ACCESS, approve: true, delete: true },
       profit_estimates: READ_ONLY,
@@ -137,14 +141,13 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       overview_dashboard: READ_ONLY,
       positions: OFFICER_ACCESS,
       workers: OFFICER_ACCESS,
-      timesheets: OFFICER_ACCESS,
-      worker_payroll: OFFICER_ACCESS,
-      waves: OFFICER_ACCESS,
-      assignments: OFFICER_ACCESS,
-      mobilization: OFFICER_ACCESS,
+      timesheets: { view: true, create: true, edit: true }, // can prep daily logs
+      worker_payroll: { view: true }, // support only
+      waves: READ_ONLY,
+      assignments: READ_ONLY,
+      mobilization: READ_ONLY,
       labor_cost_contract_terms: OFFICER_ACCESS,
       rate_conditions: OFFICER_ACCESS,
-      profit_estimates: READ_ONLY,
     }),
 
     // 4. Operations Manager
@@ -153,7 +156,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       waves: { ...OFFICER_ACCESS, approve: true, delete: true },
       assignments: { ...OFFICER_ACCESS, approve: true },
       mobilization: { ...OFFICER_ACCESS, approve: true },
-      timesheets: OFFICER_ACCESS,
+      timesheets: { view: true, create: true, edit: true, approve: true }, // create, edit, review_ops
       workers: READ_ONLY,
       positions: READ_ONLY,
       profit_estimates: READ_ONLY,
@@ -165,7 +168,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       waves: OFFICER_ACCESS,
       assignments: OFFICER_ACCESS,
       mobilization: OFFICER_ACCESS,
-      timesheets: OFFICER_ACCESS,
+      timesheets: { view: true, create: true, edit: true }, // create, edit
       workers: READ_ONLY,
     }),
 
@@ -180,8 +183,9 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       bank_accounts: { ...OFFICER_ACCESS, approve: true },
       accounts_receivable: READ_ONLY,
       accounts_payable: READ_ONLY,
-      worker_payroll: READ_ONLY,
-      office_payroll: READ_ONLY,
+      worker_payroll: { view: true, edit: true, approve: true }, // finance_prepare, mark_paid, lock
+      office_payroll: { view: true, edit: true, approve: true },
+      payment_export_batches: { view: true, create: true, approve: true }, // export_bank_file
       sales_contract_terms: READ_ONLY,
       labor_cost_contract_terms: READ_ONLY,
       rate_conditions: READ_ONLY,
@@ -198,6 +202,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       cashbook: OFFICER_ACCESS,
       accounts_receivable: READ_ONLY,
       accounts_payable: READ_ONLY,
+      worker_payroll: { view: true },
       sales_contract_terms: READ_ONLY,
       labor_cost_contract_terms: READ_ONLY,
     }),
@@ -237,18 +242,19 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
 
     // 11. Client Approver
     baseline('client_approver', 'Client Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
-      client_portal: { ...READ_ONLY, approve: true },
+      client_portal: { view: true, approve: true }, // wave_accept, timesheet_approve
     }),
 
     // 12. Client Viewer
     baseline('client_viewer', 'Client Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
-      client_portal: READ_ONLY,
+      client_portal: { view: true, approve: false }, // read-only
     })
   ];
 }
 
 /**
  * Primary helper to check permissions for a specific module
+ * Maps business "Intents" to the 5 standard boolean flags.
  */
 export function getPermissions(
   user: User | null, 
@@ -272,7 +278,7 @@ export function getPermissions(
     return profile.permissions[moduleKey];
   }
 
-  // 4. Graceful Fallback Logic
+  // 4. Graceful Fallback Logic (Legacy Support)
   const { dept, level } = inferDeptAndLevel(user);
   
   if (moduleKey === 'overview_dashboard') return READ_ONLY;
@@ -287,6 +293,28 @@ export function getPermissions(
 
   return NO_ACCESS;
 }
+
+/**
+ * Intent-to-Flag Mapping Reference:
+ * 
+ * [Timesheets]
+ * create -> .create
+ * edit -> .edit
+ * review_ops -> .approve (Internal)
+ * approve_client -> .approve (Client Context)
+ * lock -> .delete (Safeguard)
+ * 
+ * [Payroll]
+ * generate -> .create
+ * hr_approve -> .approve
+ * finance_prepare -> .edit
+ * mark_paid -> .approve
+ * lock -> .delete
+ * 
+ * [Customer Portal]
+ * wave_accept -> .approve
+ * timesheet_approve -> .approve
+ */
 
 /**
  * Functional shorthand helpers
