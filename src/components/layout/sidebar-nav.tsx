@@ -41,7 +41,8 @@ import {
   UserCheck,
   ClipboardCheck,
   History,
-  Grid3X3
+  Grid3X3,
+  Lock
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -130,6 +131,7 @@ const navGroups: NavGroup[] = [
     label: 'การจัดการระบบ (Administration)',
     items: [
       { key: 'system_admin', title: 'จัดการสิทธิ์ผู้ใช้งาน (User Access)', href: '/users', icon: ShieldCheck },
+      { key: 'system_admin', title: 'การเข้าใช้งานของลูกค้า', href: '/system-admin/customer-portal', icon: Lock },
       { key: 'system_admin', title: 'เมทริกซ์สิทธิ์ (Advanced)', href: '/system-admin/permissions', icon: LockKeyhole },
       { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },

@@ -11,7 +11,6 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
-  getDoc,
   serverTimestamp 
 } from 'firebase/firestore';
 import { 
@@ -36,7 +35,6 @@ export class CustomerProvisioningService {
 
   /**
    * Generates a simple temporary password.
-   * In production, this should be more complex or use a link-based flow.
    */
   private generateTempPassword(): string {
     return 'Opec' + Math.random().toString(36).slice(-8) + '!';
@@ -79,7 +77,7 @@ export class CustomerProvisioningService {
         customerId,
         portalRole,
         assignedRoleKey: roleKey,
-        ...roleFields, // Maps department: 'client', etc.
+        ...roleFields,
         isActive: true,
         approvalStatus: 'ACTIVE' as ApprovalStatus,
         mustResetPassword: true,
@@ -114,38 +112,8 @@ export class CustomerProvisioningService {
     }
   }
 
-  /**
-   * Updates the portal role and automatically re-maps technical permissions.
-   */
-  async assignCustomerPortalRole(userId: string, newRole: PortalRole, adminUser: User) {
+  async deactivateUser(userId: string, reason: string, adminUser: User) {
     const userRef = doc(this.db, 'users', userId);
-    const roleKey: BusinessRoleKey = newRole === 'approver' ? 'customer_approver' : 'customer_viewer';
-    const roleFields = getFieldsForBusinessRole(roleKey);
-
-    const updateData = {
-      portalRole: newRole,
-      assignedRoleKey: roleKey,
-      ...roleFields,
-      updatedAt: Date.now()
-    };
-
-    await updateDoc(userRef, updateData);
-
-    await writeAuditLog(this.db, adminUser, {
-      actionType: 'UPDATE_ROLE',
-      entityType: 'User',
-      entityId: userId,
-      sourceModule: 'system',
-      afterSummary: `Changed customer portal role to ${newRole}`
-    });
-  }
-
-  /**
-   * Suspends access for a customer portal user.
-   */
-  async deactivateCustomerPortalUser(userId: string, reason: string, adminUser: User) {
-    const userRef = doc(this.db, 'users', userId);
-    
     await updateDoc(userRef, {
       isActive: false,
       approvalStatus: 'SUSPENDED' as ApprovalStatus,
@@ -159,17 +127,12 @@ export class CustomerProvisioningService {
       entityType: 'User',
       entityId: userId,
       reasonText: reason,
-      sourceModule: 'system',
-      afterSummary: `Deactivated customer account. Reason: ${reason}`
+      sourceModule: 'system'
     });
   }
 
-  /**
-   * Restores access for a customer portal user.
-   */
-  async activateCustomerPortalUser(userId: string, adminUser: User) {
+  async activateUser(userId: string, adminUser: User) {
     const userRef = doc(this.db, 'users', userId);
-    
     await updateDoc(userRef, {
       isActive: true,
       approvalStatus: 'ACTIVE' as ApprovalStatus,
@@ -182,24 +145,7 @@ export class CustomerProvisioningService {
       actionType: 'ACTIVATE_USER',
       entityType: 'User',
       entityId: userId,
-      sourceModule: 'system',
-      afterSummary: `Re-activated customer account`
-    });
-  }
-
-  /**
-   * Triggers a standard Firebase password reset email.
-   */
-  async resetCustomerPortalPassword(email: string, adminUser: User) {
-    const auth = getAuth();
-    await sendPasswordResetEmail(auth, email);
-
-    await writeAuditLog(this.db, adminUser, {
-      actionType: 'PASSWORD_RESET_REQ',
-      entityType: 'User',
-      entityId: email,
-      sourceModule: 'system',
-      afterSummary: `Triggered password reset email for ${email}`
+      sourceModule: 'system'
     });
   }
 }
