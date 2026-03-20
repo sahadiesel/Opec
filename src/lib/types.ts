@@ -142,8 +142,8 @@ export interface User {
   mustResetPassword?: boolean;
   allowedContractIds?: string[];
   allowedPurchaseOrderIds?: string[];
-  deactivatedAt?: number;
-  deactivatedReason?: string;
+  deactivatedAt?: number | null;
+  deactivatedReason?: string | null;
 }
 
 export interface PermissionProfile {
