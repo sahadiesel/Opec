@@ -8,7 +8,8 @@ import {
   getDoc, 
   updateDoc, 
   setDoc,
-  CollectionReference 
+  CollectionReference,
+  writeBatch
 } from 'firebase/firestore';
 import { DailyTimesheet, User, DailyTimesheetStatus } from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
@@ -58,10 +59,9 @@ export class TimesheetService {
     const id = this.getTimesheetId(data.workerId, data.assignmentId, data.date);
     const docRef = doc(this.getCollection(), id);
     
-    // Uniqueness check: Prevent silent overwrite of existing daily records
     const existing = await getDoc(docRef);
     if (existing.exists()) {
-      throw new Error(`Timesheet record already exists for this identity and date: ${data.date}. Use the update or correction flow instead.`);
+      throw new Error(`Timesheet record already exists for this identity and date: ${data.date}.`);
     }
 
     const validated = DailyTimesheetSchema.parse({
@@ -74,7 +74,6 @@ export class TimesheetService {
       updatedAt: Date.now(),
     });
 
-    // High integrity write: Blocking
     await setDoc(docRef, validated);
     
     await writeAuditLog(this.db, user, {
@@ -93,42 +92,60 @@ export class TimesheetService {
   }
 
   /**
-   * Updates an existing draft or rejected timesheet.
-   * Business Rule: Blocks updates if the record is approved or locked.
+   * Performs a bulk upsert of timesheets for a Wave.
+   * Skips approved/locked records to maintain integrity.
    */
-  async updateTimesheetDraft(id: string, data: Partial<DailyTimesheet>, user: User) {
-    const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    
-    if (!snap.exists()) throw new Error('Timesheet not found');
-    const current = snap.data() as DailyTimesheet;
+  async bulkUpsertTimesheets(timesheets: Partial<DailyTimesheet>[], user: User) {
+    const batch = writeBatch(this.db);
+    const results = { created: 0, updated: 0, skipped: 0 };
 
-    if (!this.canEdit(current.status)) {
-      throw new Error(`Integrity Error: Cannot edit timesheet in current status: ${current.status}. To make changes, the record must be rejected or marked for correction.`);
+    for (const ts of timesheets) {
+      if (!ts.workerId || !ts.assignmentId || !ts.date) continue;
+
+      const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
+      const docRef = doc(this.getCollection(), id);
+      const existing = await getDoc(docRef);
+
+      if (existing.exists()) {
+        const current = existing.data() as DailyTimesheet;
+        if (!this.canEdit(current.status)) {
+          results.skipped++;
+          continue;
+        }
+        batch.update(docRef, {
+          ...ts,
+          updatedBy: user.displayName,
+          updatedAt: Date.now()
+        });
+        results.updated++;
+      } else {
+        const validated = DailyTimesheetSchema.parse({
+          ...ts,
+          id,
+          status: 'DRAFT',
+          createdBy: user.displayName,
+          updatedBy: user.displayName,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        batch.set(docRef, validated);
+        results.created++;
+      }
     }
 
-    const updateData = {
-      ...data,
-      updatedBy: user.displayName,
-      updatedAt: Date.now()
-    };
-
-    await updateDoc(docRef, updateData);
-
+    await batch.commit();
+    
     await writeAuditLog(this.db, user, {
-      actionType: 'UPDATE',
+      actionType: 'BULK_UPSERT',
       entityType: 'DailyTimesheet',
-      entityId: id,
-      timesheetId: id,
-      sourceModule: 'operations',
-      changedFields: Object.keys(data),
-      afterSummary: 'Updated timesheet draft details'
+      entityId: 'batch',
+      afterSummary: `Bulk processed timesheets: Created ${results.created}, Updated ${results.updated}, Skipped ${results.skipped}`,
+      sourceModule: 'operations'
     });
+
+    return results;
   }
 
-  /**
-   * Submits a timesheet for Operations review.
-   */
   async submitTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
@@ -136,7 +153,7 @@ export class TimesheetService {
     const current = snap.data() as DailyTimesheet;
 
     if (!['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(current.status)) {
-      throw new Error('Invalid Transition: Only drafts or rejected items can be submitted for review');
+      throw new Error('Invalid Transition: Only drafts or rejected items can be submitted');
     }
 
     await updateDoc(docRef, {
@@ -157,9 +174,6 @@ export class TimesheetService {
     });
   }
 
-  /**
-   * Operations internal verification.
-   */
   async opsReview(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
@@ -184,15 +198,11 @@ export class TimesheetService {
     });
   }
 
-  /**
-   * Client final sign-off.
-   * Business Control: Blocking write ensures the approval state is settled.
-   */
   async approveTimesheetByClient(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
-    if (snap.data()?.status !== 'OPS_REVIEWED') throw new Error('Client Approval Failed: Only ops-reviewed items can be approved');
+    if (snap.data()?.status !== 'OPS_REVIEWED') throw new Error('Client Approval Failed');
 
     await updateDoc(docRef, {
       status: 'CLIENT_APPROVED',
@@ -208,22 +218,17 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'client',
-      reasonCode: 'CLIENT_SIGNOFF',
-      afterSummary: 'Client final approval granted via portal'
+      afterSummary: 'Client final approval granted'
     });
   }
 
-  /**
-   * Generic rejection by Ops or Client.
-   */
   async rejectTimesheet(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
     
-    // Cannot reject once locked for financial period
     if (snap.data()?.status === 'LOCKED') {
-      throw new Error('Integrity Violation: Cannot reject a record that is already locked for a financial period.');
+      throw new Error('Integrity Violation: Cannot reject a locked record.');
     }
 
     await updateDoc(docRef, {
@@ -244,9 +249,6 @@ export class TimesheetService {
     });
   }
 
-  /**
-   * Request correction from the submitter.
-   */
   async requestCorrection(id: string, reason: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
@@ -274,15 +276,11 @@ export class TimesheetService {
     });
   }
 
-  /**
-   * Locks the timesheet for final payroll processing.
-   * Business Control: Mandatory blocking write.
-   */
   async lockTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
-    if (snap.data()?.status !== 'CLIENT_APPROVED') throw new Error('Only client-approved items can be locked for financial periods');
+    if (snap.data()?.status !== 'CLIENT_APPROVED') throw new Error('Only approved items can be locked');
 
     await updateDoc(docRef, {
       status: 'LOCKED',
@@ -298,7 +296,6 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'finance',
-      reasonCode: 'PERIOD_CLOSED',
       afterSummary: 'Locked record for final financial processing'
     });
   }

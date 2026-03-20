@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -21,7 +22,9 @@ import {
   HardHat,
   Save,
   Loader2,
-  Trash2
+  Trash2,
+  Grid3X3,
+  ArrowRight
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -44,6 +47,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import Link from 'next/link';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work Day)',
@@ -141,97 +145,112 @@ export default function DailyTimesheetsPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Clock className="h-8 w-8" /> ลงเวลารายวัน (Daily Timesheets)
+              <Clock className="h-8 w-8" /> ประวัติการลงเวลา (Timesheet History)
             </h1>
             <p className="text-muted-foreground text-lg italic">
-              บันทึกกิจกรรมประจำวันของคนงานหน้างานเพื่อใช้ในการคำนวณเงินเดือนและวางบิล (Daily activity source of truth).
+              ตรวจสอบและติดตามสถานะใบลงเวลาทำงานรายวันของคนงานทั้งหมด
             </p>
           </div>
           
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold">
-                <Plus className="h-5 w-5" /> บันทึกเวลาใหม่ (New Entry)
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-xl">
-              <DialogHeader>
-                <DialogTitle>บันทึกเวลาทำงานรายวัน</DialogTitle>
-                <DialogDescription>ระบุรายละเอียดการปฏิบัติงานเพื่อใช้เป็นฐานข้อมูลการจ่ายเงิน</DialogDescription>
-              </DialogHeader>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
-                <div className="space-y-2">
-                  <Label className="font-bold">วันที่ปฏิบัติงาน (Date) *</Label>
-                  <Input type="date" value={newTs.date} onChange={e => setNewTs({...newTs, date: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label className="font-bold">ประเภทกะ (Shift)</Label>
-                  <Select onValueChange={(v: any) => setNewTs({...newTs, shiftType: v})} value={newTs.shiftType}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="DAY">กลางวัน (Day)</SelectItem>
-                      <SelectItem value="NIGHT">กลางคืน (Night)</SelectItem>
-                      <SelectItem value="STANDBY">สแตนด์บาย (Standby)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label className="font-bold">เลือกคนงาน (Worker) *</Label>
-                  <Select onValueChange={v => setNewTs({...newTs, workerId: v, assignmentId: ''})}>
-                    <SelectTrigger><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
-                    <SelectContent>
-                      {workers?.map(w => (
-                        <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label className="font-bold">เลือกงานที่มอบหมาย (Assignment) *</Label>
-                  <Select onValueChange={v => setNewTs({...newTs, assignmentId: v})} disabled={!newTs.workerId}>
-                    <SelectTrigger><SelectValue placeholder="เลืองโครงการ/เวฟ..." /></SelectTrigger>
-                    <SelectContent>
-                      {assignments?.filter(a => a.workerId === newTs.workerId).map(a => (
-                        <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.assignmentNo})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="font-bold">ประเภทเหตุการณ์ (Event) *</Label>
-                  <Select onValueChange={(v: any) => setNewTs({...newTs, eventType: v})} value={newTs.eventType}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(EVENT_TYPE_LABELS).map(([k, v]) => (
-                        <SelectItem key={k} value={k}>{v}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="font-bold">ชั่วโมงงานปกติ (Normal Hrs)</Label>
-                  <Input type="number" value={newTs.normalHours} onChange={e => setNewTs({...newTs, normalHours: parseInt(e.target.value)})} />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
-                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                  บันทึกข้อมูล (Save)
+          <div className="flex gap-2">
+            <Button className="gap-2 h-11 px-6 bg-blue-600 shadow-md font-bold" asChild>
+              <Link href="/timesheets/wave-board">
+                <Grid3X3 className="h-5 w-5" /> ลงเวลาแบบกลุ่มเวฟ (Wave Bulk Entry)
+              </Link>
+            </Button>
+            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold">
+                  <Plus className="h-5 w-5" /> เพิ่มรายบุคคล (Manual Entry)
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent className="max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>บันทึกเวลาทำงานรายวัน (Manual Entry)</DialogTitle>
+                  <DialogDescription>ใช้ในกรณีพิเศษที่ไม่ต้องการบันทึกผ่านหน้า Wave Board</DialogDescription>
+                </DialogHeader>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                  <div className="space-y-2">
+                    <Label className="font-bold">วันที่ปฏิบัติงาน (Date) *</Label>
+                    <Input type="date" value={newTs.date} onChange={e => setNewTs({...newTs, date: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ประเภทกะ (Shift)</Label>
+                    <Select onValueChange={(v: any) => setNewTs({...newTs, shiftType: v})} value={newTs.shiftType}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="DAY">กลางวัน (Day)</SelectItem>
+                        <SelectItem value="NIGHT">กลางคืน (Night)</SelectItem>
+                        <SelectItem value="STANDBY">สแตนด์บาย (Standby)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-bold">เลือกคนงาน (Worker) *</Label>
+                    <Select onValueChange={v => setNewTs({...newTs, workerId: v, assignmentId: ''})}>
+                      <SelectTrigger><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
+                      <SelectContent>
+                        {workers?.map(w => (
+                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-bold">เลือกงานที่มอบหมาย (Assignment) *</Label>
+                    <Select onValueChange={v => setNewTs({...newTs, assignmentId: v})} disabled={!newTs.workerId}>
+                      <SelectTrigger><SelectValue placeholder="เลืองโครงการ/เวฟ..." /></SelectTrigger>
+                      <SelectContent>
+                        {assignments?.filter(a => a.workerId === newTs.workerId).map(a => (
+                          <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.assignmentNo})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ประเภทเหตุการณ์ (Event) *</Label>
+                    <Select onValueChange={(v: any) => setNewTs({...newTs, eventType: v})} value={newTs.eventType}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(EVENT_TYPE_LABELS).map(([k, v]) => (
+                          <SelectItem key={k} value={k}>{v}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ชั่วโมงงานปกติ (Normal Hrs)</Label>
+                    <Input type="number" value={newTs.normalHours} onChange={e => setNewTs({...newTs, normalHours: parseInt(e.target.value)})} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
+                  <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                    {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                    บันทึกข้อมูล (Save)
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
-        <PageGuidance 
-          title="คำแนะนำการลงเวลา (Operational Guidance)"
-          tips={[
-            "บันทึกข้อมูลตามวันทำงานจริง และเลือกประเภทงานให้ถูกต้อง เช่น วันทำงาน, วันเดินทาง, standby, mobilization",
-            "ตรวจสอบจำนวนชั่วโมงทำงานปกติและ OT ให้ตรงกับหน้างานจริง เพราะมีผลต่อการคิดเบี้ยเลี้ยง",
-            "ลำดับขั้นตอน: บันทึก (Draft) → ส่งตรวจ (Submit) → Ops ตรวจสอบ → ลูกค้าอนุมัติ (Client Approve)"
-          ]}
-        />
+        <Card className="bg-blue-50 border-blue-200 shadow-sm border-l-8 border-l-blue-600">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div className="flex items-start gap-3">
+              <div className="bg-white p-2 rounded-full shadow-sm">
+                <Grid3X3 className="h-6 w-6 text-blue-600" />
+              </div>
+              <div className="space-y-1">
+                <p className="font-black text-blue-900 leading-none">แนะนำการลงเวลาแบบ Wave-Based</p>
+                <p className="text-xs text-blue-700">สำหรับการลงเวลาคนงานจำนวนมาก (30-40 คน) แนะนำให้ใช้หน้า Wave Daily Board เพื่อความรวดเร็วและแม่นยำ</p>
+              </div>
+            </div>
+            <Button variant="outline" className="bg-white text-blue-700 hover:bg-blue-100 font-bold" asChild>
+              <Link href="/timesheets/wave-board">ไปที่ Wave Board <ArrowRight className="h-4 w-4 ml-2" /></Link>
+            </Button>
+          </CardContent>
+        </Card>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">

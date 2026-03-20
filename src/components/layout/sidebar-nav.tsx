@@ -1,3 +1,4 @@
+
 'use client';
 
 import Link from 'next/link';
@@ -40,7 +41,8 @@ import {
   CalendarDays,
   UserCheck,
   ClipboardCheck,
-  History
+  History,
+  Grid3X3
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -90,7 +92,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'บุคคลและเงินเดือน (HR & Payroll)',
     items: [
-      { key: 'timesheets', title: 'ลงเวลารายวัน (Daily Timesheets)', href: '/timesheets/daily', icon: Clock },
+      { key: 'timesheets', title: 'ลงเวลาแบบกลุ่ม (Wave Daily Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
+      { key: 'timesheets', title: 'ประวัติลงเวลารายวัน (History)', href: '/timesheets/daily', icon: Clock },
       { key: 'worker_payroll', title: 'งวดการจ่ายเงิน (Payroll Batches)', href: '/payroll/batches', icon: Coins },
       { key: 'worker_payroll', title: 'จัดการรอบบัญชี (Periods)', href: '/payroll/periods', icon: CalendarDays },
       { key: 'labor_cost_contract_terms', title: 'เงื่อนไขต้นทุน (Cost Terms)', href: '/labor-cost-terms', icon: Calculator },
