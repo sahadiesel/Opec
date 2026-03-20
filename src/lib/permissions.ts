@@ -45,7 +45,8 @@ export type ModuleKey =
   | 'labor_cost_contract_terms'
   | 'rate_conditions'
   | 'profit_estimates'
-  | 'payment_export_batches';
+  | 'payment_export_batches'
+  | 'audit_logs';
 
 /**
  * Default Permission Templates
@@ -89,6 +90,7 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
   rate_conditions: NO_ACCESS,
   profit_estimates: NO_ACCESS,
   payment_export_batches: NO_ACCESS,
+  audit_logs: NO_ACCESS,
 };
 
 /**
