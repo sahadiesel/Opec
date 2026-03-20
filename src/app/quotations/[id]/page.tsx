@@ -28,7 +28,7 @@ import {
   Calculator
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, collection, updateDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Quotation, QuotationLine, QuotationStatus, User, Customer } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
@@ -131,7 +131,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header - Hidden on Print */}
         <div className="flex items-center justify-between print:hidden">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.push('/quotations')}>
@@ -166,7 +165,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           <TabsContent value="edit" className="mt-6 space-y-6 print:hidden">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
-                {/* Header Editor */}
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                     <div>
@@ -208,7 +206,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   </CardContent>
                 </Card>
 
-                {/* Line Items Editor */}
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                     <div>
@@ -265,8 +262,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                             <TableCell className="pl-6 text-sm font-medium">{line.description}</TableCell>
                             <TableCell className="text-right">{line.quantity}</TableCell>
                             <TableCell className="text-right text-xs text-muted-foreground">{line.unit}</TableCell>
-                            <TableCell className="text-right">฿{line.unitPrice.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-bold">฿{line.lineTotal.toLocaleString()}</TableCell>
+                            <TableCell className="text-right">฿{(line.unitPrice || 0).toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-bold">฿{(line.lineTotal || 0).toLocaleString()}</TableCell>
                             <TableCell className="text-right pr-6">
                               <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => handleDeleteLine(line.id)}>
                                 <Trash2 className="h-4 w-4" />
@@ -285,7 +282,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 </Card>
               </div>
 
-              {/* Sidebar: Status & Actions */}
               <div className="space-y-6">
                 <Card className="bg-primary text-primary-foreground shadow-lg overflow-hidden border-none">
                   <CardHeader className="pb-4 border-b border-white/10">
@@ -322,22 +318,22 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <CardContent className="pt-6 space-y-3 text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">รวมยอดสินค้า (Subtotal):</span>
-                      <span className="font-bold">฿{quotation.subtotal.toLocaleString()}</span>
+                      <span className="font-bold">฿{(quotation.subtotal || 0).toLocaleString()}</span>
                     </div>
-                    {quotation.discountAmount > 0 && (
+                    {(quotation.discountAmount || 0) > 0 && (
                       <div className="flex justify-between text-red-600">
                         <span>ส่วนลด (Discount):</span>
-                        <span className="font-bold">- ฿{quotation.discountAmount.toLocaleString()}</span>
+                        <span className="font-bold">- ฿{(quotation.discountAmount || 0).toLocaleString()}</span>
                       </div>
                     )}
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({quotation.taxPercent}%):</span>
-                      <span className="font-bold">฿{quotation.taxAmount.toLocaleString()}</span>
+                      <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({quotation.taxPercent || 7}%):</span>
+                      <span className="font-bold">฿{(quotation.taxAmount || 0).toLocaleString()}</span>
                     </div>
                     <Separator className="my-2" />
                     <div className="flex justify-between text-lg">
                       <span className="font-black text-primary uppercase">ยอดสุทธิ (Total):</span>
-                      <span className="font-black text-2xl text-primary">฿{quotation.grandTotal.toLocaleString()}</span>
+                      <span className="font-black text-2xl text-primary">฿{(quotation.grandTotal || 0).toLocaleString()}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -346,9 +342,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           </TabsContent>
 
           <TabsContent value="preview" className="mt-6">
-            {/* Formal Quotation Layout */}
             <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-12 space-y-10 min-h-[29.7cm] font-serif text-slate-900">
-              {/* Doc Header */}
               <div className="flex justify-between items-start border-b-4 border-primary pb-6">
                 <div className="space-y-1">
                   <h2 className="text-3xl font-black text-primary uppercase tracking-tighter">OPEC OpsFlow</h2>
@@ -360,7 +354,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 </div>
               </div>
 
-              {/* Addresses */}
               <div className="grid grid-cols-2 gap-12 text-sm">
                 <div className="space-y-3">
                   <p className="font-black text-xs uppercase tracking-widest text-slate-400 border-b pb-1">Issued To:</p>
@@ -383,13 +376,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 </div>
               </div>
 
-              {/* Title Section */}
               <div className="bg-slate-50 p-4 border rounded">
                 <p className="text-xs font-black uppercase text-slate-400 mb-1">Subject / Project:</p>
                 <p className="font-bold text-lg text-primary">{quotation.projectTitle}</p>
               </div>
 
-              {/* Items Table */}
               <div className="space-y-4">
                 <Table className="border-collapse">
                   <TableHeader className="bg-slate-100 border-y-2 border-slate-300">
@@ -407,39 +398,37 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                         <TableCell className="py-4 font-medium">{line.description}</TableCell>
                         <TableCell className="text-right">{line.quantity}</TableCell>
                         <TableCell className="text-center text-xs">{line.unit}</TableCell>
-                        <TableCell className="text-right">฿{line.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-bold text-slate-800">฿{line.lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right">฿{(line.unitPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right font-bold text-slate-800">฿{(line.lineTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
 
-              {/* Footer Totals */}
               <div className="flex justify-end pt-6">
                 <div className="w-[300px] space-y-2 text-sm">
                   <div className="flex justify-between text-slate-600">
                     <span>Subtotal:</span>
-                    <span className="font-bold text-slate-800">฿{quotation.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="font-bold text-slate-800">฿{(quotation.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
-                  {quotation.discountAmount > 0 && (
+                  {(quotation.discountAmount || 0) > 0 && (
                     <div className="flex justify-between text-red-600 font-bold">
                       <span>Discount:</span>
-                      <span>- ฿{quotation.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      <span>- ฿{(quotation.discountAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-slate-600">
-                    <span>VAT ({quotation.taxPercent}%):</span>
-                    <span className="font-bold text-slate-800">฿{quotation.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span>VAT ({quotation.taxPercent || 7}%):</span>
+                    <span className="font-bold text-slate-800">฿{(quotation.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-xl border-t-2 border-slate-800 pt-2">
                     <span className="font-black text-primary">Grand Total:</span>
-                    <span className="font-black text-primary underline decoration-double">฿{quotation.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    <span className="font-black text-primary underline decoration-double">฿{(quotation.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Terms */}
               <div className="pt-12 space-y-4">
                 <p className="text-xs font-black uppercase text-slate-400 border-b pb-1">Notes & Conditions:</p>
                 <p className="text-xs text-slate-600 leading-relaxed italic whitespace-pre-line">
@@ -447,7 +436,6 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 </p>
               </div>
 
-              {/* Signatures */}
               <div className="pt-24 grid grid-cols-2 gap-24">
                 <div className="border-t border-slate-300 pt-4 text-center space-y-1">
                   <p className="font-black text-[10px] uppercase text-slate-400 mb-12">Authorized Signature (Issuer)</p>
