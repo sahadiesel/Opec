@@ -14,6 +14,7 @@ import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing Client-side Worker Acceptance for Waves.
+ * Handles the logic for customers to approve or request changes to their workforce.
  */
 export class WorkerWaveAcceptanceService {
   constructor(private db: Firestore) {}
@@ -22,6 +23,9 @@ export class WorkerWaveAcceptanceService {
     return collection(this.db, 'worker_wave_acceptances');
   }
 
+  /**
+   * Initializes a pending acceptance record for a worker assigned to a wave.
+   */
   async createPendingAcceptance(data: Partial<WorkerWaveAcceptance>, user: User) {
     const id = data.id || `${data.waveId}_${data.assignmentId}`;
     const docRef = doc(this.getCollection(), id);
@@ -36,6 +40,7 @@ export class WorkerWaveAcceptanceService {
       updatedAt: Date.now(),
     });
 
+    // High integrity write for commercial records
     await setDoc(docRef, validated);
     
     await writeAuditLog(this.db, user, {
@@ -50,6 +55,9 @@ export class WorkerWaveAcceptanceService {
     return id;
   }
 
+  /**
+   * Finalizes the acceptance of a worker by the customer.
+   */
   async acceptWorkerForWave(id: string, user: User, remark?: string) {
     const docRef = doc(this.getCollection(), id);
     const now = new Date().toISOString().split('T')[0];
@@ -72,6 +80,9 @@ export class WorkerWaveAcceptanceService {
     });
   }
 
+  /**
+   * Records a client's decision to reject a proposed worker.
+   */
   async rejectWorkerForWave(id: string, user: User, remark: string) {
     const docRef = doc(this.getCollection(), id);
     
@@ -92,6 +103,9 @@ export class WorkerWaveAcceptanceService {
     });
   }
 
+  /**
+   * Records a request from the client to provide a different person for the role.
+   */
   async requestReplacementForWave(id: string, user: User, remark: string) {
     const docRef = doc(this.getCollection(), id);
     
