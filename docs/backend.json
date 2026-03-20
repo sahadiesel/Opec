@@ -1,3 +1,4 @@
+
 {
   "entities": {
     "User": {
@@ -27,9 +28,10 @@
         "eventType": { "type": "string" },
         "status": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "OPS_REVIEWED", "CLIENT_APPROVED", "LOCKED", "REJECTED", "CORRECTION_REQUIRED"] },
         "normalHours": { "type": "number" },
-        "ot15Hours": { "type": "number" }
+        "ot15Hours": { "type": "number" },
+        "customerId": { "type": "string" }
       },
-      "required": ["id", "date", "workerId", "assignmentId", "status"]
+      "required": ["id", "date", "workerId", "assignmentId", "status", "customerId"]
     },
     "PayrollPeriod": {
       "title": "PayrollPeriod",
@@ -152,6 +154,7 @@
         "waveId": { "type": "string" },
         "assignmentId": { "type": "string" },
         "workerId": { "type": "string" },
+        "customerId": { "type": "string" },
         "customerPortalUserId": { "type": "string" },
         "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "replacement_requested"] },
         "remark": { "type": "string" },
@@ -161,7 +164,7 @@
         "createdAt": { "type": "number" },
         "updatedAt": { "type": "number" }
       },
-      "required": ["id", "waveId", "assignmentId", "workerId", "status"]
+      "required": ["id", "waveId", "assignmentId", "workerId", "status", "customerId"]
     }
   },
   "auth": {

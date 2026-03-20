@@ -1,3 +1,4 @@
+
 'use client';
 
 import { 
@@ -25,8 +26,13 @@ export class WorkerWaveAcceptanceService {
 
   /**
    * Initializes a pending acceptance record for a worker assigned to a wave.
+   * Note: customerId is mandatory for strict Firestore security rule isolation.
    */
   async createPendingAcceptance(data: Partial<WorkerWaveAcceptance>, user: User) {
+    if (!data.customerId) {
+      throw new Error('Customer ID is required for security isolation');
+    }
+
     const id = data.id || `${data.waveId}_${data.assignmentId}`;
     const docRef = doc(this.getCollection(), id);
     

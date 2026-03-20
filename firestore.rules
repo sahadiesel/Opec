@@ -1,3 +1,4 @@
+
 rules_version = '2';
 
 service cloud.firestore {
@@ -49,11 +50,23 @@ service cloud.firestore {
       return hasRole('store_officer') || hasRole('system_admin');
     }
 
+    function isInternalStaff() {
+      return isHRStaff() || isOperationsStaff() || isFinanceStaff() || isSalesStaff() || isStoreStaff();
+    }
+
+    function isClient() {
+      return hasRole('client_approver') || hasRole('client_viewer') || hasRole('client') || hasRole('client_user');
+    }
+
+    function isClientOf(cid) {
+      return isClient() && getUserData().customerId == cid;
+    }
+
     // --- COLLECTION RULES ---
 
     match /users/{userId} {
       allow get: if isSignedIn();
-      allow list: if isHRStaff();
+      allow list: if isInternalStaff();
       allow create: if isOwner(userId) || hasRole('system_admin');
       allow update: if isOwner(userId) || hasRole('system_admin');
       allow delete: if hasRole('system_admin');
@@ -61,15 +74,15 @@ service cloud.firestore {
 
     // Daily Activity Tracking
     match /daily_timesheets/{id} {
-      allow read: if isSignedIn();
+      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow create: if isOperationsStaff() || isHRStaff();
-      allow update: if isOperationsStaff() || isHRStaff() || hasRole('client_approver');
+      allow update: if isOperationsStaff() || isHRStaff() || (isClientOf(resource.data.customerId) && hasRole('client_approver'));
       allow delete: if hasRole('system_admin');
     }
 
     // Payroll Periods
     match /payroll_periods/{id} {
-      allow read: if isSignedIn();
+      allow read: if isInternalStaff();
       allow write: if isHRStaff() || isFinanceStaff();
     }
 
@@ -100,13 +113,13 @@ service cloud.firestore {
     match /number_sequences/{id} {
       allow get: if isSignedIn();
       allow list: if hasRole('system_admin');
-      allow update: if isFinanceStaff() || isHRStaff() || isSalesStaff() || isOperationsStaff() || isStoreStaff();
+      allow update: if isInternalStaff();
       allow create, delete: if hasRole('system_admin');
     }
 
     // Audit Trail (Immutable once created)
     match /audit_logs/{id} {
-      allow get: if isSignedIn();
+      allow get: if isInternalStaff();
       allow list: if hasRole('system_admin');
       allow create: if isSignedIn();
       allow update, delete: if false;
@@ -114,12 +127,12 @@ service cloud.firestore {
 
     // Commercial & Sales
     match /customers/{id} {
-      allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+      allow read: if isInternalStaff();
       allow write: if isSalesStaff();
     }
 
     match /quotations/{id} {
-      allow get, list: if isSalesStaff() || isFinanceStaff();
+      allow get, list: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow create, update: if isSalesStaff();
       allow delete: if hasRole('system_admin');
     }
@@ -135,60 +148,61 @@ service cloud.firestore {
     }
 
     match /rate_conditions/{id} {
-      allow read: if isSalesStaff() || isHRStaff() || isFinanceStaff() || isOperationsStaff();
+      allow read: if isInternalStaff();
       allow write: if isSalesStaff() || isHRStaff() || isFinanceStaff();
     }
 
     match /po_commercial_snapshots/{id} {
-      allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+      allow read: if isInternalStaff();
       allow write: if isSalesStaff() || isFinanceStaff();
     }
 
     match /wave_rate_snapshots/{id} {
-      allow read: if isOperationsStaff() || isHRStaff() || isFinanceStaff();
+      allow read: if isInternalStaff();
       allow write: if isOperationsStaff() || isHRStaff();
     }
 
     match /main_contracts/{id} {
-      allow read: if isSalesStaff() || isFinanceStaff() || isOperationsStaff();
+      allow read: if isInternalStaff();
       allow write: if isSalesStaff();
     }
 
     match /purchase_orders/{poId} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isInternalStaff();
       allow write: if isSalesStaff() || isFinanceStaff();
     }
     
     match /purchase_orders/{poId}/po_lines/{lineId} {
-      allow read, write: if isSalesStaff() || isFinanceStaff();
+      allow read, write: if isInternalStaff();
     }
 
     // Operations & Mobilization
     match /waves/{id} {
-      allow read: if isOperationsStaff() || isHRStaff() || isFinanceStaff();
+      allow read: if isInternalStaff();
       allow write: if isOperationsStaff();
     }
 
     match /mobilizations/{id} {
-      allow get, list: if isSignedIn();
+      allow get, list: if isInternalStaff();
       allow write: if isHRStaff() || isOperationsStaff();
     }
 
     match /workers/{workerId} {
-      allow get, list: if isHRStaff() || isOperationsStaff() || isStoreStaff();
+      allow get: if isSignedIn();
+      allow list: if isInternalStaff();
       allow write: if isHRStaff();
     }
 
     match /positions/{id} {
-      allow read: if isSignedIn();
+      allow read: if isInternalStaff();
       allow write: if isHRStaff();
     }
 
     // Client-side Hiring/Mobilization Approvals
     match /worker_wave_acceptances/{id} {
-      allow read: if isSignedIn();
-      allow create: if isOperationsStaff() || hasRole('client_approver');
-      allow update: if isOperationsStaff() || hasRole('client_approver');
+      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
+      allow create: if isOperationsStaff();
+      allow update: if isOperationsStaff() || (isClientOf(resource.data.customerId) && hasRole('client_approver'));
       allow delete: if hasRole('system_admin');
     }
 

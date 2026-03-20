@@ -1,3 +1,4 @@
+
 /**
  * OPEC OpsFlow - Master TypeScript Data Models
  * Refined for Production Readiness with clear Staff vs Worker separation.
@@ -716,14 +717,14 @@ export interface PayrollBatchLine {
   payrollBatchId: string;
   workerId: string;
   workerNameSnapshot: string;
-  workerPaymentProfileSnapshot: any;
+  workerPaymentProfileSnapshot: Partial<WorkerPaymentProfile>;
   assignmentIds: string[];
   sourceTimesheetIds: string[];
   periodStartDate: string;
   periodEndDate: string;
-  eventBreakdown: Record<string, number>;
-  earningsBreakdown: Record<string, number>;
-  deductionsBreakdown: Record<string, number>;
+  eventBreakdown: Record<string, number>; // Maps eventType to count/units
+  earningsBreakdown: Record<string, number>; // Maps specific earning category to amount
+  deductionsBreakdown: Record<string, number>; // Maps specific deduction category to amount
   grossAmount: number;
   netAmount: number;
   exportStatus: 'pending' | 'exported' | 'failed';
@@ -1011,66 +1012,6 @@ export interface RateCondition {
  */
 
 /**
- * Deep snapshot of all commercial and cost rules applicable to a PO.
- */
-export interface PurchaseOrderCommercialSnapshot {
-  id: string;
-  purchaseOrderId: string;
-  effectiveDateContext: string; // YYYY-MM-DD
-  salesContractTermIdSnapshot: string;
-  laborCostContractTermIdSnapshot: string;
-  // Deep copies of conditions to prevent historical changes from affecting logic
-  salesConditionsSnapshot: RateCondition[];
-  costConditionsSnapshot: RateCondition[];
-  currencySnapshot: string;
-  summaryNote?: string;
-  createdAt: number;
-  createdBy: string;
-}
-
-/**
- * Locks in the rates for a specific wave deployment.
- */
-export interface WaveRateSnapshot {
-  id: string;
-  waveId: string;
-  poCommercialSnapshotId: string;
-  // Allows for wave-specific overrides if needed, otherwise derived from PO snapshot
-  appliedConditionsSnapshot: RateCondition[];
-  effectiveStartDate: string;
-  effectiveEndDate: string;
-  createdAt: number;
-  createdBy: string;
-}
-
-/**
- * Worker Payment Profile for Payroll and Financial Tracking
- */
-export type WorkerPaymentMethod = 'BANK_TRANSFER' | 'CASH' | 'PROMPTPAY' | 'OTHER';
-export type WorkerPaymentProfileStatus = 'ACTIVE' | 'INACTIVE' | 'PENDING_VERIFICATION';
-
-export interface WorkerPaymentProfile {
-  id: string;
-  workerId: string;
-  paymentMethod: WorkerPaymentMethod;
-  bankCode?: string;
-  bankName?: string;
-  accountName?: string;
-  accountNumber?: string;
-  branchName?: string;
-  promptPayId?: string;
-  isPrimary: boolean;
-  effectiveDate: string; // YYYY-MM-DD
-  endDate?: string; // YYYY-MM-DD
-  attachmentUrl?: string;
-  status: WorkerPaymentProfileStatus;
-  createdBy: string;
-  updatedBy: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-/**
  * Daily Timesheet for precise tracking of worker activity
  */
 export type DailyTimesheetStatus = 
@@ -1095,6 +1036,7 @@ export interface DailyTimesheet {
   salesContractTermId?: string;
   laborCostContractTermId?: string;
   purchaseOrderId: string;
+  customerId: string;
   siteId: string;
   positionId: string;
   workMode: JobMode;
@@ -1141,6 +1083,7 @@ export interface WorkerWaveAcceptance {
   waveId: string;
   assignmentId: string;
   workerId: string;
+  customerId: string;
   customerPortalUserId: string;
   status: WorkerWaveAcceptanceStatus;
   remark?: string;
@@ -1174,8 +1117,8 @@ export interface PayrollPeriod {
 export interface PayrollBatch {
   id: string;
   payrollPeriodId: string;
-  workModeScope: JobMode | 'BOTH';
-  status: PayrollRunStatus;
+  workModeScope: 'onshore' | 'offshore' | 'mixed';
+  status: PayrollBatchStatus;
   totalWorkers: number;
   grossAmount: number;
   totalDeductions: number;
