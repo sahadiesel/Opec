@@ -31,6 +31,22 @@
       },
       "required": ["id", "date", "workerId", "assignmentId", "status"]
     },
+    "PayrollPeriod": {
+      "title": "PayrollPeriod",
+      "type": "object",
+      "description": "Defines a specific window of time for calculating worker salaries and customer billing, typically aligned with month boundaries.",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "cycleType": { "type": "string", "enum": ["MONTHLY", "PARTIAL_START", "PARTIAL_END", "CUSTOM"] },
+        "status": { "type": "string", "enum": ["DRAFT", "OPEN", "PROCESSING", "LOCKED", "CLOSED"] },
+        "generatedBy": { "type": "string" },
+        "generatedAt": { "type": "number" }
+      },
+      "required": ["id", "startDate", "endDate", "cycleType", "status"]
+    },
     "Quotation": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Quotation",
@@ -124,6 +140,15 @@
           "schema": { "$ref": "#/backend/entities/DailyTimesheet" },
           "description": "Stores individual daily activity logs for workers.",
           "params": [{ "name": "tsId", "description": "Unique key combining worker, assignment, and date." }]
+        }
+      },
+      {
+        "path": "/payroll_periods/{periodId}",
+        "definition": {
+          "entityName": "PayrollPeriod",
+          "schema": { "$ref": "#/backend/entities/PayrollPeriod" },
+          "description": "Stores defined financial windows for processing.",
+          "params": [{ "name": "periodId", "description": "Unique ID for the period." }]
         }
       },
       {

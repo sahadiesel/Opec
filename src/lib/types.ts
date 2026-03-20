@@ -1096,8 +1096,8 @@ export interface WorkerWaveAcceptance {
 /**
  * Payroll Period for cycle management
  */
-export type PayrollCycleType = 'MONTHLY' | 'FORTNIGHTLY' | 'WEEKLY' | 'CUSTOM';
-export type PayrollPeriodStatus = 'OPEN' | 'PROCESSING' | 'LOCKED' | 'CLOSED';
+export type PayrollCycleType = 'MONTHLY' | 'PARTIAL_START' | 'PARTIAL_END' | 'CUSTOM';
+export type PayrollPeriodStatus = 'DRAFT' | 'OPEN' | 'PROCESSING' | 'LOCKED' | 'CLOSED';
 
 export interface PayrollPeriod {
   id: string;

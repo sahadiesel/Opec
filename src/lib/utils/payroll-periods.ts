@@ -19,9 +19,9 @@ import { PayrollPeriod } from '@/lib/types';
  * Generates an array of monthly period boundaries for a given date range.
  * Business Rule: A range spanning multiple months is split at month boundaries.
  * Example: 2026-01-15 to 2026-03-15 becomes:
- * - 2026-01-15 to 2026-01-31
- * - 2026-02-01 to 2026-02-28
- * - 2026-03-01 to 2026-03-15
+ * - 2026-01-15 to 2026-01-31 (Label: January 2026)
+ * - 2026-02-01 to 2026-02-28 (Label: February 2026)
+ * - 2026-03-01 to 2026-03-15 (Label: March 2026)
  */
 export function generateMonthlyPeriodsForRange(startDateStr: string, endDateStr: string): { startDate: string; endDate: string; label: string }[] {
   const startDate = parseISO(startDateStr);

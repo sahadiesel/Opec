@@ -1,6 +1,20 @@
 import { z } from 'zod';
 
 /**
+ * Zod validation schema for PayrollPeriod
+ */
+export const PayrollPeriodSchema = z.object({
+  id: z.string().optional(),
+  label: z.string().min(1, 'Label is required'),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+  cycleType: z.enum(['MONTHLY', 'PARTIAL_START', 'PARTIAL_END', 'CUSTOM']),
+  status: z.enum(['DRAFT', 'OPEN', 'PROCESSING', 'LOCKED', 'CLOSED']),
+  generatedBy: z.string().min(1),
+  generatedAt: z.number(),
+});
+
+/**
  * Zod validation schema for PayrollBatch
  */
 export const PayrollBatchSchema = z.object({
