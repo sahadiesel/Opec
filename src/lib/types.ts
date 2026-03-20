@@ -432,6 +432,13 @@ export interface AuditLog {
   sourceModule?: string;
   sourcePath?: string;
   linkedIds?: string[];
+  // Named linked IDs for optimized indexing
+  payrollBatchId?: string;
+  timesheetId?: string;
+  waveId?: string;
+  purchaseOrderId?: string;
+  contractTermId?: string;
+  exportBatchId?: string;
   beforeSummary?: string;
   afterSummary?: string;
   changedFields?: string[];

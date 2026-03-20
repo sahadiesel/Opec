@@ -34,3 +34,26 @@ export async function writeAuditLog(
   
   return auditRef.id;
 }
+
+/**
+ * Specialized helper for logging updates with a list of changed fields.
+ */
+export async function logUpdateAudit(
+  db: Firestore,
+  user: User,
+  entityType: string,
+  entityId: string,
+  changes: string[],
+  summary: string,
+  linkedIds: string[] = []
+) {
+  return writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType,
+    entityId,
+    changedFields: changes,
+    afterSummary: summary,
+    linkedIds,
+    sourceModule: 'system'
+  });
+}
