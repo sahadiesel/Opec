@@ -1,6 +1,7 @@
+
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -30,7 +31,15 @@ import {
   Lock,
   Loader2,
   CheckCircle2,
-  Info
+  Info,
+  Activity,
+  HardHat,
+  Waves,
+  ClipboardCheck,
+  Clock,
+  ChevronRight,
+  TrendingUp,
+  UserCheck
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -41,25 +50,56 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser, useAuth } from '@/firebase';
-import { doc, collection, query, where, limit, setDoc } from 'firebase/firestore';
-import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking, setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { Customer, ContactPerson, MainContract, PurchaseOrder, User, PortalRole } from '@/lib/types';
+import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { doc, collection, query, where } from 'firebase/firestore';
+import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { 
+  Customer, 
+  ContactPerson, 
+  MainContract, 
+  PurchaseOrder, 
+  User, 
+  PortalRole,
+  Wave,
+  Assignment,
+  DailyTimesheet,
+  WorkerWaveAcceptance,
+  Worker
+} from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { CustomerProvisioningService } from '@/lib/services/customer-provisioning-service';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { Separator } from '@/components/ui/separator';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedCust, setEditedCust] = useState<Partial<Customer>>({});
+
+  // Provisioning State
+  const [isProvisioningOpen, setIsProvisioningOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newPortalUser, setNewPortalUser] = useState({
+    email: '',
+    displayName: '',
+    portalRole: 'viewer' as PortalRole
+  });
+
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
+  // --- Data Queries ---
 
   const custRef = useMemoFirebase(() => (firestore ? doc(firestore, 'customers', id) : null), [firestore, id]);
   const { data: customer, isLoading: isCustLoading } = useDoc<Customer>(custRef as any);
@@ -79,32 +119,52 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }, [firestore, id]);
   const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
-  // Portal Users Query
   const portalUsersQuery = useMemoFirebase(() => {
     if (!firestore) return null;
     return query(collection(firestore, 'users'), where('customerId', '==', id), where('userType', '==', 'customer_portal'));
   }, [firestore, id]);
   const { data: portalUsers } = useCollection<User>(portalUsersQuery as any);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedCust, setEditedCust] = useState<Partial<Customer>>({});
+  // Operational Queries for Workspace
+  const wavesQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'waves'), where('customerId', '==', id));
+  }, [firestore, id]);
+  const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
-  const [isAddContactOpen, setIsAddContactOpen] = useState(false);
-  const [newContact, setNewContact] = useState<Partial<ContactPerson>>({ isPrimary: false });
+  const asgnQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'mobilizations'), where('customerId', '==', id));
+  }, [firestore, id]);
+  const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
-  // Provisioning State
-  const [isProvisioningOpen, setIsProvisioningOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [newPortalUser, setNewPortalUser] = useState({
-    email: '',
-    displayName: '',
-    portalRole: 'viewer' as PortalRole
-  });
+  const acceptQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'worker_wave_acceptances'), where('customerId', '==', id), where('status', '==', 'pending'));
+  }, [firestore, id]);
+  const { data: pendingAcceptances } = useCollection<WorkerWaveAcceptance>(acceptQuery as any);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const tsQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'daily_timesheets'), where('customerId', '==', id), where('status', '==', 'OPS_REVIEWED'));
+  }, [firestore, id]);
+  const { data: pendingTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
+
+  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
+
+  // --- Computed Stats ---
+
+  const opStats = useMemo(() => {
+    return {
+      activeHeadcount: assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0,
+      mobilizing: assignments?.filter(a => ['READY_TO_MOB', 'MOBILIZING'].includes(a.deploymentStatus)).length || 0,
+      pendingApproval: (pendingAcceptances?.length || 0) + (pendingTimesheets?.length || 0),
+      activeWaves: waves?.filter(w => w.status === 'ACTIVE').length || 0,
+    };
+  }, [assignments, pendingAcceptances, pendingTimesheets, waves]);
+
+  // --- Actions ---
 
   const handleSaveMaster = () => {
     if (!custRef) return;
@@ -134,7 +194,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       
       toast({ 
         title: "สร้างบัญชีลูกค้าสำเร็จ", 
-        description: `รหัสผ่านชั่วคราวคือ: ${tempPassword} (กรุณาจดบันทึกและแจ้งลูกค้า)`,
+        description: `รหัสผ่านชั่วคราวคือ: ${tempPassword} (กรุณาแจ้งลูกค้า)`,
         duration: 10000 
       });
     } catch (err: any) {
@@ -168,7 +228,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6">
+      <div className="space-y-6 max-w-[1600px] mx-auto">
+        {/* Header Section */}
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
             <Link href="/customers"><ArrowLeft className="h-5 w-5" /></Link>
@@ -176,7 +237,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{customer.name}</h1>
-              <Badge variant="outline" className="font-mono">{customer.customerCode || 'NO CODE'}</Badge>
+              <Badge variant="outline" className="font-mono text-primary bg-primary/5">{customer.customerCode || 'NO CODE'}</Badge>
               {customer.isActive ? (
                 <Badge className="bg-green-600">Active</Badge>
               ) : (
@@ -192,15 +253,17 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
             </Button>
             {isEditing && (
-              <Button className="gap-2" onClick={handleSaveMaster}>
+              <Button className="gap-2 bg-primary font-bold shadow-md" onClick={handleSaveMaster}>
                 <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง
               </Button>
             )}
           </div>
         </div>
 
-        <Tabs defaultValue="info" className="w-full">
-          <TabsList className="grid grid-cols-5 w-full md:w-fit h-auto p-1 bg-muted/50">
+        {/* Dashboard Tabs */}
+        <Tabs defaultValue="ops" className="w-full">
+          <TabsList className="grid grid-cols-6 w-full md:w-fit h-auto p-1 bg-muted/50">
+            <TabsTrigger value="ops" className="gap-2 py-2 px-6"><Activity className="h-4 w-4" /> หน้าสรุปงาน (Operations)</TabsTrigger>
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><Building2 className="h-4 w-4" /> ข้อมูลบริษัท</TabsTrigger>
             <TabsTrigger value="contacts" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> ผู้ติดต่อ</TabsTrigger>
             <TabsTrigger value="contracts" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> สัญญาหลัก</TabsTrigger>
@@ -208,6 +271,106 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             <TabsTrigger value="portal" className="gap-2 py-2 px-6"><Lock className="h-4 w-4" /> Portal Access</TabsTrigger>
           </TabsList>
 
+          {/* NEW: Operations Workspace Tab */}
+          <TabsContent value="ops" className="mt-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <StatCard title="คนงานหน้างาน" value={opStats.activeHeadcount} sub="Active Headcount" icon={HardHat} colorClass="border-l-blue-600" />
+              <StatCard title="กำลังเดินทาง" value={opStats.mobilizing} sub="Mobilization Pipeline" icon={Truck} colorClass="border-l-indigo-500" />
+              <StatCard title="รอบงานปัจจุบัน" value={opStats.activeWaves} sub="Active Waves" icon={Waves} colorClass="border-l-green-600" />
+              <StatCard title="รอลูกค้าอนุมัติ" value={opStats.pendingApproval} sub="Pending Actions" icon={ClipboardCheck} colorClass="border-l-amber-500" />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card className="lg:col-span-2 shadow-sm border-none overflow-hidden">
+                <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg">รายการรอบการทำงาน (Waves)</CardTitle>
+                    <CardDescription>สรุปสถานะรอบงานที่เชื่อมโยงกับลูกค้าบริษัทนี้</CardDescription>
+                  </div>
+                  <Button variant="ghost" size="sm" asChild><Link href="/waves">ดูทั้งหมด <ChevronRight className="h-4 w-4" /></Link></Button>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader className="bg-muted/30">
+                      <TableRow>
+                        <TableHead className="pl-6">รหัสเวฟ</TableHead>
+                        <TableHead>สถานที่ (Site)</TableHead>
+                        <TableHead>ระยะเวลา</TableHead>
+                        <TableHead className="text-center">พนักงาน (จริง/แผน)</TableHead>
+                        <TableHead className="text-right pr-6">สถานะ</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {waves?.map(w => (
+                        <TableRow key={w.id} className="hover:bg-muted/10">
+                          <TableCell className="pl-6 font-bold text-primary font-mono">{w.waveCode}</TableCell>
+                          <TableCell className="text-xs font-medium">{w.siteLocation}</TableCell>
+                          <TableCell className="text-[10px] text-muted-foreground">{w.startDate} - {w.endDate}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant="outline" className="font-bold">{w.assignedWorkers} / {w.plannedWorkers}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right pr-6">
+                            <Badge variant={w.status === 'ACTIVE' ? 'default' : 'secondary'} className={w.status === 'ACTIVE' ? 'bg-green-600' : ''}>
+                              {w.status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {(!waves || waves.length === 0) && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่มีข้อมูลเวฟงาน</TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <div className="space-y-6">
+                <Card className="shadow-sm border-none overflow-hidden">
+                  <CardHeader className="bg-amber-50 border-b border-amber-100">
+                    <CardTitle className="text-sm font-black uppercase text-amber-800 flex items-center gap-2">
+                      <UserCheck className="h-4 w-4" /> รายการรอยืนยัน (Action Queue)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-4 space-y-4">
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-white border shadow-sm group hover:border-primary transition-all">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-amber-100 rounded-lg text-amber-700"><Users className="h-4 w-4" /></div>
+                        <div>
+                          <p className="text-xs font-bold text-primary">พิจารณาคนงาน (Candidates)</p>
+                          <p className="text-[10px] text-muted-foreground">{opStats.pendingApproval} รายการรอตรวจ</p>
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="icon" asChild><Link href="/client-portal/waves"><ChevronRight className="h-4 w-4" /></Link></Button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-white border shadow-sm group hover:border-primary transition-all">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-100 rounded-lg text-blue-700"><Clock className="h-4 w-4" /></div>
+                        <div>
+                          <p className="text-xs font-bold text-primary">อนุมัติเวลา (Timesheets)</p>
+                          <p className="text-[10px] text-muted-foreground">{pendingTimesheets?.length || 0} รายการรอยืนยัน</p>
+                        </div>
+                      </div>
+                      <Button variant="ghost" size="icon" asChild><Link href="/client-portal/timesheets"><ChevronRight className="h-4 w-4" /></Link></Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-primary/5 border-dashed border-2">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs font-black uppercase tracking-widest text-muted-foreground">Workspace Help</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-[10px] text-muted-foreground leading-relaxed">
+                    หน้าต่างนี้สรุปงานที่เชื่อมโยงกับลูกค้าโดยตรง ข้อมูลพนักงานและเวฟจะถูกกรองอัตโนมัติเพื่อให้ฝ่ายปฏิบัติการและฝ่ายขายเห็นภาพรวมเดียวกัน
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Company Info Tab */}
           <TabsContent value="info" className="mt-6 space-y-6">
             <Card>
               <CardHeader><CardTitle>ข้อมูลบริษัท (Company Profile)</CardTitle></CardHeader>
@@ -251,6 +414,136 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             </Card>
           </TabsContent>
 
+          {/* Contacts Tab */}
+          <TabsContent value="contacts" className="mt-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>ผู้ติดต่อหลัก (Contact Persons)</CardTitle>
+                  <CardDescription>รายชื่อเจ้าหน้าที่ฝั่งลูกค้าสำหรับการประสานงาน</CardDescription>
+                </div>
+                <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มผู้ติดต่อ</Button>
+              </CardHeader>
+              <CardContent className="p-0 border-t">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead className="pl-6">ชื่อ-นามสกุล</TableHead>
+                      <TableHead>ตำแหน่ง/แผนก</TableHead>
+                      <TableHead>เบอร์โทรศัพท์</TableHead>
+                      <TableHead>อีเมล</TableHead>
+                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {contacts?.map(contact => (
+                      <TableRow key={contact.id}>
+                        <TableCell className="pl-6 font-bold text-primary">{contact.name}</TableCell>
+                        <TableCell className="text-xs">{contact.role} ({contact.department})</TableCell>
+                        <TableCell className="text-xs">{contact.phone}</TableCell>
+                        <TableCell className="text-xs">{contact.email}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          {contact.isPrimary && <Badge className="bg-blue-600">Primary</Badge>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {(!contacts || contacts.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ยังไม่มีข้อมูลผู้ติดต่อ</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Main Contracts Tab */}
+          <TabsContent value="contracts" className="mt-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>สัญญาหลัก (Master Agreements)</CardTitle>
+                  <CardDescription>รายการสัญญา MSA ที่กำหนดฐานราคาจ้างงาน</CardDescription>
+                </div>
+                <Button variant="outline" asChild><Link href="/main-contracts">ไปที่ระบบสัญญา <ExternalLink className="h-4 w-4 ml-2" /></Link></Button>
+              </CardHeader>
+              <CardContent className="p-0 border-t">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead className="pl-6">เลขที่สัญญา</TableHead>
+                      <TableHead>หัวข้อสัญญา</TableHead>
+                      <TableHead>ระยะเวลา</TableHead>
+                      <TableHead>สกุลเงิน</TableHead>
+                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customerContracts?.map(contract => (
+                      <TableRow key={contract.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/main-contracts/${contract.id}`)}>
+                        <TableCell className="pl-6 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
+                        <TableCell className="font-medium text-sm">{contract.title}</TableCell>
+                        <TableCell className="text-[10px]">
+                          {new Date(contract.startDate).toLocaleDateString('th-TH')} - {new Date(contract.endDate).toLocaleDateString('th-TH')}
+                        </TableCell>
+                        <TableCell>{contract.currency}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Badge variant={contract.status === 'active' ? 'default' : 'secondary'}>{contract.status.toUpperCase()}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Customer POs Tab */}
+          <TabsContent value="pos" className="mt-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>ใบสั่งซื้อจากลูกค้า (Purchase Orders)</CardTitle>
+                  <CardDescription>รายการโควต้าพนักงานและงบประมาณโครงการ</CardDescription>
+                </div>
+                <Button variant="outline" asChild><Link href="/purchase-orders">ไปที่ระบบใบสั่งซื้อ <ExternalLink className="h-4 w-4 ml-2" /></Link></Button>
+              </CardHeader>
+              <CardContent className="p-0 border-t">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead className="pl-6">รหัส PO</TableHead>
+                      <TableHead>โครงการ</TableHead>
+                      <TableHead>ระยะเวลา</TableHead>
+                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customerPOs?.map(po => (
+                      <TableRow key={po.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/purchase-orders/${po.id}`)}>
+                        <TableCell className="pl-6 font-mono font-bold text-primary">{po.poCode}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm">{po.title}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase">{po.projectName}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-[10px]">
+                          {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Portal Access Tab (Renamed from Client Login) */}
           <TabsContent value="portal" className="mt-6 space-y-6">
             <PageGuidance 
               title="การจัดการสิทธิ์ลูกค้า (Customer Portal Guidance)"
@@ -384,5 +677,20 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         </Tabs>
       </div>
     </AppShell>
+  );
+}
+
+function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
+  return (
+    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm bg-white`}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
+        <Icon className="h-4 w-4 opacity-30 text-primary" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-black text-primary truncate">{value}</div>
+        <p className="text-[10px] font-medium text-muted-foreground mt-1 uppercase tracking-tighter">{sub}</p>
+      </CardContent>
+    </Card>
   );
 }
