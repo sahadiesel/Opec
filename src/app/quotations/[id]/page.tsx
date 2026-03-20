@@ -28,7 +28,10 @@ import {
   ArrowUp,
   ArrowDown,
   Tag,
-  SearchCheck
+  SearchCheck,
+  Send,
+  RefreshCw,
+  Lock
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
@@ -72,9 +75,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     if (quotation) setEditedHeader(quotation);
   }, [quotation]);
 
+  // --- Workflow Logic ---
+  const isDraft = quotation?.status === 'draft';
+  const isSent = quotation?.status === 'sent';
+  const isFinalized = quotation ? ['accepted', 'rejected', 'cancelled', 'expired'].includes(quotation.status) : false;
+  const isEditable = isDraft;
+
   // --- Handlers: Header ---
   const handleSaveHeader = () => {
-    if (!quotationRef) return;
+    if (!quotationRef || !isEditable) return;
     updateDocumentNonBlocking(quotationRef, { ...editedHeader, updatedAt: Date.now() });
     setIsEditingHeader(false);
     toast({ title: "บันทึกหัวเอกสารสำเร็จ (Header Saved)" });
@@ -83,11 +92,17 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const handleUpdateStatus = (newStatus: QuotationStatus) => {
     if (!quotationRef) return;
     updateDocumentNonBlocking(quotationRef, { status: newStatus, updatedAt: Date.now() });
-    toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus.toUpperCase()}` });
+    
+    let msg = `เปลี่ยนสถานะเป็น ${newStatus.toUpperCase()}`;
+    if (newStatus === 'sent') msg = "ทำเครื่องหมายว่าส่งเอกสารแล้ว (Marked as Sent)";
+    if (newStatus === 'accepted') msg = "ลูกค้ายืนยันตกลง (Client Accepted)";
+    
+    toast({ title: "อัปเดตสถานะสำเร็จ", description: msg });
   };
 
   // --- Handlers: Line Items ---
   const handleOpenAddLine = () => {
+    if (!isEditable) return;
     setEditingLine({ 
       description: '', 
       quantity: 1, 
@@ -100,12 +115,13 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleOpenEditLine = (line: QuotationLine) => {
+    if (!isEditable) return;
     setEditingLine({ ...line });
     setIsLineDialogOpen(true);
   };
 
   const handleSaveLine = async () => {
-    if (!firestore || !editingLine?.description) return;
+    if (!firestore || !editingLine?.description || !isEditable) return;
     
     const qty = Number(editingLine.quantity) || 0;
     const price = Number(editingLine.unitPrice) || 0;
@@ -143,7 +159,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleDeleteLine = async (lineId: string) => {
-    if (!firestore) return;
+    if (!firestore || !isEditable) return;
     if (!confirm('ยืนยันการลบรายการนี้?')) return;
     
     await deleteDocumentNonBlocking(doc(firestore, 'quotations', id, 'lines', lineId));
@@ -152,7 +168,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleMoveLine = async (line: QuotationLine, direction: 'up' | 'down') => {
-    if (!firestore || !lines) return;
+    if (!firestore || !lines || !isEditable) return;
     
     const sortedLines = [...lines].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
     const currentIndex = sortedLines.findIndex(l => l.id === line.id);
@@ -216,7 +232,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <Button variant="outline" className="gap-2" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> พิมพ์ (Print)
             </Button>
-            <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary uppercase">
+            <Badge variant={isFinalized ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isFinalized ? "bg-slate-900" : "border-primary/20 bg-primary/5 text-primary"}`}>
+              {isFinalized && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {quotation.status}
             </Badge>
           </div>
@@ -224,19 +241,18 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
         <Tabs defaultValue="edit" className="w-full">
           <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50 print:hidden">
-            <TabsTrigger value="edit" className="gap-2 py-2 px-8"><Edit2 className="h-4 w-4" /> แก้ไขข้อมูล (Edit)</TabsTrigger>
+            <TabsTrigger value="edit" className="gap-2 py-2 px-8"><Edit2 className="h-4 w-4" /> {isEditable ? 'แก้ไขข้อมูล (Edit)' : 'ดูรายละเอียด (View)'}</TabsTrigger>
             <TabsTrigger value="preview" className="gap-2 py-2 px-8"><FileText className="h-4 w-4" /> พรีวิวเอกสาร (Preview)</TabsTrigger>
             <TabsTrigger value="history" className="gap-2 py-2 px-8"><History className="h-4 w-4" /> ประวัติ (History)</TabsTrigger>
           </TabsList>
 
           <TabsContent value="edit" className="mt-6 space-y-6 print:hidden">
             <PageGuidance 
-              title="ขั้นตอนการทำงาน (Quotation Workflow)"
+              title="สถานะปัจจุบัน (Document Stage)"
               tips={[
-                "ตรวจสอบข้อมูลลูกค้าและหัวข้อโครงการให้ถูกต้อง",
-                "เพิ่มรายการสินค้าหรือบริการในตาราง และระบุราคาต่อหน่วย",
-                "ตรวจสอบยอดรวมและภาษีมูลค่าเพิ่มในส่วนสรุปมูลค่า",
-                "จัดส่งเอกสารให้ลูกค้าผ่านปุ่ม 'Sent' ในแถบดำเนินการ"
+                isDraft ? "ฉบับร่าง (Draft): ท่านสามารถแก้ไขรายการและหัวเอกสารได้ตามต้องการ" : 
+                isSent ? "ส่งแล้ว (Sent): เอกสารส่งให้ลูกค้าแล้ว ไม่สามารถแก้ไขได้โดยตรง หากต้องการแก้ไขกรุณากด 'Revise' เพื่อกลับไปสถานะร่าง" :
+                "สิ้นสุด (Finalized): เอกสารนี้ถูกปิดสถานะแล้ว ไม่สามารถแก้ไขข้อมูลได้อีก"
               ]}
             />
 
@@ -250,9 +266,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                         <Tag className="h-5 w-5 text-primary" /> ข้อมูลหัวเอกสาร (Header Info)
                       </CardTitle>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => setIsEditingHeader(!isEditingHeader)}>
-                      {isEditingHeader ? 'ยกเลิก' : 'แก้ไข'}
-                    </Button>
+                    {isEditable && (
+                      <Button variant="ghost" size="sm" onClick={() => setIsEditingHeader(!isEditingHeader)}>
+                        {isEditingHeader ? 'ยกเลิก' : 'แก้ไข'}
+                      </Button>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-4 pt-6">
                     <div className="grid grid-cols-2 gap-4">
@@ -284,13 +302,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       <CardTitle className="text-lg">รายการบริการ (Quotation Lines)</CardTitle>
                       <CardDescription>ระบุรายละเอียดสินค้าหรือบริการและราคาเสนอขาย</CardDescription>
                     </div>
-                    <Button className="bg-primary font-bold shadow-md h-10" onClick={handleOpenAddLine}>
-                      <Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add Item)
-                    </Button>
+                    {isEditable && (
+                      <Button className="bg-primary font-bold shadow-md h-10" onClick={handleOpenAddLine}>
+                        <Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add Item)
+                      </Button>
+                    )}
                   </CardHeader>
                   <CardContent className="p-0">
                     <Table>
-                      <TableHeader className="bg-muted/30">
+                      <TableHeader className="bg-muted/50">
                         <TableRow>
                           <TableHead className="pl-6 w-[60px] text-center">#</TableHead>
                           <TableHead>รายละเอียด (Description)</TableHead>
@@ -322,20 +342,22 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               ฿{(line.lineTotal || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="text-right pr-6">
-                              <div className="flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => handleMoveLine(line, 'up')} disabled={index === 0}>
-                                  <ArrowUp className="h-3 w-3" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => handleMoveLine(line, 'down')} disabled={index === sortedLines.length - 1}>
-                                  <ArrowDown className="h-3 w-3" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" onClick={() => handleOpenEditLine(line)}>
-                                  <Edit2 className="h-3 w-3" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteLine(line.id)}>
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
+                              {isEditable && (
+                                <div className="flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => handleMoveLine(line, 'up')} disabled={index === 0}>
+                                    <ArrowUp className="h-3 w-3" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => handleMoveLine(line, 'down')} disabled={index === sortedLines.length - 1}>
+                                    <ArrowDown className="h-3 w-3" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" onClick={() => handleOpenEditLine(line)}>
+                                    <Edit2 className="h-3 w-3" />
+                                  </Button>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteLine(line.id)}>
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              )}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -362,24 +384,41 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ (Workflow)</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3">
-                    {quotation.status === 'draft' && (
+                    {isDraft && (
                       <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('sent')}>
-                        <CheckCircle2 className="h-4 w-4 mr-2" /> ส่งให้ลูกค้า (Sent)
+                        <Send className="h-4 w-4 mr-2" /> ส่งให้ลูกค้า (Mark as Sent)
                       </Button>
                     )}
-                    {quotation.status === 'sent' && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs" onClick={() => handleUpdateStatus('accepted')}>
-                          <CheckCircle2 className="h-3 w-3 mr-1" /> Accepted
+                    
+                    {isSent && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs" onClick={() => handleUpdateStatus('accepted')}>
+                            <CheckCircle2 className="h-3 w-3 mr-1" /> Accepted
+                          </Button>
+                          <Button variant="outline" className="bg-transparent border-white/20 text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('rejected')}>
+                            <XCircle className="h-3 w-3 mr-1" /> Rejected
+                          </Button>
+                        </div>
+                        <Separator className="bg-white/10" />
+                        <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('draft')}>
+                          <RefreshCw className="h-3 w-3 mr-2" /> เปิดเพื่อแก้ไข (Revise Draft)
                         </Button>
-                        <Button variant="outline" className="bg-transparent border-white/20 text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('rejected')}>
-                          <XCircle className="h-3 w-3 mr-1" /> Rejected
-                        </Button>
+                      </>
+                    )}
+
+                    {!isFinalized && (
+                      <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('cancelled')}>
+                        <Trash2 className="h-3 w-3 mr-2" /> ยกเลิกใบเสนอราคา
+                      </Button>
+                    )}
+
+                    {isFinalized && (
+                      <div className="text-center py-4 bg-white/5 rounded-lg border border-dashed border-white/10">
+                        <Lock className="h-5 w-5 mx-auto mb-2 opacity-40" />
+                        <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Status Finalized</p>
                       </div>
                     )}
-                    <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs" onClick={() => handleUpdateStatus('cancelled')}>
-                      ยกเลิกใบเสนอราคา
-                    </Button>
                   </CardContent>
                 </Card>
 
@@ -398,10 +437,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     <div className="flex justify-between items-center group">
                       <span className="text-muted-foreground">ส่วนลด (Discount):</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity italic">แก้ไข {'>'}</span>
+                        {isEditable && <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity italic">แก้ไข {'>'}</span>}
                         <Input 
+                          disabled={!isEditable}
                           type="number" 
-                          className="h-8 w-28 text-right text-xs font-bold text-red-600 border-dashed"
+                          className={`h-8 w-28 text-right text-xs font-bold text-red-600 ${isEditable ? 'border-dashed' : 'border-none bg-transparent'}`}
                           value={editedHeader.discountAmount || 0}
                           onChange={e => {
                             const val = parseFloat(e.target.value) || 0;
@@ -435,6 +475,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     <div className="space-y-1">
                       <Label className="text-[10px] font-bold text-muted-foreground">เงื่อนไขในเอกสาร (Client Terms)</Label>
                       <Textarea 
+                        disabled={!isEditable}
                         placeholder="ระบุเงื่อนไขการเสนอราคาที่ต้องการให้ลูกค้าเห็น..." 
                         className="text-xs min-h-[80px]"
                         value={editedHeader.notes || ''}
@@ -445,6 +486,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     <div className="space-y-1">
                       <Label className="text-[10px] font-bold text-muted-foreground">บันทึกภายใน (Internal Log)</Label>
                       <Textarea 
+                        disabled={!isEditable}
                         placeholder="สำหรับบันทึกเฉพาะเจ้าหน้าที่ขาย..." 
                         className="text-xs min-h-[80px] bg-muted/20"
                         value={editedHeader.internalNotes || ''}
