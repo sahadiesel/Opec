@@ -47,6 +47,30 @@
       },
       "required": ["id", "startDate", "endDate", "cycleType", "status"]
     },
+    "PayrollBatch": {
+      "title": "PayrollBatch",
+      "type": "object",
+      "description": "A collection of payroll calculations for a specific period and scope, undergoing review and approval before payment.",
+      "properties": {
+        "id": { "type": "string" },
+        "payrollPeriodId": { "type": "string" },
+        "workModeScope": { "type": "string", "enum": ["onshore", "offshore", "mixed"] },
+        "status": { "type": "string", "enum": ["DRAFT", "GENERATED", "HR_REVIEWED", "HR_APPROVED", "FINANCE_PREPARED", "PAYMENT_EXPORTED", "PAID", "LOCKED"] },
+        "totalWorkers": { "type": "number" },
+        "netAmount": { "type": "number" }
+      }
+    },
+    "PayrollBatchLine": {
+      "title": "PayrollBatchLine",
+      "type": "object",
+      "description": "Individual worker calculation within a payroll batch, containing snapshots of earnings and bank details.",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "workerNameSnapshot": { "type": "string" },
+        "netAmount": { "type": "number" }
+      }
+    },
     "Quotation": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Quotation",
@@ -149,6 +173,27 @@
           "schema": { "$ref": "#/backend/entities/PayrollPeriod" },
           "description": "Stores defined financial windows for processing.",
           "params": [{ "name": "periodId", "description": "Unique ID for the period." }]
+        }
+      },
+      {
+        "path": "/payroll_batches/{batchId}",
+        "definition": {
+          "entityName": "PayrollBatch",
+          "schema": { "$ref": "#/backend/entities/PayrollBatch" },
+          "description": "Main batch record for a payroll run.",
+          "params": [{ "name": "batchId", "description": "Unique ID for the batch." }]
+        }
+      },
+      {
+        "path": "/payroll_batches/{batchId}/lines/{lineId}",
+        "definition": {
+          "entityName": "PayrollBatchLine",
+          "schema": { "$ref": "#/backend/entities/PayrollBatchLine" },
+          "description": "Individual worker records within a payroll batch.",
+          "params": [
+            { "name": "batchId", "description": "Parent batch ID." },
+            { "name": "lineId", "description": "Unique ID for the line." }
+          ]
         }
       },
       {

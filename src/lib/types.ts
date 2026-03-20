@@ -92,6 +92,16 @@ export type PayrollRunStatus =
   | 'LOCKED'              // ปิดงวดถาวร
   | 'CANCELLED';          // ยกเลิก
 
+export type PayrollBatchStatus = 
+  | 'DRAFT' 
+  | 'GENERATED' 
+  | 'HR_REVIEWED' 
+  | 'HR_APPROVED' 
+  | 'FINANCE_PREPARED' 
+  | 'PAYMENT_EXPORTED' 
+  | 'PAID' 
+  | 'LOCKED';
+
 export type BillingStatus = 
   | 'DRAFT'               // ฉบับร่าง
   | 'ISSUED'              // ออกเอกสารแล้ว
@@ -670,6 +680,47 @@ export interface PayrollLine {
   notes?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface PayrollBatch {
+  id: string;
+  payrollPeriodId: string;
+  workModeScope: 'onshore' | 'offshore' | 'mixed';
+  status: PayrollBatchStatus;
+  totalWorkers: number;
+  grossAmount: number;
+  totalDeductions: number;
+  netAmount: number;
+  notes?: string;
+  hrApprovedBy?: string;
+  hrApprovedAt?: number;
+  financePreparedBy?: string;
+  financePreparedAt?: number;
+  lockedBy?: string;
+  lockedAt?: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PayrollBatchLine {
+  id: string;
+  payrollBatchId: string;
+  workerId: string;
+  workerNameSnapshot: string;
+  workerPaymentProfileSnapshot: any;
+  assignmentIds: string[];
+  sourceTimesheetIds: string[];
+  periodStartDate: string;
+  periodEndDate: string;
+  eventBreakdown: Record<string, number>;
+  earningsBreakdown: Record<string, number>;
+  deductionsBreakdown: Record<string, number>;
+  grossAmount: number;
+  netAmount: number;
+  exportStatus: 'pending' | 'exported' | 'failed';
+  remarks?: string;
 }
 
 export interface Purchase {

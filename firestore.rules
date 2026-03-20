@@ -73,6 +73,17 @@ service cloud.firestore {
       allow write: if isHRStaff() || isFinanceStaff();
     }
 
+    // Payroll Batches & Lines
+    match /payroll_batches/{id} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isFinanceStaff();
+    }
+
+    match /payroll_batches/{id}/lines/{lineId} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isFinanceStaff();
+    }
+
     // Centralized Numbering System
     match /number_sequences/{id} {
       allow get: if isSignedIn();

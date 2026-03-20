@@ -20,10 +20,16 @@ export const PayrollPeriodSchema = z.object({
 export const PayrollBatchSchema = z.object({
   id: z.string().optional(),
   payrollPeriodId: z.string().min(1, 'Payroll Period ID is required'),
-  workModeScope: z.enum(['ONSHORE', 'OFFSHORE', 'BOTH']),
+  workModeScope: z.enum(['onshore', 'offshore', 'mixed']),
   status: z.enum([
-    'DRAFT', 'PROCESSING', 'HR_REVIEW', 'HR_APPROVED', 
-    'FINANCE_APPROVED', 'PAID', 'LOCKED', 'CANCELLED'
+    'DRAFT', 
+    'GENERATED', 
+    'HR_REVIEWED', 
+    'HR_APPROVED', 
+    'FINANCE_PREPARED', 
+    'PAYMENT_EXPORTED', 
+    'PAID', 
+    'LOCKED'
   ]),
   totalWorkers: z.number().min(0),
   grossAmount: z.number().min(0),
