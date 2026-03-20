@@ -1,3 +1,4 @@
+
 /**
  * OPEC OpsFlow - Authorization & Menu Mapping Configuration
  * Centralized mapping from Business Roles to Dept + Level + Legacy Roles.
@@ -164,6 +165,12 @@ export const LEGACY_ROLE_MAP: Record<string, { dept: DeptType; level: AccessLeve
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
   if (!user) return { dept: 'hr', level: 'viewer' };
   
+  // New automated inference for customer portal users
+  if (user.userType === 'customer_portal') {
+    const level: AccessLevel = user.portalRole === 'approver' ? 'manager' : 'viewer';
+    return { dept: 'client', level };
+  }
+
   if (user.department && user.level) {
     return { dept: user.department, level: user.level };
   }
@@ -190,6 +197,11 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
 export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
   if (user.assignedRoleKey) return user.assignedRoleKey;
   
+  // Use new identity fields to map to role
+  if (user.userType === 'customer_portal') {
+    return user.portalRole === 'approver' ? 'client_approver' : 'client_viewer';
+  }
+
   const { dept, level } = inferDeptAndLevel(user);
   
   // Find standard match
@@ -271,10 +283,17 @@ export function getMigratedUserFields(user: Partial<User>): Partial<User> {
     if (internalDepts.includes(dept)) {
       approvalStatus = 'ACTIVE';
     }
+    // Clients created via detail page are usually active immediately or handled by portal admin
+    if (dept === 'client') {
+      approvalStatus = 'ACTIVE';
+    }
   }
 
+  // Ensure customer portal fields are preserved or inferred
   return {
     ...getFieldsForBusinessRole(roleKey),
+    userType: user.userType || (dept === 'client' ? 'customer_portal' : 'internal'),
+    portalRole: user.portalRole || (roleKey === 'client_approver' ? 'approver' : roleKey === 'client_viewer' ? 'viewer' : undefined),
     assignedRoleKey: roleKey,
     isActive: isActive,
     approvalStatus: approvalStatus,

@@ -114,6 +114,9 @@ export type BillingStatus =
 
 export type ApprovalStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
 
+export type UserType = 'internal' | 'customer_portal';
+export type PortalRole = 'approver' | 'viewer';
+
 export interface User {
   id: string;
   email: string;
@@ -131,6 +134,14 @@ export interface User {
   lastLogoutAt?: number;
   notes?: string;
   customerId?: string | null;
+  // Additive fields for Customer Portal
+  userType?: UserType;
+  portalRole?: PortalRole;
+  mustResetPassword?: boolean;
+  allowedContractIds?: string[];
+  allowedPurchaseOrderIds?: string[];
+  deactivatedAt?: number;
+  deactivatedReason?: string;
 }
 
 export interface PermissionProfile {
@@ -1245,4 +1256,26 @@ export interface QuotationLine {
   quantity: number;
   unitPrice: number;
   amount: number;
+}
+
+/** Worker bank and payment detail snapshots */
+export interface WorkerPaymentProfile {
+  id: string;
+  workerId: string;
+  paymentMethod: 'BANK_TRANSFER' | 'CASH' | 'PROMPTPAY' | 'OTHER';
+  bankCode?: string | null;
+  bankName?: string | null;
+  accountName?: string | null;
+  accountNumber?: string | null;
+  branchName?: string | null;
+  promptPayId?: string | null;
+  isPrimary: boolean;
+  effectiveDate: string;
+  endDate?: string | null;
+  attachmentUrl?: string | null;
+  status: 'ACTIVE' | 'INACTIVE' | 'PENDING_VERIFICATION';
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt: number;
+  updatedAt: number;
 }

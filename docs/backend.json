@@ -11,8 +11,24 @@
         "email": { "type": "string", "format": "email" },
         "displayName": { "type": "string" },
         "roleId": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "department": { "type": "string" },
+        "level": { "type": "string" },
+        "roleIds": { "type": "array", "items": { "type": "string" } },
+        "isActive": { "type": "boolean" },
+        "approvalStatus": { "type": "string" },
+        "permissionProfileKey": { "type": "string" },
+        "assignedRoleKey": { "type": "string" },
+        "userType": { "type": "string", "enum": ["internal", "customer_portal"] },
+        "customerId": { "type": "string" },
+        "portalRole": { "type": "string", "enum": ["approver", "viewer"] },
+        "mustResetPassword": { "type": "boolean" },
+        "allowedContractIds": { "type": "array", "items": { "type": "string" } },
+        "allowedPurchaseOrderIds": { "type": "array", "items": { "type": "string" } },
+        "lastLoginAt": { "type": "number" },
+        "deactivatedAt": { "type": "number" },
+        "deactivatedReason": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
       }
     },
     "DailyTimesheet": {
@@ -172,6 +188,15 @@
   },
   "firestore": {
     "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "User",
+          "schema": { "$ref": "#/backend/entities/User" },
+          "description": "Stores user profiles and access roles.",
+          "params": [{ "name": "userId", "description": "Unique user ID from Auth." }]
+        }
+      },
       {
         "path": "/daily_timesheets/{tsId}",
         "definition": {

@@ -197,7 +197,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
 
     // 7. Accounting Officer
     baseline('accounting_officer', 'Accounting Officer', 'เจ้าหน้าที่ฝ่ายบัญชี', 'accounting', 'officer', {
-      overview_dashboard: READ_ONLY,
+      overview_dashboard: OFFICER_ACCESS,
       billing_notes: OFFICER_ACCESS,
       tax_invoices: OFFICER_ACCESS,
       receipts: OFFICER_ACCESS,
@@ -292,7 +292,11 @@ export function getPermissions(
   if (dept === 'accounting' && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills'].includes(moduleKey)) return OFFICER_ACCESS;
   if (dept === 'operations' && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
   
-  if (dept === 'client' && moduleKey === 'client_portal') return READ_ONLY;
+  // Automated access scoping for Customer Portal
+  if (dept === 'client' && moduleKey === 'client_portal') {
+    // If manager (approver), grant approval rights
+    return level === 'manager' ? { ...READ_ONLY, approve: true } : READ_ONLY;
+  }
 
   return NO_ACCESS;
 }
