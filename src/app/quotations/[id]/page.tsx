@@ -96,11 +96,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันที่ออกเอกสาร:</Label>
-                  <p className="font-medium flex items-center gap-2"><Calendar className="h-4 w-4" /> {quotation.issueDate}</p>
+                  <div className="font-medium flex items-center gap-2"><Calendar className="h-4 w-4" /> {quotation.issueDate}</div>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันหมดอายุข้อเสนอ:</Label>
-                  <p className="font-bold text-red-600 flex items-center gap-2"><Clock className="h-4 w-4" /> {quotation.expiryDate}</p>
+                  <div className="font-bold text-red-600 flex items-center gap-2"><Clock className="h-4 w-4" /> {quotation.expiryDate}</div>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">ลูกค้า:</Label>
@@ -165,7 +165,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <span>{new Date(quotation.createdAt).toLocaleString('th-TH')}</span>
                 </div>
               </CardContent>
-            </div>
+            </Card>
           </div>
         </div>
       </div>
