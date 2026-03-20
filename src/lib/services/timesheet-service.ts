@@ -73,6 +73,9 @@ export class TimesheetService {
       actionType: 'CREATE',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
+      waveId: validated.waveId,
+      purchaseOrderId: validated.purchaseOrderId,
       entityLabel: `${validated.workerNameSnapshot} - ${validated.date}`,
       sourceModule: 'operations',
       afterSummary: `Created daily activity log for ${validated.date}`
@@ -102,6 +105,16 @@ export class TimesheetService {
     };
 
     await updateDoc(docRef, updateData);
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      timesheetId: id,
+      sourceModule: 'operations',
+      changedFields: Object.keys(data),
+      afterSummary: 'Updated timesheet draft details'
+    });
   }
 
   /**
@@ -128,8 +141,9 @@ export class TimesheetService {
       actionType: 'SUBMIT',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Submitted daily log for review'
+      afterSummary: 'Submitted daily log for operations review'
     });
   }
 
@@ -153,8 +167,9 @@ export class TimesheetService {
       actionType: 'OPS_REVIEW',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Operations verification complete'
+      afterSummary: 'Operations internal verification complete'
     });
   }
 
@@ -178,9 +193,10 @@ export class TimesheetService {
       actionType: 'CLIENT_APPROVE',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
       sourceModule: 'client',
       reasonCode: 'CLIENT_SIGNOFF',
-      afterSummary: 'Client final approval received'
+      afterSummary: 'Client final approval granted via portal'
     });
   }
 
@@ -200,9 +216,10 @@ export class TimesheetService {
       actionType: 'REJECT',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
       reasonText: reason,
       sourceModule: 'operations',
-      afterSummary: `Timesheet rejected: ${reason}`
+      afterSummary: `Daily activity log rejected: ${reason}`
     });
   }
 
@@ -222,9 +239,10 @@ export class TimesheetService {
       actionType: 'CORRECTION_REQ',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
       reasonText: reason,
       sourceModule: 'operations',
-      afterSummary: `Correction requested: ${reason}`
+      afterSummary: `Correction requested for daily log: ${reason}`
     });
   }
 
@@ -248,9 +266,10 @@ export class TimesheetService {
       actionType: 'LOCK',
       entityType: 'DailyTimesheet',
       entityId: id,
+      timesheetId: id,
       sourceModule: 'finance',
       reasonCode: 'PERIOD_CLOSED',
-      afterSummary: 'Locked for final payroll processing'
+      afterSummary: 'Locked record for final financial processing'
     });
   }
 }

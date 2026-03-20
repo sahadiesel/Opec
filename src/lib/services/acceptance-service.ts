@@ -47,6 +47,7 @@ export class WorkerWaveAcceptanceService {
       actionType: 'SUBMIT_CANDIDATE',
       entityType: 'WorkerWaveAcceptance',
       entityId: id,
+      waveId: validated.waveId,
       linkedIds: [validated.waveId, validated.workerId],
       sourceModule: 'operations',
       afterSummary: 'Submitted candidate for client review'
@@ -76,7 +77,8 @@ export class WorkerWaveAcceptanceService {
       entityType: 'WorkerWaveAcceptance',
       entityId: id,
       reasonText: remark,
-      sourceModule: 'client'
+      sourceModule: 'client',
+      afterSummary: 'Client accepted candidate for deployment'
     });
   }
 
@@ -99,7 +101,8 @@ export class WorkerWaveAcceptanceService {
       entityType: 'WorkerWaveAcceptance',
       entityId: id,
       reasonText: remark,
-      sourceModule: 'client'
+      sourceModule: 'client',
+      afterSummary: 'Client rejected candidate during review'
     });
   }
 
@@ -122,7 +125,8 @@ export class WorkerWaveAcceptanceService {
       entityType: 'WorkerWaveAcceptance',
       entityId: id,
       reasonText: remark,
-      sourceModule: 'client'
+      sourceModule: 'client',
+      afterSummary: 'Client requested personnel replacement'
     });
   }
 }

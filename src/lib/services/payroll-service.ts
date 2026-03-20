@@ -121,7 +121,7 @@ export class PayrollService {
           if (condition) {
             const cost = calculateDailyLaborCost(ts, condition, 0);
             workerGross += cost;
-            eventBreakdown[ts.eventType] = (acc(eventBreakdown[ts.eventType]) || 0) + 1;
+            eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
             earningsBreakdown[ts.eventType] = (earningsBreakdown[ts.eventType] || 0) + cost;
           }
         }
@@ -183,6 +183,7 @@ export class PayrollService {
       actionType: 'GENERATE',
       entityType: 'PayrollBatch',
       entityId: batchId,
+      payrollBatchId: batchId,
       entityLabel: `${period.label} - ${newBatch.workModeScope}`,
       sourceModule: 'hr',
       afterSummary: `Generated payroll batch with ${lines.length} workers. Total Net: ${newBatch.netAmount}`
@@ -206,7 +207,9 @@ export class PayrollService {
       actionType: 'REVIEW',
       entityType: 'PayrollBatch',
       entityId: id,
-      sourceModule: 'hr'
+      payrollBatchId: id,
+      sourceModule: 'hr',
+      afterSummary: 'Payroll batch under HR internal review'
     });
   }
 
@@ -234,8 +237,9 @@ export class PayrollService {
       actionType: 'APPROVE',
       entityType: 'PayrollBatch',
       entityId: id,
+      payrollBatchId: id,
       sourceModule: 'hr',
-      afterSummary: 'Final HR approval granted'
+      afterSummary: 'Final HR organizational approval granted'
     });
   }
 
@@ -267,7 +271,9 @@ export class PayrollService {
       actionType: 'FINANCE_PREPARE',
       entityType: 'PayrollBatch',
       entityId: id,
-      sourceModule: 'accounting'
+      payrollBatchId: id,
+      sourceModule: 'accounting',
+      afterSummary: 'Finance department initialized payment preparation'
     });
   }
 
@@ -287,8 +293,9 @@ export class PayrollService {
       actionType: 'PAY',
       entityType: 'PayrollBatch',
       entityId: id,
+      payrollBatchId: id,
       sourceModule: 'accounting',
-      afterSummary: 'Marked as paid'
+      afterSummary: 'Payroll batch marked as paid'
     });
   }
 
@@ -310,12 +317,10 @@ export class PayrollService {
       actionType: 'LOCK',
       entityType: 'PayrollBatch',
       entityId: id,
+      payrollBatchId: id,
       sourceModule: 'accounting',
       reasonCode: 'PAYMENT_FINALIZED',
-      afterSummary: 'Payroll batch locked'
+      afterSummary: 'Payroll batch locked permanently'
     });
   }
 }
-
-// Utility helper for safe aggregation access
-function acc(val: any) { return val; }

@@ -108,10 +108,12 @@ export class PaymentExportService {
       actionType: 'PREPARE_EXPORT',
       entityType: 'PaymentExportBatch',
       entityId: exportId,
+      exportBatchId: exportId,
+      payrollBatchId: payrollBatchId,
       entityLabel: `${templateCode} - ${totalLines} records`,
       linkedIds: [payrollBatchId],
       sourceModule: 'accounting',
-      afterSummary: `Prepared payment export batch for ${totalLines} lines totaling ${totalAmount}`
+      afterSummary: `Prepared payment export batch for ${totalLines} lines totaling ${totalAmount}. Previous drafts superseded.`
     });
 
     return exportId;
@@ -134,7 +136,8 @@ export class PaymentExportService {
       actionType: 'GENERATE_FILE',
       entityType: 'PaymentExportBatch',
       entityId: id,
-      afterSummary: `Generated file: ${fileName}`,
+      exportBatchId: id,
+      afterSummary: `Generated bank-ready payment file: ${fileName}`,
       sourceModule: 'accounting'
     });
   }
@@ -154,7 +157,9 @@ export class PaymentExportService {
       actionType: 'DOWNLOAD_EXPORT',
       entityType: 'PaymentExportBatch',
       entityId: id,
-      sourceModule: 'accounting'
+      exportBatchId: id,
+      sourceModule: 'accounting',
+      afterSummary: 'User downloaded payment export file for bank submission'
     });
   }
 }
