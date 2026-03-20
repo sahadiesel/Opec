@@ -26,10 +26,12 @@ import {
   LayoutGrid, 
   TrendingUp,
   Receipt,
-  FileText
+  FileText,
+  Lock,
+  KeyRound
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
-import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { isAdminUser, BUSINESS_ROLES, inferDeptAndLevel } from '@/lib/auth-mapping';
@@ -41,6 +43,14 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogFooter, 
+  DialogHeader, 
+  DialogTitle 
+} from '@/components/ui/dialog';
 
 export default function Home() {
   const router = useRouter();
@@ -49,6 +59,12 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Password Reset State
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   const firestore = useFirestore();
   const auth = useAuth();
@@ -77,6 +93,18 @@ export default function Home() {
 
   useEffect(() => {
     if (latestUserDoc) {
+      // Security Guard: Check inactivity
+      if (!latestUserDoc.isActive || latestUserDoc.approvalStatus === 'SUSPENDED') {
+        toast({ variant: "destructive", title: "Access Blocked", description: "Your account is currently inactive." });
+        handleLogout();
+        return;
+      }
+
+      // Security Guard: Forced Password Reset
+      if (latestUserDoc.mustResetPassword) {
+        setShowResetDialog(true);
+      }
+
       setUser(latestUserDoc);
       localStorage.setItem('opsflow_user', JSON.stringify(latestUserDoc));
     }
@@ -99,31 +127,77 @@ export default function Home() {
       
       if (snap.exists()) {
         const userData = snap.data() as User;
-        if (userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
-          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณถูกระงับการใช้งาน" });
+        
+        // 1. Check Activity Status
+        if (!userData.isActive || userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
+          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณถูกระงับการใช้งาน (Account Inactive)" });
+          await signOut(auth);
           setIsLoggingIn(false);
           return;
         }
+
+        // 2. Log login time
         await updateDoc(docRef, { lastLoginAt: Date.now() });
-        setUser(userData);
-        localStorage.setItem('opsflow_user', JSON.stringify(userData));
-        toast({ title: "เข้าสู่ระบบสำเร็จ" });
+
+        // 3. Handle First-time reset detection
+        if (userData.mustResetPassword) {
+          setUser(userData);
+          setShowResetDialog(true);
+          toast({ title: "First Login Detected", description: "Please set a new permanent password." });
+        } else {
+          setUser(userData);
+          localStorage.setItem('opsflow_user', JSON.stringify(userData));
+          toast({ title: "เข้าสู่ระบบสำเร็จ" });
+        }
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
     } finally { setIsLoggingIn(false); }
   };
 
+  const handlePasswordReset = async () => {
+    if (!auth.currentUser || !latestUserDoc) return;
+    if (newPassword !== confirmNewPassword) {
+      toast({ variant: "destructive", title: "Validation Error", description: "Passwords do not match." });
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast({ variant: "destructive", title: "Weak Password", description: "Password must be at least 8 characters." });
+      return;
+    }
+
+    setIsResetting(true);
+    try {
+      // 1. Update Firebase Auth Password
+      await updatePassword(auth.currentUser, newPassword);
+
+      // 2. Clear reset flag in Firestore
+      const userRef = doc(firestore!, 'users', latestUserDoc.id);
+      await updateDoc(userRef, { 
+        mustResetPassword: false,
+        updatedAt: Date.now()
+      });
+
+      setShowResetDialog(false);
+      toast({ title: "Password Updated", description: "You can now use the portal." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Reset Failed", description: err.message });
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const handleLogout = async () => {
     await signOut(auth);
     setUser(null);
     localStorage.removeItem('opsflow_user');
+    setShowResetDialog(false);
   };
 
   if (!isLoaded || isUserLoading) return null;
 
   // Login Screen
-  if (!user) {
+  if (!user || (!latestUserDoc && isLoggingIn)) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
         <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary">
@@ -333,6 +407,59 @@ export default function Home() {
             </AlertDescription>
           </Alert>
         )}
+
+        {/* Forced Password Reset Dialog */}
+        <Dialog open={showResetDialog} onOpenChange={(open) => { if(!open) handleLogout(); }}>
+          <DialogContent className="sm:max-w-md border-t-8 border-t-primary">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-2xl font-black text-primary">
+                <KeyRound className="h-6 w-6" /> ตั้งรหัสผ่านใหม่
+              </DialogTitle>
+              <DialogDescription className="font-medium text-slate-600">
+                เป็นการเข้าใช้งานครั้งแรก กรุณากำหนดรหัสผ่านถาวรเพื่อความปลอดภัยของข้อมูล (First login detected. Please set a permanent password.)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label className="font-bold">รหัสผ่านใหม่ (New Password)</Label>
+                <Input 
+                  type="password" 
+                  value={newPassword} 
+                  onChange={e => setNewPassword(e.target.value)} 
+                  placeholder="อย่างน้อย 8 ตัวอักษร"
+                  className="h-11"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">ยืนยันรหัสผ่านใหม่ (Confirm Password)</Label>
+                <Input 
+                  type="password" 
+                  value={confirmNewPassword} 
+                  onChange={e => setConfirmNewPassword(e.target.value)} 
+                  placeholder="กรอกรหัสผ่านอีกครั้ง"
+                  className="h-11"
+                />
+              </div>
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex gap-3">
+                <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] text-blue-700 leading-relaxed font-medium">
+                  รหัสผ่านควรประกอบด้วย ตัวอักษรพิมพ์ใหญ่ พิมพ์เล็ก และตัวเลข เพื่อป้องกันการคาดเดา
+                </p>
+              </div>
+            </div>
+            <DialogFooter className="sm:justify-between gap-2">
+              <Button variant="ghost" onClick={handleLogout} className="text-muted-foreground">ยกเลิกและออก</Button>
+              <Button 
+                onClick={handlePasswordReset} 
+                disabled={isResetting || !newPassword}
+                className="bg-primary font-bold h-11 px-8 shadow-lg"
+              >
+                {isResetting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Lock className="h-4 w-4 mr-2" />}
+                ยืนยันการเปลี่ยนรหัส
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );
