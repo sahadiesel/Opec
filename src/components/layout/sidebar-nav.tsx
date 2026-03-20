@@ -142,6 +142,7 @@ const navGroups: NavGroup[] = [
   {
     label: 'ลูกค้า (Customer Portal)',
     items: [
+      { key: 'client_portal', title: 'หน้าแรก (Client Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
       { key: 'client_portal', title: 'อนุมัติพนักงาน (Candidate Acceptance)', href: '/client-portal/waves', icon: UserCheck },
       { key: 'client_portal', title: 'อนุมัติใบลงเวลา (Timesheet Approval)', href: '/client-portal/timesheets', icon: ClipboardCheck },
     ]

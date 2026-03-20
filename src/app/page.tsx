@@ -100,6 +100,11 @@ export default function Home() {
         return;
       }
 
+      // Customer Portal Redirect
+      if (latestUserDoc.userType === 'customer_portal') {
+        router.push('/client-portal/dashboard');
+      }
+
       // Security Guard: Forced Password Reset
       if (latestUserDoc.mustResetPassword) {
         setShowResetDialog(true);
@@ -108,7 +113,7 @@ export default function Home() {
       setUser(latestUserDoc);
       localStorage.setItem('opsflow_user', JSON.stringify(latestUserDoc));
     }
-  }, [latestUserDoc]);
+  }, [latestUserDoc, router]);
 
   const isInternalAuthorized = useMemo(() => {
     if (isDocLoading || !latestUserDoc) return false;
@@ -148,6 +153,10 @@ export default function Home() {
           setUser(userData);
           localStorage.setItem('opsflow_user', JSON.stringify(userData));
           toast({ title: "เข้าสู่ระบบสำเร็จ" });
+          
+          if (userData.userType === 'customer_portal') {
+            router.push('/client-portal/dashboard');
+          }
         }
       }
     } catch (err: any) {
