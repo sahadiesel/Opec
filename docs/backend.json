@@ -71,6 +71,18 @@
         "netAmount": { "type": "number" }
       }
     },
+    "PaymentExportBatch": {
+      "title": "PaymentExportBatch",
+      "type": "object",
+      "description": "A record of a generated bank payment file, derived from a payroll batch.",
+      "properties": {
+        "id": { "type": "string" },
+        "payrollBatchId": { "type": "string" },
+        "exportTemplateCode": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "generated", "downloaded", "superseded"] },
+        "totalAmount": { "type": "number" }
+      }
+    },
     "Quotation": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Quotation",
@@ -194,6 +206,15 @@
             { "name": "batchId", "description": "Parent batch ID." },
             { "name": "lineId", "description": "Unique ID for the line." }
           ]
+        }
+      },
+      {
+        "path": "/payment_export_batches/{id}",
+        "definition": {
+          "entityName": "PaymentExportBatch",
+          "schema": { "$ref": "#/backend/entities/PaymentExportBatch" },
+          "description": "Records of generated bank payment files.",
+          "params": [{ "name": "id", "description": "Unique ID for the export batch." }]
         }
       },
       {

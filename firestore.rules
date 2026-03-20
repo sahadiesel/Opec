@@ -84,6 +84,12 @@ service cloud.firestore {
       allow write: if isHRStaff() || isFinanceStaff();
     }
 
+    // Payment Export Batches
+    match /payment_export_batches/{id} {
+      allow read: if isHRStaff() || isFinanceStaff();
+      allow write: if isFinanceStaff() || hasRole('accounting_manager');
+    }
+
     // Centralized Numbering System
     match /number_sequences/{id} {
       allow get: if isSignedIn();

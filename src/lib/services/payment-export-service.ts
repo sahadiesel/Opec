@@ -22,6 +22,7 @@ import { writeAuditLog } from './audit-service';
 
 /**
  * Service for managing official bank payment file batches.
+ * Handles derived data from PayrollBatchLines and maintains version history.
  */
 export class PaymentExportService {
   constructor(private db: Firestore) {}
@@ -30,12 +31,17 @@ export class PaymentExportService {
     return collection(this.db, 'payment_export_batches');
   }
 
+  /**
+   * Initializes a new payment export batch.
+   * Business Rule: Safely supersedes any previous draft/generated exports for this payroll batch.
+   */
   async prepareExportBatch(
     payrollBatchId: string, 
     templateCode: string, 
     companyBankAccountId: string, 
     user: User
   ): Promise<string> {
+    // 1. Resolve source lines to calculate summary
     const linesRef = collection(this.db, 'payroll_batches', payrollBatchId, 'lines');
     const linesSnap = await getDocs(linesRef);
     const lines = linesSnap.docs.map(d => d.data() as PayrollBatchLine);
@@ -47,7 +53,9 @@ export class PaymentExportService {
     const totalLines = lines.length;
     const totalAmount = lines.reduce((sum, l) => sum + Number(l.netAmount), 0);
 
+    // 2. Perform atomic creation and supersession
     const exportId = await runTransaction(this.db, async (transaction) => {
+      // Check payroll batch status
       const pbRef = doc(this.db, 'payroll_batches', payrollBatchId);
       const pbSnap = await transaction.get(pbRef);
       if (!pbSnap.exists()) throw new Error('Payroll Batch not found');
@@ -58,6 +66,7 @@ export class PaymentExportService {
         throw new Error(`Cannot export: Payroll Batch is in status ${payrollBatch.status}`);
       }
 
+      // Find existing exports to supersede
       const existingQuery = query(
         this.getCollection(),
         where('payrollBatchId', '==', payrollBatchId),
@@ -66,9 +75,14 @@ export class PaymentExportService {
       const existingSnap = await getDocs(existingQuery);
       
       existingSnap.docs.forEach(d => {
-        transaction.update(d.ref, { status: 'superseded' });
+        transaction.update(d.ref, { 
+          status: 'superseded',
+          updatedAt: Date.now(),
+          updatedBy: user.displayName 
+        });
       });
 
+      // Create new export record
       const newExportId = `EXP-${Date.now().toString().slice(-6)}`;
       const exportRef = doc(this.getCollection(), newExportId);
       
@@ -96,12 +110,16 @@ export class PaymentExportService {
       entityId: exportId,
       entityLabel: `${templateCode} - ${totalLines} records`,
       linkedIds: [payrollBatchId],
-      sourceModule: 'accounting'
+      sourceModule: 'accounting',
+      afterSummary: `Prepared payment export batch for ${totalLines} lines totaling ${totalAmount}`
     });
 
     return exportId;
   }
 
+  /**
+   * Records that the physical file has been generated and stored.
+   */
   async markAsGenerated(id: string, fileName: string, fileUrl: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -117,6 +135,25 @@ export class PaymentExportService {
       entityType: 'PaymentExportBatch',
       entityId: id,
       afterSummary: `Generated file: ${fileName}`,
+      sourceModule: 'accounting'
+    });
+  }
+
+  /**
+   * Tracks when a user downloads the file for bank submission.
+   */
+  async recordDownload(id: string, user: User) {
+    const docRef = doc(this.getCollection(), id);
+    await updateDoc(docRef, {
+      status: 'downloaded',
+      updatedAt: Date.now(),
+      updatedBy: user.displayName
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'DOWNLOAD_EXPORT',
+      entityType: 'PaymentExportBatch',
+      entityId: id,
       sourceModule: 'accounting'
     });
   }
