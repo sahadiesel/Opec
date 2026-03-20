@@ -1024,6 +1024,8 @@ export type DailyTimesheetStatus =
   | 'REJECTED' 
   | 'CORRECTION_REQUIRED';
 
+export type TimesheetShiftType = 'DAY' | 'NIGHT' | 'MIXED' | 'STANDBY';
+
 export interface DailyTimesheet {
   id: string;
   date: string; // YYYY-MM-DD
@@ -1039,7 +1041,7 @@ export interface DailyTimesheet {
   positionId: string;
   workMode: JobMode;
   eventType: RateConditionEventType;
-  shiftType: 'DAY' | 'NIGHT';
+  shiftType: TimesheetShiftType;
   normalHours: number;
   ot15Hours: number;
   ot20Hours: number;
@@ -1051,7 +1053,7 @@ export interface DailyTimesheet {
   demobUnits: number;
   paidLeaveUnits: number;
   unpaidLeaveUnits: number;
-  quantityOverride?: number;
+  quantityOverride?: number | null;
   remark?: string;
   evidenceAttachments: string[];
   status: DailyTimesheetStatus;

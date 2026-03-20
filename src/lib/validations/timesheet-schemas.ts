@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 /**
  * Zod validation schema for DailyTimesheet
+ * Aligned with Opec OpsFlow structured calculation requirements.
  */
 export const DailyTimesheetSchema = z.object({
   id: z.string().optional(),
@@ -18,12 +19,25 @@ export const DailyTimesheetSchema = z.object({
   positionId: z.string().min(1, 'Position ID is required'),
   workMode: z.enum(['ONSHORE', 'OFFSHORE']),
   eventType: z.enum([
-    'work_day', 'off_day_worked', 'public_holiday_worked', 'travel_day', 'standby_day', 
-    'mobilization_day', 'demobilization_day', 'training_day', 'sick_leave_paid', 
-    'vacation_paid', 'unpaid_leave', 'night_shift', 'half_day', 'early_return', 
-    'client_cancellation', 'replacement_day', 'other'
+    'work_day', 
+    'off_day_worked', 
+    'public_holiday_worked', 
+    'travel_day', 
+    'standby_day', 
+    'mobilization_day', 
+    'demobilization_day', 
+    'training_day', 
+    'sick_leave_paid', 
+    'vacation_paid', 
+    'unpaid_leave', 
+    'night_shift', 
+    'half_day', 
+    'early_return', 
+    'client_cancellation', 
+    'replacement_day', 
+    'other'
   ]),
-  shiftType: z.enum(['DAY', 'NIGHT']),
+  shiftType: z.enum(['DAY', 'NIGHT', 'MIXED', 'STANDBY']),
   normalHours: z.number().min(0).max(24),
   ot15Hours: z.number().min(0).max(24),
   ot20Hours: z.number().min(0).max(24),
@@ -39,8 +53,13 @@ export const DailyTimesheetSchema = z.object({
   remark: z.string().optional().nullable(),
   evidenceAttachments: z.array(z.string()).default([]),
   status: z.enum([
-    'DRAFT', 'SUBMITTED', 'OPS_REVIEWED', 'CLIENT_APPROVED', 
-    'LOCKED', 'REJECTED', 'CORRECTION_REQUIRED'
+    'DRAFT', 
+    'SUBMITTED', 
+    'OPS_REVIEWED', 
+    'CLIENT_APPROVED', 
+    'LOCKED', 
+    'REJECTED', 
+    'CORRECTION_REQUIRED'
   ]),
   submittedBy: z.string().optional().nullable(),
   submittedAt: z.number().optional().nullable(),
@@ -52,8 +71,8 @@ export const DailyTimesheetSchema = z.object({
   lockedAt: z.number().optional().nullable(),
   rejectionReason: z.string().optional().nullable(),
   correctionReason: z.string().optional().nullable(),
-  createdBy: z.string().optional(),
-  updatedBy: z.string().optional(),
-  createdAt: z.number().optional(),
-  updatedAt: z.number().optional(),
+  createdBy: z.string().min(1),
+  updatedBy: z.string().min(1),
+  createdAt: z.number(),
+  updatedAt: z.number(),
 });

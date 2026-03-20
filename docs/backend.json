@@ -14,6 +14,23 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       }
     },
+    "DailyTimesheet": {
+      "title": "DailyTimesheet",
+      "type": "object",
+      "description": "Granular record of worker activity for a single day, serving as the source of truth for payroll and billing.",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "workerId": { "type": "string" },
+        "workerNameSnapshot": { "type": "string" },
+        "assignmentId": { "type": "string" },
+        "eventType": { "type": "string" },
+        "status": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "OPS_REVIEWED", "CLIENT_APPROVED", "LOCKED", "REJECTED", "CORRECTION_REQUIRED"] },
+        "normalHours": { "type": "number" },
+        "ot15Hours": { "type": "number" }
+      },
+      "required": ["id", "date", "workerId", "assignmentId", "status"]
+    },
     "Quotation": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Quotation",
@@ -73,91 +90,6 @@
         "isActive": { "type": "boolean" }
       },
       "required": ["id", "parentType", "parentId", "appliesTo", "eventType", "calculationMethod", "unitType"]
-    },
-    "PurchaseOrderCommercialSnapshot": {
-      "title": "PurchaseOrderCommercialSnapshot",
-      "type": "object",
-      "description": "Locked-in pricing and cost rules for a specific PO, ensuring historical stability.",
-      "properties": {
-        "id": { "type": "string" },
-        "purchaseOrderId": { "type": "string" },
-        "effectiveDateContext": { "type": "string" },
-        "createdAt": { "type": "number" },
-        "createdBy": { "type": "string" }
-      },
-      "required": ["id", "purchaseOrderId", "createdAt", "createdBy"]
-    },
-    "WaveRateSnapshot": {
-      "title": "WaveRateSnapshot",
-      "type": "object",
-      "description": "Locked-in rules specifically for a deployment wave.",
-      "properties": {
-        "id": { "type": "string" },
-        "waveId": { "type": "string" },
-        "poCommercialSnapshotId": { "type": "string" },
-        "createdAt": { "type": "number" }
-      },
-      "required": ["id", "waveId", "createdAt"]
-    },
-    "PurchaseOrderProfitSnapshot": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "PurchaseOrderProfitSnapshot",
-      "type": "object",
-      "description": "Commercial snapshot of estimated profitability for a PO or Wave within a specific period.",
-      "properties": {
-        "id": { "type": "string" },
-        "purchaseOrderId": { "type": "string" },
-        "waveId": { "type": "string" },
-        "periodStartDate": { "type": "string", "format": "date" },
-        "periodEndDate": { "type": "string", "format": "date" },
-        "estimatedRevenue": { "type": "number" },
-        "estimatedLaborCost": { "type": "number" },
-        "estimatedGrossProfit": { "type": "number" },
-        "estimatedGrossMarginPercent": { "type": "number" },
-        "calculationBasisSummary": { "type": "string" },
-        "generatedAt": { "type": "number" },
-        "generatedBy": { "type": "string" }
-      },
-      "required": ["id", "purchaseOrderId", "periodStartDate", "periodEndDate", "estimatedRevenue", "estimatedLaborCost", "generatedAt"]
-    },
-    "AuditLog": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "AuditLog",
-      "type": "object",
-      "description": "Detailed record of high-risk actions and data changes for security and compliance.",
-      "properties": {
-        "id": { "type": "string" },
-        "actionType": { "type": "string" },
-        "entityType": { "type": "string" },
-        "entityId": { "type": "string" },
-        "actorUserId": { "type": "string" },
-        "actorName": { "type": "string" },
-        "eventAt": { "type": "number" }
-      },
-      "required": ["id", "actionType", "entityType", "entityId", "actorUserId", "eventAt"]
-    },
-    "NumberSequence": {
-      "title": "NumberSequence",
-      "type": "object",
-      "description": "Configuration and state for automatic document numbering sequences (e.g., BN-2024-0001).",
-      "properties": {
-        "id": { "type": "string" },
-        "sequenceKey": { "type": "string" },
-        "label": { "type": "string" },
-        "prefix": { "type": "string" },
-        "department": { "type": "string" },
-        "entityType": { "type": "string" },
-        "resetPolicy": { "type": "string", "enum": ["none", "yearly", "monthly"] },
-        "year": { "type": "number" },
-        "month": { "type": "number" },
-        "paddingLength": { "type": "number" },
-        "lastNumber": { "type": "number" },
-        "lastIssuedCode": { "type": "string" },
-        "isActive": { "type": "boolean" },
-        "updatedAt": { "type": "number" },
-        "updatedBy": { "type": "string" }
-      },
-      "required": ["id", "sequenceKey", "prefix", "lastNumber", "updatedAt", "isActive"]
     }
   },
   "auth": {
@@ -165,6 +97,15 @@
   },
   "firestore": {
     "structure": [
+      {
+        "path": "/daily_timesheets/{tsId}",
+        "definition": {
+          "entityName": "DailyTimesheet",
+          "schema": { "$ref": "#/backend/entities/DailyTimesheet" },
+          "description": "Stores individual daily activity logs for workers.",
+          "params": [{ "name": "tsId", "description": "Unique key combining worker, assignment, and date." }]
+        }
+      },
       {
         "path": "/quotations/{quoId}",
         "definition": {
@@ -199,51 +140,6 @@
           "schema": { "$ref": "#/backend/entities/RateCondition" },
           "description": "Specific pricing and cost rules for contracts and POs.",
           "params": [{ "name": "conditionId", "description": "Unique ID of the rate condition." }]
-        }
-      },
-      {
-        "path": "/po_commercial_snapshots/{snapId}",
-        "definition": {
-          "entityName": "PurchaseOrderCommercialSnapshot",
-          "schema": { "$ref": "#/backend/entities/PurchaseOrderCommercialSnapshot" },
-          "description": "Historical snapshots of PO rules.",
-          "params": [{ "name": "snapId", "description": "Unique ID of the snapshot." }]
-        }
-      },
-      {
-        "path": "/wave_rate_snapshots/{snapId}",
-        "definition": {
-          "entityName": "WaveRateSnapshot",
-          "schema": { "$ref": "#/backend/entities/WaveRateSnapshot" },
-          "description": "Historical snapshots of Wave rules.",
-          "params": [{ "name": "snapId", "description": "Unique ID of the snapshot." }]
-        }
-      },
-      {
-        "path": "/po_profit_snapshots/{snapshotId}",
-        "definition": {
-          "entityName": "PurchaseOrderProfitSnapshot",
-          "schema": { "$ref": "#/backend/entities/PurchaseOrderProfitSnapshot" },
-          "description": "Stores estimated profitability analyses for POs and Waves.",
-          "params": [{ "name": "snapshotId", "description": "Unique ID of the snapshot." }]
-        }
-      },
-      {
-        "path": "/audit_logs/{logId}",
-        "definition": {
-          "entityName": "AuditLog",
-          "schema": { "$ref": "#/backend/entities/AuditLog" },
-          "description": "Central collection for system-wide audit trails.",
-          "params": [{ "name": "logId", "description": "Unique ID of the audit entry." }]
-        }
-      },
-      {
-        "path": "/number_sequences/{seqId}",
-        "definition": {
-          "entityName": "NumberSequence",
-          "schema": { "$ref": "#/backend/entities/NumberSequence" },
-          "description": "State for automatic document numbering.",
-          "params": [{ "name": "seqId", "description": "Key identifying the specific numbering sequence." }]
         }
       }
     ]

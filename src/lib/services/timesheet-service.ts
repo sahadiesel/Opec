@@ -14,7 +14,8 @@ import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { writeAuditLog } from './audit-service';
 
 /**
- * Service for managing Daily Timesheets and their workflow transitions.
+ * Service for managing Daily Timesheets and their refined workflow transitions.
+ * Ensures data integrity for downstream payroll and billing calculations.
  */
 export class TimesheetService {
   constructor(private db: Firestore) {}
@@ -28,6 +29,7 @@ export class TimesheetService {
   }
 
   canEdit(status: DailyTimesheetStatus): boolean {
+    // Once locked or approved by client, internal staff shouldn't edit without unlocking
     return !['CLIENT_APPROVED', 'LOCKED'].includes(status);
   }
 
@@ -62,7 +64,7 @@ export class TimesheetService {
       entityId: id,
       entityLabel: `${validated.workerNameSnapshot} - ${validated.date}`,
       sourceModule: 'operations',
-      afterSummary: `Created timesheet for ${validated.date}`
+      afterSummary: `Created daily activity log for ${validated.date}`
     });
 
     return id;
@@ -82,7 +84,8 @@ export class TimesheetService {
       actionType: 'SUBMIT',
       entityType: 'DailyTimesheet',
       entityId: id,
-      sourceModule: 'operations'
+      sourceModule: 'operations',
+      afterSummary: 'Submitted daily log for review'
     });
   }
 
@@ -97,10 +100,11 @@ export class TimesheetService {
     });
 
     await writeAuditLog(this.db, user, {
-      actionType: 'REVIEW',
+      actionType: 'OPS_REVIEW',
       entityType: 'DailyTimesheet',
       entityId: id,
-      sourceModule: 'operations'
+      sourceModule: 'operations',
+      afterSummary: 'Operations verification complete'
     });
   }
 
@@ -115,11 +119,12 @@ export class TimesheetService {
     });
 
     await writeAuditLog(this.db, user, {
-      actionType: 'APPROVE',
+      actionType: 'CLIENT_APPROVE',
       entityType: 'DailyTimesheet',
       entityId: id,
       sourceModule: 'client',
-      reasonCode: 'CLIENT_SIGNOFF'
+      reasonCode: 'CLIENT_SIGNOFF',
+      afterSummary: 'Client final approval received'
     });
   }
 
@@ -137,7 +142,8 @@ export class TimesheetService {
       entityType: 'DailyTimesheet',
       entityId: id,
       reasonText: reason,
-      sourceModule: 'operations'
+      sourceModule: 'operations',
+      afterSummary: `Timesheet rejected: ${reason}`
     });
   }
 
@@ -155,7 +161,8 @@ export class TimesheetService {
       entityType: 'DailyTimesheet',
       entityId: id,
       reasonText: reason,
-      sourceModule: 'operations'
+      sourceModule: 'operations',
+      afterSummary: `Correction requested: ${reason}`
     });
   }
 
@@ -174,7 +181,8 @@ export class TimesheetService {
       entityType: 'DailyTimesheet',
       entityId: id,
       sourceModule: 'finance',
-      reasonCode: 'PERIOD_CLOSED'
+      reasonCode: 'PERIOD_CLOSED',
+      afterSummary: 'Locked for payroll processing'
     });
   }
 }
