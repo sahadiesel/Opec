@@ -27,7 +27,8 @@ import {
   Calculator,
   ArrowUp,
   ArrowDown,
-  Tag
+  Tag,
+  SearchCheck
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
@@ -54,14 +55,12 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
+  // --- Data Subscription ---
   const quotationRef = useMemoFirebase(() => (firestore ? doc(firestore, 'quotations', id) : null), [firestore, id]);
   const { data: quotation, isLoading: isQuoLoading } = useDoc<Quotation>(quotationRef as any);
 
   const linesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'quotations', id, 'lines') : null), [firestore, id]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<QuotationLine>(linesQuery as any);
-
-  const customerRef = useMemoFirebase(() => (firestore && quotation ? doc(firestore, 'customers', quotation.customerId) : null), [firestore, quotation?.customerId]);
-  const { data: customer } = useDoc<Customer>(customerRef as any);
 
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
@@ -73,19 +72,21 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     if (quotation) setEditedHeader(quotation);
   }, [quotation]);
 
+  // --- Handlers: Header ---
   const handleSaveHeader = () => {
     if (!quotationRef) return;
     updateDocumentNonBlocking(quotationRef, { ...editedHeader, updatedAt: Date.now() });
     setIsEditingHeader(false);
-    toast({ title: "บันทึกหัวเอกสารสำเร็จ" });
+    toast({ title: "บันทึกหัวเอกสารสำเร็จ (Header Saved)" });
   };
 
   const handleUpdateStatus = (newStatus: QuotationStatus) => {
     if (!quotationRef) return;
     updateDocumentNonBlocking(quotationRef, { status: newStatus, updatedAt: Date.now() });
-    toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
+    toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus.toUpperCase()}` });
   };
 
+  // --- Handlers: Line Items ---
   const handleOpenAddLine = () => {
     setEditingLine({ 
       description: '', 
@@ -138,11 +139,13 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
     setIsLineDialogOpen(false);
     setEditingLine(null);
-    toast({ title: "บันทึกรายการสำเร็จ" });
+    toast({ title: "บันทึกรายการสำเร็จ (Item Saved)" });
   };
 
   const handleDeleteLine = async (lineId: string) => {
     if (!firestore) return;
+    if (!confirm('ยืนยันการลบรายการนี้?')) return;
+    
     await deleteDocumentNonBlocking(doc(firestore, 'quotations', id, 'lines', lineId));
     recalculateTotal(lines?.filter(l => l.id !== lineId) || []);
     toast({ title: "ลบรายการสำเร็จ" });
@@ -240,7 +243,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
                 {/* Header Information Card */}
-                <Card className="shadow-sm">
+                <Card className="shadow-sm border-none bg-white">
                   <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                     <div>
                       <CardTitle className="text-lg flex items-center gap-2">
@@ -274,33 +277,33 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   </CardContent>
                 </Card>
 
-                {/* Line Item Editor Card */}
-                <Card className="shadow-sm">
-                  <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
+                {/* Line Item Editor Table */}
+                <Card className="shadow-sm border-none bg-white overflow-hidden">
+                  <CardHeader className="flex flex-row items-center justify-between border-b pb-4 bg-muted/5">
                     <div>
                       <CardTitle className="text-lg">รายการบริการ (Quotation Lines)</CardTitle>
-                      <CardDescription>ระบุรายละเอียดสินค้าหรือบริการและราคาขาย</CardDescription>
+                      <CardDescription>ระบุรายละเอียดสินค้าหรือบริการและราคาเสนอขาย</CardDescription>
                     </div>
                     <Button className="bg-primary font-bold shadow-md h-10" onClick={handleOpenAddLine}>
-                      <Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add)
+                      <Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add Item)
                     </Button>
                   </CardHeader>
                   <CardContent className="p-0">
                     <Table>
                       <TableHeader className="bg-muted/30">
                         <TableRow>
-                          <TableHead className="pl-6 w-[50px]">#</TableHead>
+                          <TableHead className="pl-6 w-[60px] text-center">#</TableHead>
                           <TableHead>รายละเอียด (Description)</TableHead>
-                          <TableHead className="text-center w-[100px]">จำนวน</TableHead>
-                          <TableHead className="text-right w-[150px]">ราคา/หน่วย</TableHead>
-                          <TableHead className="text-right w-[150px] font-bold">รวม (Total)</TableHead>
-                          <TableHead className="text-right pr-6 w-[120px]">จัดการ</TableHead>
+                          <TableHead className="text-center w-[100px]">จำนวน/หน่วย</TableHead>
+                          <TableHead className="text-right w-[140px]">ราคา/หน่วย</TableHead>
+                          <TableHead className="text-right w-[140px] font-bold">ยอดรวม</TableHead>
+                          <TableHead className="text-right pr-6 w-[140px]">จัดการ</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {sortedLines.map((line, index) => (
                           <TableRow key={line.id} className="group hover:bg-muted/10 transition-colors">
-                            <TableCell className="pl-6 text-xs text-muted-foreground text-center">
+                            <TableCell className="pl-6 text-xs text-muted-foreground text-center font-mono">
                               {index + 1}
                             </TableCell>
                             <TableCell>
@@ -310,9 +313,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               </div>
                             </TableCell>
                             <TableCell className="text-center">
-                              <span className="text-sm font-bold">{line.quantity}</span> <span className="text-[10px] text-muted-foreground uppercase">{line.unit}</span>
+                              <span className="text-sm font-bold">{line.quantity}</span> <span className="text-[10px] text-muted-foreground uppercase font-medium">{line.unit}</span>
                             </TableCell>
-                            <TableCell className="text-right text-sm">
+                            <TableCell className="text-right text-sm font-medium">
                               ฿{(line.unitPrice || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="text-right font-black text-primary">
@@ -320,10 +323,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                             </TableCell>
                             <TableCell className="text-right pr-6">
                               <div className="flex justify-end items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleMoveLine(line, 'up')} disabled={index === 0}>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => handleMoveLine(line, 'up')} disabled={index === 0}>
                                   <ArrowUp className="h-3 w-3" />
                                 </Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleMoveLine(line, 'down')} disabled={index === sortedLines.length - 1}>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => handleMoveLine(line, 'down')} disabled={index === sortedLines.length - 1}>
                                   <ArrowDown className="h-3 w-3" />
                                 </Button>
                                 <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" onClick={() => handleOpenEditLine(line)}>
@@ -380,56 +383,59 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   </CardContent>
                 </Card>
 
-                {/* Financial Summary */}
-                <Card className="border-primary/10 shadow-md">
+                {/* Financial Summary Card */}
+                <Card className="border-none shadow-md bg-white overflow-hidden">
                   <CardHeader className="bg-muted/30 border-b">
                     <CardTitle className="text-base flex items-center gap-2 font-bold text-primary">
                       <Calculator className="h-5 w-5" /> สรุปมูลค่า (Summary)
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">รวมยอดสินค้า (Subtotal):</span>
-                      <span className="font-bold">฿{(quotation.subtotal || 0).toLocaleString()}</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">ยอดรวมสินค้า (Subtotal):</span>
+                      <span className="font-bold">฿{(quotation.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between items-center group">
+                      <span className="text-muted-foreground">ส่วนลด (Discount):</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity italic">แก้ไข {'>'}</span>
+                        <Input 
+                          type="number" 
+                          className="h-8 w-28 text-right text-xs font-bold text-red-600 border-dashed"
+                          value={editedHeader.discountAmount || 0}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setEditedHeader({...editedHeader, discountAmount: val});
+                            updateDoc(quotationRef!, { discountAmount: val, updatedAt: Date.now() });
+                            recalculateTotal(lines || []);
+                          }}
+                        />
+                      </div>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">ส่วนลด (Discount):</span>
-                      <Input 
-                        type="number" 
-                        className="h-8 w-28 text-right text-xs font-bold text-red-600 border-dashed"
-                        value={editedHeader.discountAmount || 0}
-                        onChange={e => {
-                          const val = parseFloat(e.target.value) || 0;
-                          setEditedHeader({...editedHeader, discountAmount: val});
-                          updateDoc(quotationRef!, { discountAmount: val, updatedAt: Date.now() });
-                          recalculateTotal(lines || []);
-                        }}
-                      />
-                    </div>
-                    <div className="flex justify-between">
                       <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({quotation.taxPercent || 7}%):</span>
-                      <span className="font-bold">฿{(quotation.taxAmount || 0).toLocaleString()}</span>
+                      <span className="font-bold">฿{(quotation.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
                     <Separator className="my-2" />
                     <div className="flex justify-between items-end">
-                      <span className="font-black text-primary uppercase text-[10px] tracking-widest">ยอดสุทธิ (Net Total)</span>
-                      <span className="font-black text-2xl text-primary underline decoration-double">฿{(quotation.grandTotal || 0).toLocaleString()}</span>
+                      <span className="font-black text-primary uppercase text-[10px] tracking-widest">ยอดสุทธิ (Grand Total)</span>
+                      <span className="font-black text-2xl text-primary underline decoration-double">฿{(quotation.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
                   </CardContent>
                 </Card>
 
-                {/* Internal Notes */}
-                <Card>
-                  <CardHeader className="pb-2">
+                {/* Technical/Commercial Notes */}
+                <Card className="border-none shadow-sm bg-white">
+                  <CardHeader className="pb-2 bg-muted/5 border-b">
                     <CardTitle className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
-                      <Info className="h-3 w-3" /> หมายเหตุ (Notes)
+                      <Info className="h-3 w-3" /> เงื่อนไขและหมายเหตุ (Notes)
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-4 pt-4">
                     <div className="space-y-1">
-                      <Label className="text-[10px] font-bold text-muted-foreground">ข้อความในเอกสาร (Visible to Client)</Label>
+                      <Label className="text-[10px] font-bold text-muted-foreground">เงื่อนไขในเอกสาร (Client Terms)</Label>
                       <Textarea 
-                        placeholder="ระบุเงื่อนไขการเสนอราคา..." 
+                        placeholder="ระบุเงื่อนไขการเสนอราคาที่ต้องการให้ลูกค้าเห็น..." 
                         className="text-xs min-h-[80px]"
                         value={editedHeader.notes || ''}
                         onChange={e => setEditedHeader({...editedHeader, notes: e.target.value})}
@@ -437,9 +443,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[10px] font-bold text-muted-foreground">บันทึกภายใน (Private Logs)</Label>
+                      <Label className="text-[10px] font-bold text-muted-foreground">บันทึกภายใน (Internal Log)</Label>
                       <Textarea 
-                        placeholder="สำหรับดูเฉพาะเจ้าหน้าที่..." 
+                        placeholder="สำหรับบันทึกเฉพาะเจ้าหน้าที่ขาย..." 
                         className="text-xs min-h-[80px] bg-muted/20"
                         value={editedHeader.internalNotes || ''}
                         onChange={e => setEditedHeader({...editedHeader, internalNotes: e.target.value})}
@@ -569,13 +575,13 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           </TabsContent>
 
           <TabsContent value="history" className="mt-6 print:hidden">
-            <Card className="shadow-sm">
-              <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" /> ประวัติการเปลี่ยนแปลง (Audit Log)</CardTitle></CardHeader>
+            <Card className="shadow-sm border-none bg-white">
+              <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" /> ประวัติกิจกรรม (Audit Log)</CardTitle></CardHeader>
               <CardContent className="space-y-6 py-10">
                 <div className="flex gap-4 border-l-2 border-primary/20 pl-4 relative pb-4">
                   <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
                   <div className="text-sm">
-                    <p className="font-bold uppercase text-primary">LATEST STATUS: {quotation.status}</p>
+                    <p className="font-bold uppercase text-primary">LATEST STATUS: {quotation.status.toUpperCase()}</p>
                     <p className="text-xs text-muted-foreground">{new Date(quotation.updatedAt).toLocaleString('th-TH')}</p>
                     <p className="text-xs mt-1 font-medium">Edited by {quotation.updatedBy || 'System'}</p>
                   </div>
@@ -674,16 +680,16 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             visibility: visible;
           }
           .print-container {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            margin: 0;
-            padding: 2cm;
-            box-shadow: none;
-            border: none;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 2cm !important;
+            box-shadow: none !important;
+            border: none !important;
           }
-          header, .sidebar, .print\\:hidden, [role="tablist"], button {
+          header, nav, .sidebar, .print\\:hidden, [role="tablist"], button {
             display: none !important;
           }
         }
