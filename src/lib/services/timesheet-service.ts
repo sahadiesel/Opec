@@ -9,11 +9,23 @@ import {
   updateDoc, 
   setDoc,
   CollectionReference,
-  writeBatch
+  writeBatch,
+  query,
+  where,
+  getDocs,
+  limit
 } from 'firebase/firestore';
-import { DailyTimesheet, User, DailyTimesheetStatus } from '@/lib/types';
+import { 
+  DailyTimesheet, 
+  User, 
+  DailyTimesheetStatus, 
+  Assignment,
+  RateConditionEventType,
+  Wave
+} from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { writeAuditLog } from './audit-service';
+import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
 
 /**
  * Service for managing Daily Timesheets and their refined workflow transitions.
@@ -37,7 +49,7 @@ export class TimesheetService {
    * Business Control: Defines which states allow for direct field modification.
    */
   canEdit(status: DailyTimesheetStatus): boolean {
-    return ['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED'].includes(status);
+    return ['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED', 'SUBMITTED', 'OPS_REVIEWED'].includes(status);
   }
 
   /**
@@ -45,6 +57,124 @@ export class TimesheetService {
    */
   isFinalized(status: DailyTimesheetStatus): boolean {
     return ['CLIENT_APPROVED', 'LOCKED'].includes(status);
+  }
+
+  /**
+   * Fetches the active roster for a specific wave on a specific date.
+   * Only includes assignments that are active and cover the target date.
+   */
+  async getWaveRosterForDate(waveId: string, date: string): Promise<Assignment[]> {
+    const mobRef = collection(this.db, 'mobilizations');
+    const q = query(
+      mobRef, 
+      where('waveId', '==', waveId),
+      where('deploymentStatus', 'in', ['ACTIVE', 'READY_TO_MOB', 'MOBILIZING', 'READY'])
+    );
+    
+    const snap = await getDocs(q);
+    const targetDate = parseISO(date);
+
+    return snap.docs
+      .map(d => ({ ...d.data(), id: d.id } as Assignment))
+      .filter(asgn => {
+        const start = parseISO(asgn.startDate);
+        const end = parseISO(asgn.endDate);
+        return isWithinInterval(targetDate, { start, end });
+      });
+  }
+
+  /**
+   * Generates initial draft objects for an entire Wave roster.
+   * Useful for pre-populating the Wave Board UI.
+   */
+  async generateDraftsForWave(waveId: string, date: string, user: User): Promise<Partial<DailyTimesheet>[]> {
+    const roster = await this.getWaveRosterForDate(waveId, date);
+    const waveRef = doc(this.db, 'waves', waveId);
+    const waveSnap = await getDoc(waveRef);
+    const wave = waveSnap.data() as Wave;
+
+    return roster.map(asgn => ({
+      date,
+      workerId: asgn.workerId,
+      assignmentId: asgn.id,
+      waveId: asgn.waveId,
+      purchaseOrderId: asgn.poId,
+      customerId: asgn.customerId,
+      projectName: asgn.projectName,
+      positionId: asgn.positionId,
+      eventType: 'work_day' as RateConditionEventType,
+      normalHours: 8,
+      status: 'DRAFT',
+      workMode: 'OFFSHORE', // Default for Opec
+      shiftType: 'DAY'
+    }));
+  }
+
+  /**
+   * Clones activity logs from the previous day for a specific wave.
+   * High-productivity feature for static offshore deployments.
+   */
+  async copyFromPreviousDay(waveId: string, targetDate: string, user: User) {
+    const prevDate = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
+    
+    const q = query(
+      this.getCollection(),
+      where('waveId', '==', waveId),
+      where('date', '==', prevDate)
+    );
+    
+    const snap = await getDocs(q);
+    if (snap.empty) return { copied: 0, msg: 'No source data found for yesterday' };
+
+    const payloads = snap.docs.map(d => {
+      const data = d.data() as DailyTimesheet;
+      return {
+        ...data,
+        id: undefined, // Let service generate new ID
+        date: targetDate,
+        status: 'DRAFT' as DailyTimesheetStatus,
+        createdAt: undefined,
+        updatedAt: undefined
+      };
+    });
+
+    return this.bulkUpsertTimesheets(payloads, user);
+  }
+
+  /**
+   * Validates a batch of timesheets before saving.
+   * Checks for assignment validity and potential compliance blockers.
+   */
+  async validateWaveBatch(timesheets: Partial<DailyTimesheet>[]) {
+    const warnings: string[] = [];
+    const errors: string[] = [];
+
+    for (const ts of timesheets) {
+      if (!ts.date || !ts.workerId || !ts.assignmentId) {
+        errors.push('Missing required identity fields in batch item');
+        continue;
+      }
+
+      // Check assignment validity period
+      const asgnRef = doc(this.db, 'mobilizations', ts.assignmentId);
+      const asgnSnap = await getDoc(asgnRef);
+      if (asgnSnap.exists()) {
+        const asgn = asgnSnap.data() as Assignment;
+        const targetDate = parseISO(ts.date);
+        const start = parseISO(asgn.startDate);
+        const end = parseISO(asgn.endDate);
+        
+        if (!isWithinInterval(targetDate, { start, end })) {
+          warnings.push(`Assignment for ${ts.workerNameSnapshot} does not cover ${ts.date}`);
+        }
+      }
+    }
+
+    return { 
+      isValid: errors.length === 0, 
+      errors, 
+      warnings 
+    };
   }
 
   /**
@@ -108,10 +238,12 @@ export class TimesheetService {
 
       if (existing.exists()) {
         const current = existing.data() as DailyTimesheet;
-        if (!this.canEdit(current.status)) {
+        // Integrity Guard: Skip if already finalized (Client Approved or Locked)
+        if (this.isFinalized(current.status)) {
           results.skipped++;
           continue;
         }
+        
         batch.update(docRef, {
           ...ts,
           updatedBy: user.displayName,
@@ -227,7 +359,7 @@ export class TimesheetService {
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
     
-    if (snap.data()?.status === 'LOCKED') {
+    if (this.isFinalized(snap.data()?.status)) {
       throw new Error('Integrity Violation: Cannot reject a locked record.');
     }
 
@@ -254,7 +386,7 @@ export class TimesheetService {
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Timesheet not found');
 
-    if (snap.data()?.status === 'LOCKED') {
+    if (this.isFinalized(snap.data()?.status)) {
       throw new Error('Integrity Violation: Locked records cannot be marked for correction.');
     }
 
