@@ -112,9 +112,9 @@ service cloud.firestore {
     // Centralized Numbering System
     match /number_sequences/{id} {
       allow get: if isSignedIn();
-      allow list: if hasRole('system_admin');
-      allow update: if isInternalStaff();
-      allow create, delete: if hasRole('system_admin');
+      allow list: if isInternalStaff();
+      allow create, update: if isInternalStaff();
+      allow delete: if hasRole('system_admin');
     }
 
     // Audit Trail (Immutable once created)
