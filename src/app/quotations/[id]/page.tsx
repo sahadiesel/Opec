@@ -67,11 +67,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Quotation Detail (รายละเอียดใบเสนอราคา)</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{quotation.quotationNo}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>ลูกค้า: {customer?.name || '...'}</span>
-              </p>
+              </div>
             </div>
           </div>
           <div className="flex gap-2">
@@ -165,7 +165,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <span>{new Date(quotation.createdAt).toLocaleString('th-TH')}</span>
                 </div>
               </CardContent>
-            </Card>
+            </div>
           </div>
         </div>
       </div>

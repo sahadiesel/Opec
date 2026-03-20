@@ -161,11 +161,11 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Billing Note Detail (รายละเอียดใบวางบิล)</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{note.billingNoteNo}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>ลูกค้า: {customer?.name || '...'}</span>
-              </p>
+              </div>
             </div>
           </div>
           <div className="flex gap-2">
