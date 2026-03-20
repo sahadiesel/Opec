@@ -295,28 +295,6 @@ export function getPermissions(
 }
 
 /**
- * Intent-to-Flag Mapping Reference:
- * 
- * [Timesheets]
- * create -> .create
- * edit -> .edit
- * review_ops -> .approve (Internal)
- * approve_client -> .approve (Client Context)
- * lock -> .delete (Safeguard)
- * 
- * [Payroll]
- * generate -> .create
- * hr_approve -> .approve
- * finance_prepare -> .edit
- * mark_paid -> .approve
- * lock -> .delete
- * 
- * [Customer Portal]
- * wave_accept -> .approve
- * timesheet_approve -> .approve
- */
-
-/**
  * Functional shorthand helpers
  */
 export const canView = (user: User | null, moduleKey: ModuleKey, profile?: PermissionProfile | null) => 
