@@ -30,7 +30,8 @@ import {
   Loader2,
   CheckCircle2,
   Info,
-  ChevronRight
+  ChevronRight,
+  XCircle
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -544,7 +545,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                               className={user.isActive ? "text-destructive" : "text-green-600"}
                               onClick={() => handleToggleActive(user)}
                             >
-                              {user.isActive ? <UserMinus className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+                              {user.isActive ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                             </Button>
                           </div>
                         </TableCell>
@@ -566,8 +567,4 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       </div>
     </AppShell>
   );
-}
-
-function UserMinus(props: any) {
-  return <Users {...props} className={props.className + " text-destructive"} />;
 }
