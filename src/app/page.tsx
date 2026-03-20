@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -51,6 +52,7 @@ import {
   DialogHeader, 
   DialogTitle 
 } from '@/components/ui/dialog';
+import { PlaceHolderImages } from '@/lib/placeholder-images';
 
 export default function Home() {
   const router = useRouter();
@@ -207,9 +209,15 @@ export default function Home() {
 
   // Login Screen
   if (!user || (!latestUserDoc && isLoggingIn)) {
+    const loginBg = PlaceHolderImages.find(img => img.id === 'login-bg')?.imageUrl || '';
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
-        <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary">
+      <div 
+        className="flex items-center justify-center min-h-screen p-4 bg-cover bg-center bg-no-repeat relative"
+        style={{ backgroundImage: loginBg ? `url(${loginBg})` : 'none' }}
+        data-ai-hint="offshore platform"
+      >
+        <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px]" />
+        <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary relative z-10 bg-white/95">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
               <ShieldCheck className="h-10 w-10 text-primary" />
@@ -221,15 +229,15 @@ export default function Home() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">อีเมลใช้งาน (Email)</Label>
-                <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" required />
+                <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" required className="h-11" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">รหัสผ่าน (Password)</Label>
-                <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+                <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="h-11" />
               </div>
             </CardContent>
             <CardFooter>
-              <Button type="submit" className="w-full h-12 text-lg font-bold" disabled={isLoggingIn}>
+              <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg" disabled={isLoggingIn}>
                 {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
                 เข้าสู่ระบบ
               </Button>
