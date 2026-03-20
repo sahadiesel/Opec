@@ -111,12 +111,28 @@
         "quotationNo": { "type": "string" },
         "customerId": { "type": "string" },
         "title": { "type": "string" },
+        "description": { "type": "string" },
         "totalAmount": { "type": "number" },
+        "currency": { "type": "string" },
         "status": { "type": "string", "enum": ["DRAFT", "SENT", "ACCEPTED", "REJECTED", "EXPIRED", "CANCELLED"] },
         "issueDate": { "type": "string", "format": "date" },
-        "expiryDate": { "type": "string", "format": "date" }
+        "expiryDate": { "type": "string", "format": "date" },
+        "notes": { "type": "string" }
       },
       "required": ["id", "quotationNo", "customerId", "title"]
+    },
+    "QuotationLine": {
+      "title": "QuotationLine",
+      "type": "object",
+      "description": "Line items for a quotation document.",
+      "properties": {
+        "id": { "type": "string" },
+        "quotationId": { "type": "string" },
+        "description": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "amount": { "type": "number" }
+      }
     },
     "SalesContractTerm": {
       "title": "SalesContractTerm",
@@ -252,6 +268,18 @@
           "schema": { "$ref": "#/backend/entities/Quotation" },
           "description": "Stores sales quotations sent to customers.",
           "params": [{ "name": "quoId", "description": "Unique ID of the quotation." }]
+        }
+      },
+      {
+        "path": "/quotations/{quoId}/lines/{lineId}",
+        "definition": {
+          "entityName": "QuotationLine",
+          "schema": { "$ref": "#/backend/entities/QuotationLine" },
+          "description": "Line items for a quotation document.",
+          "params": [
+            { "name": "quoId", "description": "Parent quotation ID." },
+            { "name": "lineId", "description": "Unique ID for the line." }
+          ]
         }
       },
       {
