@@ -250,7 +250,7 @@ export default function QuotationsPage() {
                         </TableCell>
                         <TableCell className="text-sm font-medium">{q.projectTitle}</TableCell>
                         <TableCell className="text-right font-black text-primary">
-                          {q.currency} {q.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          {q.currency} {(q.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell>{getStatusBadge(q.status)}</TableCell>
                         <TableCell className="text-right pr-6">

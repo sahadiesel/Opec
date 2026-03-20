@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -10,9 +11,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   ArrowLeft, 
   Save, 
-  FileSignature, 
+  Plus, 
+  Trash2, 
   Building2, 
   Calendar, 
+  FileText, 
   History,
   Info,
   Loader2,
@@ -20,15 +23,14 @@ import {
   XCircle,
   Clock,
   Briefcase,
-  Plus,
-  Trash2,
   Printer,
   Edit2,
-  FileText,
-  Calculator
+  Calculator,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, collection, updateDoc } from 'firebase/firestore';
+import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Quotation, QuotationLine, QuotationStatus, User, Customer } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
@@ -38,6 +40,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { PageGuidance } from '@/components/layout/page-guidance';
 
 export default function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -62,8 +65,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
-  const [isAddingLine, setIsAddingLine] = useState(false);
-  const [newLine, setNewLine] = useState<Partial<QuotationLine>>({ description: '', quantity: 1, unit: 'EA', unitPrice: 0 });
+  
+  const [isLineDialogOpen, setIsLineDialogOpen] = useState(false);
+  const [editingLine, setEditingLine] = useState<Partial<QuotationLine> | null>(null);
 
   useEffect(() => {
     if (quotation) setEditedHeader(quotation);
@@ -82,23 +86,50 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 
-  const handleAddLine = async () => {
-    if (!firestore || !newLine.description) return;
-    const lineRef = collection(firestore, 'quotations', id, 'lines');
-    const lineTotal = (newLine.quantity || 0) * (newLine.unitPrice || 0);
-    
-    await addDocumentNonBlocking(lineRef, {
-      ...newLine,
-      quotationId: id,
-      lineTotal,
-      displayOrder: (lines?.length || 0) + 1,
-      createdAt: Date.now()
-    });
+  const handleOpenAddLine = () => {
+    setEditingLine({ description: '', quantity: 1, unit: 'EA', unitPrice: 0, remarks: '', displayOrder: (lines?.length || 0) + 1 });
+    setIsLineDialogOpen(true);
+  };
 
-    recalculateTotal([...(lines || []), { ...newLine, lineTotal } as any]);
-    setIsAddingLine(false);
-    setNewLine({ description: '', quantity: 1, unit: 'EA', unitPrice: 0 });
-    toast({ title: "เพิ่มรายการสำเร็จ" });
+  const handleOpenEditLine = (line: QuotationLine) => {
+    setEditingLine({ ...line });
+    setIsLineDialogOpen(true);
+  };
+
+  const handleSaveLine = async () => {
+    if (!firestore || !editingLine?.description) return;
+    
+    const lineTotal = (Number(editingLine.quantity) || 0) * (Number(editingLine.unitPrice) || 0);
+    const lineData = {
+      ...editingLine,
+      lineTotal,
+      updatedAt: Date.now()
+    };
+
+    if (editingLine.id) {
+      // Update existing
+      const lineRef = doc(firestore, 'quotations', id, 'lines', editingLine.id);
+      updateDocumentNonBlocking(lineRef, lineData);
+      
+      // Local recalculation for immediate feedback
+      const updatedLines = lines?.map(l => l.id === editingLine.id ? { ...l, ...lineData } : l) || [];
+      recalculateTotal(updatedLines as QuotationLine[]);
+    } else {
+      // Add new
+      const linesColRef = collection(firestore, 'quotations', id, 'lines');
+      await addDocumentNonBlocking(linesColRef, {
+        ...lineData,
+        quotationId: id,
+        createdAt: Date.now()
+      });
+      
+      const updatedLines = [...(lines || []), { ...lineData } as QuotationLine];
+      recalculateTotal(updatedLines);
+    }
+
+    setIsLineDialogOpen(false);
+    setEditingLine(null);
+    toast({ title: "บันทึกรายการสำเร็จ" });
   };
 
   const handleDeleteLine = async (lineId: string) => {
@@ -106,6 +137,27 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     await deleteDocumentNonBlocking(doc(firestore, 'quotations', id, 'lines', lineId));
     recalculateTotal(lines?.filter(l => l.id !== lineId) || []);
     toast({ title: "ลบรายการสำเร็จ" });
+  };
+
+  const handleMoveLine = async (line: QuotationLine, direction: 'up' | 'down') => {
+    if (!firestore || !lines) return;
+    
+    const sortedLines = [...lines].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    const currentIndex = sortedLines.findIndex(l => l.id === line.id);
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+
+    if (newIndex < 0 || newIndex >= sortedLines.length) return;
+
+    const otherLine = sortedLines[newIndex];
+    const batch = writeBatch(firestore);
+    
+    const lineRef = doc(firestore, 'quotations', id, 'lines', line.id);
+    const otherRef = doc(firestore, 'quotations', id, 'lines', otherLine.id);
+
+    batch.update(lineRef, { displayOrder: otherLine.displayOrder || 0 });
+    batch.update(otherRef, { displayOrder: line.displayOrder || 0 });
+
+    await batch.commit();
   };
 
   const recalculateTotal = (currentLines: QuotationLine[]) => {
@@ -127,6 +179,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   if (isQuoLoading || !quotation || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
+
+  const sortedLines = lines?.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)) || [];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -163,6 +217,16 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           </TabsList>
 
           <TabsContent value="edit" className="mt-6 space-y-6 print:hidden">
+            <PageGuidance 
+              title="ขั้นตอนการทำงาน (Quotation Workflow)"
+              tips={[
+                "ระบุข้อมูลหัวเอกสารและลูกค้าให้ครบถ้วนก่อนเพิ่มรายการบริการ",
+                "รายการบริการจะถูกคำนวณภาษีมูลค่าเพิ่ม (VAT 7%) โดยอัตโนมัติจากยอด Subtotal",
+                "เมื่อเอกสารพร้อมแล้ว ให้เปลี่ยนสถานะเป็น 'sent' เพื่อเตรียมส่งให้ลูกค้าพิจารณา",
+                "คุณสามารถจัดลำดับรายการได้โดยใช้ปุ่มขึ้น/ลง ในตารางรายการบริการ"
+              ]}
+            />
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
                 <Card>
@@ -178,23 +242,23 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <CardContent className="space-y-4 pt-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2 col-span-2">
-                        <Label>หัวข้อโครงการ (Project Title)</Label>
+                        <Label className="font-bold">หัวข้อโครงการ (Project Title)</Label>
                         <Input disabled={!isEditingHeader} value={editedHeader.projectTitle || ''} onChange={e => setEditedHeader({...editedHeader, projectTitle: e.target.value})} />
                       </div>
                       <div className="space-y-2">
-                        <Label>วันที่ออกเอกสาร (Issue Date)</Label>
+                        <Label className="font-bold">วันที่ออกเอกสาร (Issue Date)</Label>
                         <Input type="date" disabled={!isEditingHeader} value={editedHeader.issueDate || ''} onChange={e => setEditedHeader({...editedHeader, issueDate: e.target.value})} />
                       </div>
                       <div className="space-y-2">
-                        <Label>วันหมดอายุข้อเสนอ (Valid Until)</Label>
+                        <Label className="font-bold">วันหมดอายุข้อเสนอ (Valid Until)</Label>
                         <Input type="date" disabled={!isEditingHeader} value={editedHeader.validUntilDate || ''} onChange={e => setEditedHeader({...editedHeader, validUntilDate: e.target.value})} />
                       </div>
                       <div className="space-y-2">
-                        <Label>รหัสอ้างอิงลูกค้า (Ref No.)</Label>
+                        <Label className="font-bold">รหัสอ้างอิงลูกค้า (Ref No.)</Label>
                         <Input disabled={!isEditingHeader} value={editedHeader.referenceNo || ''} onChange={e => setEditedHeader({...editedHeader, referenceNo: e.target.value})} />
                       </div>
                       <div className="space-y-2">
-                        <Label>ผู้ติดต่อฝั่งลูกค้า (Contact Person)</Label>
+                        <Label className="font-bold">ผู้ติดต่อฝั่งลูกค้า (Contact Person)</Label>
                         <Input disabled={!isEditingHeader} value={editedHeader.contactPerson || ''} onChange={e => setEditedHeader({...editedHeader, contactPerson: e.target.value})} />
                       </div>
                     </div>
@@ -212,62 +276,54 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       <CardTitle>รายการบริการ (Quotation Lines)</CardTitle>
                       <CardDescription>ระบุรายการสินค้าหรือบริการที่นำเสนอ</CardDescription>
                     </div>
-                    <Dialog open={isAddingLine} onOpenChange={setIsAddingLine}>
-                      <DialogTrigger asChild>
-                        <Button className="bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ</Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader><DialogTitle>เพิ่มรายการในใบเสนอราคา</DialogTitle></DialogHeader>
-                        <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label>รายละเอียดรายการ (Description)</Label>
-                            <Input value={newLine.description} onChange={e => setNewLine({...newLine, description: e.target.value})} />
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label>จำนวน (Quantity)</Label>
-                              <Input type="number" value={newLine.quantity} onChange={e => setNewLine({...newLine, quantity: parseFloat(e.target.value)})} />
-                            </div>
-                            <div className="space-y-2">
-                              <Label>หน่วย (Unit)</Label>
-                              <Input value={newLine.unit} onChange={e => setNewLine({...newLine, unit: e.target.value})} placeholder="EA, Days, etc." />
-                            </div>
-                            <div className="space-y-2">
-                              <Label>ราคาต่อหน่วย (Unit Price)</Label>
-                              <Input type="number" value={newLine.unitPrice} onChange={e => setNewLine({...newLine, unitPrice: parseFloat(e.target.value)})} />
-                            </div>
-                          </div>
-                        </div>
-                        <DialogFooter>
-                          <Button onClick={handleAddLine} disabled={!newLine.description} className="bg-primary font-bold">บันทึกรายการ</Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
+                    <Button className="bg-primary font-bold shadow-md" onClick={handleOpenAddLine}>
+                      <Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ
+                    </Button>
                   </CardHeader>
                   <CardContent className="p-0">
                     <Table>
                       <TableHeader className="bg-muted/30">
                         <TableRow>
-                          <TableHead className="pl-6">รายละเอียด</TableHead>
+                          <TableHead className="pl-6 w-[50px]">ลำดับ</TableHead>
+                          <TableHead>รายละเอียด</TableHead>
                           <TableHead className="text-right">จำนวน</TableHead>
-                          <TableHead className="text-right">หน่วย</TableHead>
                           <TableHead className="text-right">ราคา/หน่วย</TableHead>
                           <TableHead className="text-right font-bold">รวม</TableHead>
                           <TableHead className="text-right pr-6">จัดการ</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {lines?.sort((a,b) => (a.displayOrder || 0) - (b.displayOrder || 0)).map(line => (
-                          <TableRow key={line.id}>
-                            <TableCell className="pl-6 text-sm font-medium">{line.description}</TableCell>
-                            <TableCell className="text-right">{line.quantity}</TableCell>
-                            <TableCell className="text-right text-xs text-muted-foreground">{line.unit}</TableCell>
+                        {sortedLines.map((line, index) => (
+                          <TableRow key={line.id} className="group">
+                            <TableCell className="pl-6 text-xs text-muted-foreground text-center">
+                              {index + 1}
+                            </TableCell>
+                            <TableCell className="text-sm font-medium">
+                              <div className="flex flex-col">
+                                <span>{line.description}</span>
+                                {line.remarks && <span className="text-[10px] text-muted-foreground italic">{line.remarks}</span>}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <span className="font-bold">{line.quantity}</span> <span className="text-[10px] text-muted-foreground uppercase">{line.unit}</span>
+                            </TableCell>
                             <TableCell className="text-right">฿{(line.unitPrice || 0).toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-bold">฿{(line.lineTotal || 0).toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-bold text-primary">฿{(line.lineTotal || 0).toLocaleString()}</TableCell>
                             <TableCell className="text-right pr-6">
-                              <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => handleDeleteLine(line.id)}>
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <div className="flex justify-end items-center gap-1">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleMoveLine(line, 'up')} disabled={index === 0}>
+                                  <ArrowUp className="h-3 w-3" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleMoveLine(line, 'down')} disabled={index === sortedLines.length - 1}>
+                                  <ArrowDown className="h-3 w-3" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" onClick={() => handleOpenEditLine(line)}>
+                                  <Edit2 className="h-3 w-3" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteLine(line.id)}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -320,20 +376,62 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       <span className="text-muted-foreground">รวมยอดสินค้า (Subtotal):</span>
                       <span className="font-bold">฿{(quotation.subtotal || 0).toLocaleString()}</span>
                     </div>
-                    {(quotation.discountAmount || 0) > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>ส่วนลด (Discount):</span>
-                        <span className="font-bold">- ฿{(quotation.discountAmount || 0).toLocaleString()}</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">ส่วนลด (Discount):</span>
+                      <div className="flex items-center gap-2">
+                        <Input 
+                          type="number" 
+                          className="h-7 w-24 text-right text-xs font-bold text-red-600"
+                          value={editedHeader.discountAmount || 0}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setEditedHeader({...editedHeader, discountAmount: val});
+                            // Delayed auto-save for the discount field
+                            const timer = setTimeout(() => {
+                              updateDoc(quotationRef!, { discountAmount: val, updatedAt: Date.now() });
+                              recalculateTotal(lines || []);
+                            }, 500);
+                            return () => clearTimeout(timer);
+                          }}
+                        />
                       </div>
-                    )}
+                    </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({quotation.taxPercent || 7}%):</span>
                       <span className="font-bold">฿{(quotation.taxAmount || 0).toLocaleString()}</span>
                     </div>
                     <Separator className="my-2" />
                     <div className="flex justify-between text-lg">
-                      <span className="font-black text-primary uppercase">ยอดสุทธิ (Total):</span>
+                      <span className="font-black text-primary uppercase">ยอดสุทธิ (Net Total):</span>
                       <span className="font-black text-2xl text-primary">฿{(quotation.grandTotal || 0).toLocaleString()}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs font-bold uppercase text-muted-foreground">หมายเหตุและเงื่อนไข (Terms)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground">ข้อความในเอกสาร (Notes on Doc)</Label>
+                      <Textarea 
+                        placeholder="ระบุเงื่อนไขการเสนอราคา..." 
+                        className="text-xs min-h-[80px]"
+                        value={editedHeader.notes || ''}
+                        onChange={e => setEditedHeader({...editedHeader, notes: e.target.value})}
+                        onBlur={handleSaveHeader}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] uppercase font-bold text-muted-foreground">บันทึกภายใน (Internal Notes)</Label>
+                      <Textarea 
+                        placeholder="สำหรับดูเฉพาะเจ้าหน้าที่..." 
+                        className="text-xs min-h-[80px] bg-amber-50/30"
+                        value={editedHeader.internalNotes || ''}
+                        onChange={e => setEditedHeader({...editedHeader, internalNotes: e.target.value})}
+                        onBlur={handleSaveHeader}
+                      />
                     </div>
                   </CardContent>
                 </Card>
@@ -342,7 +440,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           </TabsContent>
 
           <TabsContent value="preview" className="mt-6">
-            <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-12 space-y-10 min-h-[29.7cm] font-serif text-slate-900">
+            <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-12 space-y-10 min-h-[29.7cm] font-serif text-slate-900 overflow-hidden">
               <div className="flex justify-between items-start border-b-4 border-primary pb-6">
                 <div className="space-y-1">
                   <h2 className="text-3xl font-black text-primary uppercase tracking-tighter">OPEC OpsFlow</h2>
@@ -393,9 +491,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.sort((a,b) => (a.displayOrder || 0) - (b.displayOrder || 0)).map(line => (
+                    {sortedLines.map(line => (
                       <TableRow key={line.id} className="border-b border-slate-100 hover:bg-transparent">
-                        <TableCell className="py-4 font-medium">{line.description}</TableCell>
+                        <TableCell className="py-4">
+                          <div className="flex flex-col">
+                            <span className="font-medium">{line.description}</span>
+                            {line.remarks && <span className="text-[10px] text-slate-500 italic mt-0.5">{line.remarks}</span>}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">{line.quantity}</TableCell>
                         <TableCell className="text-center text-xs">{line.unit}</TableCell>
                         <TableCell className="text-right">฿{(line.unitPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
@@ -475,6 +578,70 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Line Item Editor Dialog */}
+        <Dialog open={isLineDialogOpen} onOpenChange={setIsLineDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                {editingLine?.id ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                {editingLine?.id ? 'แก้ไขรายการบริการ' : 'เพิ่มรายการใหม่'}
+              </DialogTitle>
+              <DialogDescription>ระบุรายละเอียดสินค้าหรือบริการและราคาเพื่อนำไปพรีวิวในเอกสาร</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label className="font-bold">รายละเอียดรายการ (Description) *</Label>
+                <Input 
+                  value={editingLine?.description || ''} 
+                  onChange={e => setEditingLine({...editingLine, description: e.target.value})} 
+                  placeholder="เช่น ค่าแรงช่างเชื่อม (Welder) ประจำเดือน..."
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="font-bold">จำนวน (Qty)</Label>
+                  <Input 
+                    type="number" 
+                    value={editingLine?.quantity || 0} 
+                    onChange={e => setEditingLine({...editingLine, quantity: parseFloat(e.target.value) || 0})} 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="font-bold">หน่วย (Unit)</Label>
+                  <Input 
+                    value={editingLine?.unit || ''} 
+                    onChange={e => setEditingLine({...editingLine, unit: e.target.value})} 
+                    placeholder="EA, Days, Hrs"
+                  />
+                </div>
+                <div className="space-y-2 col-span-2">
+                  <Label className="font-bold text-blue-700">ราคาต่อหน่วย (Unit Price)</Label>
+                  <Input 
+                    type="number" 
+                    className="font-black text-lg"
+                    value={editingLine?.unitPrice || 0} 
+                    onChange={e => setEditingLine({...editingLine, unitPrice: parseFloat(e.target.value) || 0})} 
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">หมายเหตุรายการ (Item Remarks)</Label>
+                <Input 
+                  value={editingLine?.remarks || ''} 
+                  onChange={e => setEditingLine({...editingLine, remarks: e.target.value})} 
+                  placeholder="ระบุข้อมูลเพิ่มเติมเฉพาะรายการนี้..."
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsLineDialogOpen(false)}>ยกเลิก</Button>
+              <Button onClick={handleSaveLine} disabled={!editingLine?.description} className="bg-primary font-bold shadow-md">
+                <Save className="h-4 w-4 mr-2" /> บันทึกรายการ
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <style jsx global>{`
