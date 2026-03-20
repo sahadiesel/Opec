@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -23,8 +22,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, query, orderBy } from 'firebase/firestore';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { collection, query, orderBy, addDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
@@ -109,9 +107,9 @@ export default function MainContractsPage() {
         actor: currentUser.displayName 
       });
 
-      // 2. Create the document
+      // 2. Create the document using explicit awaited addDoc to catch errors
       const colRef = collection(firestore, 'main_contracts');
-      const docRef = await addDocumentNonBlocking(colRef, {
+      const docRef = await addDoc(colRef, {
         ...newContract,
         contractNumber: finalNo, // Use official sequential number
         createdAt: Date.now(),
@@ -127,12 +125,12 @@ export default function MainContractsPage() {
       if (docRef) {
         router.push(`/main-contracts/${docRef.id}`);
       }
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      console.error('Create Main Contract Error:', error);
       toast({
         variant: "destructive",
-        title: "เกิดข้อผิดพลาด",
-        description: "ไม่สามารถสร้างสัญญาได้",
+        title: "เกิดข้อผิดพลาดในการบันทึกสัญญา",
+        description: error.message || "ไม่สามารถบันทึกข้อมูลสัญญาหลักได้ กรุณาตรวจสอบสิทธิ์การใช้งาน",
       });
     } finally {
       setIsCreating(false);
