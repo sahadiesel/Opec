@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -28,10 +27,12 @@ import {
   CheckCircle,
   Building2,
   FileText,
-  Send
+  Send,
+  RotateCcw,
+  Loader2
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   Assignment, 
@@ -44,12 +45,16 @@ import {
   ClientApprovalStatus,
   Wave,
   ChecklistItemStatus,
-  MainContract
+  MainContract,
+  ExceptionRequest
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { ExceptionRequestService } from '@/lib/services/exception-request-service';
 
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -60,25 +65,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
+    if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
-
-  const isAuthorized = useMemo(() => {
-    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
-  }, [currentUser]);
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     async function fetchAssignment() {
-      if (!firestore || !isAuthorized) {
+      if (!firestore) {
         setIsLoading(false);
         return;
       }
@@ -95,61 +90,70 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       }
     }
     fetchAssignment();
-  }, [firestore, id, isAuthorized]);
+  }, [firestore, id]);
 
-  const workerRef = useMemoFirebase(() => (firestore && assignment && isAuthorized ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId, isAuthorized]);
+  const workerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId]);
   const { data: worker } = useDoc<Worker>(workerRef as any);
 
-  const positionRef = useMemoFirebase(() => (firestore && assignment && isAuthorized ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId, isAuthorized]);
-  const { data: position } = useDoc<Position>(positionRef as any);
-
-  const waveRef = useMemoFirebase(() => (firestore && assignment?.waveId && isAuthorized ? doc(firestore, 'waves', assignment.waveId) : null), [firestore, assignment?.waveId, isAuthorized]);
-  const { data: wave } = useDoc<Wave>(waveRef as any);
-
-  const customerRef = useMemoFirebase(() => (firestore && assignment?.customerId && isAuthorized ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId, isAuthorized]);
+  const customerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId]);
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
-  const poRef = useMemoFirebase(() => (firestore && assignment?.poId && isAuthorized ? doc(firestore, 'purchase_orders', assignment.poId) : null), [firestore, assignment?.poId, isAuthorized]);
-  const { data: po } = useDoc<PurchaseOrder>(poRef as any);
+  // Fetch pending exception requests for this assignment
+  const requestsQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(
+      collection(firestore, 'exception_requests'),
+      where('referenceId', '==', id),
+      where('status', '==', 'PENDING')
+    );
+  }, [firestore, id]);
+  const { data: pendingRequests } = useCollection<ExceptionRequest>(requestsQuery as any);
 
-  const contractRef = useMemoFirebase(() => (firestore && assignment?.contractId && isAuthorized ? doc(firestore, 'main_contracts', assignment.contractId) : null), [firestore, assignment?.contractId, isAuthorized]);
-  const { data: contract } = useDoc<MainContract>(contractRef as any);
+  const isOpsOrSalesManager = useMemo(() => {
+    return ['operations_manager', 'sales_manager'].includes(currentUser?.assignedRoleKey || '') || currentUser?.roleIds.includes('system_admin');
+  }, [currentUser]);
 
-  const handleUpdateStatus = (newStatus: DeploymentStatus, clientStatus?: ClientApprovalStatus) => {
-    if (!firestore) return;
-    const mobRef = doc(firestore, 'mobilizations', id);
-    const updateData: any = { deploymentStatus: newStatus, updatedAt: Date.now() };
-    if (clientStatus) updateData.clientApprovalStatus = clientStatus;
-    
-    updateDocumentNonBlocking(mobRef, updateData);
-    setAssignment(prev => prev ? ({ ...prev, ...updateData }) : null);
-    toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} เรียบร้อยแล้ว` });
+  const [reviewNote, setReviewNote] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handleProcessRequest = async (requestId: string, status: 'APPROVED' | 'REJECTED') => {
+    if (!firestore || !currentUser || !isOpsOrSalesManager) return;
+    setIsProcessing(true);
+
+    try {
+      const service = new ExceptionRequestService(firestore);
+      if (status === 'APPROVED') {
+        await service.approveAssignmentChange(requestId, id, currentUser, reviewNote);
+        toast({ title: "อนุมัติการเปลี่ยนแปลงสำเร็จ", description: "การมอบหมายเดิมถูกยกเลิกแล้วเพื่อรอส่งตัวพนักงานใหม่" });
+      } else {
+        await service.processRequest({ requestId, status: 'REJECTED', user: currentUser, internalNotes: reviewNote });
+        toast({ title: "ปฏิเสธคำขอสำเร็จ" });
+      }
+      setReviewNote('');
+      // Reload assignment data
+      const snap = await getDoc(doc(firestore, 'mobilizations', id));
+      if (snap.exists()) setAssignment(snap.data() as Assignment);
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Action Failed", description: e.message });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   if (isLoading || !currentUser) {
-    return <div className="flex items-center justify-center min-h-screen"><Clock className="h-12 w-12 text-primary animate-pulse" /></div>;
+    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 
   if (!assignment) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="text-center py-20 space-y-4">
-          <AlertCircle className="h-12 w-12 text-destructive mx-auto" />
+        <div className="text-center py-20">
+          <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
           <h2 className="text-xl font-bold">ไม่พบข้อมูลการมอบหมาย</h2>
-          <Button asChild variant="outline"><Link href="/assignments">กลับไปหน้ารายการ</Link></Button>
         </div>
       </AppShell>
     );
   }
-
-  const getChecklistIcon = (status: ChecklistItemStatus) => {
-    switch(status) {
-      case 'pass': return <CheckCircle className="h-5 w-5 text-green-600" />;
-      case 'warning': return <AlertCircle className="h-5 w-5 text-amber-500" />;
-      case 'fail': return <XCircle className="h-5 w-5 text-red-600" />;
-      default: return <Clock className="h-5 w-5 text-muted-foreground" />;
-    }
-  };
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -168,179 +172,111 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Badge variant="outline" className="text-sm py-1 px-4 border-primary/20 font-bold uppercase">
-              DEPLOYMENT: {assignment.deploymentStatus}
-            </Badge>
-            <Badge variant={assignment.readinessStatus === 'ready' ? 'default' : 'destructive'} className={assignment.readinessStatus === 'ready' ? 'bg-green-600' : ''}>
-              READINESS: {assignment.readinessStatus.toUpperCase()}
-            </Badge>
-          </div>
+          <Badge variant="outline" className="text-sm py-1 px-4 border-primary/20 font-bold uppercase">
+            DEPLOYMENT: {assignment.deploymentStatus}
+          </Badge>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <Tabs defaultValue="info" className="w-full">
-              <TabsList className="grid grid-cols-5 w-full h-auto p-1 bg-muted/50">
-                <TabsTrigger value="info" className="gap-2 py-2 text-xs">ข้อมูลมอบหมาย</TabsTrigger>
-                <TabsTrigger value="readiness" className="gap-2 py-2 text-xs">ความพร้อม</TabsTrigger>
-                <TabsTrigger value="approval" className="gap-2 py-2 text-xs">การอนุมัติ</TabsTrigger>
-                <TabsTrigger value="ppe" className="gap-2 py-2 text-xs">PPE/เครื่องมือ</TabsTrigger>
-                <TabsTrigger value="history" className="gap-2 py-2 text-xs">ประวัติ</TabsTrigger>
-              </TabsList>
+            {/* Exception Review Card */}
+            {pendingRequests && pendingRequests.length > 0 && (
+              <Card className="border-amber-500 bg-amber-50/20 shadow-lg">
+                <CardHeader className="bg-amber-100/50 border-b border-amber-200">
+                  <CardTitle className="text-amber-800 flex items-center gap-2">
+                    <RotateCcw className="h-5 w-5" /> คำขอเปลี่ยนแปลงพนักงาน (Pending Change Request)
+                  </CardTitle>
+                  <CardDescription className="text-amber-700">คำขอนี้ต้องการการอนุมัติจาก Operations/Sales Manager</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-6 space-y-4">
+                  {pendingRequests.map(req => (
+                    <div key={req.id} className="space-y-4">
+                      <div className="p-4 bg-white rounded-lg border border-amber-200">
+                        <Label className="text-[10px] uppercase font-black text-amber-800 mb-2 block">เหตุผลการขอเปลี่ยนตัว (Reason):</Label>
+                        <p className="text-sm italic text-slate-700">"{req.reason}"</p>
+                        <div className="mt-2 text-[10px] text-muted-foreground">โดย {req.requestedBy} เมื่อ {new Date(req.requestedAt).toLocaleString()}</div>
+                      </div>
 
-              <TabsContent value="info" className="mt-6 space-y-6">
-                <Card>
-                  <CardHeader><CardTitle className="text-lg">ข้อมูลงานและกำหนดการ (Operational Context)</CardTitle></CardHeader>
-                  <CardContent className="space-y-6 text-sm">
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-muted-foreground uppercase text-[10px] font-bold">ตำแหน่งงาน (Position):</p>
-                        <p className="font-bold text-lg text-primary">{position?.positionName || assignment.positionId}</p>
-                        <Badge variant="secondary" className="mt-1 text-[9px]">{assignment.workMode} Mode</Badge>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground uppercase text-[10px] font-bold">รอบการทำงาน (Wave):</p>
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 font-mono">{wave?.waveCode || 'N/A'}</Badge>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground uppercase text-[10px] font-bold">ใบสั่งซื้ออ้างอิง (Purchase Order):</p>
-                        <p className="font-mono font-bold text-primary flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {po?.poCode || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground uppercase text-[10px] font-bold">สัญญาหลัก (Main Contract):</p>
-                        <p className="font-mono text-xs flex items-center gap-1"><Building2 className="h-3 w-3" /> {contract?.contractNumber || 'N/A'}</p>
-                      </div>
-                      <div className="col-span-2 border-t pt-4">
-                        <p className="text-muted-foreground uppercase text-[10px] font-bold mb-2">ช่วงเวลาปฏิบัติงาน (Schedule):</p>
-                        <div className="flex items-center gap-4">
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-muted-foreground">เริ่ม (Start)</span>
-                            <span className="font-bold">{assignment.startDate}</span>
+                      {isOpsOrSalesManager ? (
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label className="font-bold">ความเห็นผู้พิจารณา (Internal Response)</Label>
+                            <Textarea 
+                              placeholder="ระบุความเห็นเพื่อแจ้งให้ลูกค้าทราบ..." 
+                              value={reviewNote} 
+                              onChange={e => setReviewNote(e.target.value)}
+                              className="bg-white"
+                            />
                           </div>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-muted-foreground">สิ้นสุด (End)</span>
-                            <span className="font-bold">{assignment.endDate}</span>
+                          <div className="flex gap-3">
+                            <Button 
+                              className="flex-1 bg-green-600 hover:bg-green-700 font-bold" 
+                              disabled={isProcessing}
+                              onClick={() => handleProcessRequest(req.id, 'APPROVED')}
+                            >
+                              <CheckCircle2 className="h-4 w-4 mr-2" /> อนุมัติเปลี่ยนตัว (Approve Change)
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              className="flex-1 border-red-200 text-red-600 hover:bg-red-50 font-bold"
+                              disabled={isProcessing}
+                              onClick={() => handleProcessRequest(req.id, 'REJECTED')}
+                            >
+                              <XCircle className="h-4 w-4 mr-2" /> ปฏิเสธ (Keep Original)
+                            </Button>
                           </div>
                         </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader><CardTitle className="text-lg">การดำเนินการ (Operational Actions)</CardTitle></CardHeader>
-                  <CardContent className="flex flex-wrap gap-3">
-                    {assignment.deploymentStatus === 'DRAFT' && (
-                      <Button onClick={() => handleUpdateStatus('READINESS_CHECK')} className="gap-2 bg-amber-600 hover:bg-amber-700 font-bold">
-                        <ClipboardCheck className="h-4 w-4" /> เริ่มตรวจสอบความพร้อม
-                      </Button>
-                    )}
-                    {assignment.deploymentStatus === 'READINESS_CHECK' && (
-                      <Button 
-                        disabled={assignment.readinessStatus !== 'ready'}
-                        onClick={() => handleUpdateStatus('CLIENT_SUBMITTED', 'PENDING')} 
-                        className="gap-2 bg-blue-600 hover:bg-blue-700 font-bold"
-                      >
-                        <Send className="h-4 w-4" /> ส่งรายชื่อให้ลูกค้าพิจารณา (Submit to Client)
-                      </Button>
-                    )}
-                    <Button variant="outline" className="text-destructive border-destructive font-bold" onClick={() => handleUpdateStatus('CLOSED')}>
-                      <XCircle className="h-4 w-4 mr-2" /> ยกเลิก / ปิดงาน
-                    </Button>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="readiness" className="mt-6">
-                <Card>
-                  <CardHeader><CardTitle className="text-lg">รายการตรวจสอบความพร้อม</CardTitle></CardHeader>
-                  <CardContent className="p-0">
-                    <Table>
-                      <TableBody>
-                        <TableRow>
-                          <TableCell>{getChecklistIcon(assignment.readinessSummary.passportValid)}</TableCell>
-                          <TableCell>หนังสือเดินทาง / บัตรประชาชน (Passport/ID Valid)</TableCell>
-                          <TableCell className="text-right capitalize">{assignment.readinessSummary.passportValid}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell>{getChecklistIcon(assignment.readinessSummary.medicalValid)}</TableCell>
-                          <TableCell>ใบรับรองแพทย์ (Medical Certificate Valid)</TableCell>
-                          <TableCell className="text-right capitalize">{assignment.readinessSummary.medicalValid}</TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="approval" className="mt-6">
-                <Card>
-                  <CardHeader><CardTitle>สถานะการพิจารณาจากลูกค้า</CardTitle></CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg border">
-                      <div className="space-y-1">
-                        <p className="text-xs font-bold text-muted-foreground uppercase">Client Acceptance Status</p>
-                        <p className="text-sm font-medium">สถานะการรับตัวคนงานโดยลูกค้า</p>
-                      </div>
-                      <Badge variant={assignment.clientApprovalStatus === 'APPROVED' ? 'default' : 'secondary'} className={assignment.clientApprovalStatus === 'APPROVED' ? 'bg-green-600' : ''}>
-                        {assignment.clientApprovalStatus}
-                      </Badge>
-                    </div>
-                    {assignment.clientComments && (
-                      <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg">
-                        <p className="text-[10px] font-black uppercase text-amber-800 mb-1">ความเห็นจากลูกค้า:</p>
-                        <p className="text-sm italic">{assignment.clientComments}</p>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="history" className="mt-6">
-                <Card>
-                  <CardHeader><CardTitle className="text-lg flex items-center gap-2"><History className="h-5 w-5" /> ประวัติการเปลี่ยนแปลง</CardTitle></CardHeader>
-                  <CardContent>
-                    <div className="text-sm space-y-4">
-                      <div className="flex gap-4 border-l-2 border-primary/20 pl-4 relative">
-                        <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
-                        <div>
-                          <p className="font-bold">DEPLOYMENT STATUS: {assignment.deploymentStatus}</p>
-                          <p className="text-xs text-muted-foreground">{new Date(assignment.updatedAt).toLocaleString('th-TH')}</p>
+                      ) : (
+                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-100 flex gap-2">
+                          <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                          <p className="text-xs text-blue-700">คุณไม่มีสิทธิ์พิจารณาคำขอนี้ (Manager Required)</p>
                         </div>
-                      </div>
+                      )}
                     </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg">Deployment Summary</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <Label className="text-xs uppercase text-muted-foreground">ตำแหน่ง (Position):</Label>
+                    <p className="font-bold">{assignment.positionId}</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs uppercase text-muted-foreground">โครงการ (Project):</Label>
+                    <p className="font-bold">{assignment.projectName}</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน:</Label>
+                    <p className="font-bold">{assignment.startDate}</p>
+                  </div>
+                  <div>
+                    <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด:</Label>
+                    <p className="font-bold">{assignment.endDate}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           <div className="space-y-6">
             <Card>
               <CardHeader className="pb-3 border-b">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-primary">
-                  <User className="h-4 w-4" /> ข้อมูลคนงาน (Worker Profile)
+                  <User className="h-4 w-4" /> ข้อมูลพนักงาน
                 </CardTitle>
               </CardHeader>
-              <CardContent className="pt-4 space-y-4">
+              <CardContent className="pt-4">
                 {worker ? (
-                  <div className="space-y-4 text-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
-                        {worker.firstName.charAt(0)}
-                      </div>
-                      <div>
-                        <h3 className="font-bold">{worker.firstName} {worker.lastName}</h3>
-                        <p className="text-[10px] text-muted-foreground">{worker.thaiNationalId}</p>
-                      </div>
-                    </div>
-                    <Button variant="outline" size="sm" className="w-full text-xs" asChild>
-                      <Link href={`/workers/${worker.id}`}>ดูประวัติเต็ม <ChevronRight className="h-4 w-4 ml-1" /></Link>
-                    </Button>
+                  <div className="space-y-2">
+                    <p className="font-bold">{worker.firstName} {worker.lastName}</p>
+                    <p className="text-xs text-muted-foreground font-mono">{worker.workerCode}</p>
                   </div>
-                ) : <p className="text-xs text-muted-foreground animate-pulse">Loading worker data...</p>}
+                ) : <p className="text-xs">Loading...</p>}
               </CardContent>
             </Card>
           </div>

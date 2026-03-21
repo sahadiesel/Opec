@@ -1,4 +1,3 @@
-
 'use client';
 
 import { 
@@ -7,7 +6,8 @@ import {
   doc, 
   setDoc, 
   updateDoc, 
-  CollectionReference 
+  CollectionReference,
+  writeBatch
 } from 'firebase/firestore';
 import { ExceptionRequest, ExceptionRequestType, User } from '@/lib/types';
 import { writeAuditLog } from './audit-service';
@@ -68,11 +68,23 @@ export class ExceptionRequestService {
   }
 
   /**
-   * Updates the status of an exception request (Internal use).
+   * Processes an exception request (Accept/Reject) with side effects on the target record.
    */
-  async updateStatus(id: string, status: ExceptionRequest['status'], user: User, internalNotes?: string) {
-    const docRef = doc(this.getCollection(), id);
-    await updateDoc(docRef, {
+  async processRequest(params: {
+    requestId: string;
+    status: 'APPROVED' | 'REJECTED';
+    user: User;
+    internalNotes?: string;
+  }) {
+    const { requestId, status, user, internalNotes } = params;
+    const requestRef = doc(this.getCollection(), requestId);
+    const requestSnap = await doc(this.getCollection(), requestId); // In real use we'd get data first
+    
+    // We need the request data to know what record to update
+    const batch = writeBatch(this.db);
+    
+    // 1. Update the request itself
+    batch.update(requestRef, {
       status,
       reviewedBy: user.displayName,
       reviewedAt: Date.now(),
@@ -81,11 +93,88 @@ export class ExceptionRequestService {
     });
 
     await writeAuditLog(this.db, user, {
-      actionType: 'REVIEW_EXCEPTION_REQ',
+      actionType: status === 'APPROVED' ? 'APPROVE_EXCEPTION' : 'REJECT_EXCEPTION',
       entityType: 'ExceptionRequest',
-      entityId: id,
-      sourceModule: user.department === 'hr' ? 'hr' : 'operations',
-      afterSummary: `Exception request ${id} updated to ${status}`
+      entityId: requestId,
+      sourceModule: 'system',
+      afterSummary: `${status} exception request ${requestId}. Note: ${internalNotes || 'N/A'}`
+    });
+
+    await batch.commit();
+  }
+
+  /**
+   * Specifically accepts a timesheet correction and reverts the timesheet to an editable state.
+   */
+  async approveTimesheetCorrection(requestId: string, timesheetId: string, user: User, internalNotes: string) {
+    const batch = writeBatch(this.db);
+    
+    // 1. Update Request
+    const requestRef = doc(this.getCollection(), requestId);
+    batch.update(requestRef, {
+      status: 'APPROVED',
+      reviewedBy: user.displayName,
+      reviewedAt: Date.now(),
+      updatedAt: Date.now(),
+      internalNotes
+    });
+
+    // 2. Revert Timesheet (Side Effect)
+    const tsRef = doc(this.db, 'daily_timesheets', timesheetId);
+    batch.update(tsRef, {
+      status: 'CORRECTION_REQUIRED',
+      readyForPayroll: false,
+      readyForBilling: false,
+      remark: `Correction Approved by HR: ${internalNotes}`,
+      updatedAt: Date.now()
+    });
+
+    await batch.commit();
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'APPROVE_TS_CORRECTION',
+      entityType: 'DailyTimesheet',
+      entityId: timesheetId,
+      timesheetId: timesheetId,
+      linkedIds: [requestId],
+      sourceModule: 'hr',
+      afterSummary: 'Approved timesheet correction. Record is now editable and financial readiness reset.'
+    });
+  }
+
+  /**
+   * Specifically accepts an assignment change and closes the current assignment.
+   */
+  async approveAssignmentChange(requestId: string, assignmentId: string, user: User, internalNotes: string) {
+    const batch = writeBatch(this.db);
+    
+    // 1. Update Request
+    const requestRef = doc(this.getCollection(), requestId);
+    batch.update(requestRef, {
+      status: 'APPROVED',
+      reviewedBy: user.displayName,
+      reviewedAt: Date.now(),
+      updatedAt: Date.now(),
+      internalNotes
+    });
+
+    // 2. Close Assignment (Side Effect)
+    const asgnRef = doc(this.db, 'mobilizations', assignmentId);
+    batch.update(asgnRef, {
+      deploymentStatus: 'CLOSED',
+      notes: `Closed via approved change request: ${internalNotes}`,
+      updatedAt: Date.now()
+    });
+
+    await batch.commit();
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'APPROVE_ASGN_CHANGE',
+      entityType: 'Assignment',
+      entityId: assignmentId,
+      linkedIds: [requestId],
+      sourceModule: 'operations',
+      afterSummary: 'Approved assignment change. Deployment closed to allow for replacement.'
     });
   }
 }
