@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { User, BusinessRoleKey } from '@/lib/types';
+import { User, BusinessRoleKey, DeptType } from '@/lib/types';
 import { 
   ShieldCheck, 
   Users, 
@@ -29,7 +29,8 @@ import {
   Receipt,
   FileText,
   Lock,
-  KeyRound
+  KeyRound,
+  Building2
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
@@ -250,6 +251,10 @@ export default function Home() {
 
   const roleKey = latestUserDoc?.assignedRoleKey || 'hr_officer';
   const roleInfo = BUSINESS_ROLES[roleKey as BusinessRoleKey];
+  
+  // Aggregate all unique departments for the welcome display
+  const activeRoleKeys = latestUserDoc?.assignedRoleKeys || [roleKey as BusinessRoleKey];
+  const allDepts = Array.from(new Set(activeRoleKeys.map(rk => BUSINESS_ROLES[rk]?.dept).filter(Boolean)));
 
   return (
     <AppShell user={user} onLogout={handleLogout}>
@@ -283,10 +288,14 @@ export default function Home() {
               </div>
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
                 <p className="text-[10px] font-black text-slate-400 uppercase mb-1">สิทธิ์การเข้าถึง (Access Level)</p>
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="capitalize font-bold">{user.department}</Badge>
-                  <span className="text-muted-foreground text-xs">/</span>
-                  <Badge variant="outline" className="capitalize font-bold">{user.level}</Badge>
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  {allDepts.map(d => (
+                    <Badge key={d} variant="secondary" className="capitalize font-black flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100">
+                      <Building2 className="h-2.5 w-2.5" /> {d}
+                    </Badge>
+                  ))}
+                  <span className="text-muted-foreground text-xs mx-1">/</span>
+                  <Badge variant="outline" className="capitalize font-bold border-primary/20">{user.level}</Badge>
                 </div>
               </div>
             </CardContent>
@@ -426,7 +435,7 @@ export default function Home() {
 
         {/* Forced Password Reset Dialog */}
         <Dialog open={showResetDialog} onOpenChange={(open) => { if(!open) handleLogout(); }}>
-          <DialogContent className="sm:max-w-md border-t-8 border-t-primary">
+          <DialogContent className="sm:max-max-w-md border-t-8 border-t-primary">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-2xl font-black text-primary">
                 <KeyRound className="h-6 w-6" /> ตั้งรหัสผ่านใหม่

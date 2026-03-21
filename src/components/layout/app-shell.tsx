@@ -1,3 +1,4 @@
+
 'use client';
 
 import * as React from 'react';
@@ -6,7 +7,7 @@ import { SidebarNav } from './sidebar-nav';
 import { User, PermissionProfile } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { LogOut, Shield, AlertTriangle, Info, Settings2 } from 'lucide-react';
+import { LogOut, Shield, AlertTriangle, Info, Settings2, Building2 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useAuth, useCollection } from '@/firebase';
 import { doc, updateDoc, query, collection, where } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
@@ -86,7 +87,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const isProfileMissing = profileKeys.length > 0 && !isProfilesLoading && (!profiles || profiles.length === 0);
   const isContextMissing = !user.department || !user.level;
 
-  // For display, we use the first active profile or legacy indicator
+  // Primary profile identification for simple display
   const primaryProfile = profiles?.find(p => p.profileKey === user.permissionProfileKey) || profiles?.[0];
 
   return (
@@ -145,13 +146,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                   <span className="text-sm font-black truncate text-primary">{user.displayName}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">
-                    {dept} / {level}
+                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter flex items-center gap-1">
+                    <Building2 className="h-2.5 w-2.5" /> {dept} / {level}
                   </span>
                   {primaryProfile && (
-                    <Badge variant="secondary" className="text-[9px] h-4 py-0 px-1 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1">
-                      <Shield className="h-2 w-2" /> {primaryProfile.profileNameEn}
-                      {profiles && profiles.length > 1 && <span className="ml-1 opacity-60">+{profiles.length - 1}</span>}
+                    <Badge variant="secondary" className="text-[9px] h-4 py-0 px-1 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1 font-black">
+                      <Shield className="h-2.5 w-2.5" /> {primaryProfile.profileNameEn}
+                      {profiles && profiles.length > 1 && <span className="ml-0.5 opacity-60">+{profiles.length - 1}</span>}
                     </Badge>
                   )}
                 </div>

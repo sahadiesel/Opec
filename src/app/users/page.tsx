@@ -22,7 +22,8 @@ import {
   Clock,
   Mail,
   AlertTriangle,
-  RefreshCw
+  RefreshCw,
+  Building2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
@@ -252,14 +253,14 @@ export default function UsersPage() {
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
                     <TableHead>บทบาทหน้าที่ (Assigned Roles)</TableHead>
-                    <TableHead>สิทธิ์เชิงแผนก</TableHead>
+                    <TableHead>สิทธิ์เชิงแผนก (Departments)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.map((u) => {
                     const roles = deriveBusinessRoleKeys(u);
-                    const isInternal = u.userType !== 'customer_portal';
+                    const depts = Array.from(new Set(roles.map(rk => BUSINESS_ROLES[rk]?.dept).filter(Boolean)));
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -277,11 +278,11 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex flex-wrap gap-1 max-w-[300px]">
                             {roles.map(rk => {
                               const info = BUSINESS_ROLES[rk];
                               return (
-                                <Badge key={rk} variant="outline" className="text-[9px] uppercase font-bold bg-white">
+                                <Badge key={rk} variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary">
                                   {info?.labelTh || rk}
                                 </Badge>
                               );
@@ -289,9 +290,12 @@ export default function UsersPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-1">
-                            <Badge variant="secondary" className="text-[9px] capitalize">{u.department}</Badge>
-                            <Badge variant="outline" className="text-[9px] capitalize">{u.level}</Badge>
+                          <div className="flex flex-wrap gap-1">
+                            {depts.map(d => (
+                              <Badge key={d} variant="secondary" className="text-[9px] capitalize font-bold flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100">
+                                <Building2 className="h-2 w-2" /> {d}
+                              </Badge>
+                            ))}
                           </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
@@ -376,17 +380,22 @@ export default function UsersPage() {
                   {editedRoles.length > 0 ? (
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <p className="text-[9px] font-bold text-muted-foreground uppercase">แผนกที่เกี่ยวข้อง (Departments):</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">แผนกที่เกี่ยวข้อง (Target Departments):</p>
                         <div className="flex flex-wrap gap-1">
                           {Array.from(new Set(editedRoles.map(rk => BUSINESS_ROLES[rk]?.dept))).map(d => (
-                            <Badge key={d} variant="outline" className="bg-white capitalize text-[10px]">{d}</Badge>
+                            <Badge key={d} variant="outline" className="bg-white capitalize text-[10px] font-black border-blue-200 text-blue-700">
+                              <Building2 className="h-2.5 w-2.5 mr-1" /> {d}
+                            </Badge>
                           ))}
                         </div>
                       </div>
                       <Separator className="bg-primary/10" />
-                      <p className="text-[10px] text-muted-foreground italic leading-relaxed">
-                        ระบบจะรวมสิทธิ์การเข้าถึงจากทุกโปรไฟล์ที่เลือกแบบสะสม (Additive Permissions).
-                      </p>
+                      <div className="p-3 bg-white/50 rounded border border-dashed border-blue-200">
+                        <p className="text-[10px] text-blue-800 italic leading-relaxed">
+                          <Info className="h-3 w-3 inline mr-1" />
+                          ระบบจะรวมสิทธิ์การเข้าถึงจากทุกโปรไฟล์ที่เลือกแบบสะสม (Additive Permissions). ผู้ใช้จะเห็นเมนูและข้อมูลของทุกแผนกที่ระบุไว้
+                        </p>
+                      </div>
                     </div>
                   ) : (
                     <div className="py-20 text-center space-y-3">
@@ -415,7 +424,7 @@ export default function UsersPage() {
                 disabled={isSaving || editedRoles.length === 0} 
                 className="bg-primary font-black h-12 px-10 shadow-lg text-lg"
               >
-                {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-5 w-5 mr-2" />}
+                {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                 บันทึกสิทธิ์ (Apply Changes)
               </Button>
             </DialogFooter>
