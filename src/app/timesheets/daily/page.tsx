@@ -108,6 +108,7 @@ export default function DailyTimesheetsPage() {
 
       if (!asgn) throw new Error("Could not resolve assignment context");
 
+      // CRITICAL: deriving workMode from assignment context ONLY (no hardcoding)
       await service.bulkUpsertTimesheets([{
         ...newTs,
         workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
@@ -116,7 +117,7 @@ export default function DailyTimesheetsPage() {
         purchaseOrderId: asgn.poId || '',
         positionId: asgn.positionId || '',
         siteId: asgn.waveId || '',
-        workMode: asgn.workMode, // Derived from assignment context (NO HARDCODING)
+        workMode: asgn.workMode, 
         shiftType: 'DAY',
         status: 'DRAFT'
       }], currentUser);
