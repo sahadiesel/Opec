@@ -116,7 +116,7 @@ export default function DailyTimesheetsPage() {
         purchaseOrderId: asgn.poId || '',
         positionId: asgn.positionId || '',
         siteId: asgn.waveId || '',
-        workMode: asgn.workMode, // Derived from assignment context
+        workMode: asgn.workMode, // Derived from assignment context (NO HARDCODING)
         shiftType: 'DAY',
         status: 'DRAFT'
       }], currentUser);

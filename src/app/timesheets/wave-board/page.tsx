@@ -161,7 +161,7 @@ export default function WaveTimesheetBoardPage() {
           customerId: wave?.customerId || '',
           projectName: wave?.projectName || '',
           positionId: asgn?.positionId || '',
-          workMode: asgn?.workMode, // Derived directly from assignment context
+          workMode: asgn?.workMode, // Derived directly from assignment context (NO HARDCODING)
           shiftType: 'DAY' as any,
         };
       });
