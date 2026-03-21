@@ -18,7 +18,9 @@ import {
   Waves,
   AlertTriangle,
   Info,
-  Loader2
+  Loader2,
+  ShieldAlert,
+  UserX
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
@@ -98,14 +100,50 @@ export default function AssignmentsPage() {
       return;
     }
 
+    const worker = allWorkers?.find(w => w.id === selectedWorkerId);
     const wave = allWaves?.find(w => w.id === selectedWaveId);
-    if (!wave) return;
+    if (!worker || !wave) return;
+
+    // --- SUITABILITY VALIDATIONS ---
+    
+    // 1. Worker Status Check
+    if (worker.workerStatus === 'BLACKLISTED') {
+      toast({ variant: "destructive", title: "ไม่สามารถมอบหมายได้", description: "คนงานรายนี้อยู่ในบัญชีดำ (Blacklisted)" });
+      return;
+    }
+    if (worker.workerStatus === 'INACTIVE') {
+      toast({ variant: "destructive", title: "ไม่สามารถมอบหมายได้", description: "คนงานพ้นสภาพการจ้าง (Inactive)" });
+      return;
+    }
+
+    // 2. Readiness Compliance Check
+    if (worker.readinessStatus !== 'READY') {
+      toast({ 
+        variant: "destructive", 
+        title: "ความพร้อมไม่ผ่านเกณฑ์ (Not Ready)", 
+        description: `คนงานมีสถานะ ${worker.readinessStatus} กรุณาตรวจสอบใบเซอร์และผลตรวจร่างกายก่อนมอบหมายงาน` 
+      });
+      return;
+    }
 
     // Resolve Context from PO, PO Line and Position Matrix
     const po = allPOs?.find(p => p.id === wave.poId);
     const poLine = allPOLines?.find(l => l.id === wave.poLineId);
-    const position = allPositions?.find(p => p.id === (poLine?.positionId || wave.poLineId));
+    const targetPositionId = poLine?.positionId || wave.poLineId;
+    const position = allPositions?.find(p => p.id === targetPositionId);
     const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
+
+    // 3. Position Suitability Check
+    if (worker.currentPositionId !== targetPositionId) {
+      const targetPosName = position?.positionName || targetPositionId;
+      const workerPosName = allPositions?.find(p => p.id === worker.currentPositionId)?.positionName || worker.currentPositionId;
+      toast({ 
+        variant: "destructive", 
+        title: "ตำแหน่งงานไม่ตรงกัน", 
+        description: `คนงานมีตำแหน่ง ${workerPosName} แต่โครงการต้องการตำแหน่ง ${targetPosName}` 
+      });
+      return;
+    }
 
     setIsCreating(true);
     try {
@@ -133,17 +171,17 @@ export default function AssignmentsPage() {
         endDate: endDate,
         deploymentStatus: 'DRAFT',
         clientApprovalStatus: 'NOT_SUBMITTED',
-        readinessStatus: 'incomplete',
+        readinessStatus: 'ready', // Worker was validated as ready before creation
         workMode: resolvedWorkMode,
         readinessSummary: {
-          passportValid: 'missing',
-          medicalValid: 'missing',
-          certificatesComplete: 'missing',
-          safetyTrainingComplete: 'missing',
-          fitToWork: 'missing',
+          passportValid: 'pass',
+          medicalValid: 'pass',
+          certificatesComplete: 'pass',
+          safetyTrainingComplete: 'pass',
+          fitToWork: 'pass',
           ppeIssued: 'missing',
           toolsIssued: 'missing',
-          overlapClear: 'missing',
+          overlapClear: 'pass',
           clientApproved: 'missing'
         },
         notes: notes,
@@ -200,6 +238,14 @@ export default function AssignmentsPage() {
           </div>
         ) : (
           <>
+            <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
+              <ShieldAlert className="h-5 w-5 text-amber-600" />
+              <AlertTitle className="font-bold">นโยบายความเหมาะสม (Suitability Policy)</AlertTitle>
+              <AlertDescription className="text-sm">
+                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b> และ <b>สถานะความพร้อม (Readiness)</b> โดยอัตโนมัติ ห้ามมอบหมายคนงานที่มีสถานะไม่พร้อมหรือตำแหน่งไม่ตรงตามใบสั่งซื้อ
+              </AlertDescription>
+            </Alert>
+
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
@@ -234,14 +280,14 @@ export default function AssignmentsPage() {
                     <div className="space-y-2 md:col-span-2">
                       <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
                       <Select onValueChange={setSelectedWorkerId}>
-                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงาน (Field Workforce only)..." /></SelectTrigger>
+                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงานที่พร้อม (Ready)..." /></SelectTrigger>
                         <SelectContent>
-                          {allWorkers?.map(w => (
+                          {allWorkers?.filter(w => w.readinessStatus === 'READY').map(w => (
                             <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className="text-[10px] text-muted-foreground italic">* เฉพาะรายชื่อจากฐานข้อมูล Worker (Field labor) เท่านั้นที่จะแสดงที่นี่</p>
+                      <p className="text-[10px] text-muted-foreground italic">* แสดงเฉพาะคนงานที่มีสถานะ READY เท่านั้น</p>
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>
