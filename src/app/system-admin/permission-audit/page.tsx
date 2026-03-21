@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -41,42 +42,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isAdminUser, inferDeptAndLevel } from '@/lib/auth-mapping';
-import { getPermissions } from '@/lib/permissions';
+import { getPermissions, SYSTEM_MODULES } from '@/lib/permissions';
 import { useRouter } from 'next/navigation';
-
-const MODULE_LIST = [
-  { group: 'Overview', key: 'overview_dashboard', label: 'Dashboard' },
-  { group: 'Commercial', key: 'customers', label: 'Customers' },
-  { group: 'Commercial', key: 'main_contracts', label: 'Contracts' },
-  { group: 'Commercial', key: 'customer_pos', label: 'Customer POs' },
-  { group: 'Commercial', key: 'quotations', label: 'Quotations' },
-  { group: 'Commercial', key: 'sales_contract_terms', label: 'Sales Terms' },
-  { group: 'Commercial', key: 'labor_cost_contract_terms', label: 'Labor Cost Terms' },
-  { group: 'Commercial', key: 'rate_conditions', label: 'Rate Conditions' },
-  { group: 'Commercial', key: 'profit_estimates', label: 'Profit Estimates' },
-  { group: 'HR & Payroll', key: 'timesheets', label: 'Timesheets' },
-  { group: 'HR & Payroll', key: 'worker_payroll', label: 'Worker Payroll' },
-  { group: 'HR & Payroll', key: 'office_payroll', label: 'Office Payroll' },
-  { group: 'HR & Payroll', key: 'positions', label: 'Positions' },
-  { group: 'HR & Payroll', key: 'workers', label: 'Workers' },
-  { group: 'HR & Payroll', key: 'office_staff', label: 'Office Staff' },
-  { group: 'Operations', key: 'waves', label: 'Waves' },
-  { group: 'Operations', key: 'assignments', label: 'Assignments' },
-  { group: 'Operations', key: 'mobilization', label: 'Mobilization' },
-  { group: 'Operations', key: 'vendors', label: 'Vendors' },
-  { group: 'Operations', key: 'purchases', label: 'Purchases' },
-  { group: 'Operations', key: 'store_inventory', label: 'Store / Inventory' },
-  { group: 'Finance', key: 'billing_notes', label: 'Billing Notes' },
-  { group: 'Finance', key: 'tax_invoices', label: 'Tax Invoices' },
-  { group: 'Finance', key: 'receipts', label: 'Receipts' },
-  { group: 'Finance', key: 'ap_bills', label: 'AP Bills' },
-  { group: 'Finance', key: 'accounts_receivable', label: 'Accounts Receivable' },
-  { group: 'Finance', key: 'accounts_payable', label: 'Accounts Payable' },
-  { group: 'Finance', key: 'cashbook', label: 'Cashbook' },
-  { group: 'Finance', key: 'bank_accounts', label: 'Bank Accounts' },
-  { group: 'System', key: 'system_admin', label: 'System Admin' },
-  { group: 'System', key: 'client_portal', label: 'Client Portal' },
-];
 
 export default function PermissionAuditPage() {
   const router = useRouter();
@@ -202,7 +169,7 @@ export default function PermissionAuditPage() {
       const profile = profiles?.find(p => p.profileKey === user.permissionProfileKey);
       
       const permissions: Record<string, ModulePermission> = {};
-      MODULE_LIST.forEach(m => {
+      SYSTEM_MODULES.forEach(m => {
         permissions[m.key] = getPermissions(user, m.key as any, profile);
       });
       return permissions;
@@ -239,9 +206,6 @@ export default function PermissionAuditPage() {
           <div className="flex gap-2">
             <Button variant="outline" className="gap-2 h-11" onClick={() => router.push('/system-admin/permission-matrix')}>
               <RefreshCw className="h-4 w-4" /> Go to Matrix Tool
-            </Button>
-            <Button variant="outline" className="gap-2 h-11">
-              <Download className="h-4 w-4" /> Export Audit Report
             </Button>
           </div>
         </div>
@@ -528,7 +492,7 @@ export default function PermissionAuditPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {MODULE_LIST.map(mod => {
+                      {SYSTEM_MODULES.map(mod => {
                         const perms = explorerPermissions?.[mod.key] || { view: false, create: false, edit: false, delete: false, approve: false };
                         return (
                           <TableRow key={mod.key} className="hover:bg-muted/10">

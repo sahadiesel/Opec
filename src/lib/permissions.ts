@@ -11,43 +11,60 @@ import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel } from
 import { inferDeptAndLevel, isAdminUser } from './auth-mapping';
 
 /**
- * Standard Module Keys for the entire system
+ * Registry of all modules in the system.
+ * This is the canonical source of truth for module keys and their UI groups.
  */
-export type ModuleKey = 
-  | 'overview_dashboard'
-  | 'customers'
-  | 'main_contracts'
-  | 'customer_pos'
-  | 'quotations'
-  | 'timesheets'
-  | 'worker_payroll'
-  | 'office_payroll'
-  | 'positions'
-  | 'workers'
-  | 'office_staff'
-  | 'waves'
-  | 'assignments'
-  | 'mobilization'
-  | 'vendors'
-  | 'purchases'
-  | 'store_inventory'
-  | 'billing_notes'
-  | 'tax_invoices'
-  | 'receipts'
-  | 'ap_bills'
-  | 'accounts_receivable'
-  | 'accounts_payable'
-  | 'cashbook'
-  | 'bank_accounts'
-  | 'system_admin'
-  | 'client_portal'
-  | 'document_numbering'
-  | 'sales_contract_terms'
-  | 'labor_cost_contract_terms'
-  | 'rate_conditions'
-  | 'profit_estimates'
-  | 'payment_export_batches'
-  | 'audit_logs';
+export const SYSTEM_MODULES = [
+  { group: 'Overview', key: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Main Dashboard)' },
+  
+  // Commercial
+  { group: 'Commercial (การค้า)', key: 'customers', label: 'ทะเบียนลูกค้า (Customers)' },
+  { group: 'Commercial (การค้า)', key: 'main_contracts', label: 'สัญญาหลัก (Contracts)' },
+  { group: 'Commercial (การค้า)', key: 'customer_pos', label: 'ใบสั่งซื้อลูกค้า (Customer POs)' },
+  { group: 'Commercial (การค้า)', key: 'quotations', label: 'ใบเสนอราคา (Quotations)' },
+  { group: 'Commercial (การค้า)', key: 'sales_contract_terms', label: 'เงื่อนไขการขาย (Sales Terms)' },
+  { group: 'Commercial (การค้า)', key: 'rate_conditions', label: 'กฎการคำนวณราคา (Rate Conditions)' },
+  { group: 'Commercial (การค้า)', key: 'profit_estimates', label: 'ประมาณการกำไร (Profit Estimates)' },
+  
+  // HR & Payroll
+  { group: 'HR & Payroll (บุคคล)', key: 'timesheets', label: 'ลงเวลาทำงาน (Timesheets)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'worker_payroll', label: 'จ่ายเงินคนงาน (Worker Payroll)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'office_payroll', label: 'เงินเดือนออฟฟิศ (Office Payroll)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'payment_export_batches', label: 'ไฟล์โอนเงินธนาคาร (Payment Exports)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'labor_cost_contract_terms', label: 'เงื่อนไขต้นทุน (Labor Cost Terms)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'positions', label: 'ตำแหน่งงาน (Positions)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'workers', label: 'ทะเบียนคนงาน (Workers)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'office_staff', label: 'พนักงานออฟฟิศ (Office Staff)' },
+  
+  // Operations
+  { group: 'Operations (ปฏิบัติการ)', key: 'waves', label: 'กลุ่มรอบการทำงาน (Waves)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'assignments', label: 'การมอบหมายงาน (Assignments)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'mobilization', label: 'การเตรียมส่งตัว (Mobilization)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การสั่งซื้อ (Purchases)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
+  
+  // Finance
+  { group: 'Finance & Accounting (การเงิน)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'tax_invoices', label: 'ใบกำกับภาษี (Tax Invoices)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'receipts', label: 'ใบเสร็จรับเงิน (Receipts)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'ap_bills', label: 'รับวางบิลเจ้าหนี้ (AP Bills)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'accounts_receivable', label: 'ลูกหนี้การค้า (AR)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'accounts_payable', label: 'เจ้าหนี้การค้า (AP)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
+  
+  // System
+  { group: 'Administration (ระบบ)', key: 'system_admin', label: 'จัดการผู้ใช้/ระบบ (System Admin)' },
+  { group: 'Administration (ระบบ)', key: 'client_portal', label: 'Client Portal (หน้าของลูกค้า)' },
+  { group: 'Administration (ระบบ)', key: 'document_numbering', label: 'รันเลขที่เอกสาร (Numbering)' },
+  { group: 'Administration (ระบบ)', key: 'audit_logs', label: 'ประวัติกิจกรรม (Audit Logs)' },
+] as const;
+
+/**
+ * Extract ModuleKey type from the registry
+ */
+export type ModuleKey = typeof SYSTEM_MODULES[number]['key'];
 
 /**
  * Default Permission Templates
@@ -57,42 +74,11 @@ export const OFFICER_ACCESS: ModulePermission = { view: true, create: true, edit
 export const READ_ONLY: ModulePermission = { view: true, create: false, edit: false, delete: false, approve: false };
 export const NO_ACCESS: ModulePermission = { view: false, create: false, edit: false, delete: false, approve: false };
 
-export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = {
-  overview_dashboard: NO_ACCESS,
-  customers: NO_ACCESS,
-  main_contracts: NO_ACCESS,
-  customer_pos: NO_ACCESS,
-  quotations: NO_ACCESS,
-  timesheets: NO_ACCESS,
-  worker_payroll: NO_ACCESS,
-  office_payroll: NO_ACCESS,
-  positions: NO_ACCESS,
-  workers: NO_ACCESS,
-  office_staff: NO_ACCESS,
-  waves: NO_ACCESS,
-  assignments: NO_ACCESS,
-  mobilization: NO_ACCESS,
-  vendors: NO_ACCESS,
-  purchases: NO_ACCESS,
-  store_inventory: NO_ACCESS,
-  billing_notes: NO_ACCESS,
-  tax_invoices: NO_ACCESS,
-  receipts: NO_ACCESS,
-  ap_bills: NO_ACCESS,
-  accounts_receivable: NO_ACCESS,
-  accounts_payable: NO_ACCESS,
-  cashbook: NO_ACCESS,
-  bank_accounts: NO_ACCESS,
-  system_admin: NO_ACCESS,
-  client_portal: NO_ACCESS,
-  document_numbering: NO_ACCESS,
-  sales_contract_terms: NO_ACCESS,
-  labor_cost_contract_terms: NO_ACCESS,
-  rate_conditions: NO_ACCESS,
-  profit_estimates: NO_ACCESS,
-  payment_export_batches: NO_ACCESS,
-  audit_logs: NO_ACCESS,
-};
+/**
+ * Initial empty template for permissions
+ */
+export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = 
+  SYSTEM_MODULES.reduce((acc, mod) => ({ ...acc, [mod.key]: NO_ACCESS }), {});
 
 /**
  * Baseline Permission Profile Definitions
@@ -107,11 +93,11 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
     level: level,
     isActive: true,
     notes: 'Generated by system baseline tool',
-    permissions: Object.keys(INITIAL_PERMISSIONS_TEMPLATE).reduce((acc, k) => {
-      const p = perms[k] || NO_ACCESS;
+    permissions: SYSTEM_MODULES.reduce((acc, mod) => {
+      const p = perms[mod.key] || NO_ACCESS;
       return { 
         ...acc, 
-        [k]: { ...NO_ACCESS, ...p } 
+        [mod.key]: { ...NO_ACCESS, ...p } 
       };
     }, {} as Record<string, ModulePermission>)
   });
@@ -119,7 +105,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   return [
     // 1. Admin Admin
     baseline('admin_admin', 'System Administrator', 'ผู้ดูแลระบบสูงสุด', 'admin', 'admin', 
-      Object.keys(INITIAL_PERMISSIONS_TEMPLATE).reduce((acc, k) => ({ ...acc, [k]: FULL_ACCESS }), {})
+      SYSTEM_MODULES.reduce((acc, mod) => ({ ...acc, [mod.key]: FULL_ACCESS }), {})
     ),
 
     // 2. HR Manager

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -8,16 +9,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { 
   ShieldCheck, 
   Plus, 
-  CheckCircle2, 
   Edit2, 
   ShieldAlert,
-  Info,
   ChevronRight,
   Loader2,
   Save,
-  Sparkles,
   Settings2,
-  Lock,
   RefreshCw
 } from 'lucide-react';
 import { 
@@ -54,9 +51,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
 import { isAdminUser } from '@/lib/auth-mapping';
-import { getBaselineProfiles, INITIAL_PERMISSIONS_TEMPLATE } from '@/lib/permissions';
+import { getBaselineProfiles, INITIAL_PERMISSIONS_TEMPLATE, SYSTEM_MODULES } from '@/lib/permissions';
 
 const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหาร)' },
@@ -73,41 +69,6 @@ const LEVELS: { id: AccessLevel; label: string }[] = [
   { id: 'officer', label: 'Officer' },
   { id: 'manager', label: 'Manager' },
   { id: 'admin', label: 'Admin' },
-];
-
-const MODULE_LIST = [
-  { group: 'Overview', key: 'overview_dashboard', label: 'Dashboard' },
-  { group: 'Commercial', key: 'customers', label: 'Customers' },
-  { group: 'Commercial', key: 'main_contracts', label: 'Contracts' },
-  { group: 'Commercial', key: 'customer_pos', label: 'Customer POs' },
-  { group: 'Commercial', key: 'quotations', label: 'Quotations' },
-  { group: 'Commercial', key: 'sales_contract_terms', label: 'Sales Terms' },
-  { group: 'Commercial', key: 'labor_cost_contract_terms', label: 'Labor Cost Terms' },
-  { group: 'Commercial', key: 'rate_conditions', label: 'Rate Conditions' },
-  { group: 'Commercial', key: 'profit_estimates', label: 'Profit Estimates' },
-  { group: 'HR & Payroll', key: 'timesheets', label: 'Timesheets' },
-  { group: 'HR & Payroll', key: 'worker_payroll', label: 'Worker Payroll' },
-  { group: 'HR & Payroll', key: 'office_payroll', label: 'Office Payroll' },
-  { group: 'HR & Payroll', key: 'positions', label: 'Positions' },
-  { group: 'HR & Payroll', key: 'workers', label: 'Workers' },
-  { group: 'HR & Payroll', key: 'office_staff', label: 'Office Staff' },
-  { group: 'Operations', key: 'waves', label: 'Waves' },
-  { group: 'Operations', key: 'assignments', label: 'Assignments' },
-  { group: 'Operations', key: 'mobilization', label: 'Mobilization' },
-  { group: 'Operations', key: 'vendors', label: 'Vendors' },
-  { group: 'Operations', key: 'purchases', label: 'Purchases' },
-  { group: 'Operations', key: 'store_inventory', label: 'Store / Inventory' },
-  { group: 'Finance', key: 'billing_notes', label: 'Billing Notes' },
-  { group: 'Finance', key: 'tax_invoices', label: 'Tax Invoices' },
-  { group: 'Finance', key: 'receipts', label: 'Receipts' },
-  { group: 'Finance', key: 'ap_bills', label: 'AP Bills' },
-  { group: 'Finance', key: 'accounts_receivable', label: 'AR' },
-  { group: 'Finance', key: 'accounts_payable', label: 'AP' },
-  { group: 'Finance', key: 'cashbook', label: 'Cashbook' },
-  { group: 'Finance', key: 'bank_accounts', label: 'Bank Accounts' },
-  { group: 'System', key: 'system_admin', label: 'System Admin' },
-  { group: 'System', key: 'client_portal', label: 'Client Portal' },
-  { group: 'System', key: 'document_numbering', label: 'Numbering Admin' },
 ];
 
 export default function PermissionMatrixPage() {
@@ -233,7 +194,7 @@ export default function PermissionMatrixPage() {
   if (!isUserAdmin) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <div className="flex items-center justify-center py-20 text-center space-y-4">
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Restricted</h2>
           <p className="text-muted-foreground">Only system administrators can access advanced settings.</p>
@@ -323,13 +284,6 @@ export default function PermissionMatrixPage() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(!profiles || profiles.length === 0) && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="py-20 text-center text-muted-foreground italic">
-                        ยังไม่มีโปรไฟล์ในฐานข้อมูล กดปุ่ม "Restore Baseline Profiles" เพื่อสร้างโปรไฟล์มาตรฐานเริ่มต้น
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             )}
@@ -396,7 +350,7 @@ export default function PermissionMatrixPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {MODULE_LIST.map((mod) => (
+                      {SYSTEM_MODULES.map((mod) => (
                         <TableRow key={mod.key} className="hover:bg-muted/10 transition-colors">
                           <TableCell className="py-2">
                             <div className="flex flex-col">
