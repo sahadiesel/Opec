@@ -37,6 +37,16 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { 
   DropdownMenu, 
   DropdownMenuContent, 
   DropdownMenuItem, 
@@ -69,6 +79,8 @@ export default function UsersPage() {
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [showConfirmCancel, setShowConfirmCancel] = useState(false);
+  
   const [editedRoles, setEditedRoles] = useState<BusinessRoleKey[]>([]);
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
@@ -106,6 +118,22 @@ export default function UsersPage() {
     });
   }, [users, searchTerm]);
 
+  /**
+   * Detection of unsaved changes (Dirty state)
+   */
+  const isDirty = useMemo(() => {
+    if (!selectedUser) return false;
+    const initialRoles = deriveBusinessRoleKeys(selectedUser);
+    const initialStatus = selectedUser.approvalStatus || (selectedUser.isActive ? 'ACTIVE' : 'PENDING');
+    const initialNotes = selectedUser.notes || '';
+
+    const rolesChanged = JSON.stringify([...editedRoles].sort()) !== JSON.stringify([...initialRoles].sort());
+    const statusChanged = editedStatus !== initialStatus;
+    const notesChanged = notes !== initialNotes;
+
+    return rolesChanged || statusChanged || notesChanged;
+  }, [selectedUser, editedRoles, editedStatus, notes]);
+
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
     const roles = deriveBusinessRoleKeys(user);
@@ -113,6 +141,23 @@ export default function UsersPage() {
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
+  };
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open && isDirty) {
+      setShowConfirmCancel(true);
+    } else if (!open) {
+      setIsEditDialogOpen(false);
+      setSelectedUser(null);
+    } else {
+      setIsEditDialogOpen(true);
+    }
+  };
+
+  const handleConfirmCancel = () => {
+    setShowConfirmCancel(false);
+    setIsEditDialogOpen(false);
+    setSelectedUser(null);
   };
 
   const handleSaveUser = async () => {
@@ -136,6 +181,7 @@ export default function UsersPage() {
       setTimeout(() => {
         setIsSaving(false);
         setIsEditDialogOpen(false);
+        setSelectedUser(null);
         toast({ 
           title: "บันทึกข้อมูลสำเร็จ (Saved)", 
           description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
@@ -319,7 +365,7 @@ export default function UsersPage() {
         </Card>
 
         {/* Access Editor Modal */}
-        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <Dialog open={isEditDialogOpen} onOpenChange={handleOpenChange}>
           <DialogContent className="max-w-3xl border-t-8 border-t-primary">
             <DialogHeader>
               <DialogTitle className="text-2xl flex items-center gap-3">
@@ -417,19 +463,42 @@ export default function UsersPage() {
               </div>
             </div>
 
-            <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-6 mt-4 gap-3">
-              <Button variant="outline" className="h-12 px-8" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
+            <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-6 mt-4 gap-3 border-t">
+              <Button 
+                variant="outline" 
+                className="h-12 px-8" 
+                onClick={() => handleOpenChange(false)} 
+                disabled={isSaving}
+              >
+                ยกเลิก
+              </Button>
               <Button 
                 onClick={handleSaveUser} 
-                disabled={isSaving || editedRoles.length === 0} 
+                disabled={isSaving || editedRoles.length === 0 || !isDirty} 
                 className="bg-primary font-black h-12 px-10 shadow-lg text-lg"
               >
                 {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                บันทึกสิทธิ์ (Apply Changes)
+                บันทึกสิทธิ์
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Unsaved Changes Confirmation */}
+        <AlertDialog open={showConfirmCancel} onOpenChange={setShowConfirmCancel}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ยืนยันการยกเลิก</AlertDialogTitle>
+              <AlertDialogDescription>
+                มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก ต้องการยกเลิกและทิ้งข้อมูลที่แก้ไขหรือไม่?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setShowConfirmCancel(false)}>แก้ไขต่อ</AlertDialogCancel>
+              <AlertDialogAction onClick={handleConfirmCancel} className="bg-destructive text-destructive-foreground">ทิ้งข้อมูลและยกเลิก</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );
