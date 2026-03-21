@@ -24,7 +24,9 @@ import {
   Waves,
   Package,
   History,
-  CheckCircle
+  CheckCircle,
+  Building2,
+  FileText
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -39,7 +41,8 @@ import {
   DeploymentStatus, 
   ClientApprovalStatus,
   Wave,
-  ChecklistItemStatus
+  ChecklistItemStatus,
+  MainContract
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -102,6 +105,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const waveRef = useMemoFirebase(() => (firestore && assignment?.waveId && isAuthorized ? doc(firestore, 'waves', assignment.waveId) : null), [firestore, assignment?.waveId, isAuthorized]);
   const { data: wave } = useDoc<Wave>(waveRef as any);
 
+  const customerRef = useMemoFirebase(() => (firestore && assignment?.customerId && isAuthorized ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId, isAuthorized]);
+  const { data: customer } = useDoc<Customer>(customerRef as any);
+
+  const poRef = useMemoFirebase(() => (firestore && assignment?.poId && isAuthorized ? doc(firestore, 'purchase_orders', assignment.poId) : null), [firestore, assignment?.poId, isAuthorized]);
+  const { data: po } = useDoc<PurchaseOrder>(poRef as any);
+
+  const contractRef = useMemoFirebase(() => (firestore && assignment?.contractId && isAuthorized ? doc(firestore, 'main_contracts', assignment.contractId) : null), [firestore, assignment?.contractId, isAuthorized]);
+  const { data: contract } = useDoc<MainContract>(contractRef as any);
+
   const handleUpdateStatus = (newStatus: DeploymentStatus) => {
     if (!firestore) return;
     const mobRef = doc(firestore, 'mobilizations', id);
@@ -149,7 +161,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{assignment.assignmentNo || assignment.id}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <span>คนงาน: {worker?.firstName} {worker?.lastName}</span>
+                <span>ลูกค้า: {customer?.name || '...'}</span>
               </div>
             </div>
           </div>
@@ -176,16 +188,39 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
               <TabsContent value="info" className="mt-6 space-y-6">
                 <Card>
-                  <CardHeader><CardTitle className="text-lg">ข้อมูลงานและกำหนดการ</CardTitle></CardHeader>
+                  <CardHeader><CardTitle className="text-lg">ข้อมูลงานและกำหนดการ (Operational Context)</CardTitle></CardHeader>
                   <CardContent className="space-y-6 text-sm">
                     <div className="grid grid-cols-2 gap-6">
                       <div>
-                        <p className="text-muted-foreground uppercase text-[10px] font-bold">ตำแหน่งงาน:</p>
+                        <p className="text-muted-foreground uppercase text-[10px] font-bold">ตำแหน่งงาน (Position):</p>
                         <p className="font-bold text-lg text-primary">{position?.positionName || assignment.positionId}</p>
+                        <Badge variant="secondary" className="mt-1 text-[9px]">{assignment.workMode} Mode</Badge>
                       </div>
                       <div>
                         <p className="text-muted-foreground uppercase text-[10px] font-bold">รอบการทำงาน (Wave):</p>
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700">{wave?.waveCode || 'N/A'}</Badge>
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 font-mono">{wave?.waveCode || 'N/A'}</Badge>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground uppercase text-[10px] font-bold">ใบสั่งซื้ออ้างอิง (Purchase Order):</p>
+                        <p className="font-mono font-bold text-primary flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {po?.poCode || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground uppercase text-[10px] font-bold">สัญญาหลัก (Main Contract):</p>
+                        <p className="font-mono text-xs flex items-center gap-1"><Building2 className="h-3 w-3" /> {contract?.contractNumber || 'N/A'}</p>
+                      </div>
+                      <div className="col-span-2 border-t pt-4">
+                        <p className="text-muted-foreground uppercase text-[10px] font-bold mb-2">ช่วงเวลาปฏิบัติงาน (Schedule):</p>
+                        <div className="flex items-center gap-4">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-muted-foreground">เริ่ม (Start)</span>
+                            <span className="font-bold">{assignment.startDate}</span>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-muted-foreground">สิ้นสุด (End)</span>
+                            <span className="font-bold">{assignment.endDate}</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </CardContent>

@@ -15,7 +15,7 @@ import {
   AlertCircle, 
   Clock, 
   CheckCircle2, 
-  Truck,
+  Truck, 
   XCircle,
   ClipboardCheck,
   Info,
@@ -28,7 +28,8 @@ import {
   FileText,
   ChevronRight,
   MapPin,
-  AlertTriangle
+  AlertTriangle,
+  Building2
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, getDoc } from 'firebase/firestore';
@@ -43,7 +44,9 @@ import {
   Wave,
   WorkerCertificate,
   MobilizationStatus,
-  DeploymentStatus
+  DeploymentStatus,
+  PurchaseOrder,
+  MainContract
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -106,6 +109,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const customerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId]);
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
+  const poRef = useMemoFirebase(() => (firestore && assignment?.poId ? doc(firestore, 'purchase_orders', assignment.poId) : null), [firestore, assignment?.poId]);
+  const { data: po } = useDoc<PurchaseOrder>(poRef as any);
+
+  const contractRef = useMemoFirebase(() => (firestore && assignment?.contractId ? doc(firestore, 'main_contracts', assignment.contractId) : null), [firestore, assignment?.contractId]);
+  const { data: contract } = useDoc<MainContract>(contractRef as any);
+
   const handleUpdateMobStatus = (newStatus: MobilizationStatus, deploymentStatus?: DeploymentStatus) => {
     if (!firestore) return;
     const updateData: any = { 
@@ -159,7 +168,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Mobilization Command Center (การเตรียมส่งตัว)</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
-                <span className="font-mono">ID: {assignment.id}</span>
+                <span className="font-mono font-bold text-primary">{assignment.assignmentNo || assignment.id}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>{worker?.firstName} {worker?.lastName}</span>
               </div>
@@ -329,6 +338,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     </div>
                   </CardContent>
                 </Card>
+              </TabsContent>
 
               <TabsContent value="history" className="mt-6">
                 <Card>
@@ -380,12 +390,16 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
             <Card className="bg-primary/5 border-primary/10 shadow-none">
               <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">ข้อมูลโครงการ & เวฟ</CardTitle>
+                <CardTitle className="text-xs font-bold uppercase tracking-widest text-muted-foreground">ข้อมูลโครงการ & สัญญา</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-2">
                 <div className="space-y-1">
                   <p className="text-[9px] text-muted-foreground uppercase font-bold">ลูกค้า (Client):</p>
                   <p className="text-xs font-bold flex items-center gap-1"><Building2 className="h-3 w-3" /> {customer?.name || '...'}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[9px] text-muted-foreground uppercase font-bold">ใบสั่งซื้อ (Purchase Order):</p>
+                  <p className="text-xs font-bold text-primary flex items-center gap-1"><FileText className="h-3 w-3" /> {po?.poCode || '...'}</p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-[9px] text-muted-foreground uppercase font-bold">รอบการส่งตัว (Wave):</p>

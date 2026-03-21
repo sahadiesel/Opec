@@ -75,7 +75,13 @@ export default function AssignmentsPage() {
   const positionsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'positions') : null), [firestore, isAuthorized]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
-  const poLinesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collectionGroup(firestore, 'po_lines') : null), [firestore, isAuthorized]);
+  const posQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null), [firestore, isAuthorized]);
+  const { data: allPOs } = useCollection<PurchaseOrder>(posQuery as any);
+
+  const poLinesQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return collectionGroup(firestore, 'po_lines');
+  }, [firestore, isAuthorized]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -95,9 +101,10 @@ export default function AssignmentsPage() {
     const wave = allWaves?.find(w => w.id === selectedWaveId);
     if (!wave) return;
 
-    // Resolve Context from PO Line and Position Matrix
+    // Resolve Context from PO, PO Line and Position Matrix
+    const po = allPOs?.find(p => p.id === wave.poId);
     const poLine = allPOLines?.find(l => l.id === wave.poLineId);
-    const position = allPositions?.find(p => p.id === poLine?.positionId);
+    const position = allPositions?.find(p => p.id === (poLine?.positionId || wave.poLineId));
     const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
 
     setIsCreating(true);
@@ -117,7 +124,7 @@ export default function AssignmentsPage() {
         workerId: selectedWorkerId,
         poLineId: wave.poLineId,
         poId: wave.poId,
-        contractId: '', 
+        contractId: po?.contractId || '', // Capture Contract ID from PO for downstream logic
         waveId: selectedWaveId,
         positionId: position?.id || poLine?.positionId || '', 
         customerId: wave.customerId,
