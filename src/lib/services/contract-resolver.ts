@@ -1,3 +1,4 @@
+
 'use client';
 
 /**
@@ -25,6 +26,7 @@ export interface ResolutionResult<T> {
 
 /**
  * Resolves the most appropriate Sales Contract Term based on PO, Customer, and Date.
+ * PRIORITY: Purchase Order Match > Customer Match.
  */
 export function resolveActiveSalesContractTerm(
   terms: SalesContractTerm[],
@@ -76,6 +78,7 @@ export function resolveActiveSalesContractTerm(
 
 /**
  * Resolves the most appropriate Labor Cost Contract Term based on PO, Customer, and Date.
+ * PRIORITY: Specific PO (Scope: SPECIFIC_PO) > General Customer Scope.
  */
 export function resolveActiveLaborCostContractTerm(
   terms: LaborCostContractTerm[],
@@ -105,18 +108,20 @@ export function resolveActiveLaborCostContractTerm(
     };
   }
 
+  // Highest priority: Terms specifically created for this PO
   if (criteria.poId) {
     const poMatch = applicable.find(t => t.relatedPurchaseOrderId === criteria.poId);
     if (poMatch) return { data: poMatch, warnings, isMatch: true };
-    warnings.push(`No specific labor cost term for PO ${criteria.poId}. Falling back to general scope.`);
+    warnings.push(`No specific labor cost term for PO ${criteria.poId}. Checking for general customer scope.`);
   }
 
+  // Fallback: Terms covering the entire customer
   if (criteria.customerId) {
-    const custMatch = applicable.find(t => t.relatedCustomerId === criteria.customerId);
+    const custMatch = applicable.find(t => t.relatedCustomerId === criteria.customerId && t.scopeType === 'GENERAL_CUSTOMER');
     if (custMatch) return { data: custMatch, warnings, isMatch: true };
   }
 
-  return { data: null, warnings: ['No applicable labor cost term found.'], isMatch: false };
+  return { data: null, warnings: ['No applicable labor cost term found for this context.'], isMatch: false };
 }
 
 /**
