@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -15,13 +16,15 @@ import {
   Building2, 
   Calendar,
   Info,
-  Loader2
+  Loader2,
+  ShoppingCart,
+  ClipboardList
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { BillingNote, BillingNoteStatus, User, Customer } from '@/lib/types';
+import { BillingNote, BillingNoteStatus, User, Customer, MainContract, PurchaseOrder } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy } from 'firebase/firestore';
+import { collection, query, orderBy, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -57,7 +60,7 @@ export default function BillingNotesPage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'sales_officer', 'finance_officer'];
+    const authRoles = ['system_admin', 'sales_officer', 'finance_officer', 'accounting_manager'];
     return currentUser?.roleIds?.some(r => authRoles.includes(r as any)) || false;
   }, [currentUser]);
 
@@ -82,6 +85,12 @@ export default function BillingNotesPage() {
     notes: ''
   });
 
+  const contractsQuery = useMemoFirebase(() => (firestore && newNote.customerId ? query(collection(firestore, 'main_contracts'), where('customerId', '==', newNote.customerId)) : null), [firestore, newNote.customerId]);
+  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
+
+  const poQuery = useMemoFirebase(() => (firestore && newNote.customerId ? query(collection(firestore, 'purchase_orders'), where('customerId', '==', newNote.customerId)) : null), [firestore, newNote.customerId]);
+  const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
+
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     if (!newNote.customerId) {
@@ -91,14 +100,13 @@ export default function BillingNotesPage() {
 
     setIsCreating(true);
     try {
-      // Atomic Document Number Generation
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'billing_note', { 
         actor: currentUser.displayName 
       });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), {
         ...newNote,
-        billingNoteNo: finalNo, // Apply the official sequential number
+        billingNoteNo: finalNo,
         amountBeforeTax: 0,
         vatAmount: 0,
         withholdingTaxAmount: 0,
@@ -106,7 +114,7 @@ export default function BillingNotesPage() {
         createdAt: Date.now(),
         createdBy: currentUser.displayName,
         updatedAt: Date.now(),
-        updatedBy: currentUser.id
+        updatedBy: currentUser.displayName
       });
 
       setIsDialogOpen(false);
@@ -178,15 +186,36 @@ export default function BillingNotesPage() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่ใบวางบิล (Billing Note No.)</Label>
                   <Input value={newNote.billingNoteNo} disabled className="bg-muted/50 font-mono font-bold text-primary" />
-                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label>ลูกค้า (Customer)</Label>
-                  <Select onValueChange={v => setNewNote({...newNote, customerId: v})}>
+                  <Label>ลูกค้า (Customer) *</Label>
+                  <Select onValueChange={v => setNewNote({...newNote, customerId: v, contractId: '', poId: ''})}>
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
                     <SelectContent>
                       {customers?.map(c => (
                         <SelectItem key={c.id} value={c.id}>{c.name} ({c.customerCode})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1"><ClipboardList className="h-3 w-3" /> สัญญาหลัก (Contract)</Label>
+                  <Select onValueChange={v => setNewNote({...newNote, contractId: v})} value={newNote.contractId} disabled={!newNote.customerId}>
+                    <SelectTrigger><SelectValue placeholder="เลือกสัญญา..." /></SelectTrigger>
+                    <SelectContent>
+                      {contracts?.map(c => (
+                        <SelectItem key={c.id} value={c.id}>{c.contractNumber}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1"><ShoppingCart className="h-3 w-3" /> ใบสั่งซื้อ (Customer PO)</Label>
+                  <Select onValueChange={v => setNewNote({...newNote, poId: v})} value={newNote.poId} disabled={!newNote.customerId}>
+                    <SelectTrigger><SelectValue placeholder="เลือก PO..." /></SelectTrigger>
+                    <SelectContent>
+                      {pos?.map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.poCode}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -256,7 +285,7 @@ export default function BillingNotesPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-medium">
                             <Calendar className="h-3 w-3" />
-                            {note.billingPeriodStart} - {note.billingPeriodEnd}
+                            {note.billingPeriodStart || 'N/A'} - {note.billingPeriodEnd || 'N/A'}
                           </div>
                         </TableCell>
                         <TableCell className="text-right font-black text-primary">

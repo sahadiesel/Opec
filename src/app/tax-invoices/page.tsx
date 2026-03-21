@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -21,7 +22,7 @@ import { Input } from '@/components/ui/input';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy, doc } from 'firebase/firestore';
+import { collection, query, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -51,8 +52,8 @@ export default function TaxInvoicesPage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer', 'sales_officer'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
+    const authRoles = ['system_admin', 'finance_officer', 'sales_officer', 'accounting_manager'];
+    return currentUser?.roleIds?.some(r => authRoles.includes(r as any)) || false;
   }, [currentUser]);
 
   const invoicesQuery = useMemoFirebase(() => {
@@ -102,19 +103,23 @@ export default function TaxInvoicesPage() {
         customerId: sourceNote.customerId,
         taxableAmount: sourceNote.amountBeforeTax,
         vatAmount: sourceNote.vatAmount,
-        withholdingTaxAmount: sourceNote.withholdingTaxAmount || 0,
+        currency: sourceNote.currency || 'THB',
         totalAmount: sourceNote.netAmount,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
 
-      // 3. Create an AR record automatically with sequential AR- number
+      // 3. Update source Billing Note status
+      const sourceNoteRef = doc(firestore, 'billing_notes', sourceNote.id);
+      await updateDoc(sourceNoteRef, { status: 'ISSUED', updatedAt: Date.now() });
+
+      // 4. Create an AR record automatically with sequential AR- number
       await addDocumentNonBlocking(collection(firestore, 'accounts_receivable'), {
         customerId: sourceNote.customerId,
         referenceType: 'TAX_INVOICE',
         referenceId: docRef?.id || '',
-        referenceNo: finalNo, // Store Invoice No as reference
-        documentNo: arNo, // Use official AR sequential number
+        referenceNo: finalNo, 
+        documentNo: arNo, 
         issueDate: newInvoice.issueDate,
         dueDate: sourceNote.dueDate,
         debitAmount: sourceNote.netAmount,
@@ -139,7 +144,7 @@ export default function TaxInvoicesPage() {
   const getStatusBadge = (status: TaxInvoiceStatus) => {
     switch (status) {
       case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'ISSUED': return <Badge className="bg-blue-600">ISSUED</Badge>;
+      case 'ISSUED': return <Badge className="bg-green-600">ISSUED</Badge>;
       case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
@@ -190,13 +195,12 @@ export default function TaxInvoicesPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่ใบกำกับภาษี (Tax Invoice No.)</Label>
-                  <Input value={newInvoice.taxInvoiceNo} disabled className="bg-muted/50 font-mono font-bold" />
-                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
+                  <Input value={newInvoice.taxInvoiceNo} disabled className="bg-muted/50 font-mono font-bold text-primary" />
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label>อ้างอิงใบวางบิล (Source Billing Note)</Label>
+                  <Label>อ้างอิงใบวางบิล (Source Billing Note) *</Label>
                   <Select onValueChange={v => setNewInvoice({...newInvoice, billingNoteId: v})}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกใบวางบิลที่ต้องการออกภาษี..." /></SelectTrigger>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกใบวางบิล..." /></SelectTrigger>
                     <SelectContent>
                       {billingNotes?.filter(n => n.status === 'ISSUED' || n.status === 'SUBMITTED').map(n => (
                         <SelectItem key={n.id} value={n.id}>{n.billingNoteNo} | {customers?.find(c => c.id === n.customerId)?.name}</SelectItem>

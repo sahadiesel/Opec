@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -17,12 +18,13 @@ import {
   Trash2,
   Info,
   Loader2,
-  Coins
+  Coins,
+  History
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { collection, doc, query, where, updateDoc, increment, writeBatch } from 'firebase/firestore';
+import { collection, doc, query, where, updateDoc, increment, writeBatch, getDocs } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { Receipt as ReceiptType, ReceiptStatus, ReceiptAllocation, TaxInvoice, User, Customer, BankAccount } from '@/lib/types';
+import { Receipt as ReceiptType, ReceiptStatus, ReceiptAllocation, TaxInvoice, User, Customer, BankAccount, AccountsReceivable } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -37,6 +39,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { writeAuditLog } from '@/lib/services/audit-service';
 
 export default function ReceiptDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -74,7 +77,7 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
   }, [allocations]);
 
   const handleAddAllocation = async () => {
-    if (!firestore || !selectedInvoiceId || !allocAmount) return;
+    if (!firestore || !selectedInvoiceId || !allocAmount || !currentUser) return;
     
     if (totalAllocated + allocAmount > receipt!.receivedAmount) {
       toast({ variant: "destructive", title: "ยอดเงินไม่พอ", description: "ยอดจัดสรรรวมเกินยอดรับเงินจริง" });
@@ -91,16 +94,30 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
 
       // Update AR record
       const arQuery = query(collection(firestore, 'accounts_receivable'), where('referenceId', '==', selectedInvoiceId));
-      const arSnap = await (await import('firebase/firestore')).getDocs(arQuery);
+      const arSnap = await getDocs(arQuery);
+      
       if (!arSnap.empty) {
         const arDoc = arSnap.docs[0];
-        const newCredit = Number(arDoc.data().creditAmount) + allocAmount;
-        const newOutstanding = Number(arDoc.data().debitAmount) - newCredit;
+        const arData = arDoc.data() as AccountsReceivable;
+        const newCredit = Number(arData.creditAmount) + allocAmount;
+        const newOutstanding = Number(arData.debitAmount) - newCredit;
+        
         await updateDoc(arDoc.ref, {
           creditAmount: newCredit,
           outstandingAmount: newOutstanding,
           status: newOutstanding <= 0 ? 'PAID' : 'PARTIALLY_PAID',
           updatedAt: Date.now()
+        });
+
+        // Audit Log for the collection reconciliation
+        await writeAuditLog(firestore, currentUser, {
+          actionType: 'ALLOCATE_RECEIPT',
+          entityType: 'AccountsReceivable',
+          entityId: arDoc.id,
+          entityLabel: arData.documentNo,
+          sourceModule: 'accounting',
+          linkedIds: [id, selectedInvoiceId],
+          afterSummary: `Allocated ฿${allocAmount.toLocaleString()} from Receipt ${receipt?.receiptNo} to Invoice ${arData.referenceNo}`
         });
       }
 
@@ -109,20 +126,30 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
       setAllocAmount(0);
       toast({ title: "จัดสรรยอดสำเร็จ" });
     } catch (e) {
+      console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
     }
   };
 
-  const handleFinalize = () => {
-    if (!receiptRef || !bankAccountRef) return;
+  const handleFinalize = async () => {
+    if (!receiptRef || !bankAccountRef || !firestore || !currentUser) return;
     
-    const batch = writeBatch(firestore!);
+    const batch = writeBatch(firestore);
     batch.update(receiptRef, { status: 'ISSUED', updatedAt: Date.now() });
     batch.update(bankAccountRef, { currentBalance: increment(receipt!.receivedAmount) });
     
-    batch.commit().then(() => {
-      toast({ title: "ยืนยันใบเสร็จสำเร็จ", description: "ยอดเงินถูกเพิ่มเข้าบัญชีธนาคารและอัปเดตสถานะลูกหนี้แล้ว" });
+    await batch.commit();
+    
+    await writeAuditLog(firestore, currentUser, {
+      actionType: 'ISSUED',
+      entityType: 'Receipt',
+      entityId: id,
+      entityLabel: receipt?.receiptNo,
+      sourceModule: 'accounting',
+      afterSummary: `Finalized receipt. ฿${receipt?.receivedAmount.toLocaleString()} credited to ${bankAccount?.accountCode}`
     });
+
+    toast({ title: "ยืนยันใบเสร็จสำเร็จ", description: "ยอดเงินถูกเพิ่มเข้าบัญชีธนาคารและอัปเดตสถานะลูกหนี้แล้ว" });
   };
 
   if (isReceiptLoading || !receipt || !currentUser) {
@@ -164,7 +191,7 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">บัญชีปลายทาง:</Label>
-                  <p className="font-semibold text-primary">{bankAccount?.accountCode} - {bankAccount?.bankName}</p>
+                  <p className="font-semibold text-primary">{bankAccount?.accountCode || '...'} - {bankAccount?.bankName || '...'}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">ยอดเงินรับสุทธิ:</Label>
@@ -214,18 +241,22 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
                 <Table>
                   <TableHeader className="bg-muted/30">
                     <TableRow>
-                      <TableHead>ใบกำกับภาษี (Ref)</TableHead>
+                      <TableHead className="pl-6">ใบกำกับภาษี (Ref)</TableHead>
                       <TableHead className="text-right">ยอดเงินจัดสรร</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {allocations?.map(a => (
                       <TableRow key={a.id}>
-                        <TableCell className="font-mono">{customerInvoices?.find(inv => inv.id === a.taxInvoiceId)?.taxInvoiceNo}</TableCell>
+                        <TableCell className="pl-6 font-mono text-sm">
+                          {customerInvoices?.find(inv => inv.id === a.taxInvoiceId)?.taxInvoiceNo || 'Unknown Ref'}
+                        </TableCell>
                         <TableCell className="text-right font-bold text-primary">฿ {a.amountAllocated.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                        <TableCell className="text-right pr-6">
+                          {receipt.status === 'DRAFT' && (
+                            <Button variant="ghost" size="icon" className="text-destructive"><Trash2 className="h-4 w-4" /></Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -260,22 +291,28 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
                 </div>
                 
                 {receipt.status === 'DRAFT' && totalAllocated > 0 && (
-                  <Button className="w-full mt-4 bg-green-600 hover:bg-green-700 font-bold h-12" onClick={handleFinalize}>
+                  <Button className="w-full mt-4 bg-green-600 hover:bg-green-700 font-bold h-12 shadow-md" onClick={handleFinalize}>
                     <CheckCircle2 className="h-4 w-4 mr-2" /> ยืนยันใบเสร็จ (Finalize)
                   </Button>
                 )}
               </CardContent>
             </Card>
 
-            <Card className="border-dashed">
-              <CardHeader><CardTitle className="text-sm flex items-center gap-2 text-primary font-bold"><Info className="h-4 w-4" /> ขั้นตอนถัดไป</CardTitle></CardHeader>
-              <CardContent className="text-[10px] text-muted-foreground leading-relaxed">
-                การยืนยันใบเสร็จจะส่งผลดังนี้:
-                <ul className="list-disc pl-4 mt-2">
-                  <li>ปรับสถานะใบเสร็จเป็น ISSUED</li>
-                  <li>เพิ่มยอดเงินในบัญชีธนาคาร (Current Balance)</li>
-                  <li>ลดยอดค้างชำระในระบบลูกหนี้ (AR)</li>
-                </ul>
+            <Card>
+              <CardHeader className="pb-2 border-b">
+                <CardTitle className="text-xs font-bold uppercase text-muted-foreground flex items-center gap-2">
+                  <History className="h-3 w-3" /> Audit Log
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 text-[10px] space-y-2">
+                <div className="flex justify-between">
+                  <span>สถานะปัจจุบัน:</span>
+                  <span className="font-bold">{receipt.status}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>สร้างเมื่อ:</span>
+                  <span>{new Date(receipt.createdAt).toLocaleString('th-TH')}</span>
+                </div>
               </CardContent>
             </Card>
           </div>
