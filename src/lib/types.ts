@@ -511,6 +511,10 @@ export interface DailyTimesheet {
   quantityOverride?: number;
   remark?: string;
   status: DailyTimesheetStatus;
+  // Readiness flags
+  readyForPayroll: boolean;
+  readyForBilling: boolean;
+  
   // Metadata for Paper-first/Portal flow
   approvalSource?: 'PORTAL' | 'PAPER';
   evidenceConfirmedBy?: string;

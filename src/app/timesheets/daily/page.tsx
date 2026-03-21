@@ -30,7 +30,9 @@ import {
   FileCheck,
   FileText,
   UserCheck,
-  PenTool
+  PenTool,
+  Coins,
+  Receipt
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -98,6 +100,8 @@ export default function DailyTimesheetsPage() {
     shiftType: 'DAY',
     normalHours: 8,
     status: 'DRAFT',
+    readyForPayroll: false,
+    readyForBilling: false,
     sourceType: 'PAPER',
     sourceDocumentNo: '',
     supervisorSignedBy: '',
@@ -130,6 +134,8 @@ export default function DailyTimesheetsPage() {
         workMode: asgn.workMode, 
         shiftType: 'DAY',
         status: 'DRAFT',
+        readyForPayroll: false,
+        readyForBilling: false,
         officeEnteredBy: currentUser.displayName,
         officeEnteredAt: Date.now()
       }], currentUser);
@@ -141,6 +147,8 @@ export default function DailyTimesheetsPage() {
         shiftType: 'DAY',
         normalHours: 8,
         status: 'DRAFT',
+        readyForPayroll: false,
+        readyForBilling: false,
         sourceType: 'PAPER',
         sourceDocumentNo: '',
         supervisorSignedBy: '',
@@ -325,9 +333,9 @@ export default function DailyTimesheetsPage() {
 
         <PageGuidance 
           tips={[
-            "ระบบรองรับทั้งการอนุมัติผ่าน Portal และการยืนยันจากหลักฐานกระดาษที่มีลายเซ็นลูกค้า",
-            "พนักงานออฟฟิศสามารถระบุชื่อผู้ลงนามบนเอกสาร (Supervisor/Client) เพื่อใช้เป็นหลักฐานการตรวจสอบย้อนหลัง",
-            "เฉพาะรายการที่สถานะเป็น CLIENT_APPROVED หรือ VERIFIED_PAPER เท่านั้นที่จะนำไปจ่ายเงินและวางบิล"
+            "ระบบแยกสิทธิ์ Payroll Readiness (จ่ายเงิน) ออกจาก Billing Readiness (วางบิล)",
+            "การ Approve ภายใน (Ops Review) จะทำให้จ่ายเงินคนงานได้ แต่จะยังวางบิลไม่ได้จนกว่าลูกค้าจะเซ็นรับรอง",
+            "เฉพาะรายการที่สถานะเป็น CLIENT_APPROVED หรือ VERIFIED_PAPER เท่านั้นที่จะนำไปวางบิลลูกค้า"
           ]}
         />
 
@@ -342,8 +350,8 @@ export default function DailyTimesheetsPage() {
                     <TableHead className="pl-6 py-4 font-bold">วันที่ (Date)</TableHead>
                     <TableHead className="font-bold">คนงาน (Worker)</TableHead>
                     <TableHead className="font-bold">อ้างอิงเอกสาร (Evidence)</TableHead>
-                    <TableHead className="font-bold">ประเภทงาน (Event)</TableHead>
                     <TableHead className="font-bold text-center">ชั่วโมง (Hrs)</TableHead>
+                    <TableHead className="font-bold">Readiness (P/B)</TableHead>
                     <TableHead className="font-bold">สถานะ (Status)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
@@ -383,12 +391,17 @@ export default function DailyTimesheetsPage() {
                             <span className="text-[10px] text-muted-foreground italic">No evidence ref</span>
                           )}
                         </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[10px] bg-white border-primary/20 font-bold uppercase">
-                            {ts.eventType.replace('_', ' ')}
-                          </Badge>
-                        </TableCell>
                         <TableCell className="text-center font-black">{ts.normalHours}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <Badge variant={ts.readyForPayroll ? "default" : "outline"} className={`text-[8px] h-5 px-1 ${ts.readyForPayroll ? "bg-green-600" : "text-muted-foreground opacity-40"}`}>
+                              <Coins className="h-2 w-2 mr-1" /> PAY
+                            </Badge>
+                            <Badge variant={ts.readyForBilling ? "default" : "outline"} className={`text-[8px] h-5 px-1 ${ts.readyForBilling ? "bg-blue-600" : "text-muted-foreground opacity-40"}`}>
+                              <Receipt className="h-2 w-2 mr-1" /> BILL
+                            </Badge>
+                          </div>
+                        </TableCell>
                         <TableCell>{getStatusBadge(ts.status)}</TableCell>
                         <TableCell className="text-right pr-6">
                           <div className="flex justify-end gap-2">

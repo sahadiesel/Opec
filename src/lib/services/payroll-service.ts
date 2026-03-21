@@ -41,7 +41,7 @@ export class PayrollService {
 
   /**
    * Generates a new Payroll Batch from approved timesheets.
-   * Supports both digital (CLIENT_APPROVED) and manual (VERIFIED_PAPER) approvals.
+   * RULE: Only include timesheets where readyForPayroll is TRUE.
    * TRANSITION: Marks source timesheets as LOCKED to prevent double processing.
    */
   async generatePayrollBatch(
@@ -54,22 +54,26 @@ export class PayrollService {
     if (!periodSnap.exists()) throw new Error('Payroll period not found');
     const period = periodSnap.data() as PayrollPeriod;
 
-    // RULE: Only include approved timesheets in payroll (Digital or Paper-verified).
+    // RULE: Use readyForPayroll flag instead of status string.
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
       where('date', '<=', period.endDate),
-      where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER'])
+      where('readyForPayroll', '==', true)
     );
     const tsSnap = await getDocs(tsQuery);
-    let timesheets = tsSnap.docs.map(d => ({ ...d.data(), id: d.id } as DailyTimesheet));
+    
+    // Filter out already LOCKED timesheets in JS to avoid complex composite index requirement
+    let timesheets = tsSnap.docs
+      .map(d => ({ ...d.data(), id: d.id } as DailyTimesheet))
+      .filter(ts => ts.status !== 'LOCKED');
 
     if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
       timesheets = timesheets.filter(ts => ts.workMode.toLowerCase() === filters.workModeScope);
     }
 
     if (timesheets.length === 0) {
-      throw new Error('No approved timesheets found for this period');
+      throw new Error('No timesheets ready for payroll found for this period');
     }
 
     // Load master rules for calculation

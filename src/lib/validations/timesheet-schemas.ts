@@ -63,6 +63,11 @@ export const DailyTimesheetSchema = z.object({
     'REJECTED', 
     'CORRECTION_REQUIRED'
   ]),
+  
+  // Readiness flags
+  readyForPayroll: z.boolean().default(false),
+  readyForBilling: z.boolean().default(false),
+
   approvalSource: z.enum(['PORTAL', 'PAPER']).optional().nullable(),
   evidenceConfirmedBy: z.string().optional().nullable(),
   evidenceConfirmedAt: z.number().optional().nullable(),

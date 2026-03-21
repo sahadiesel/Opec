@@ -105,7 +105,9 @@ export class TimesheetService {
       status: 'DRAFT',
       workMode: asgn.workMode, 
       shiftType: 'DAY',
-      sourceType: 'PAPER'
+      sourceType: 'PAPER',
+      readyForPayroll: false,
+      readyForBilling: false
     }));
   }
 
@@ -141,6 +143,8 @@ export class TimesheetService {
           ...ts,
           id,
           status: ts.status || 'DRAFT',
+          readyForPayroll: ts.readyForPayroll ?? false,
+          readyForBilling: ts.readyForBilling ?? false,
           officeEnteredBy: user.displayName,
           officeEnteredAt: Date.now(),
           createdAt: Date.now(),
@@ -183,6 +187,8 @@ export class TimesheetService {
         id: undefined, 
         date: targetDate,
         status: 'DRAFT' as DailyTimesheetStatus,
+        readyForPayroll: false,
+        readyForBilling: false,
         createdAt: undefined,
         updatedAt: undefined
       };
@@ -208,10 +214,15 @@ export class TimesheetService {
     });
   }
 
+  /**
+   * Internal review by manager. 
+   * RULE: Once internally approved, it is ready for Payroll, even if client hasn't officially billed.
+   */
   async markAsReviewed(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'OPS_REVIEWED',
+      readyForPayroll: true,
       managerApprovedBy: user.displayName,
       managerApprovedAt: Date.now(),
       updatedAt: Date.now(),
@@ -223,14 +234,20 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Operations reviewed and internally approved'
+      afterSummary: 'Operations reviewed and internally approved for payroll'
     });
   }
 
+  /**
+   * Client approval via Paper Evidence.
+   * RULE: Sets both Payroll and Billing readiness to TRUE.
+   */
   async markAsVerifiedPaper(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'VERIFIED_PAPER',
+      readyForPayroll: true,
+      readyForBilling: true,
       approvalSource: 'PAPER',
       sourceType: 'PAPER',
       evidenceConfirmedBy: user.displayName,
@@ -244,7 +261,7 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Verified client signature from paper evidence'
+      afterSummary: 'Verified client signature from paper evidence for payroll and billing'
     });
   }
 }

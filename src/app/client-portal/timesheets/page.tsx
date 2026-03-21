@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -71,6 +72,8 @@ export default function ClientTimesheetApprovalPage() {
       const docRef = doc(firestore, 'daily_timesheets', tsId);
       await updateDoc(docRef, {
         status: 'CLIENT_APPROVED',
+        readyForPayroll: true,
+        readyForBilling: true,
         clientApprovedBy: currentUser.displayName,
         clientApprovedAt: Date.now(),
         updatedAt: Date.now()
@@ -96,8 +99,8 @@ export default function ClientTimesheetApprovalPage() {
         <PageGuidance 
           title="คำแนะนำในการอนุมัติเวลา (Approval Guidance)"
           tips={[
-            "กรุณาตรวจสอบประเภทงาน (Work/Travel/Standby) และจำนวนชั่วโมงให้ถูกต้องตามการปฏิบัติงานจริง",
-            "เฉพาะรายการที่ท่านกดอนุมัติ (Approve) แล้วเท่านั้นที่จะถูกนำไปสรุปยอดวางบิลและจ่ายเงินเดือน",
+            "การกดอนุมัติ (Approve) จะเป็นการยืนยันความถูกต้องเพื่อใช้ในการสรุปยอดวางบิล (Billing Readiness)",
+            "หากท่านกดอนุมัติ ข้อมูลจะถูกส่งเข้าสู่ระบบการเงินของ OPEC โดยอัตโนมัติ",
             "หากข้อมูลไม่ถูกต้อง ท่านสามารถแจ้งเจ้าหน้าที่ Operations เพื่อทำการแก้ไข (Rejected/Correction)"
           ]}
         />
