@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -213,7 +214,7 @@ export default function HRDashboardPage() {
               </CardContent>
               <CardFooter className="bg-muted/30 p-3 flex justify-center border-t">
                 <Button variant="link" className="text-xs text-muted-foreground" asChild>
-                  <Link href="/payroll">ดูระบบจ่ายเงินทั้งหมด <ArrowRight className="h-3 w-3 ml-1" /></Link>
+                  <Link href="/payroll/batches">ดูระบบจ่ายเงินทั้งหมด <ArrowRight className="h-3 w-3 ml-1" /></Link>
                 </Button>
               </CardFooter>
             </Card>
@@ -302,9 +303,9 @@ export default function HRDashboardPage() {
               <CardContent className="pt-4 space-y-2">
                 <ShortcutItem href="/workers" label="ทะเบียนคนงาน" sub="Worker Records" icon={HardHat} />
                 <ShortcutItem href="/positions" label="ตำแหน่งงานมาตรฐาน" sub="Job Matrix" icon={Briefcase} />
-                <ShortcutItem href="/payroll" label="ประมวลผลเงินเดือน" sub="Payroll System" icon={Coins} />
+                <ShortcutItem href="/payroll/batches" label="ประมวลผลเงินเดือน" sub="Payroll System" icon={Coins} />
                 <ShortcutItem href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Employees" icon={Users} />
-                <ShortcutItem href="/timesheets/daily" label="ระบบลงเวลา" sub="Timesheets" icon={Calendar} />
+                <ShortcutItem href="/timesheets/daily" label="ระบบลงเวลา" sub="Timesheet History" icon={Calendar} />
               </CardContent>
             </Card>
 
@@ -313,7 +314,7 @@ export default function HRDashboardPage() {
                 <CardTitle className="text-xs font-bold uppercase text-blue-800 flex items-center gap-2">
                   <Info className="h-3 w-3" /> HR Policy reminder
                 </CardTitle>
-              </CardHeader>
+              </Header>
               <CardContent className="text-[10px] text-blue-700 leading-relaxed">
                 ห้ามอนุมัติ Payroll หากยังมีใบลงเวลา (Timesheet) ที่ไม่อยู่ในสถานะ Approved การแก้ไขประวัติคนงานจะมีผลต่อการคำนวณ Readiness ทันที
               </CardContent>

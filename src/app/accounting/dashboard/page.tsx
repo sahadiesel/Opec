@@ -115,7 +115,7 @@ export default function AccountingDashboardPage() {
         type: 'Payroll Payment',
         label: `Authorize Payment: ${run.payrollRunNo}`,
         status: 'HR_APPROVED',
-        link: `/payroll/${run.id}`,
+        link: `/payroll/batches`, // Updated to batches canonical list
         priority: 'high'
       });
     });
@@ -316,7 +316,7 @@ export default function AccountingDashboardPage() {
                 <CardTitle className="text-xs font-bold uppercase text-blue-800 flex items-center gap-2">
                   <Info className="h-3 w-3" /> Billing Cycle reminder
                 </CardTitle>
-              </CardHeader>
+              </Header>
               <CardContent className="text-[10px] text-blue-700 leading-relaxed">
                 กรุณาตรวจสอบความถูกต้องของ Billing Note ก่อนออก Tax Invoice ทุกครั้ง และตรวจสอบหัก ณ ที่จ่าย (WHT) ให้ตรงตามเงื่อนไขสัญญา
               </CardContent>
