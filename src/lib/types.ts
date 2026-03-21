@@ -517,6 +517,23 @@ export interface DailyTimesheet {
   evidenceConfirmedAt?: number;
   clientApprovedBy?: string;
   clientApprovedAt?: number;
+  
+  // Paper-first Evidence Fields
+  sourceType?: 'PAPER' | 'DIGITAL';
+  sourceDocumentNo?: string;
+  sourceDocumentDate?: string;
+  supervisorSignedBy?: string;
+  supervisorSignedDate?: string;
+  clientSignedBy?: string;
+  clientSignedDate?: string;
+  officeEnteredBy?: string;
+  officeEnteredAt?: number;
+  managerApprovedBy?: string;
+  managerApprovedAt?: number;
+  lockedForPayrollAt?: number;
+  lockedForBillingAt?: number;
+  evidenceFileUrl?: string;
+
   createdAt: number;
   updatedAt: number;
   lockedAt?: number;

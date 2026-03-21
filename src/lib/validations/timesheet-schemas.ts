@@ -66,6 +66,25 @@ export const DailyTimesheetSchema = z.object({
   approvalSource: z.enum(['PORTAL', 'PAPER']).optional().nullable(),
   evidenceConfirmedBy: z.string().optional().nullable(),
   evidenceConfirmedAt: z.number().optional().nullable(),
+  
+  // Paper-first Evidence Fields (Zod)
+  sourceType: z.enum(['PAPER', 'DIGITAL']).optional().nullable(),
+  sourceDocumentNo: z.string().optional().nullable(),
+  sourceDocumentDate: z.string().optional().nullable(),
+  supervisorSignedBy: z.string().optional().nullable(),
+  supervisorSignedDate: z.string().optional().nullable(),
+  clientSignedBy: z.string().optional().nullable(),
+  clientSignedDate: z.string().optional().nullable(),
+  officeEnteredBy: z.string().optional().nullable(),
+  officeEnteredAt: z.number().optional().nullable(),
+  managerApprovedBy: z.string().optional().nullable(),
+  managerApprovedAt: z.number().optional().nullable(),
+  lockedForPayrollAt: z.number().optional().nullable(),
+  lockedForBillingAt: z.number().optional().nullable(),
+  evidenceFileUrl: z.string().url().optional().nullable(),
+
   createdAt: z.number(),
   updatedAt: z.number(),
+  lockedAt: z.number().optional().nullable(),
+  lockedBy: z.string().optional().nullable(),
 });

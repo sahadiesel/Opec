@@ -27,7 +27,8 @@ import {
   ArrowRight,
   ShieldAlert,
   Send,
-  FileCheck
+  FileCheck,
+  FileText
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -93,7 +94,9 @@ export default function DailyTimesheetsPage() {
     eventType: 'work_day' as RateConditionEventType,
     shiftType: 'DAY',
     normalHours: 8,
-    status: 'DRAFT'
+    status: 'DRAFT',
+    sourceType: 'PAPER',
+    sourceDocumentNo: ''
   });
 
   const handleCreate = async () => {
@@ -121,7 +124,9 @@ export default function DailyTimesheetsPage() {
         siteId: asgn.waveId || '',
         workMode: asgn.workMode, 
         shiftType: 'DAY',
-        status: 'DRAFT'
+        status: 'DRAFT',
+        officeEnteredBy: currentUser.displayName,
+        officeEnteredAt: Date.now()
       }], currentUser);
 
       setIsCreateOpen(false);
@@ -197,7 +202,7 @@ export default function DailyTimesheetsPage() {
                   <Plus className="h-5 w-5" /> เพิ่มรายบุคคล (Manual Entry)
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-xl">
+              <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>บันทึกเวลาทำงานรายวัน (Worker Timesheet)</DialogTitle>
                   <DialogDescription>บันทึกเวลาทำงานรายวันสำหรับลูกจ้างหน้างาน</DialogDescription>
@@ -254,6 +259,30 @@ export default function DailyTimesheetsPage() {
                   <div className="space-y-2">
                     <Label className="font-bold">ชั่วโมงงานปกติ (Normal Hrs)</Label>
                     <Input type="number" value={newTs.normalHours} onChange={e => setNewTs({...newTs, normalHours: parseInt(e.target.value)})} />
+                  </div>
+
+                  <Separator className="md:col-span-2 my-2" />
+                  
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-bold text-blue-700 flex items-center gap-2">
+                      <FileText className="h-4 w-4" /> ข้อมูลหลักฐานกระดาษ (Evidence)
+                    </Label>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="font-bold">ประเภทแหล่งข้อมูล (Source)</Label>
+                    <Select onValueChange={(v: any) => setNewTs({...newTs, sourceType: v})} value={newTs.sourceType}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="PAPER">ใบลงเวลากระดาษ (Paper)</SelectItem>
+                        <SelectItem value="DIGITAL">บันทึกดิจิทัล (Digital)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="font-bold">เลขที่ใบลงเวลา (Slip No.)</Label>
+                    <Input value={newTs.sourceDocumentNo} onChange={e => setNewTs({...newTs, sourceDocumentNo: e.target.value})} placeholder="ระบุเลขที่ slip..." />
                   </div>
                 </div>
                 <DialogFooter>
@@ -334,7 +363,7 @@ export default function DailyTimesheetsPage() {
                               </Button>
                             )}
                             {canVerifyPaper && (
-                              <Button size="sm" variant="outline" className="h-8 gap-1 text-green-700 border-green-200 bg-green-50 font-bold" onClick={() => handleVerifyPaper(ts.id)}>
+                              <Button size="sm" variant="outline" className="h-8 gap-1 text-green-700 border-blue-200 bg-blue-50 font-bold" onClick={() => handleVerifyPaper(ts.id)}>
                                 <FileCheck className="h-3 w-3" /> ยืนยันกระดาษ
                               </Button>
                             )}

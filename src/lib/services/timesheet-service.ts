@@ -104,7 +104,8 @@ export class TimesheetService {
       normalHours: 8,
       status: 'DRAFT',
       workMode: asgn.workMode, 
-      shiftType: 'DAY'
+      shiftType: 'DAY',
+      sourceType: 'PAPER'
     }));
   }
 
@@ -140,6 +141,8 @@ export class TimesheetService {
           ...ts,
           id,
           status: ts.status || 'DRAFT',
+          officeEnteredBy: user.displayName,
+          officeEnteredAt: Date.now(),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         });
@@ -209,6 +212,8 @@ export class TimesheetService {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'OPS_REVIEWED',
+      managerApprovedBy: user.displayName,
+      managerApprovedAt: Date.now(),
       updatedAt: Date.now(),
     });
 
@@ -227,6 +232,7 @@ export class TimesheetService {
     await updateDoc(docRef, {
       status: 'VERIFIED_PAPER',
       approvalSource: 'PAPER',
+      sourceType: 'PAPER',
       evidenceConfirmedBy: user.displayName,
       evidenceConfirmedAt: Date.now(),
       updatedAt: Date.now(),
