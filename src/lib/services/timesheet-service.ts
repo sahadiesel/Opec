@@ -1,4 +1,3 @@
-
 'use client';
 
 import { 
@@ -95,6 +94,7 @@ export class TimesheetService {
       assignmentId: asgn.id,
       waveId: asgn.waveId,
       purchaseOrderId: asgn.poId,
+      contractId: asgn.contractId,
       customerId: asgn.customerId,
       projectName: asgn.projectName,
       positionId: asgn.positionId,

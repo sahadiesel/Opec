@@ -112,7 +112,12 @@ export class PayrollService {
       let workerGross = 0;
 
       for (const ts of workerTs) {
-        const contract = allCostTerms.find(ct => ct.id === ts.laborCostContractTermId);
+        // Resolve project-specific cost term if possible, otherwise use main contract fallback
+        const contract = allCostTerms.find(ct => 
+          ct.id === ts.laborCostContractTermId || 
+          (ct.relatedPurchaseOrderId === ts.purchaseOrderId && ct.status === 'ACTIVE')
+        );
+        
         if (contract) {
           const condition = resolveApplicableCostRateCondition(allConditions, ts, contract);
           if (condition) {

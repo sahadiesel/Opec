@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -157,7 +156,8 @@ export default function WaveTimesheetBoardPage() {
           ...ts,
           workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
           waveId: selectedWaveId,
-          purchaseOrderId: selectedPoId,
+          purchaseOrderId: asgn?.poId || selectedPoId,
+          contractId: asgn?.contractId || '',
           customerId: wave?.customerId || '',
           projectName: wave?.projectName || '',
           positionId: asgn?.positionId || '',

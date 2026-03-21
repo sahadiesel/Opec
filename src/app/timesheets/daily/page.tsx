@@ -106,17 +106,20 @@ export default function DailyTimesheetsPage() {
       const worker = workers?.find(w => w.id === newTs.workerId);
       const asgn = assignments?.find(a => a.id === newTs.assignmentId);
 
-      await service.createTimesheet({
+      if (!asgn) throw new Error("Could not resolve assignment context");
+
+      await service.bulkUpsertTimesheets([{
         ...newTs,
         workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
-        waveId: asgn?.waveId || '',
-        contractId: asgn?.contractId || '',
-        purchaseOrderId: asgn?.poId || '',
-        positionId: asgn?.positionId || '',
-        siteId: asgn?.waveId || '',
-        workMode: asgn?.workMode || 'OFFSHORE', 
-        shiftType: 'DAY', 
-      }, currentUser);
+        waveId: asgn.waveId || '',
+        contractId: asgn.contractId || '',
+        purchaseOrderId: asgn.poId || '',
+        positionId: asgn.positionId || '',
+        siteId: asgn.waveId || '',
+        workMode: asgn.workMode || 'OFFSHORE', 
+        shiftType: 'DAY',
+        status: 'DRAFT'
+      }], currentUser);
 
       setIsCreateOpen(false);
       toast({ title: "บันทึกใบลงเวลาสำเร็จ" });
@@ -203,7 +206,7 @@ export default function DailyTimesheetsPage() {
                     <Select onValueChange={v => setNewTs({...newTs, assignmentId: v})} disabled={!newTs.workerId}>
                       <SelectTrigger><SelectValue placeholder="เลืองโครงการ/เวฟ..." /></SelectTrigger>
                       <SelectContent>
-                        {assignments?.filter(a => a.workerId === newTs.workerId).map(a => (
+                        {assignments?.filter(a => a.workerId === newTs.workerId && a.deploymentStatus !== 'CLOSED').map(a => (
                           <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.assignmentNo})</SelectItem>
                         ))}
                       </SelectContent>
