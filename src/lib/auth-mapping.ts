@@ -153,7 +153,6 @@ export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
   if (!user) return { dept: 'hr', level: 'viewer' };
   
-  // Automated inference for customer portal users
   if (user.userType === 'customer_portal') {
     const level: AccessLevel = user.portalRole === 'approver' ? 'manager' : 'viewer';
     return { dept: 'client', level };
@@ -164,21 +163,18 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
   }
 
   const roles = user.roleIds || [];
-  const allRoles = [...roles];
-  if (user.roleId && !allRoles.includes(user.roleId as any)) allRoles.push(user.roleId as any);
-  
-  if (allRoles.includes('system_admin')) return { dept: 'admin', level: 'admin' };
-  if (allRoles.includes('hr_manager')) return { dept: 'hr', level: 'manager' };
-  if (allRoles.includes('hr_officer')) return { dept: 'hr', level: 'officer' };
-  if (allRoles.includes('accounting_manager')) return { dept: 'accounting', level: 'manager' };
-  if (allRoles.includes('accounting_officer')) return { dept: 'accounting', level: 'officer' };
-  if (allRoles.includes('sales_manager')) return { dept: 'sales', level: 'manager' };
-  if (allRoles.includes('sales_officer')) return { dept: 'sales', level: 'officer' };
-  if (allRoles.includes('store_manager')) return { dept: 'store', level: 'manager' };
-  if (allRoles.includes('store_officer')) return { dept: 'store', level: 'officer' };
-  if (allRoles.includes('operations_manager')) return { dept: 'operations', level: 'manager' };
-  if (allRoles.includes('operations_officer')) return { dept: 'operations', level: 'officer' };
-  if (allRoles.includes('client_user')) return { dept: 'client', level: 'viewer' };
+  if (roles.includes('system_admin')) return { dept: 'admin', level: 'admin' };
+  if (roles.includes('hr_manager')) return { dept: 'hr', level: 'manager' };
+  if (roles.includes('hr_officer')) return { dept: 'hr', level: 'officer' };
+  if (roles.includes('accounting_manager')) return { dept: 'accounting', level: 'manager' };
+  if (roles.includes('accounting_officer')) return { dept: 'accounting', level: 'officer' };
+  if (roles.includes('sales_manager')) return { dept: 'sales', level: 'manager' };
+  if (roles.includes('sales_officer')) return { dept: 'sales', level: 'officer' };
+  if (roles.includes('store_manager')) return { dept: 'store', level: 'manager' };
+  if (roles.includes('store_officer')) return { dept: 'store', level: 'officer' };
+  if (roles.includes('operations_manager')) return { dept: 'operations', level: 'manager' };
+  if (roles.includes('operations_officer')) return { dept: 'operations', level: 'officer' };
+  if (roles.includes('client_user')) return { dept: 'client', level: 'viewer' };
 
   return { dept: 'hr', level: 'viewer' };
 }
@@ -191,18 +187,14 @@ export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
     return LEGACY_TO_CANONICAL_MAP[user.assignedRoleKey] || user.assignedRoleKey;
   }
   
-  // Use identity fields to map to role
   if (user.userType === 'customer_portal') {
     return 'client_user';
   }
 
   const { dept, level } = inferDeptAndLevel(user);
-  
-  // Find standard match
   const match = Object.values(BUSINESS_ROLES).find(r => r.dept === dept && r.level === level);
   if (match) return match.key;
 
-  // Fallbacks
   if (dept === 'admin') return 'system_admin';
   if (dept === 'client') return 'client_user';
   return `${dept}_officer` as BusinessRoleKey;
@@ -225,6 +217,37 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
     permissionProfileKey: profileKey,
     updatedAt: Date.now()
   };
+}
+
+/**
+ * Utility to generate the correct migration fields for a user based on their context.
+ * Used by the system repair tools.
+ */
+export function getMigratedUserFields(user: Partial<User>): Partial<User> {
+  const roleKey = deriveBusinessRoleKey(user);
+  const mapped = getFieldsForBusinessRole(roleKey);
+  
+  return {
+    assignedRoleKey: roleKey,
+    department: mapped.department,
+    level: mapped.level,
+    roleIds: mapped.roleIds,
+    permissionProfileKey: mapped.permissionProfileKey,
+    updatedAt: Date.now()
+  };
+}
+
+/**
+ * Returns canonical role IDs based on department and level.
+ */
+export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
+  if (dept === 'admin') return ['system_admin'];
+  if (dept === 'client') return ['client_user'];
+  
+  const match = Object.values(BUSINESS_ROLES).find(r => r.dept === dept && r.level === level);
+  if (match) return [match.canonicalRole];
+
+  return [`${dept}_officer` as RoleType];
 }
 
 export const getEffectiveDepartment = (user: Partial<User> | null) => inferDeptAndLevel(user).dept;
