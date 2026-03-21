@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -24,7 +25,8 @@ import {
   Trash2,
   Grid3X3,
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  Send
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -77,7 +79,6 @@ export default function DailyTimesheetsPage() {
   }, [firestore]);
   const { data: timesheets, isLoading: isTsLoading } = useCollection<DailyTimesheet>(tsQuery as any);
 
-  // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
@@ -108,13 +109,13 @@ export default function DailyTimesheetsPage() {
 
       if (!asgn) throw new Error("Could not resolve assignment context");
 
-      // CRITICAL: deriving workMode from assignment context ONLY
       await service.bulkUpsertTimesheets([{
         ...newTs,
         workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
         waveId: asgn.waveId || '',
         contractId: asgn.contractId || '',
         purchaseOrderId: asgn.poId || '',
+        poLineId: asgn.poLineId || '',
         positionId: asgn.positionId || '',
         siteId: asgn.waveId || '',
         workMode: asgn.workMode, 
@@ -131,13 +132,24 @@ export default function DailyTimesheetsPage() {
     }
   };
 
+  const handleSubmitReview = async (tsId: string) => {
+    if (!firestore || !currentUser) return;
+    try {
+      const service = new TimesheetService(firestore);
+      await service.markAsReviewed(tsId, currentUser);
+      toast({ title: "ส่งข้อมูลตรวจรับสำเร็จ", description: "รายการถูกส่งไปยัง Client Portal แล้ว" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e.message });
+    }
+  };
+
   const getStatusBadge = (status: DailyTimesheetStatus) => {
     switch (status) {
       case 'DRAFT': return <Badge variant="outline" className="bg-slate-50">DRAFT</Badge>;
       case 'SUBMITTED': return <Badge variant="outline" className="bg-blue-50 text-blue-700">SUBMITTED</Badge>;
       case 'OPS_REVIEWED': return <Badge variant="outline" className="bg-amber-50 text-amber-700">OPS REVIEWED</Badge>;
       case 'CLIENT_APPROVED': return <Badge className="bg-green-600">CLIENT APPROVED</Badge>;
-      case 'LOCKED': return <Badge className="bg-primary">LOCKED</Badge>;
+      case 'LOCKED': return <Badge className="bg-primary font-black uppercase"><Clock className="h-3 w-3 mr-1" /> LOCKED</Badge>;
       case 'REJECTED': return <Badge variant="destructive">REJECTED</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
@@ -243,9 +255,9 @@ export default function DailyTimesheetsPage() {
 
         <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
           <ShieldAlert className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold">ข้อควรระวัง (Data Integrity Rule)</AlertTitle>
+          <AlertTitle className="font-bold">นโยบายการตรวจสอบ (Review Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            ระบบลงเวลานี้ใช้สำหรับ <b>ลูกจ้างหน้างาน (Field Workers)</b> เพื่อคำนวณรายรับโครงการและจ่ายเงินเดือนคนงาน ห้ามนำพนักงานออฟฟิศมาบันทึกเวลาในส่วนนี้
+            รายการที่อยู่ในสถานะ DRAFT จะยังไม่ปรากฏในหน้า Client Portal กรุณากด <b>"ส่งตรวจ"</b> เพื่อให้ลูกค้าพิจารณาและรับรองชั่วโมงทำงาน
           </AlertDescription>
         </Alert>
 
@@ -269,6 +281,8 @@ export default function DailyTimesheetsPage() {
                 <TableBody>
                   {timesheets?.map((ts) => {
                     const worker = workers?.find(w => w.id === ts.workerId);
+                    const canSubmit = ts.status === 'DRAFT' || ts.status === 'REJECTED';
+                    
                     return (
                       <TableRow key={ts.id} className="hover:bg-muted/30 transition-colors">
                         <TableCell className="pl-6 py-4">
@@ -284,12 +298,12 @@ export default function DailyTimesheetsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="text-[10px] bg-white border-primary/20">
-                            {EVENT_TYPE_LABELS[ts.eventType] || ts.eventType}
+                          <Badge variant="outline" className="text-[10px] bg-white border-primary/20 font-bold uppercase">
+                            {ts.eventType.replace('_', ' ')}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1.5 text-xs">
+                          <div className="flex items-center gap-1.5 text-xs font-medium">
                             <Briefcase className="h-3 w-3 text-muted-foreground" />
                             <span className="truncate max-w-[150px]">{ts.projectName}</span>
                           </div>
@@ -297,7 +311,14 @@ export default function DailyTimesheetsPage() {
                         <TableCell className="text-center font-black">{ts.normalHours}</TableCell>
                         <TableCell>{getStatusBadge(ts.status)}</TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon"><ChevronRight className="h-4 w-4" /></Button>
+                          <div className="flex justify-end gap-2">
+                            {canSubmit && (
+                              <Button size="sm" variant="outline" className="h-8 gap-1 text-blue-700 border-blue-200 bg-blue-50 font-bold" onClick={() => handleSubmitReview(ts.id)}>
+                                <Send className="h-3 w-3" /> ส่งตรวจ
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-8 w-8"><ChevronRight className="h-4 w-4" /></Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

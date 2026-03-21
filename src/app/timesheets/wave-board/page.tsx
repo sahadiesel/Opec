@@ -1,9 +1,10 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Waves, 
@@ -18,14 +19,15 @@ import {
   Clock,
   ClipboardCheck,
   CheckCircle2,
-  Copy
+  Copy,
+  Send
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { PurchaseOrder, Wave, Assignment, Worker, DailyTimesheet, RateConditionEventType, User, JobMode } from '@/lib/types';
+import { PurchaseOrder, Wave, Assignment, Worker, DailyTimesheet, RateConditionEventType, User, DailyTimesheetStatus } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { Badge } from '@/components/ui/badge';
@@ -142,7 +144,7 @@ export default function WaveTimesheetBoardPage() {
     }
   };
 
-  const handleSaveAll = async () => {
+  const handleSaveAll = async (finalize: boolean = false) => {
     if (!firestore || !currentUser || !selectedWaveId) return;
     setIsSaving(true);
     try {
@@ -157,20 +159,21 @@ export default function WaveTimesheetBoardPage() {
           workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
           waveId: selectedWaveId,
           purchaseOrderId: asgn?.poId || selectedPoId,
+          poLineId: asgn?.poLineId || '',
           contractId: asgn?.contractId || '',
           customerId: wave?.customerId || '',
           projectName: wave?.projectName || '',
           positionId: asgn?.positionId || '',
-          // CRITICAL: derived from assignment context
           workMode: asgn?.workMode, 
           shiftType: 'DAY' as any,
+          status: finalize ? ('OPS_REVIEWED' as DailyTimesheetStatus) : (ts.status || 'DRAFT')
         };
       });
 
       const results = await service.bulkUpsertTimesheets(payloads as Partial<DailyTimesheet>[], currentUser);
       toast({ 
-        title: "บันทึกสำเร็จ (Save Board Success)", 
-        description: `สร้างใหม่: ${results.created}, อัปเดต: ${results.updated}, ข้ามรายการล็อก: ${results.skipped}` 
+        title: finalize ? "ยืนยันและส่งตรวจสำเร็จ" : "บันทึกสำเร็จ (Save Success)", 
+        description: finalize ? "ข้อมูลถูกส่งไปยังหน้า Client Portal แล้ว" : `สร้างใหม่: ${results.created}, อัปเดต: ${results.updated}` 
       });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e.message });
@@ -195,9 +198,13 @@ export default function WaveTimesheetBoardPage() {
             <Button variant="outline" className="gap-2 h-11" onClick={handleClonePrevious} disabled={!selectedWaveId || isCloning}>
               <Copy className="h-4 w-4" /> ดึงข้อมูลจากเมื่อวาน (Clone Prev)
             </Button>
-            <Button className="gap-2 h-11 px-8 bg-primary font-black shadow-lg" onClick={handleSaveAll} disabled={!selectedWaveId || isSaving}>
-              {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
-              บันทึกกระดานนี้ (Save Board)
+            <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold shadow-sm" onClick={() => handleSaveAll(false)} disabled={!selectedWaveId || isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              บันทึกร่าง (Save Draft)
+            </Button>
+            <Button className="gap-2 h-11 px-8 bg-blue-600 font-black shadow-lg" onClick={() => handleSaveAll(true)} disabled={!selectedWaveId || isSaving}>
+              {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+              ยืนยันและส่งตรวจ (Finalize & Submit)
             </Button>
           </div>
         </div>
@@ -205,9 +212,9 @@ export default function WaveTimesheetBoardPage() {
         <PageGuidance 
           title="คู่มือการบันทึกแบบกลุ่ม (Bulk Entry Guide)"
           tips={[
-            "ระบบจะโหลดรายชื่อจาก 'Mobilizations' อัตโนมัติ เฉพาะคนที่มีกำหนดเริ่มงานแล้วเท่านั้น",
-            "ใช้ปุ่ม 'Quick Apply' เพื่อระบุสถานะ 'ทำงาน (Work)' ให้พนักงานทุกคนในครั้งเดียว",
-            "แก้ไขเฉพาะรายการที่มีการทำ OT หรือรายการพิเศษ (Travel/Standby) แล้วกดบันทึกทั้งหมด"
+            "ปุ่ม 'บันทึกร่าง' จะเก็บข้อมูลไว้ตรวจสอบภายในแผนก Ops เท่านั้น",
+            "ปุ่ม 'ยืนยันและส่งตรวจ' จะส่งข้อมูลไปยัง Client Portal เพื่อให้ลูกค้าอนุมัติ (Status: OPS_REVIEWED)",
+            "ข้อมูลที่ลูกค้าอนุมัติแล้วจะไม่สามารถแก้ไขได้ผ่านหน้าจอนี้"
           ]}
         />
 
@@ -284,7 +291,7 @@ export default function WaveTimesheetBoardPage() {
                       {assignments?.map((asgn) => {
                         const worker = workers?.find(w => w.id === asgn.workerId);
                         const row = rosterData[asgn.workerId] || {};
-                        const isLocked = row.status === 'CLIENT_APPROVED' || row.status === 'LOCKED';
+                        const isLocked = row.status === 'CLIENT_APPROVED' || row.status === 'LOCKED' || row.status === 'OPS_REVIEWED';
 
                         return (
                           <TableRow key={asgn.id} className={isLocked ? "bg-slate-50 opacity-80" : "hover:bg-muted/20"}>
@@ -339,8 +346,9 @@ export default function WaveTimesheetBoardPage() {
                             </TableCell>
                             <TableCell>
                               {row.status ? (
-                                <Badge variant="outline" className={`text-[9px] font-black ${
+                                <Badge variant="outline" className={`text-[9px] font-black uppercase ${
                                   row.status === 'CLIENT_APPROVED' ? 'bg-green-50 text-green-700 border-green-200' : 
+                                  row.status === 'OPS_REVIEWED' ? 'bg-amber-50 text-amber-700 border-amber-200' :
                                   row.status === 'SUBMITTED' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100'
                                 }`}>
                                   {row.status}

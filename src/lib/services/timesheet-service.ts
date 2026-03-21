@@ -1,3 +1,4 @@
+
 'use client';
 
 import { 
@@ -94,6 +95,7 @@ export class TimesheetService {
       assignmentId: asgn.id,
       waveId: asgn.waveId,
       purchaseOrderId: asgn.poId,
+      poLineId: asgn.poLineId,
       contractId: asgn.contractId,
       customerId: asgn.customerId,
       projectName: asgn.projectName,
@@ -101,15 +103,64 @@ export class TimesheetService {
       eventType: 'work_day' as RateConditionEventType,
       normalHours: 8,
       status: 'DRAFT',
-      // CRITICAL: deriving workMode from assignment context ONLY (no hardcoding)
       workMode: asgn.workMode, 
       shiftType: 'DAY'
     }));
   }
 
   /**
-   * Clones activity logs from the previous day for a specific wave.
+   * Performs a bulk upsert of timesheets for a Wave.
+   * Safeguard: Strictly skips any record already approved by client or locked.
    */
+  async bulkUpsertTimesheets(timesheets: Partial<DailyTimesheet>[], user: User) {
+    const batch = writeBatch(this.db);
+    const results = { created: 0, updated: 0, skipped: 0 };
+
+    for (const ts of timesheets) {
+      if (!ts.workerId || !ts.assignmentId || !ts.date) continue;
+
+      const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
+      const docRef = doc(this.getCollection(), id);
+      const existingSnap = await getDoc(docRef);
+
+      if (existingSnap.exists()) {
+        const current = existingSnap.data() as DailyTimesheet;
+        if (this.isFinalized(current.status)) {
+          results.skipped++;
+          continue;
+        }
+        
+        batch.update(docRef, {
+          ...ts,
+          updatedAt: Date.now()
+        });
+        results.updated++;
+      } else {
+        const validated = DailyTimesheetSchema.parse({
+          ...ts,
+          id,
+          status: ts.status || 'DRAFT',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        batch.set(docRef, validated);
+        results.created++;
+      }
+    }
+
+    await batch.commit();
+    
+    await writeAuditLog(this.db, user, {
+      actionType: 'BULK_UPSERT',
+      entityType: 'DailyTimesheet',
+      entityId: 'batch',
+      afterSummary: `Wave bulk upsert: ${results.created} new, ${results.updated} updated, ${results.skipped} skipped.`,
+      sourceModule: 'operations'
+    });
+
+    return results;
+  }
+
   async copyFromPreviousDay(waveId: string, targetDate: string, user: User) {
     const prevDate = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
     
@@ -137,72 +188,10 @@ export class TimesheetService {
     return this.bulkUpsertTimesheets(payloads, user);
   }
 
-  /**
-   * Performs a bulk upsert of timesheets for a Wave.
-   * Safeguard: Strictly skips any record already approved by client or locked.
-   */
-  async bulkUpsertTimesheets(timesheets: Partial<DailyTimesheet>[], user: User) {
-    const batch = writeBatch(this.db);
-    const results = { created: 0, updated: 0, skipped: 0 };
-
-    for (const ts of timesheets) {
-      if (!ts.workerId || !ts.assignmentId || !ts.date) continue;
-
-      const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
-      const docRef = doc(this.getCollection(), id);
-      const existingSnap = await getDoc(docRef);
-
-      if (existingSnap.exists()) {
-        const current = existingSnap.data() as DailyTimesheet;
-        if (this.isFinalized(current.status)) {
-          results.skipped++;
-          continue;
-        }
-        
-        batch.update(docRef, {
-          ...ts,
-          updatedBy: user.displayName,
-          updatedAt: Date.now()
-        });
-        results.updated++;
-      } else {
-        const validated = DailyTimesheetSchema.parse({
-          ...ts,
-          id,
-          status: 'DRAFT',
-          createdBy: user.displayName,
-          updatedBy: user.displayName,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        });
-        batch.set(docRef, validated);
-        results.created++;
-      }
-    }
-
-    await batch.commit();
-    
-    await writeAuditLog(this.db, user, {
-      actionType: 'BULK_UPSERT',
-      entityType: 'DailyTimesheet',
-      entityId: 'batch',
-      afterSummary: `Wave bulk upsert: ${results.created} new, ${results.updated} updated, ${results.skipped} skipped.`,
-      sourceModule: 'operations'
-    });
-
-    return results;
-  }
-
   async submitTimesheet(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-    
     await updateDoc(docRef, {
       status: 'SUBMITTED',
-      submittedBy: user.displayName,
-      submittedAt: Date.now(),
-      updatedBy: user.displayName,
       updatedAt: Date.now(),
     });
 
@@ -216,54 +205,20 @@ export class TimesheetService {
     });
   }
 
-  async approveTimesheetByClient(id: string, user: User) {
+  async markAsReviewed(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-
     await updateDoc(docRef, {
-      status: 'CLIENT_APPROVED',
-      clientApprovedBy: user.displayName,
-      clientApprovedAt: Date.now(),
-      updatedBy: user.displayName,
+      status: 'OPS_REVIEWED',
       updatedAt: Date.now(),
     });
 
     await writeAuditLog(this.db, user, {
-      actionType: 'CLIENT_APPROVE',
+      actionType: 'OPS_REVIEW',
       entityType: 'DailyTimesheet',
       entityId: id,
       timesheetId: id,
-      sourceModule: 'client',
-      afterSummary: 'Client approved daily log'
-    });
-  }
-
-  async requestCorrection(id: string, reason: string, user: User) {
-    const docRef = doc(this.getCollection(), id);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) throw new Error('Timesheet not found');
-
-    // Rule: Cannot silently correct locked financial data
-    if (snap.data()?.status === 'LOCKED') {
-      throw new Error('Integrity Violation: Locked records cannot be marked for correction.');
-    }
-
-    await updateDoc(docRef, {
-      status: 'CORRECTION_REQUIRED',
-      correctionReason: reason,
-      updatedBy: user.displayName,
-      updatedAt: Date.now(),
-    });
-
-    await writeAuditLog(this.db, user, {
-      actionType: 'CORRECTION_REQ',
-      entityType: 'DailyTimesheet',
-      entityId: id,
-      timesheetId: id,
-      reasonText: reason,
       sourceModule: 'operations',
-      afterSummary: `Correction requested: ${reason}`
+      afterSummary: 'Operations reviewed and submitted to client'
     });
   }
 }

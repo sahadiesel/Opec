@@ -482,6 +482,91 @@ export interface AuditLog {
   sessionId?: string;
 }
 
+export interface DailyTimesheet {
+  id: string;
+  date: string;
+  workerId: string;
+  workerNameSnapshot: string;
+  assignmentId: string;
+  waveId: string;
+  contractId: string;
+  purchaseOrderId: string;
+  poLineId: string;
+  siteId: string;
+  positionId: string;
+  workMode: JobMode;
+  eventType: RateConditionEventType;
+  shiftType: 'DAY' | 'NIGHT' | 'MIXED' | 'STANDBY';
+  normalHours: number;
+  ot15Hours?: number;
+  ot20Hours?: number;
+  ot30Hours?: number;
+  holidayHours?: number;
+  standbyUnits?: number;
+  travelUnits?: number;
+  mobUnits?: number;
+  demobUnits?: number;
+  paidLeaveUnits?: number;
+  unpaidLeaveUnits?: number;
+  quantityOverride?: number;
+  remark?: string;
+  status: DailyTimesheetStatus;
+  createdAt: number;
+  updatedAt: number;
+  lockedAt?: number;
+  lockedBy?: string;
+}
+
+export type DailyTimesheetStatus = 'DRAFT' | 'SUBMITTED' | 'OPS_REVIEWED' | 'CLIENT_APPROVED' | 'LOCKED' | 'REJECTED' | 'CORRECTION_REQUIRED';
+
+export type RateConditionEventType = 
+  | 'work_day' 
+  | 'off_day_worked' 
+  | 'public_holiday_worked' 
+  | 'travel_day' 
+  | 'standby_day' 
+  | 'mobilization_day' 
+  | 'demobilization_day' 
+  | 'training_day' 
+  | 'sick_leave_paid' 
+  | 'vacation_paid' 
+  | 'unpaid_leave' 
+  | 'night_shift' 
+  | 'half_day' 
+  | 'early_return' 
+  | 'client_cancellation' 
+  | 'replacement_day' 
+  | 'other';
+
+export type RateConditionUnitType = 'DAY' | 'HALF_DAY' | 'HOUR' | 'TRIP' | 'FIXED';
+export type RateConditionCalculationMethod = 'FLAT' | 'MULTIPLIER' | 'PERCENTAGE' | 'FORMULA';
+export type RateConditionParentType = 'SALES_CONTRACT' | 'LABOR_COST_CONTRACT' | 'PO_SNAPSHOT' | 'WAVE_SNAPSHOT';
+export type RateConditionAppliesTo = 'SALES' | 'COST';
+
+export interface RateCondition {
+  id: string;
+  parentType: RateConditionParentType;
+  parentId: string;
+  appliesTo: RateConditionAppliesTo;
+  eventType: RateConditionEventType;
+  unitType: RateConditionUnitType;
+  calculationMethod: RateConditionCalculationMethod;
+  isActive: boolean;
+  positionId?: string;
+  siteId?: string;
+  workMode?: JobMode | 'BOTH';
+  baseRate?: number;
+  multiplier?: number;
+  percentageOfBase?: number;
+  fixedAmount?: number;
+  displayOrder: number;
+  effectiveDate: string;
+  endDate?: string;
+  billableConditionText?: string;
+  payableConditionText?: string;
+  requiresApproval?: boolean;
+}
+
 export interface ClientUser {
   id: string;
   customerId: string;
@@ -884,3 +969,188 @@ export interface WorkerPaymentProfile {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface WorkerCertificate {
+  id: string;
+  certificateName: string;
+  certificateCode: string;
+  certificateNo?: string;
+  issueDate: number;
+  expiryDate: number;
+  status: 'valid' | 'expired' | 'revoked';
+  _path?: string; // Optional for internal routing
+}
+
+export interface WorkerMedicalRecord {
+  id: string;
+  medicalType: string;
+  examDate: number;
+  expiryDate: number;
+  fitStatus: 'fit' | 'unfit' | 'conditional';
+  hospitalOrClinic?: string;
+  status?: string;
+  recordDate?: string;
+  _path?: string;
+}
+
+export interface WorkerDrugTest {
+  id: string;
+  testDate: number;
+  result: 'negative' | 'positive';
+  expiryDate: number;
+  laboratory?: string;
+  _path?: string;
+}
+
+export interface WorkerDocument {
+  id: string;
+  documentType: string;
+  documentNo: string;
+  issueDate: number;
+  expiryDate: number;
+  _path?: string;
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string;
+  permissions: string[];
+}
+
+export interface Purchase {
+  id: string;
+  purchaseNo: string;
+  vendorId: string;
+  purchaseDate: string;
+  purchaseType: PurchaseType;
+  totalAmount: number;
+  amountBeforeTax: number;
+  vatAmount: number;
+  status: PurchaseStatus;
+  notes?: string;
+  paymentStatus?: string;
+  storeReceiptStatus?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type PurchaseType = 'CASH' | 'CREDIT';
+export type PurchaseStatus = 'DRAFT' | 'ISSUED' | 'COMPLETED' | 'CANCELLED';
+
+export interface PurchaseLine {
+  id: string;
+  purchaseId: string;
+  itemDescription: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  createdAt: number;
+}
+
+export interface Vendor {
+  id: string;
+  vendorCode: string;
+  vendorName: string;
+  vendorType: VendorType;
+  taxId: string;
+  branchNo: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  paymentTerms?: string;
+  creditDays?: number;
+  defaultCurrency?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankName?: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type VendorType = 
+  | 'PPE_SUPPLIER' 
+  | 'TOOL_SUPPLIER' 
+  | 'SERVICE_PROVIDER' 
+  | 'TRANSPORT' 
+  | 'ACCOMMODATION' 
+  | 'OFFICE_EXPENSE' 
+  | 'GENERAL_SUPPLIER';
+
+export interface StoreItem {
+  id: string;
+  itemCode: string;
+  itemName: string;
+  category: string;
+  unit: string;
+  minimumStock: number;
+  currentStock: number;
+  isPPE: boolean;
+  isTool: boolean;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoreTransaction {
+  id: string;
+  itemId: string;
+  transactionType: TransactionType;
+  quantity: number;
+  workerId?: string;
+  assignmentId?: string;
+  waveId?: string;
+  transactionDate: string;
+  referenceType?: string;
+  referenceId?: string;
+  notes?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+export type TransactionType = 'RECEIVE' | 'ISSUE' | 'RETURN' | 'WRITEOFF' | 'DAMAGED' | 'LOST';
+
+export interface Receipt {
+  id: string;
+  receiptNo: string;
+  customerId: string;
+  receiptDate: string;
+  receivedAmount: number;
+  paymentMethod: PaymentMethod;
+  bankAccountId: string;
+  status: ReceiptStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ReceiptStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+
+export interface ReceiptAllocation {
+  id: string;
+  receiptId: string;
+  taxInvoiceId: string;
+  amountAllocated: number;
+  createdAt: number;
+}
+
+export interface TaxInvoice {
+  id: string;
+  taxInvoiceNo: string;
+  billingNoteId: string;
+  customerId: string;
+  issueDate: string;
+  taxableAmount: number;
+  vatAmount: number;
+  totalAmount: number;
+  currency: string;
+  status: TaxInvoiceStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';

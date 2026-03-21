@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -26,7 +27,8 @@ import {
   History,
   CheckCircle,
   Building2,
-  FileText
+  FileText,
+  Send
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -74,7 +76,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Standardized fetch from 'mobilizations' top-level collection
   useEffect(() => {
     async function fetchAssignment() {
       if (!firestore || !isAuthorized) {
@@ -114,10 +115,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const contractRef = useMemoFirebase(() => (firestore && assignment?.contractId && isAuthorized ? doc(firestore, 'main_contracts', assignment.contractId) : null), [firestore, assignment?.contractId, isAuthorized]);
   const { data: contract } = useDoc<MainContract>(contractRef as any);
 
-  const handleUpdateStatus = (newStatus: DeploymentStatus) => {
+  const handleUpdateStatus = (newStatus: DeploymentStatus, clientStatus?: ClientApprovalStatus) => {
     if (!firestore) return;
     const mobRef = doc(firestore, 'mobilizations', id);
     const updateData: any = { deploymentStatus: newStatus, updatedAt: Date.now() };
+    if (clientStatus) updateData.clientApprovalStatus = clientStatus;
+    
     updateDocumentNonBlocking(mobRef, updateData);
     setAssignment(prev => prev ? ({ ...prev, ...updateData }) : null);
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} เรียบร้อยแล้ว` });
@@ -166,7 +169,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             </div>
           </div>
           <div className="flex gap-2">
-            <Badge variant="outline" className="text-sm py-1 px-4 border-primary/20">
+            <Badge variant="outline" className="text-sm py-1 px-4 border-primary/20 font-bold uppercase">
               DEPLOYMENT: {assignment.deploymentStatus}
             </Badge>
             <Badge variant={assignment.readinessStatus === 'ready' ? 'default' : 'destructive'} className={assignment.readinessStatus === 'ready' ? 'bg-green-600' : ''}>
@@ -230,12 +233,21 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   <CardHeader><CardTitle className="text-lg">การดำเนินการ (Operational Actions)</CardTitle></CardHeader>
                   <CardContent className="flex flex-wrap gap-3">
                     {assignment.deploymentStatus === 'DRAFT' && (
-                      <Button onClick={() => handleUpdateStatus('READINESS_CHECK')} className="gap-2 bg-amber-600 hover:bg-amber-700">
+                      <Button onClick={() => handleUpdateStatus('READINESS_CHECK')} className="gap-2 bg-amber-600 hover:bg-amber-700 font-bold">
                         <ClipboardCheck className="h-4 w-4" /> เริ่มตรวจสอบความพร้อม
                       </Button>
                     )}
-                    <Button variant="outline" className="text-destructive border-destructive" onClick={() => handleUpdateStatus('CLOSED')}>
-                      <XCircle className="h-4 w-4" /> ยกเลิก / ปิดงาน
+                    {assignment.deploymentStatus === 'READINESS_CHECK' && (
+                      <Button 
+                        disabled={assignment.readinessStatus !== 'ready'}
+                        onClick={() => handleUpdateStatus('CLIENT_SUBMITTED', 'PENDING')} 
+                        className="gap-2 bg-blue-600 hover:bg-blue-700 font-bold"
+                      >
+                        <Send className="h-4 w-4" /> ส่งรายชื่อให้ลูกค้าพิจารณา (Submit to Client)
+                      </Button>
+                    )}
+                    <Button variant="outline" className="text-destructive border-destructive font-bold" onClick={() => handleUpdateStatus('CLOSED')}>
+                      <XCircle className="h-4 w-4 mr-2" /> ยกเลิก / ปิดงาน
                     </Button>
                   </CardContent>
                 </Card>
@@ -263,6 +275,29 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 </Card>
               </TabsContent>
 
+              <TabsContent value="approval" className="mt-6">
+                <Card>
+                  <CardHeader><CardTitle>สถานะการพิจารณาจากลูกค้า</CardTitle></CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg border">
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-muted-foreground uppercase">Client Acceptance Status</p>
+                        <p className="text-sm font-medium">สถานะการรับตัวคนงานโดยลูกค้า</p>
+                      </div>
+                      <Badge variant={assignment.clientApprovalStatus === 'APPROVED' ? 'default' : 'secondary'} className={assignment.clientApprovalStatus === 'APPROVED' ? 'bg-green-600' : ''}>
+                        {assignment.clientApprovalStatus}
+                      </Badge>
+                    </div>
+                    {assignment.clientComments && (
+                      <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg">
+                        <p className="text-[10px] font-black uppercase text-amber-800 mb-1">ความเห็นจากลูกค้า:</p>
+                        <p className="text-sm italic">{assignment.clientComments}</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
               <TabsContent value="history" className="mt-6">
                 <Card>
                   <CardHeader><CardTitle className="text-lg flex items-center gap-2"><History className="h-5 w-5" /> ประวัติการเปลี่ยนแปลง</CardTitle></CardHeader>
@@ -271,8 +306,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                       <div className="flex gap-4 border-l-2 border-primary/20 pl-4 relative">
                         <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
                         <div>
-                          <p className="font-bold">CREATED</p>
-                          <p className="text-xs text-muted-foreground">{new Date(assignment.createdAt).toLocaleString('th-TH')}</p>
+                          <p className="font-bold">DEPLOYMENT STATUS: {assignment.deploymentStatus}</p>
+                          <p className="text-xs text-muted-foreground">{new Date(assignment.updatedAt).toLocaleString('th-TH')}</p>
                         </div>
                       </div>
                     </div>
