@@ -43,7 +43,8 @@ import {
   ClipboardCheck,
   History,
   Grid3X3,
-  Lock
+  Lock,
+  FileBarChart
 } from 'lucide-react';
 import { 
   Sidebar, 
@@ -144,8 +145,9 @@ const navGroups: NavGroup[] = [
     label: 'ลูกค้า (Customer Portal)',
     items: [
       { key: 'client_portal', title: 'หน้าแรก (Client Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
-      { key: 'client_portal', title: 'อนุมัติพนักงาน (Candidate Acceptance)', href: '/client-portal/waves', icon: UserCheck },
-      { key: 'client_portal', title: 'อนุมัติใบลงเวลา (Timesheet Approval)', href: '/client-portal/timesheets', icon: ClipboardCheck },
+      { key: 'client_portal', title: 'พนักงานและโครงการ (Manpower)', href: '/client-portal/waves', icon: HardHat },
+      { key: 'client_portal', title: 'กิจกรรมรายวัน (Daily Logs)', href: '/client-portal/timesheets', icon: Clock },
+      { key: 'client_portal', title: 'เอกสารการเงิน (Billing)', href: '/client-portal/billing', icon: FileBarChart },
     ]
   }
 ];

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -20,7 +21,10 @@ import {
   ShoppingCart,
   FileText,
   AlertCircle,
-  TrendingUp
+  TrendingUp,
+  ArrowRight,
+  FileBarChart,
+  ShieldCheck
 } from 'lucide-react';
 import { 
   User, 
@@ -30,7 +34,8 @@ import {
   Worker, 
   PurchaseOrder, 
   MainContract,
-  WorkerWaveAcceptance
+  WorkerWaveAcceptance,
+  TaxInvoice
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
@@ -65,22 +70,21 @@ export default function ClientDashboardPage() {
   const asgnQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
-  const acceptQuery = useMemoFirebase(() => queryService?.getScopedAcceptancesQuery(currentUser), [queryService, currentUser]);
-  const { data: pendingAcceptances } = useCollection<WorkerWaveAcceptance>(
-    useMemoFirebase(() => acceptQuery ? query(acceptQuery as any, where('status', '==', 'pending')) : null, [acceptQuery]) as any
-  );
-
   const tsQuery = useMemoFirebase(() => {
     const base = queryService?.getScopedTimesheetsQuery(currentUser);
-    return base ? query(base as any, where('status', '==', 'OPS_REVIEWED')) : null;
+    // Display finalized logs mostly
+    return base ? query(base as any, where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED']), limit(10)) : null;
   }, [queryService, currentUser]);
-  const { data: pendingTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
+  const { data: recentTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
 
-  const poQuery = useMemoFirebase(() => queryService?.getScopedPOsQuery(currentUser), [queryService, currentUser]);
-  const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
+  const invQuery = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(collection(firestore, 'tax_invoices'), where('customerId', '==', currentUser.customerId), orderBy('issueDate', 'desc'), limit(5));
+  }, [firestore, currentUser?.customerId]);
+  const { data: recentInvoices } = useCollection<TaxInvoice>(invQuery as any);
 
-  const contractsQuery = useMemoFirebase(() => queryService?.getScopedContractsQuery(currentUser), [queryService, currentUser]);
-  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
+  const posQuery = useMemoFirebase(() => queryService?.getScopedPOsQuery(currentUser), [queryService, currentUser]);
+  const { data: pos } = useCollection<PurchaseOrder>(posQuery as any);
 
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
@@ -94,12 +98,11 @@ export default function ClientDashboardPage() {
     return {
       activeHeadcount,
       mobilising,
-      pendingApproval: (pendingAcceptances?.length || 0) + (pendingTimesheets?.length || 0),
-      pendingAcceptance: pendingAcceptances?.length || 0,
-      pendingTimesheet: pendingTimesheets?.length || 0,
+      totalWaves: waves?.length || 0,
       activeWaves: waves?.filter(w => w.status === 'ACTIVE').length || 0,
+      totalPOs: pos?.length || 0,
     };
-  }, [assignments, pendingAcceptances, pendingTimesheets, waves]);
+  }, [assignments, waves, pos]);
 
   const activeWorkerStats = useMemo(() => {
     if (!assignments || !allWorkers) return [];
@@ -148,23 +151,12 @@ export default function ClientDashboardPage() {
         {/* Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <LayoutDashboard className="h-8 w-8" /> แดชบอร์ดลูกค้า (Customer Dashboard)
+            <LayoutDashboard className="h-8 w-8" /> แดชบอร์ดสรุปงานโครงการ (Project Overview Dashboard)
           </h1>
           <p className="text-muted-foreground text-lg italic">
-            ติดตามสถานะพนักงาน โครงการ และงานรอยืนยันสำหรับ {currentUser.displayName}
+            ติดตามสถานะพนักงาน แผนการส่งตัว และเอกสารสรุปงานสำหรับ {currentUser.displayName}
           </p>
         </div>
-
-        {/* Action Items Alert */}
-        {stats.pendingApproval > 0 && (
-          <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm animate-pulse">
-            <Clock className="h-5 w-5 text-amber-600" />
-            <AlertTitle className="font-bold">รายการรอยืนยัน (Action Required)</AlertTitle>
-            <AlertDescription className="text-sm">
-              คุณมี {stats.pendingAcceptance} รายชื่อพนักงาน และ {stats.pendingTimesheet} ใบลงเวลา ที่รอการตรวจสอบและอนุมัติ
-            </AlertDescription>
-          </Alert>
-        )}
 
         {/* Top Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -176,38 +168,38 @@ export default function ClientDashboardPage() {
             colorClass="border-l-blue-600" 
           />
           <StatCard 
-            title="กำลังเดินทาง" 
+            title="กำลังระดมพล" 
             value={stats.mobilising} 
             sub="In-Mob Pipeline" 
             icon={Truck} 
             colorClass="border-l-indigo-500" 
           />
           <StatCard 
-            title="โครงการที่ดำเนินการ" 
+            title="รอบงานที่ดำเนินการ" 
             value={stats.activeWaves} 
             sub="Active Deployment Waves" 
             icon={Waves} 
             colorClass="border-l-green-600" 
           />
           <StatCard 
-            title="รอการอนุมัติ" 
-            value={stats.pendingApproval} 
-            sub="Pending Reviews" 
-            icon={ClipboardCheck} 
+            title="ใบสั่งซื้อโครงการ" 
+            value={stats.totalPOs} 
+            sub="Purchase Orders" 
+            icon={ShoppingCart} 
             colorClass="border-l-amber-500" 
           />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Context Area */}
+          {/* Main Operational Summary */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="shadow-md border-none overflow-hidden">
               <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Activity className="h-5 w-5 text-primary" /> พนักงานที่กำลังปฏิบัติงาน (On-site Workforce)
+                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                    <Activity className="h-5 w-5" /> สถานะพนักงานปฏิบัติงาน (On-site Deployment)
                   </CardTitle>
-                  <CardDescription>สรุปสถานะพนักงาน 5 รายล่าสุดที่ปฏิบัติงานอยู่</CardDescription>
+                  <CardDescription>สรุปรายชื่อพนักงานและระยะเวลาคงเหลือในรอบปัจจุบัน</CardDescription>
                 </div>
                 <Button variant="ghost" size="sm" className="text-xs" asChild>
                   <Link href="/client-portal/waves">ดูทั้งหมด <ChevronRight className="h-4 w-4" /></Link>
@@ -217,10 +209,10 @@ export default function ClientDashboardPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/30">
-                      <TableHead className="pl-6">พนักงาน</TableHead>
-                      <TableHead>โครงการ</TableHead>
-                      <TableHead className="text-center">วันทำงาน (สะสม)</TableHead>
-                      <TableHead className="text-right pr-6">คงเหลือ (วัน)</TableHead>
+                      <TableHead className="pl-6">พนักงาน (Worker)</TableHead>
+                      <TableHead>โครงการ (Project)</TableHead>
+                      <TableHead className="text-center">สะสม (Worked)</TableHead>
+                      <TableHead className="text-right pr-6">คงเหลือ (Days left)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -256,74 +248,80 @@ export default function ClientDashboardPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card className="shadow-md border-none overflow-hidden">
-                <CardHeader className="bg-primary/5 border-b">
+                <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <ShoppingCart className="h-4 w-4 text-primary" /> ใบสั่งซื้อโครงการ (Purchase Orders)
+                    <FileBarChart className="h-4 w-4 text-primary" /> ใบกำกับภาษีล่าสุด (Recent Invoices)
                   </CardTitle>
+                  <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
+                    <Link href="/client-portal/billing">ดูทั้งหมด</Link>
+                  </Button>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y">
-                    {pos?.slice(0, 5).map(p => (
-                      <div key={p.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
+                    {recentInvoices?.map(inv => (
+                      <div key={inv.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
                         <div className="space-y-0.5">
-                          <p className="font-bold text-primary">{p.poCode}</p>
-                          <p className="text-muted-foreground truncate max-w-[150px]">{p.title}</p>
+                          <p className="font-bold text-primary font-mono">{inv.taxInvoiceNo}</p>
+                          <p className="text-[10px] text-muted-foreground">{inv.issueDate}</p>
                         </div>
-                        <Badge variant="outline" className="text-[9px] uppercase">{p.status}</Badge>
+                        <div className="text-right">
+                          <p className="font-black text-primary">฿{inv.totalAmount.toLocaleString()}</p>
+                          <Badge variant="outline" className="text-[8px] h-4 uppercase">{inv.status}</Badge>
+                        </div>
                       </div>
                     ))}
-                    {!pos?.length && <p className="p-10 text-center text-xs text-muted-foreground italic">ไม่มีข้อมูล PO</p>}
+                    {!recentInvoices?.length && <p className="p-10 text-center text-xs text-muted-foreground italic">ไม่มีข้อมูลใบกำกับภาษี</p>}
                   </div>
                 </CardContent>
               </Card>
 
               <Card className="shadow-md border-none overflow-hidden">
-                <CardHeader className="bg-primary/5 border-b">
+                <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-primary" /> สัญญาที่เกี่ยวข้อง (Main Contracts)
+                    <Clock className="h-4 w-4 text-primary" /> บันทึกเวลาล่าสุด (Activity Logs)
                   </CardTitle>
+                  <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
+                    <Link href="/client-portal/timesheets">ดูทั้งหมด</Link>
+                  </Button>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y">
-                    {contracts?.slice(0, 5).map(c => (
-                      <div key={c.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
+                    {recentTimesheets?.map(ts => (
+                      <div key={ts.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
                         <div className="space-y-0.5">
-                          <p className="font-bold text-primary">{c.contractNumber}</p>
-                          <p className="text-muted-foreground truncate max-w-[150px]">{c.title}</p>
+                          <p className="font-bold text-primary">{ts.workerNameSnapshot}</p>
+                          <p className="text-[10px] text-muted-foreground">{ts.date} | {ts.eventType}</p>
                         </div>
-                        <Badge className="bg-green-600 text-[9px] h-4">{c.status.toUpperCase()}</Badge>
+                        <Badge variant="secondary" className="text-[8px] font-bold h-4 uppercase">
+                          {ts.status === 'VERIFIED_PAPER' ? 'Verified (Paper)' : ts.status}
+                        </Badge>
                       </div>
                     ))}
-                    {!contracts?.length && <p className="p-10 text-center text-xs text-muted-foreground italic">ไม่มีข้อมูลสัญญา</p>}
+                    {!recentTimesheets?.length && <p className="p-10 text-center text-xs text-muted-foreground italic">ไม่พบบันทึกเวลาที่สรุปแล้ว</p>}
                   </div>
                 </CardContent>
               </Card>
             </div>
           </div>
 
-          {/* Sidebar Area */}
+          {/* Sidebar Portal Summary */}
           <div className="space-y-6">
             <Card className="bg-primary text-primary-foreground shadow-lg overflow-hidden border-none">
               <CardHeader className="pb-4 border-b border-white/10">
                 <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                  <ClipboardCheck className="h-4 w-4" /> ทางลัดการอนุมัติ (Approval Hub)
+                  <ShieldCheck className="h-4 w-4" /> ข้อมูลการเข้าใช้งาน (My Context)
                 </CardTitle>
               </CardHeader>
-              <CardContent className="pt-6 space-y-2">
-                <ShortcutItem 
-                  href="/client-portal/waves" 
-                  label="พิจารณาผู้สมัคร" 
-                  sub={`${stats.pendingAcceptance} รายการรอพิจารณา`} 
-                  icon={Users} 
-                  count={stats.pendingAcceptance}
-                />
-                <ShortcutItem 
-                  href="/client-portal/timesheets" 
-                  label="อนุมัติเวลาทำงาน" 
-                  sub={`${stats.pendingTimesheet} วันที่รอรับรอง`} 
-                  icon={Clock} 
-                  count={stats.pendingTimesheet}
-                />
+              <CardContent className="pt-6 space-y-4">
+                <div className="p-3 bg-white/10 rounded-lg border border-white/10">
+                  <p className="text-[10px] font-black uppercase opacity-60 mb-1">Company Account:</p>
+                  <p className="font-bold text-sm truncate">{currentUser.displayName}</p>
+                </div>
+                <div className="space-y-2">
+                  <ShortcutItem href="/client-portal/waves" label="ดูรายชื่อพนักงาน" sub="Current Roster" icon={HardHat} />
+                  <ShortcutItem href="/client-portal/timesheets" label="ประวัติลงเวลา" sub="Activity Summary" icon={History} />
+                  <ShortcutItem href="/client-portal/billing" label="เอกสารทางบัญชี" sub="Invoices & AR" icon={Receipt} />
+                </div>
               </CardContent>
             </Card>
 
@@ -356,10 +354,11 @@ export default function ClientDashboardPage() {
             </Card>
 
             <PageGuidance 
+              title="แนะนำการใช้งาน Portal"
               tips={[
-                "คุณสามารถกดที่ 'พิจารณาผู้สมัคร' เพื่อตรวจสอบประวัติคนงานก่อนเริ่มงาน",
-                "ใบลงเวลา (Timesheets) จะแสดงเฉพาะรายการที่ฝ่ายปฏิบัติการตรวจสอบแล้วเท่านั้น",
-                "ข้อมูลพนักงานและโครงการถูกจำกัดให้เห็นเฉพาะส่วนที่เกี่ยวข้องกับบริษัทของคุณ"
+                "ระบบบันทึกเวลาเป็นแบบ Paper-First ซึ่ง OPEC จะตรวจสอบและอัปโหลดสถานะขึ้นระบบให้ท่านตรวจสอบได้แบบ Real-time",
+                "ท่านสามารถคลิกที่เมนู 'เอกสารทางบัญชี' เพื่อตรวจสอบยอดค้างชำระและรายการวางบิลรายเดือน",
+                "หากพบข้อมูลพนักงานหรือชั่วโมงทำงานไม่ถูกต้อง กรุณาใช้ปุ่ม 'แจ้งปัญหา' ในหน้าแสดงผลรายละเอียด"
               ]}
             />
           </div>
@@ -384,7 +383,7 @@ function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   );
 }
 
-function ShortcutItem({ href, label, sub, icon: Icon, count }: any) {
+function ShortcutItem({ href, label, sub, icon: Icon }: any) {
   return (
     <Link href={href} className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/20 transition-all group">
       <div className="flex items-center gap-3">
@@ -396,7 +395,9 @@ function ShortcutItem({ href, label, sub, icon: Icon, count }: any) {
           <span className="text-[9px] opacity-60 uppercase">{sub}</span>
         </div>
       </div>
-      {count > 0 && <Badge className="bg-amber-500 text-white border-none h-5 min-w-5 justify-center font-bold text-[10px]">{count}</Badge>}
+      <ChevronRight className="h-4 w-4 opacity-40 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
     </Link>
   );
 }
+
+import { Separator } from '@/components/ui/separator';
