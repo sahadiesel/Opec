@@ -7,8 +7,8 @@ import { User, PermissionProfile } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LogOut, Shield, AlertTriangle, Info, Settings2 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useAuth } from '@/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { useFirestore, useDoc, useMemoFirebase, useAuth, useCollection } from '@/firebase';
+import { doc, updateDoc, query, collection, where } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { getEffectiveDepartment, getEffectiveLevel, isAdminUser } from '@/lib/auth-mapping';
 import { useRouter } from 'next/navigation';
@@ -37,12 +37,22 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const auth = useAuth();
   const router = useRouter();
 
-  const profileRef = useMemoFirebase(() => {
-    if (!firestore || !user?.permissionProfileKey) return null;
-    return doc(firestore, 'permission_profiles', user.permissionProfileKey);
-  }, [firestore, user?.permissionProfileKey]);
+  // Multi-profile resolution logic
+  const profileKeys = React.useMemo(() => {
+    if (!user) return [];
+    const keys = user.permissionProfileKeys || [];
+    if (user.permissionProfileKey && !keys.includes(user.permissionProfileKey)) {
+      return [...keys, user.permissionProfileKey];
+    }
+    return keys;
+  }, [user]);
 
-  const { data: profile, isLoading: isProfileLoading } = useDoc<PermissionProfile>(profileRef as any);
+  const profilesQuery = useMemoFirebase(() => {
+    if (!firestore || profileKeys.length === 0) return null;
+    return query(collection(firestore, 'permission_profiles'), where('profileKey', 'in', profileKeys));
+  }, [firestore, profileKeys]);
+
+  const { data: profiles, isLoading: isProfilesLoading } = useCollection<PermissionProfile>(profilesQuery as any);
 
   const handleLogout = async () => {
     if (user && firestore) {
@@ -72,14 +82,17 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const level = getEffectiveLevel(user);
   const isAdmin = isAdminUser(user);
   
-  const isLegacy = !user.permissionProfileKey;
-  const isProfileMissing = user.permissionProfileKey && !isProfileLoading && !profile;
+  const isLegacy = !user.permissionProfileKeys || user.permissionProfileKeys.length === 0;
+  const isProfileMissing = profileKeys.length > 0 && !isProfilesLoading && (!profiles || profiles.length === 0);
   const isContextMissing = !user.department || !user.level;
+
+  // For display, we use the first active profile or legacy indicator
+  const primaryProfile = profiles?.find(p => p.profileKey === user.permissionProfileKey) || profiles?.[0];
 
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <SidebarNav user={user} profile={profile} />
+        <SidebarNav user={user} profiles={profiles} />
         <SidebarInset>
           <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
@@ -99,7 +112,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                 <div className="flex items-center gap-2 mr-2">
                   {(isLegacy || isProfileMissing || isContextMissing) && (
                     <TooltipProvider>
-                      <Tooltip shadow-md>
+                      <Tooltip>
                         <TooltipTrigger asChild>
                           <Button 
                             variant="ghost" 
@@ -135,9 +148,10 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                   <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter">
                     {dept} / {level}
                   </span>
-                  {profile && (
+                  {primaryProfile && (
                     <Badge variant="secondary" className="text-[9px] h-4 py-0 px-1 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1">
-                      <Shield className="h-2 w-2" /> {profile.profileNameEn}
+                      <Shield className="h-2 w-2" /> {primaryProfile.profileNameEn}
+                      {profiles && profiles.length > 1 && <span className="ml-1 opacity-60">+{profiles.length - 1}</span>}
                     </Badge>
                   )}
                 </div>

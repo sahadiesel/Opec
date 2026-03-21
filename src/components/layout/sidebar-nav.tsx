@@ -1,4 +1,3 @@
-
 'use client';
 
 import Link from 'next/link';
@@ -152,7 +151,7 @@ const navGroups: NavGroup[] = [
   }
 ];
 
-export function SidebarNav({ user, profile }: { user: User; profile?: PermissionProfile | null }) {
+export function SidebarNav({ user, profiles }: { user: User; profiles?: PermissionProfile[] | null }) {
   const pathname = usePathname();
   const isAdmin = isAdminUser(user);
 
@@ -172,7 +171,7 @@ export function SidebarNav({ user, profile }: { user: User; profile?: Permission
       <SidebarContent className="py-4">
         {navGroups.map((group) => {
           const visibleItems = group.items.filter(item => 
-            isAdmin || canView(user, item.key, profile)
+            isAdmin || canView(user, item.key, profiles)
           );
 
           if (visibleItems.length === 0) return null;
