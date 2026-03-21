@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -30,8 +31,7 @@ import {
   AccountsReceivable, 
   AccountsPayable, 
   PayrollRun, 
-  BankAccount,
-  CashbookEntry
+  BankAccount
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
@@ -106,7 +106,7 @@ export default function AccountingDashboardPage() {
   }, [billingNotes, draftInvoices, arItems, apItems, pendingPayroll, bankAccounts]);
 
   const urgentTasks = useMemo(() => {
-    const tasks = [];
+    const tasks: any[] = [];
     
     // Payroll Handoff
     pendingPayroll?.forEach(run => {

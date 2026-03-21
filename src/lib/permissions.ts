@@ -1,3 +1,4 @@
+
 'use client';
 
 /**
@@ -126,8 +127,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       overview_dashboard: READ_ONLY,
       positions: { ...OFFICER_ACCESS, approve: true, delete: true },
       workers: { ...OFFICER_ACCESS, approve: true, delete: true },
-      timesheets: { view: true, approve: true }, // can view and review_ops
-      worker_payroll: { view: true, create: true, approve: true }, // generate, hr_approve
+      timesheets: { view: true, approve: true }, 
+      worker_payroll: { view: true, create: true, approve: true }, 
       office_payroll: { view: true, create: true, approve: true },
       office_staff: { ...OFFICER_ACCESS, approve: true },
       waves: READ_ONLY,
@@ -143,8 +144,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       overview_dashboard: READ_ONLY,
       positions: OFFICER_ACCESS,
       workers: OFFICER_ACCESS,
-      timesheets: { view: true, create: true, edit: true }, // can prep daily logs
-      worker_payroll: { view: true }, // support only
+      timesheets: { view: true, create: true, edit: true }, 
+      worker_payroll: { view: true }, 
       waves: READ_ONLY,
       assignments: READ_ONLY,
       mobilization: READ_ONLY,
@@ -158,7 +159,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       waves: { ...OFFICER_ACCESS, approve: true, delete: true },
       assignments: { ...OFFICER_ACCESS, approve: true },
       mobilization: { ...OFFICER_ACCESS, approve: true },
-      timesheets: { view: true, create: true, edit: true, approve: true }, // create, edit, review_ops
+      timesheets: { view: true, create: true, edit: true, approve: true }, 
       workers: READ_ONLY,
       positions: READ_ONLY,
       profit_estimates: READ_ONLY,
@@ -170,12 +171,12 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       waves: OFFICER_ACCESS,
       assignments: OFFICER_ACCESS,
       mobilization: OFFICER_ACCESS,
-      timesheets: { view: true, create: true, edit: true }, // create, edit
+      timesheets: { view: true, create: true, edit: true }, 
       workers: READ_ONLY,
     }),
 
     // 6. Accounting Manager
-    baseline('accounting_manager', 'Accounting & Finance Manager', 'ผู้จัดการฝ่ายบัญชีและการเงิน', 'accounting', 'manager', {
+    baseline('accounting_manager', 'Accounting Manager', 'ผู้จัดการฝ่ายบัญชี', 'accounting', 'manager', {
       overview_dashboard: READ_ONLY,
       billing_notes: { ...OFFICER_ACCESS, approve: true, delete: true },
       tax_invoices: { ...OFFICER_ACCESS, approve: true, delete: true },
@@ -185,9 +186,9 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       bank_accounts: { ...OFFICER_ACCESS, approve: true },
       accounts_receivable: READ_ONLY,
       accounts_payable: READ_ONLY,
-      worker_payroll: { view: true, edit: true, approve: true }, // finance_prepare, mark_paid, lock
+      worker_payroll: { view: true, edit: true, approve: true }, 
       office_payroll: { view: true, edit: true, approve: true },
-      payment_export_batches: { view: true, create: true, approve: true }, // export_bank_file
+      payment_export_batches: { view: true, create: true, approve: true }, 
       sales_contract_terms: READ_ONLY,
       labor_cost_contract_terms: READ_ONLY,
       rate_conditions: READ_ONLY,
@@ -234,7 +235,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
     }),
 
     // 10. Store Officer
-    baseline('store_officer', 'Store & Procurement Officer', 'เจ้าหน้าที่คลังและจัดซื้อ', 'store', 'officer', {
+    baseline('store_officer', 'Store Officer', 'เจ้าหน้าที่คลังสินค้า', 'store', 'officer', {
       overview_dashboard: READ_ONLY,
       vendors: OFFICER_ACCESS,
       purchases: OFFICER_ACCESS,
@@ -242,21 +243,11 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       ap_bills: READ_ONLY,
     }),
 
-    // 11. Client Manager (Approver)
-    baseline('client_manager', 'Client Approver', 'ลูกค้า (ผู้อนุมัติ)', 'client', 'manager', {
+    // 11. Client User
+    baseline('client_user', 'Client User', 'ลูกค้า', 'client', 'viewer', {
       overview_dashboard: READ_ONLY,
       client_portal: { view: true, approve: true, edit: true }, 
       timesheets: { view: true, approve: true },
-      workers: READ_ONLY,
-      quotations: READ_ONLY,
-      customer_pos: READ_ONLY,
-    }),
-
-    // 12. Client Viewer
-    baseline('client_viewer', 'Client Viewer', 'ลูกค้า (ผู้เรียกดู)', 'client', 'viewer', {
-      overview_dashboard: READ_ONLY,
-      client_portal: READ_ONLY,
-      timesheets: READ_ONLY,
       workers: READ_ONLY,
       quotations: READ_ONLY,
       customer_pos: READ_ONLY,

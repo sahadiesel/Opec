@@ -140,7 +140,7 @@ export default function SetupAdminPage() {
         level = repairRole.includes('manager') ? 'manager' : 'officer';
       } else if (repairRole.startsWith('accounting')) {
         dept = 'accounting';
-        level = 'officer';
+        level = repairRole.includes('manager') ? 'manager' : 'officer';
       }
 
       const legacyRoles = getLegacyRoles(dept, level);

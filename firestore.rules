@@ -38,8 +38,8 @@ service cloud.firestore {
       return hasRole('operations_officer') || hasRole('operations_manager') || hasRole('system_admin');
     }
 
-    function isFinanceStaff() {
-      return hasRole('accounting_manager') || hasRole('accounting_officer') || hasRole('finance_officer') || hasRole('system_admin');
+    function isAccountingStaff() {
+      return hasRole('accounting_manager') || hasRole('accounting_officer') || hasRole('system_admin');
     }
 
     function isSalesStaff() {
@@ -47,15 +47,15 @@ service cloud.firestore {
     }
 
     function isStoreStaff() {
-      return hasRole('store_officer') || hasRole('system_admin');
+      return hasRole('store_officer') || hasRole('store_manager') || hasRole('system_admin');
     }
 
     function isInternalStaff() {
-      return isHRStaff() || isOperationsStaff() || isFinanceStaff() || isSalesStaff() || isStoreStaff();
+      return isHRStaff() || isOperationsStaff() || isAccountingStaff() || isSalesStaff() || isStoreStaff();
     }
 
     function isClient() {
-      return hasRole('client_approver') || hasRole('client_viewer') || hasRole('client') || hasRole('client_user');
+      return hasRole('client_user') || hasRole('client') || hasRole('client_approver') || hasRole('client_viewer');
     }
 
     function isClientOf(cid) {
@@ -83,30 +83,30 @@ service cloud.firestore {
     // Payroll Periods
     match /payroll_periods/{id} {
       allow read: if isInternalStaff();
-      allow write: if isHRStaff() || isFinanceStaff();
+      allow write: if isHRStaff() || isAccountingStaff();
     }
 
     // Payroll Batches & Lines (Internal Financials)
     match /payroll_batches/{id} {
-      allow read: if isHRStaff() || isFinanceStaff();
-      allow write: if isHRStaff() || isFinanceStaff();
+      allow read: if isHRStaff() || isAccountingStaff();
+      allow write: if isHRStaff() || isAccountingStaff();
     }
 
     match /payroll_batches/{id}/lines/{lineId} {
-      allow read: if isHRStaff() || isFinanceStaff();
-      allow write: if isHRStaff() || isFinanceStaff();
+      allow read: if isHRStaff() || isAccountingStaff();
+      allow write: if isHRStaff() || isAccountingStaff();
     }
 
     // Worker Payment Profiles (Sensitive Bank Data)
     match /worker_payment_profiles/{id} {
-      allow read: if isHRStaff() || isFinanceStaff();
+      allow read: if isHRStaff() || isAccountingStaff();
       allow write: if isHRStaff();
     }
 
     // Payment Export Batches
     match /payment_export_batches/{id} {
-      allow read: if isHRStaff() || isFinanceStaff();
-      allow write: if isFinanceStaff() || hasRole('accounting_manager');
+      allow read: if isHRStaff() || isAccountingStaff();
+      allow write: if isAccountingStaff() || hasRole('accounting_manager');
     }
 
     // Centralized Numbering System
@@ -138,18 +138,18 @@ service cloud.firestore {
     }
 
     match /sales_contract_terms/{id} {
-      allow read: if isSalesStaff() || isFinanceStaff();
+      allow read: if isSalesStaff() || isAccountingStaff();
       allow write: if isSalesStaff();
     }
 
     match /labor_cost_contract_terms/{id} {
-      allow read: if isSalesStaff() || isHRStaff() || isFinanceStaff();
+      allow read: if isSalesStaff() || isHRStaff() || isAccountingStaff();
       allow write: if isSalesStaff() || isHRStaff();
     }
 
     match /rate_conditions/{id} {
       allow read: if isInternalStaff();
-      allow write: if isSalesStaff() || isHRStaff() || isFinanceStaff();
+      allow write: if isSalesStaff() || isHRStaff() || isAccountingStaff();
     }
 
     match /main_contracts/{id} {
@@ -159,7 +159,7 @@ service cloud.firestore {
 
     match /purchase_orders/{poId} {
       allow get, list: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow write: if isSalesStaff() || isFinanceStaff();
+      allow write: if isSalesStaff() || isAccountingStaff();
     }
     
     match /purchase_orders/{poId}/po_lines/{lineId} {
@@ -193,7 +193,7 @@ service cloud.firestore {
     match /worker_wave_acceptances/{id} {
       allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow create: if isOperationsStaff();
-      allow update: if isOperationsStaff() || (isClientOf(resource.data.customerId) && hasRole('client_approver'));
+      allow update: if isOperationsStaff() || (isClientOf(resource.data.customerId) && hasRole('client_user'));
       allow delete: if hasRole('system_admin');
     }
 

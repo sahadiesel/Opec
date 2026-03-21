@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -35,7 +36,7 @@ export default function AccountsReceivablePage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer'];
+    const authRoles = ['system_admin', 'accounting_officer', 'accounting_manager'];
     return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
   }, [currentUser]);
 

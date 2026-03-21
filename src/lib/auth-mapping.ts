@@ -1,6 +1,7 @@
+
 /**
  * OPEC OpsFlow - Authorization & Menu Mapping Configuration
- * Centralized mapping from Business Roles to Dept + Level + Legacy Roles.
+ * Centralized mapping from Business Roles to Dept + Level + Canonical Roles.
  */
 
 import { DeptType, AccessLevel, RoleType, User, ApprovalStatus, BusinessRoleKey } from './types';
@@ -14,7 +15,7 @@ export interface BusinessRole {
   labelEn: string;
   dept: DeptType;
   level: AccessLevel;
-  legacyRoles: RoleType[];
+  canonicalRole: RoleType;
   descriptionTh: string;
 }
 
@@ -28,7 +29,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'System Administrator',
     dept: 'admin',
     level: 'admin',
-    legacyRoles: ['system_admin'],
+    canonicalRole: 'system_admin',
     descriptionTh: 'เข้าถึงและจัดการได้ทุกส่วนของระบบ รวมถึงการตั้งค่าสิทธิ์และความปลอดภัย'
   },
   hr_manager: {
@@ -37,7 +38,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'HR Manager',
     dept: 'hr',
     level: 'manager',
-    legacyRoles: ['hr_manager', 'hr_officer', 'payroll_officer'],
+    canonicalRole: 'hr_manager',
     descriptionTh: 'จัดการข้อมูลคนงาน ตำแหน่งงาน และอนุมัติการจ่ายเงินเดือน (Payroll)'
   },
   hr_officer: {
@@ -46,7 +47,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'HR Officer',
     dept: 'hr',
     level: 'officer',
-    legacyRoles: ['hr_officer', 'payroll_officer'],
+    canonicalRole: 'hr_officer',
     descriptionTh: 'บันทึกประวัติคนงาน ใบเซอร์ และจัดเตรียมข้อมูลการลงเวลาทำงาน'
   },
   operations_manager: {
@@ -55,7 +56,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Operations Manager',
     dept: 'operations',
     level: 'manager',
-    legacyRoles: ['operations_officer'],
+    canonicalRole: 'operations_manager',
     descriptionTh: 'วางแผนรอบการทำงาน (Waves) มอบหมายงาน และอนุมัติการเตรียมตัวส่งคน (Mobilization)'
   },
   operations_officer: {
@@ -64,7 +65,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Operations Officer',
     dept: 'operations',
     level: 'officer',
-    legacyRoles: ['operations_officer'],
+    canonicalRole: 'operations_officer',
     descriptionTh: 'จัดการตารางงาน การมอบหมายตัวบุคคล และตรวจสอบความพร้อมหน้างาน'
   },
   accounting_manager: {
@@ -73,7 +74,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Accounting Manager',
     dept: 'accounting',
     level: 'manager',
-    legacyRoles: ['finance_officer'],
+    canonicalRole: 'accounting_manager',
     descriptionTh: 'จัดการระบบลูกหนี้/เจ้าหนี้ อนุมัติการจ่ายเงิน และสรุปงบการเงินบริษัท'
   },
   accounting_officer: {
@@ -82,7 +83,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Accounting Officer',
     dept: 'accounting',
     level: 'officer',
-    legacyRoles: ['finance_officer'],
+    canonicalRole: 'accounting_officer',
     descriptionTh: 'ออกใบแจ้งหนี้ บันทึกรับชำระเงิน และจัดการรายการ Cashbook'
   },
   sales_manager: {
@@ -91,7 +92,7 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Sales Manager',
     dept: 'sales',
     level: 'manager',
-    legacyRoles: ['sales_officer'],
+    canonicalRole: 'sales_manager',
     descriptionTh: 'บริหารจัดการสัญญาหลัก (Contracts) และใบสั่งซื้อจากลูกค้า (POs)'
   },
   sales_officer: {
@@ -100,8 +101,17 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Sales Officer',
     dept: 'sales',
     level: 'officer',
-    legacyRoles: ['sales_officer'],
+    canonicalRole: 'sales_officer',
     descriptionTh: 'บันทึกข้อมูลลูกค้า และจัดเตรียมรายละเอียดสัญญาเบื้องต้น'
+  },
+  store_manager: {
+    key: 'store_manager',
+    labelTh: 'ผู้จัดการคลังสินค้า',
+    labelEn: 'Store Manager',
+    dept: 'store',
+    level: 'manager',
+    canonicalRole: 'store_manager',
+    descriptionTh: 'ควบคุมดูแลคลังสินค้า PPE และเครื่องมือช่าง รวมถึงนโยบายการจัดซื้อ'
   },
   store_officer: {
     key: 'store_officer',
@@ -109,71 +119,32 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     labelEn: 'Store & Procurement',
     dept: 'store',
     level: 'officer',
-    legacyRoles: ['store_officer'],
+    canonicalRole: 'store_officer',
     descriptionTh: 'จัดการสต็อกอุปกรณ์ PPE เครื่องมือช่าง และการสั่งซื้อพัสดุเข้าคลัง'
   },
-  customer_approver: {
-    key: 'customer_approver',
-    labelTh: 'ลูกค้า (ผู้มีอำนาจอนุมัติ)',
-    labelEn: 'Customer Approver',
+  client_user: {
+    key: 'client_user',
+    labelTh: 'ลูกค้า / ผู้ใช้งานภายนอก',
+    labelEn: 'Client User',
     dept: 'client',
-    level: 'manager',
-    legacyRoles: ['client'],
+    level: 'viewer',
+    canonicalRole: 'client_user',
     descriptionTh: 'เข้าดูประวัติพนักงานที่ส่งพิจารณา และกดยืนยันการรับตัวคนงานหรืออนุมัติเวลา'
-  },
-  customer_viewer: {
-    key: 'customer_viewer',
-    labelTh: 'ลูกค้า (ผู้เรียกดู)',
-    labelEn: 'Customer Viewer',
-    dept: 'client',
-    level: 'viewer',
-    legacyRoles: ['client_user'],
-    descriptionTh: 'เรียกดูสถานะโครงการและรายชื่อพนักงานที่กำลังปฏิบัติงาน'
-  },
-  client_approver: {
-    key: 'client_approver',
-    labelTh: 'ลูกค้า (ผู้มีอำนาจอนุมัติ)',
-    labelEn: 'Client Approver',
-    dept: 'client',
-    level: 'manager',
-    legacyRoles: ['client'],
-    descriptionTh: 'เข้าดูประวัติพนักงานที่ส่งพิจารณา และกดยืนยันการรับตัวคนงาน'
-  },
-  client_viewer: {
-    key: 'client_viewer',
-    labelTh: 'ลูกค้า (ผู้เรียกดู)',
-    labelEn: 'Client Viewer',
-    dept: 'client',
-    level: 'viewer',
-    legacyRoles: ['client_user'],
-    descriptionTh: 'เรียกดูสถานะโครงการและรายชื่อพนักงานที่กำลังปฏิบัติงาน'
   }
 };
 
 /**
- * Level hierarchy for comparison
+ * Legacy to Canonical Compatibility Map
  */
-const LevelOrder: Record<AccessLevel, number> = {
-  viewer: 0,
-  officer: 1,
-  manager: 2,
-  admin: 3
-};
-
-/**
- * Legacy Role to Dept/Level Mapping for Migration
- */
-export const LEGACY_ROLE_MAP: Record<string, { dept: DeptType; level: AccessLevel }> = {
-  system_admin: { dept: 'admin', level: 'admin' },
-  hr_manager: { dept: 'hr', level: 'manager' },
-  hr_officer: { dept: 'hr', level: 'officer' },
-  payroll_officer: { dept: 'hr', level: 'officer' },
-  sales_officer: { dept: 'sales', level: 'officer' },
-  finance_officer: { dept: 'accounting', level: 'officer' },
-  store_officer: { dept: 'store', level: 'officer' },
-  operations_officer: { dept: 'operations', level: 'officer' },
-  client_user: { dept: 'client', level: 'viewer' },
-  client: { dept: 'client', level: 'viewer' }
+export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
+  finance_officer: 'accounting_officer',
+  payroll_officer: 'hr_officer',
+  client: 'client_user',
+  client_viewer: 'client_user',
+  client_approver: 'client_user',
+  customer_viewer: 'client_user',
+  customer_approver: 'client_user',
+  safety_officer: 'operations_officer'
 };
 
 /**
@@ -198,12 +169,16 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
   
   if (allRoles.includes('system_admin')) return { dept: 'admin', level: 'admin' };
   if (allRoles.includes('hr_manager')) return { dept: 'hr', level: 'manager' };
-  if (allRoles.includes('hr_officer') || allRoles.includes('payroll_officer')) return { dept: 'hr', level: 'officer' };
-  if (allRoles.includes('finance_officer')) return { dept: 'accounting', level: 'officer' };
+  if (allRoles.includes('hr_officer')) return { dept: 'hr', level: 'officer' };
+  if (allRoles.includes('accounting_manager')) return { dept: 'accounting', level: 'manager' };
+  if (allRoles.includes('accounting_officer')) return { dept: 'accounting', level: 'officer' };
+  if (allRoles.includes('sales_manager')) return { dept: 'sales', level: 'manager' };
   if (allRoles.includes('sales_officer')) return { dept: 'sales', level: 'officer' };
+  if (allRoles.includes('store_manager')) return { dept: 'store', level: 'manager' };
   if (allRoles.includes('store_officer')) return { dept: 'store', level: 'officer' };
+  if (allRoles.includes('operations_manager')) return { dept: 'operations', level: 'manager' };
   if (allRoles.includes('operations_officer')) return { dept: 'operations', level: 'officer' };
-  if (allRoles.includes('client') || allRoles.includes('client_user')) return { dept: 'client', level: 'viewer' };
+  if (allRoles.includes('client_user')) return { dept: 'client', level: 'viewer' };
 
   return { dept: 'hr', level: 'viewer' };
 }
@@ -212,11 +187,13 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
  * Derives the most appropriate Business Role Key from technical fields
  */
 export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
-  if (user.assignedRoleKey) return user.assignedRoleKey;
+  if (user.assignedRoleKey) {
+    return LEGACY_TO_CANONICAL_MAP[user.assignedRoleKey] || user.assignedRoleKey;
+  }
   
   // Use identity fields to map to role
   if (user.userType === 'customer_portal') {
-    return user.portalRole === 'approver' ? 'customer_approver' : 'customer_viewer';
+    return 'client_user';
   }
 
   const { dept, level } = inferDeptAndLevel(user);
@@ -227,7 +204,7 @@ export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
 
   // Fallbacks
   if (dept === 'admin') return 'system_admin';
-  if (dept === 'client') return 'customer_viewer';
+  if (dept === 'client') return 'client_user';
   return `${dept}_officer` as BusinessRoleKey;
 }
 
@@ -238,89 +215,14 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
   const role = BUSINESS_ROLES[roleKey];
   if (!role) throw new Error(`Invalid business role key: ${roleKey}`);
 
-  // Aligned keys for client profiles
-  const profileKey = role.dept === 'client' 
-    ? (role.level === 'manager' ? 'client_manager' : 'client_viewer')
-    : `${role.dept}_${role.level}`;
+  const profileKey = role.dept === 'client' ? 'client_user' : `${role.dept}_${role.level}`;
 
   return {
     assignedRoleKey: roleKey,
     department: role.dept,
     level: role.level,
-    roleIds: role.legacyRoles,
+    roleIds: [role.canonicalRole],
     permissionProfileKey: profileKey,
-    updatedAt: Date.now()
-  };
-}
-
-/**
- * Maps Dept + Level to legacy roleIds for Firestore Security Rules compatibility
- */
-export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
-  if (dept === 'admin' && level === 'admin') return ['system_admin'];
-  
-  const roles: RoleType[] = [];
-  
-  if (dept === 'hr') {
-    if (level === 'manager' || level === 'admin') roles.push('hr_manager');
-    roles.push('hr_officer');
-    roles.push('payroll_officer');
-  }
-  
-  if (dept === 'accounting') {
-    roles.push('finance_officer');
-  }
-  
-  if (dept === 'operations') {
-    roles.push('operations_officer');
-  }
-  
-  if (dept === 'sales') {
-    roles.push('sales_officer');
-  }
-  
-  if (dept === 'store') {
-    roles.push('store_officer');
-  }
-  
-  if (dept === 'client') {
-    roles.push('client');
-  }
-  
-  return roles;
-}
-
-/**
- * Generates the full set of migrated fields for a user document.
- */
-export function getMigratedUserFields(user: Partial<User>): Partial<User> {
-  const { dept, level } = inferDeptAndLevel(user);
-  const roleKey = deriveBusinessRoleKey(user);
-  
-  const isActive = user.isActive ?? true;
-  let approvalStatus: ApprovalStatus = user.approvalStatus || 'PENDING';
-  
-  if (isActive) {
-    const internalDepts: DeptType[] = ['admin', 'hr', 'operations', 'sales', 'accounting', 'store'];
-    if (internalDepts.includes(dept)) {
-      approvalStatus = 'ACTIVE';
-    }
-    // Clients created via detail page are usually active immediately
-    if (dept === 'client') {
-      approvalStatus = 'ACTIVE';
-    }
-  }
-
-  // Ensure customer portal fields are preserved or inferred
-  return {
-    ...getFieldsForBusinessRole(roleKey),
-    userType: user.userType || (dept === 'client' ? 'customer_portal' : 'internal'),
-    portalRole: user.portalRole || (roleKey === 'customer_approver' || roleKey === 'client_approver' ? 'approver' : roleKey === 'customer_viewer' || roleKey === 'client_viewer' ? 'viewer' : undefined),
-    assignedRoleKey: roleKey,
-    isActive: isActive,
-    approvalStatus: approvalStatus,
-    customerId: user.customerId || null,
-    notes: user.notes || "",
     updatedAt: Date.now()
   };
 }
@@ -330,16 +232,6 @@ export const getEffectiveLevel = (user: Partial<User> | null) => inferDeptAndLev
 
 export const isAdminUser = (user: User | null) => {
   if (!user) return false;
-  const { dept, level } = inferDeptAndLevel(user);
   const roles = user.roleIds || [];
-  return (dept === 'admin' && level === 'admin') || roles.includes('system_admin') || user.assignedRoleKey === 'system_admin';
-};
-
-export function hasLevel(userLevel: AccessLevel, requiredLevel: AccessLevel): boolean {
-  return LevelOrder[userLevel] >= LevelOrder[requiredLevel];
-}
-
-export const canSeeMenu = (menu: string, dept: DeptType, level: AccessLevel): boolean => {
-  if (dept === 'admin' && level === 'admin') return true;
-  return true; 
+  return roles.includes('system_admin') || user.assignedRoleKey === 'system_admin' || user.department === 'admin';
 };

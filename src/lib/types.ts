@@ -12,16 +12,17 @@ export type JobMode = 'ONSHORE' | 'OFFSHORE';
 
 export type RoleType = 
   | 'system_admin'
-  | 'finance_officer'
+  | 'accounting_officer'
+  | 'accounting_manager'
   | 'sales_officer'
-  | 'safety_officer'
+  | 'sales_manager'
   | 'hr_manager'
   | 'hr_officer'
   | 'operations_officer'
-  | 'payroll_officer'
+  | 'operations_manager'
   | 'store_officer'
-  | 'client_user'
-  | 'client'; 
+  | 'store_manager'
+  | 'client_user'; 
 
 /** Business Role Keys for Simple Mode */
 export type BusinessRoleKey = 
@@ -34,11 +35,9 @@ export type BusinessRoleKey =
   | 'operations_officer'
   | 'accounting_manager'
   | 'accounting_officer'
+  | 'store_manager'
   | 'store_officer'
-  | 'customer_approver'
-  | 'customer_viewer'
-  | 'client_viewer'
-  | 'client_approver';
+  | 'client_user';
 
 /** Readiness Status for Workers (ลูกจ้าง) */
 export type ReadinessStatus = 

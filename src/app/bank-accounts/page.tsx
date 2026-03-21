@@ -1,7 +1,8 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter } from 'navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -39,7 +40,7 @@ export default function BankAccountsPage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer'];
+    const authRoles = ['system_admin', 'accounting_officer', 'accounting_manager'];
     return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
   }, [currentUser]);
 

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -52,7 +53,7 @@ export default function APBillsPage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer'];
+    const authRoles = ['system_admin', 'accounting_officer', 'accounting_manager'];
     return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
   }, [currentUser]);
 
@@ -181,7 +182,7 @@ export default function APBillsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่บันทึกภายใน (Internal Ref)</Label>
-                  <Input value={newBill.apBillNo} disabled className="bg-muted/50 font-mono font-bold" />
+                  <Input value={newBill.apBillNo} disabled className="bg-muted/50 font-mono font-bold text-primary" />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>คู่ค้า / ผู้ขาย (Vendor)</Label>
