@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -67,18 +66,6 @@ const LEVELS: { id: AccessLevel; label: string }[] = [
   { id: 'admin', label: 'Admin' },
 ];
 
-/**
- * Transformed groups for the UI editor
- */
-const MODULE_GROUPS = useMemo(() => {
-  const groups: Record<string, any[]> = {};
-  SYSTEM_MODULES.forEach(mod => {
-    if (!groups[mod.group]) groups[mod.group] = [];
-    groups[mod.group].push(mod);
-  });
-  return Object.entries(groups).map(([name, modules]) => ({ name, modules }));
-}, []);
-
 export default function PermissionProfilesPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
@@ -115,11 +102,17 @@ export default function PermissionProfilesPage() {
   }, [firestore, isUserAdmin]);
   const { data: profiles, isLoading: isProfilesLoading } = useCollection<PermissionProfile>(profilesQuery as any);
 
-  const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !isUserAdmin) return null;
-    return collection(firestore, 'users');
-  }, [firestore, isUserAdmin]);
-  const { data: users, isLoading: isUsersLoading } = useCollection<User>(usersQuery as any);
+  /**
+   * Transformed groups for the UI editor - moved inside component
+   */
+  const finalModuleGroups = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    SYSTEM_MODULES.forEach(mod => {
+      if (!groups[mod.group]) groups[mod.group] = [];
+      groups[mod.group].push(mod);
+    });
+    return Object.entries(groups).map(([name, modules]) => ({ name, modules }));
+  }, []);
 
   // Actions
   const handleCreateProfile = () => {
@@ -197,14 +190,6 @@ export default function PermissionProfilesPage() {
       </AppShell>
     );
   }
-
-  const moduleGroups = [];
-  const groups: Record<string, any[]> = {};
-  SYSTEM_MODULES.forEach(mod => {
-    if (!groups[mod.group]) groups[mod.group] = [];
-    groups[mod.group].push(mod);
-  });
-  const finalModuleGroups = Object.entries(groups).map(([name, modules]) => ({ name, modules }));
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
