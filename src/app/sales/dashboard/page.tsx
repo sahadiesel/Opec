@@ -323,7 +323,7 @@ export default function SalesDashboardPage() {
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 ตรวจสอบ PO Lines ที่จำนวนพนักงานครบถ้วนแล้ว (Full Quota) เพื่อประสานงานขอเปิดใบสั่งซื้อเพิ่มเติมหากลูกค้าต้องการกำลังคนเพิ่ม
               </CardContent>
-            </div>
+            </Card>
           </div>
         </div>
       </div>

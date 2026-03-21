@@ -319,7 +319,7 @@ export default function AccountingDashboardPage() {
                 <CardTitle className="text-xs font-bold uppercase text-blue-800 flex items-center gap-2">
                   <Info className="h-3 w-3" /> Billing Cycle reminder
                 </CardTitle>
-              </Header>
+              </CardHeader>
               <CardContent className="text-[10px] text-blue-700 leading-relaxed">
                 กรุณาตรวจสอบความถูกต้องของ Billing Note ก่อนออก Tax Invoice ทุกครั้ง และตรวจสอบหัก ณ ที่จ่าย (WHT) ให้ตรงตามเงื่อนไขสัญญา
               </CardContent>
@@ -330,7 +330,7 @@ export default function AccountingDashboardPage() {
                 <CardTitle className="text-xs font-bold uppercase text-amber-800 flex items-center gap-2">
                   <AlertTriangle className="h-3 w-3" /> Liquidity Alert
                 </CardTitle>
-              </Header>
+              </CardHeader>
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 ติดตามลูกหนี้เกินกำหนด (Overdue AR) เพื่อรักษาสภาพคล่อง และวางแผนจ่ายเจ้าหนี้ (AP) ตามวันครบกำหนด
               </CardContent>

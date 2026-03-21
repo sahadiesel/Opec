@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -186,7 +187,7 @@ export default function APBillDetailPage({ params }: { params: Promise<{ id: str
                   <span className="font-black text-primary">฿ {bill.totalAmount.toLocaleString()}</span>
                 </div>
               </CardContent>
-            </div>
+            </Card>
           </div>
         </div>
       </div>

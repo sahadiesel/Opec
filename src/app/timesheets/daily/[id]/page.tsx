@@ -183,7 +183,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
               <Card className="border-amber-500 bg-amber-50/20 shadow-lg">
                 <CardHeader className="bg-amber-100/50 border-b border-amber-200">
                   <CardTitle className="text-amber-800 flex items-center gap-2">
-                    <RotateCcw className="h-5 w-5" /> คำขอแก้ไขข้อมูลจากลูกค้า (Pending Correction)
+                    <RotateCcw className="h-5 w-5 text-amber-600" /> คำขอแก้ไขข้อมูลจากลูกค้า (Pending Correction)
                   </CardTitle>
                   <CardDescription className="text-amber-700">คำขอนี้ต้องการการพิจารณาจาก HR Manager เพื่อเปิดสิทธิ์การแก้ไข</CardDescription>
                 </CardHeader>
@@ -263,7 +263,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
               <CardHeader className="pb-2">
                 <CardTitle className="text-[10px] font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
                   <History className="h-3 w-3" /> Audit Log
-                </Title>
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-[10px] space-y-2">
                 <div className="flex justify-between">
