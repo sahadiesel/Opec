@@ -132,22 +132,22 @@ const navGroups: NavGroup[] = [
   {
     label: 'การจัดการระบบ (Administration)',
     items: [
-      { key: 'system_admin', title: 'จัดการสิทธิ์ผู้ใช้งาน (User Access)', href: '/users', icon: ShieldCheck },
+      { key: 'system_admin', title: 'จัดการผู้ใช้/ระบบ (User Access)', href: '/users', icon: ShieldCheck },
       { key: 'system_admin', title: 'การเข้าใช้งานของลูกค้า', href: '/system-admin/customer-portal', icon: Lock },
       { key: 'system_admin', title: 'เมทริกซ์สิทธิ์ (Advanced)', href: '/system-admin/permissions', icon: LockKeyhole },
       { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'audit_logs', title: 'ประวัติกิจกรรม (Audit Logs)', href: '/system-admin/audit-logs', icon: History },
-      { key: 'client_portal', title: 'Client Portal Preview', href: '/client-portal', icon: ShieldAlert },
+      { key: 'client_portal', title: 'Client Portal Preview', href: '/client-portal/dashboard', icon: ShieldAlert },
     ]
   },
   {
-    label: 'ลูกค้า (Customer Portal)',
+    label: 'ลูกค้า (Project Portal)',
     items: [
-      { key: 'client_portal', title: 'หน้าแรก (Client Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
-      { key: 'client_portal', title: 'พนักงานและโครงการ (Manpower)', href: '/client-portal/waves', icon: HardHat },
-      { key: 'client_portal', title: 'กิจกรรมรายวัน (Daily Logs)', href: '/client-portal/timesheets', icon: Clock },
-      { key: 'client_portal', title: 'เอกสารการเงิน (Billing)', href: '/client-portal/billing', icon: FileBarChart },
+      { key: 'client_portal', title: 'หน้าหลัก (Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
+      { key: 'client_portal', title: 'ประวัติกำลังพล (Personnel)', href: '/client-portal/waves', icon: HardHat },
+      { key: 'client_portal', title: 'หลักฐานการลงเวลา (Activity)', href: '/client-portal/timesheets', icon: Clock },
+      { key: 'client_portal', title: 'การเงินและวางบิล (Billing)', href: '/client-portal/billing', icon: FileBarChart },
     ]
   }
 ];

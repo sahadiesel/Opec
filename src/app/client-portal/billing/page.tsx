@@ -23,7 +23,8 @@ import {
   Calculator,
   Wallet,
   MessageSquareWarning,
-  Loader2
+  Loader2,
+  ChevronRight
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { TaxInvoice, User as AppUser, AccountsReceivable, BillingNote, Receipt as ReceiptType, IssueCategory } from '@/lib/types';
@@ -38,7 +39,7 @@ import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
   DialogContent, 
-  DialogDescription,
+  DialogDescription, 
   DialogHeader, 
   DialogTitle, 
   DialogFooter
@@ -152,7 +153,7 @@ export default function ClientBillingViewPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <FileBarChart className="h-8 w-8" /> เอกสารการเงินและการวางบิล (Billing & Financial Docs)
+            <FileBarChart className="h-8 w-8 text-primary" /> เอกสารการเงินและการวางบิล (Billing & Financial Docs)
           </h1>
           <p className="text-muted-foreground text-lg italic">
             ตรวจสอบรายการใบวางบิล ใบกำกับภาษี และประวัติการรับชำระเงิน (Financial traceability).
@@ -171,7 +172,7 @@ export default function ClientBillingViewPage() {
           </Card>
           <Card className="border-l-8 border-l-green-600 bg-green-50/10">
             <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">รายการที่ชำระแล้ว (Paid YTD)</CardTitle>
+              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">รายการที่ชำระแล้ว (Confirmed Receipts)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-green-700">
@@ -194,8 +195,8 @@ export default function ClientBillingViewPage() {
         <PageGuidance 
           tips={[
             "รายการ 'Billing Note' คือเอกสารสรุปยอดประจำเดือนที่ OPEC จัดส่งให้เพื่อตรวจสอบความถูกต้องก่อนออกใบกำกับภาษี",
-            "หากท่านดำเนินการโอนเงินแล้วและได้รับใบเสร็จ รายการจะปรากฏในแท็บ 'Receipts'",
-            "ยอดค้างชำระจะอัปเดตทันทีที่ OPEC บันทึกการรับเงินและจัดสรรเข้าใบกำกับภาษี (Invoice Allocation)"
+            "ใบกำกับภาษี (Tax Invoice) จะแสดงยอดคงเหลือล่าสุดหากมีการทยอยชำระเงิน",
+            "หากท่านดำเนินการโอนเงินแล้วแต่ยังไม่ได้รับใบเสร็จ หรือยอดไม่ถูกต้อง กรุณาใช้ปุ่ม 'แจ้งปัญหา'"
           ]}
         />
 
@@ -283,7 +284,7 @@ export default function ClientBillingViewPage() {
                     </TableHeader>
                     <TableBody>
                       {billingNotes?.map((note) => (
-                        <TableRow key={note.id} className="hover:bg-muted/20">
+                        <TableRow key={note.id} className="hover:bg-muted/20 group">
                           <TableCell className="pl-6 py-4 font-mono font-bold text-primary">{note.billingNoteNo}</TableCell>
                           <TableCell className="text-sm font-medium">{note.billingDate}</TableCell>
                           <TableCell className="text-sm font-medium text-red-600">{note.dueDate}</TableCell>
@@ -324,7 +325,7 @@ export default function ClientBillingViewPage() {
                     </TableHeader>
                     <TableBody>
                       {receipts?.map((r) => (
-                        <TableRow key={r.id} className="hover:bg-muted/20">
+                        <TableRow key={r.id} className="hover:bg-muted/20 group">
                           <TableCell className="pl-6 py-4">
                             <div className="flex items-center gap-2 font-bold text-sm text-green-700">
                               <BadgeCheck className="h-4 w-4" /> {r.receiptNo}
@@ -355,7 +356,7 @@ export default function ClientBillingViewPage() {
         <Dialog open={isDisputeOpen} onOpenChange={setIsDisputeOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>แจ้งปัญหาข้อมูลเอกสาร (Report Issue)</DialogTitle>
+              <DialogTitle>แจ้งปัญหาข้อมูลเอกสาร (Report Document Issue)</DialogTitle>
               <DialogDescription>ระบุรายละเอียดข้อมูลที่ต้องการให้เจ้าหน้าที่ฝ่ายบัญชี OPEC ตรวจสอบแก้ไข</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">

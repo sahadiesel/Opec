@@ -135,18 +135,18 @@ export default function ClientTimesheetViewPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <FileText className="h-8 w-8" /> ประวัติและหลักฐานการลงเวลางาน (Activity & Evidence)
+            <FileText className="h-8 w-8 text-primary" /> ประวัติและหลักฐานการลงเวลางาน (Activity & Evidence)
           </h1>
           <p className="text-muted-foreground text-lg italic">
-            ตรวจสอบรายละเอียดชั่วโมงทำงานรายวัน พร้อมข้อมูลอ้างอิงจากใบลงเวลาฉบับจริง (Evidence tracking).
+            ตรวจสอบรายละเอียดชั่วโมงทำงานรายวัน พร้อมข้อมูลอ้างอิงจากใบลงเวลาฉบับจริง (Operational transparency).
           </p>
         </div>
 
         <PageGuidance 
-          title="ความโปร่งใสของข้อมูล (Evidence Policy)"
+          title="นโยบายความโปร่งใส (Transparency Policy)"
           tips={[
-            "รายการ 'VERIFIED (PAPER)' คือรายการที่ได้รับการตรวจสอบลายเซ็นจากใบ Slip ฉบับจริงโดย OPEC แล้ว",
-            "ท่านสามารถตรวจสอบ 'เลขที่ใบลงเวลา (Slip No.)' เพื่อสอบทานกับสำเนาที่ท่านถืออยู่ได้",
+            "รายการ 'VERIFIED (PAPER)' คือรายการที่ได้รับการตรวจสอบลายเซ็นจากใบ Slip ฉบับจริงโดยเจ้าหน้าที่ OPEC แล้ว",
+            "ท่านสามารถตรวจสอบ 'เลขที่ใบลงเวลา (Slip No.)' เพื่อสอบทานกับสำเนาเอกสารหน้างานที่ท่านถืออยู่ได้",
             "หากท่านต้องการตรวจสอบรูปถ่ายเอกสารหรือมีข้อสงสัยในจำนวนชั่วโมง กรุณาใช้ปุ่ม 'แจ้งปัญหา'"
           ]}
         />
@@ -166,11 +166,11 @@ export default function ClientTimesheetViewPage() {
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardHeader className="bg-muted/30 border-b">
-            <CardTitle className="text-lg">บันทึกเวลาปฏิบัติงาน (Activity Logs)</CardTitle>
+            <CardTitle className="text-lg">บันทึกเวลาปฏิบัติงาน (Confirmed Activity Logs)</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {isTsLoading ? (
-              <div className="py-20 text-center animate-pulse">กำลังโหลดข้อมูลใบลงเวลา...</div>
+              <div className="py-20 text-center animate-pulse italic">กำลังโหลดข้อมูลใบลงเวลา...</div>
             ) : (
               <Table>
                 <TableHeader className="bg-muted/50">
@@ -180,12 +180,12 @@ export default function ClientTimesheetViewPage() {
                     <TableHead className="font-bold">หลักฐาน (Slip No.)</TableHead>
                     <TableHead className="font-bold">กิจกรรม (Event)</TableHead>
                     <TableHead className="text-center font-bold">ชั่วโมงทำงาน</TableHead>
-                    <TableHead className="font-bold text-right pr-6">สถานะ / จัดการ</TableHead>
+                    <TableHead className="font-bold text-right pr-6">สถานะ (Status)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredTimesheets.map((ts) => (
-                    <TableRow key={ts.id} className="hover:bg-muted/20 transition-all group">
+                    <TableRow key={ts.id} className="hover:bg-muted/20 transition-all group cursor-pointer" onClick={() => openDetail(ts)}>
                       <TableCell className="pl-6 py-4">
                         <div className="flex items-center gap-2 text-sm font-bold text-primary">
                           <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
@@ -195,7 +195,7 @@ export default function ClientTimesheetViewPage() {
                       <TableCell>
                         <div className="flex flex-col">
                           <span className="font-bold text-sm">{ts.workerNameSnapshot}</span>
-                          <span className="text-[10px] text-muted-foreground uppercase">{ts.positionId}</span>
+                          <span className="text-[10px] text-muted-foreground uppercase font-medium">{ts.positionId}</span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -219,13 +219,11 @@ export default function ClientTimesheetViewPage() {
                         {ts.normalHours} Hrs
                       </TableCell>
                       <TableCell className="text-right pr-6">
-                        <div className="flex justify-end gap-2">
-                          <Badge variant={ts.status === 'VERIFIED_PAPER' ? 'default' : 'outline'} className={ts.status === 'VERIFIED_PAPER' ? 'bg-blue-700' : 'uppercase text-[9px]'}>
+                        <div className="flex justify-end gap-2 items-center">
+                          <Badge variant={ts.status === 'VERIFIED_PAPER' ? 'default' : 'outline'} className={ts.status === 'VERIFIED_PAPER' ? 'bg-blue-700 text-[10px]' : 'uppercase text-[9px]'}>
                             {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
                           </Badge>
-                          <Button size="sm" variant="ghost" className="h-8 w-8 rounded-full" onClick={() => openDetail(ts)}>
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30 group-hover:opacity-100 transition-all" />
                         </div>
                       </TableCell>
                     </TableRow>
@@ -246,7 +244,7 @@ export default function ClientTimesheetViewPage() {
           <DialogContent className="max-w-2xl border-t-8 border-t-primary">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-xl font-bold">
-                <FileCheck className="h-6 w-6 text-primary" /> รายละเอียดบันทึกเวลา (Log Details)
+                <FileCheck className="h-6 w-6 text-primary" /> รายละเอียดบันทึกเวลา (Evidence Details)
               </DialogTitle>
               <DialogDescription>ข้อมูลสรุปและหลักฐานอ้างอิงสำหรับการตรวจสอบ (Read-only view)</DialogDescription>
             </DialogHeader>
@@ -284,7 +282,7 @@ export default function ClientTimesheetViewPage() {
 
                 <div className="space-y-3 bg-primary/5 p-4 rounded-xl border border-primary/10">
                   <h4 className="text-xs font-black uppercase text-primary flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4" /> หลักฐานอ้างอิง (Audit Evidence)
+                    <ShieldCheck className="h-4 w-4" /> รายละเอียดการตรวจสอบ (Audit Evidence)
                   </h4>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div className="space-y-1">
@@ -296,19 +294,19 @@ export default function ClientTimesheetViewPage() {
                       <p className="font-bold">{selectedTs.sourceType || 'PAPER'}</p>
                     </div>
                     <div className="space-y-1">
-                      <span className="text-[10px] text-muted-foreground uppercase font-bold">Client Signatory:</span>
-                      <p className="font-bold text-slate-700">{selectedTs.clientSignedBy || 'Verified on Paper'}</p>
-                    </div>
-                    <div className="space-y-1">
                       <span className="text-[10px] text-muted-foreground uppercase font-bold">Verified Date:</span>
                       <p className="font-bold text-slate-700">{selectedTs.clientSignedDate || selectedTs.date}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-muted-foreground uppercase font-bold">System Confirmation:</span>
+                      <p className="text-[10px] text-green-700 font-bold italic">Confirmed via verified paper signature</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1 gap-2" disabled>
-                    <Paperclip className="h-4 w-4" /> View Scan (Coming Soon)
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" className="flex-1 gap-2 font-bold" disabled>
+                    <Download className="h-4 w-4" /> Download PDF Proof
                   </Button>
                   <Button 
                     variant="ghost" 
@@ -318,7 +316,7 @@ export default function ClientTimesheetViewPage() {
                       setIsDisputeOpen(true);
                     }}
                   >
-                    <MessageSquareWarning className="h-4 w-4 mr-2" /> แจ้งปัญหา (Report)
+                    <MessageSquareWarning className="h-4 w-4 mr-2" /> แจ้งปัญหา (Report Issue)
                   </Button>
                 </div>
               </div>

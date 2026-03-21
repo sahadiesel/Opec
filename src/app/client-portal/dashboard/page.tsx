@@ -9,7 +9,7 @@ import {
   Waves, 
   Clock, 
   ChevronRight, 
-  LayoutDashboard,
+  LayoutGrid,
   HardHat,
   MapPin,
   Calendar,
@@ -144,18 +144,18 @@ export default function ClientDashboardPage() {
       <div className="space-y-8 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <LayoutDashboard className="h-8 w-8" /> แดชบอร์ดโครงการ (Project Transparency Dashboard)
+            <ShieldCheck className="h-8 w-8 text-primary" /> พอร์ทัลโครงการ (Project Transparency Portal)
           </h1>
           <p className="text-muted-foreground text-lg italic">
-            ศูนย์รวมข้อมูลการดำเนินงาน เอกสาร และสถานะกำลังพลสำหรับ {currentUser.displayName}
+            ศูนย์รวมข้อมูลการดำเนินงาน เอกสารสิทธิ์ และความโปร่งใสสำหรับ {currentUser.displayName}
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard title="พนักงานหน้างาน" value={stats.activeHeadcount} sub="Active Personnel" icon={HardHat} colorClass="border-l-blue-600" />
-          <StatCard title="กำลังส่งตัว" value={stats.mobilising} sub="In-Mob Pipeline" icon={Truck} colorClass="border-l-indigo-500" />
-          <StatCard title="รอบงานปฏิบัติการ" value={stats.activeWaves} sub="Active Waves" icon={Waves} colorClass="border-l-green-600" />
-          <StatCard title="ยอดสั่งซื้อรวม" value={stats.totalPOs} sub="Purchase Orders" icon={ShoppingCart} colorClass="border-l-amber-500" />
+          <StatCard title="กำลังระดมพล" value={stats.mobilising} sub="Mobilization Pipeline" icon={Truck} colorClass="border-l-indigo-500" />
+          <StatCard title="รอบงานปัจจุบัน" value={stats.activeWaves} sub="Active Waves" icon={Waves} colorClass="border-l-green-600" />
+          <StatCard title="ใบสั่งซื้อ (POs)" value={stats.totalPOs} sub="Purchase Orders" icon={ShoppingCart} colorClass="border-l-amber-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -168,7 +168,7 @@ export default function ClientDashboardPage() {
                   </CardTitle>
                   <CardDescription>ความคืบหน้าของรอบการทำงานพนักงานปัจจุบัน</CardDescription>
                 </div>
-                <Button variant="ghost" size="sm" className="text-xs" asChild>
+                <Button variant="ghost" size="sm" className="text-xs font-bold text-primary" asChild>
                   <Link href="/client-portal/waves">ดูทั้งหมด <ChevronRight className="h-4 w-4" /></Link>
                 </Button>
               </CardHeader>
@@ -239,7 +239,7 @@ export default function ClientDashboardPage() {
               <Card className="shadow-md border-none overflow-hidden">
                 <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-primary" /> บันทึกเวลาล่าสุด (Verified Logs)
+                    <Clock className="h-4 w-4 text-primary" /> บันทึกเวลาที่ยืนยันแล้ว
                   </CardTitle>
                   <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
                     <Link href="/client-portal/timesheets">ดูทั้งหมด</Link>
@@ -251,9 +251,9 @@ export default function ClientDashboardPage() {
                       <div key={ts.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
                         <div className="space-y-0.5">
                           <p className="font-bold text-primary">{ts.workerNameSnapshot}</p>
-                          <p className="text-[10px] text-muted-foreground">{ts.date} | {ts.sourceDocumentNo || 'N/A'}</p>
+                          <p className="text-[10px] text-muted-foreground">{ts.date} | Slip: {ts.sourceDocumentNo || 'N/A'}</p>
                         </div>
-                        <Badge variant="secondary" className="text-[8px] font-bold h-4 uppercase">
+                        <Badge variant="secondary" className="text-[8px] font-bold h-4 uppercase bg-blue-50 text-blue-700 border-blue-100">
                           {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
                         </Badge>
                       </div>
@@ -268,7 +268,7 @@ export default function ClientDashboardPage() {
             <Card className="bg-primary text-primary-foreground shadow-lg overflow-hidden border-none">
               <CardHeader className="pb-4 border-b border-white/10">
                 <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                  <ShieldCheck className="h-4 w-4" /> แหล่งข้อมูล (Portal Access)
+                  <LayoutGrid className="h-4 w-4" /> แหล่งข้อมูล (Portal Access)
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
@@ -285,7 +285,7 @@ export default function ClientDashboardPage() {
               tips={[
                 "ท่านสามารถตรวจสอบเลขที่ Slip จากตารางบันทึกเวลาเพื่อสอบทานกับสำเนาที่หน้างาน",
                 "เอกสารการเงินประกอบด้วย ใบวางบิล (Notes), ใบกำกับภาษี (Invoices) และใบเสร็จ (Receipts)",
-                "ใช้ระบบ 'Report' หากพบข้อมูลที่ไม่ตรงตามจริงเพื่อรับการตรวจสอบเร่งด่วน"
+                "ใช้ระบบ 'Report' หากพบข้อมูลที่ไม่ตรงตามจริงเพื่อรับการตรวจสอบจากเจ้าหน้าที่โดยตรง"
               ]}
             />
           </div>
