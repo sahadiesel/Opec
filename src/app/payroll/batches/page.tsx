@@ -45,7 +45,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();

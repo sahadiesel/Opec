@@ -293,7 +293,7 @@ export default function OperationsDashboardPage() {
                 <ShortcutItem href="/waves" label="จัดการรอบงาน (Waves)" sub="Wave Planning" icon={Waves} />
                 <ShortcutItem href="/assignments" label="มอบหมายคนงาน" sub="Personnel Assignments" icon={UserPlus} />
                 <ShortcutItem href="/mobilization" label="ศูนย์รวมการส่งตัว" sub="Mobilization Hub" icon={Truck} />
-                <ShortcutItem href="/timesheets" label="ตรวจสอบใบลงเวลา" sub="Timesheet Review" icon={Calendar} />
+                <ShortcutItem href="/timesheets/daily" label="ตรวจสอบใบลงเวลา" sub="Timesheet Review" icon={Calendar} />
                 <ShortcutItem href="/workers" label="ทะเบียนคนงาน" sub="Worker Records" icon={Users} />
               </CardContent>
             </Card>

@@ -304,7 +304,7 @@ export default function HRDashboardPage() {
                 <ShortcutItem href="/positions" label="ตำแหน่งงานมาตรฐาน" sub="Job Matrix" icon={Briefcase} />
                 <ShortcutItem href="/payroll" label="ประมวลผลเงินเดือน" sub="Payroll System" icon={Coins} />
                 <ShortcutItem href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Employees" icon={Users} />
-                <ShortcutItem href="/timesheets" label="ระบบลงเวลา" sub="Timesheets" icon={Calendar} />
+                <ShortcutItem href="/timesheets/daily" label="ระบบลงเวลา" sub="Timesheets" icon={Calendar} />
               </CardContent>
             </Card>
 
