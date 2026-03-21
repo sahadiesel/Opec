@@ -24,7 +24,8 @@ import {
   Wallet,
   MessageSquareWarning,
   Loader2,
-  ChevronRight
+  ChevronRight,
+  Lock
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { TaxInvoice, User as AppUser, AccountsReceivable, BillingNote, Receipt as ReceiptType, IssueCategory } from '@/lib/types';
@@ -195,7 +196,7 @@ export default function ClientBillingViewPage() {
         <PageGuidance 
           tips={[
             "รายการ 'Billing Note' คือเอกสารสรุปยอดประจำเดือนที่ OPEC จัดส่งให้เพื่อตรวจสอบความถูกต้องก่อนออกใบกำกับภาษี",
-            "ใบกำกับภาษี (Tax Invoice) จะแสดงยอดคงเหลือล่าสุดหากมีการทยอยชำระเงิน",
+            "เอกสารที่สถานะเป็น 'PAID' หรือได้รับการยืนยันแล้วจะไม่สามารถแจ้งปัญหาผ่านช่องทางปกติได้",
             "หากท่านดำเนินการโอนเงินแล้วแต่ยังไม่ได้รับใบเสร็จ หรือยอดไม่ถูกต้อง กรุณาใช้ปุ่ม 'แจ้งปัญหา'"
           ]}
         />
@@ -228,13 +229,15 @@ export default function ClientBillingViewPage() {
                       {invoices?.map((inv) => {
                         const ar = arItems?.find(item => item.referenceId === inv.id);
                         const outstanding = ar ? ar.outstandingAmount : (inv.status === 'ISSUED' ? inv.totalAmount : 0);
+                        const isSettled = outstanding <= 0;
                         
                         return (
-                          <TableRow key={inv.id} className="hover:bg-muted/20 transition-all group">
+                          <TableRow key={inv.id} className={`${isSettled ? 'bg-slate-50/50' : 'hover:bg-muted/20'} transition-all group`}>
                             <TableCell className="pl-6 py-4">
                               <div className="flex items-center gap-2 text-sm font-bold text-primary">
                                 <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                                 {inv.taxInvoiceNo}
+                                {isSettled && <Lock className="h-3 w-3 text-amber-600" title="Settled - Locked" />}
                               </div>
                             </TableCell>
                             <TableCell className="text-xs font-medium text-muted-foreground">{inv.issueDate}</TableCell>
@@ -247,9 +250,11 @@ export default function ClientBillingViewPage() {
                             </TableCell>
                             <TableCell className="text-right pr-6">
                               <div className="flex justify-end gap-2">
-                                <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('TAX_INVOICE', inv.id, inv.taxInvoiceNo)}>
-                                  <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
-                                </Button>
+                                {!isSettled && (
+                                  <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('TAX_INVOICE', inv.id, inv.taxInvoiceNo)}>
+                                    <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
+                                  </Button>
+                                )}
                                 <Button size="sm" variant="ghost" className="font-bold text-xs h-8">
                                   <Download className="h-3.5 w-3.5 mr-1.5" /> PDF
                                 </Button>
@@ -283,22 +288,32 @@ export default function ClientBillingViewPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {billingNotes?.map((note) => (
-                        <TableRow key={note.id} className="hover:bg-muted/20 group">
-                          <TableCell className="pl-6 py-4 font-mono font-bold text-primary">{note.billingNoteNo}</TableCell>
-                          <TableCell className="text-sm font-medium">{note.billingDate}</TableCell>
-                          <TableCell className="text-sm font-medium text-red-600">{note.dueDate}</TableCell>
-                          <TableCell className="text-right font-bold text-primary">฿ {note.netAmount.toLocaleString()}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="uppercase text-[9px]">{note.status}</Badge>
-                          </TableCell>
-                          <TableCell className="text-right pr-6">
-                            <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('BILLING_NOTE', note.id, note.billingNoteNo)}>
-                              <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {billingNotes?.map((note) => {
+                        const isFinalized = note.status === 'PAID' || note.status === 'CANCELLED';
+                        return (
+                          <TableRow key={note.id} className={`${isFinalized ? 'bg-slate-50/50' : 'hover:bg-muted/20'} group`}>
+                            <TableCell className="pl-6 py-4 font-mono font-bold text-primary">
+                              <div className="flex items-center gap-2">
+                                {note.billingNoteNo}
+                                {isFinalized && <Lock className="h-3 w-3 text-amber-600" />}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm font-medium">{note.billingDate}</TableCell>
+                            <TableCell className="text-sm font-medium text-red-600">{note.dueDate}</TableCell>
+                            <TableCell className="text-right font-bold text-primary">฿ {note.netAmount.toLocaleString()}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="uppercase text-[9px]">{note.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-right pr-6">
+                              {!isFinalized && (
+                                <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('BILLING_NOTE', note.id, note.billingNoteNo)}>
+                                  <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}

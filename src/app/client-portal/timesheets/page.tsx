@@ -22,7 +22,9 @@ import {
   Paperclip,
   Download,
   ShieldCheck,
-  Loader2
+  Loader2,
+  Lock,
+  AlertTriangle
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User as AppUser, DailyTimesheet, Worker } from '@/lib/types';
@@ -82,7 +84,7 @@ export default function ClientTimesheetViewPage() {
     // Filter for finalized logs that the client should see
     return query(
       baseQuery,
-      where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED', 'OPS_REVIEWED'])
+      where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED', 'OPS_REVIEWED', 'HR_APPROVED'])
     );
   }, [firestore, currentUser]);
   
@@ -146,7 +148,7 @@ export default function ClientTimesheetViewPage() {
           title="นโยบายความโปร่งใส (Transparency Policy)"
           tips={[
             "รายการ 'VERIFIED (PAPER)' คือรายการที่ได้รับการตรวจสอบลายเซ็นจากใบ Slip ฉบับจริงโดยเจ้าหน้าที่ OPEC แล้ว",
-            "ท่านสามารถตรวจสอบ 'เลขที่ใบลงเวลา (Slip No.)' เพื่อสอบทานกับสำเนาเอกสารหน้างานที่ท่านถืออยู่ได้",
+            "รายการที่สถานะเป็น 'LOCKED' หรือ 'HR APPROVED' จะถูกส่งเข้ากระบวนการจ่ายเงินแล้วและไม่สามารถแจ้งแก้ไขตามปกติได้",
             "หากท่านต้องการตรวจสอบรูปถ่ายเอกสารหรือมีข้อสงสัยในจำนวนชั่วโมง กรุณาใช้ปุ่ม 'แจ้งปัญหา'"
           ]}
         />
@@ -184,50 +186,54 @@ export default function ClientTimesheetViewPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredTimesheets.map((ts) => (
-                    <TableRow key={ts.id} className="hover:bg-muted/20 transition-all group cursor-pointer" onClick={() => openDetail(ts)}>
-                      <TableCell className="pl-6 py-4">
-                        <div className="flex items-center gap-2 text-sm font-bold text-primary">
-                          <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                          {ts.date}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-sm">{ts.workerNameSnapshot}</span>
-                          <span className="text-[10px] text-muted-foreground uppercase font-medium">{ts.positionId}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {ts.sourceDocumentNo ? (
-                          <div className="flex flex-col">
-                            <span className="text-xs font-mono font-bold text-blue-700 flex items-center gap-1">
-                              <PenTool className="h-3 w-3" /> {ts.sourceDocumentNo}
-                            </span>
-                            <span className="text-[9px] text-muted-foreground uppercase">{ts.sourceType} Source</span>
+                  {filteredTimesheets.map((ts) => {
+                    const isLocked = ts.status === 'LOCKED' || ts.status === 'HR_APPROVED';
+                    return (
+                      <TableRow key={ts.id} className={`${isLocked ? 'bg-slate-50/50' : 'hover:bg-muted/20'} transition-all group cursor-pointer`} onClick={() => openDetail(ts)}>
+                        <TableCell className="pl-6 py-4">
+                          <div className="flex items-center gap-2 text-sm font-bold text-primary">
+                            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                            {ts.date}
                           </div>
-                        ) : (
-                          <span className="text-[10px] text-muted-foreground italic">No Ref</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px] bg-white border-primary/20">
-                          {EVENT_TYPE_LABELS[ts.eventType] || ts.eventType}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-center font-black">
-                        {ts.normalHours} Hrs
-                      </TableCell>
-                      <TableCell className="text-right pr-6">
-                        <div className="flex justify-end gap-2 items-center">
-                          <Badge variant={ts.status === 'VERIFIED_PAPER' ? 'default' : 'outline'} className={ts.status === 'VERIFIED_PAPER' ? 'bg-blue-700 text-[10px]' : 'uppercase text-[9px]'}>
-                            {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-bold text-sm">{ts.workerNameSnapshot}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase font-medium">{ts.positionId}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {ts.sourceDocumentNo ? (
+                            <div className="flex flex-col">
+                              <span className="text-xs font-mono font-bold text-blue-700 flex items-center gap-1">
+                                <PenTool className="h-3 w-3" /> {ts.sourceDocumentNo}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground uppercase">{ts.sourceType} Source</span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">No Ref</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] bg-white border-primary/20">
+                            {EVENT_TYPE_LABELS[ts.eventType] || ts.eventType}
                           </Badge>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30 group-hover:opacity-100 transition-all" />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell className="text-center font-black">
+                          {ts.normalHours} Hrs
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <div className="flex justify-end gap-2 items-center">
+                            {isLocked && <Lock className="h-3 w-3 text-amber-600" title="Locked - Finalized" />}
+                            <Badge variant={ts.status === 'VERIFIED_PAPER' ? 'default' : 'outline'} className={ts.status === 'VERIFIED_PAPER' ? 'bg-blue-700 text-[10px]' : 'uppercase text-[9px]'}>
+                              {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
+                            </Badge>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground opacity-30 group-hover:opacity-100 transition-all" />
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {filteredTimesheets.length === 0 && !isTsLoading && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบบันทึกชั่วโมงทำงานในช่วงเวลานี้</TableCell>
@@ -304,21 +310,34 @@ export default function ClientTimesheetViewPage() {
                   </div>
                 </div>
 
-                <div className="flex gap-2 pt-2">
-                  <Button variant="outline" className="flex-1 gap-2 font-bold" disabled>
-                    <Download className="h-4 w-4" /> Download PDF Proof
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    className="text-destructive hover:bg-destructive/5 font-bold"
-                    onClick={() => {
-                      setIsDetailOpen(false);
-                      setIsDisputeOpen(true);
-                    }}
-                  >
-                    <MessageSquareWarning className="h-4 w-4 mr-2" /> แจ้งปัญหา (Report Issue)
-                  </Button>
-                </div>
+                {selectedTs.status === 'LOCKED' || selectedTs.status === 'HR_APPROVED' ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex gap-3">
+                    <Lock className="h-5 w-5 text-amber-600 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-amber-900">Approved & Finalized (ล็อกข้อมูลแล้ว)</p>
+                      <p className="text-[10px] text-amber-700 leading-relaxed">
+                        รายการนี้ถูกอนุมัติเข้าสู่กระบวนการจ่ายเงินแล้ว ท่านไม่สามารถแจ้งปัญหาผ่านระบบปกติได้ 
+                        หากจำเป็นต้องแก้ไขเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ OPEC โดยตรง
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2 pt-2">
+                    <Button variant="outline" className="flex-1 gap-2 font-bold" disabled>
+                      <Download className="h-4 w-4" /> Download PDF Proof
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      className="text-destructive hover:bg-destructive/5 font-bold"
+                      onClick={() => {
+                        setIsDetailOpen(false);
+                        setIsDisputeOpen(true);
+                      }}
+                    >
+                      <MessageSquareWarning className="h-4 w-4 mr-2" /> แจ้งปัญหา (Report Issue)
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </DialogContent>

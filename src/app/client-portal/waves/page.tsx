@@ -19,7 +19,8 @@ import {
   Clock,
   User,
   ExternalLink,
-  Info
+  Info,
+  Lock
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User as AppUser, Worker, Assignment, Wave } from '@/lib/types';
@@ -56,7 +57,7 @@ export default function ClientManpowerPage() {
 
   const activePersonnel = useMemo(() => {
     if (!assignments) return [];
-    return assignments.filter(a => ['ACTIVE', 'MOBILIZING', 'READY_TO_MOB'].includes(a.deploymentStatus));
+    return assignments.filter(a => ['ACTIVE', 'MOBILIZING', 'READY_TO_MOB', 'CONFIRMED'].includes(a.deploymentStatus));
   }, [assignments]);
 
   const filteredPersonnel = useMemo(() => {
@@ -86,7 +87,7 @@ export default function ClientManpowerPage() {
           title="สถานะพนักงานหน้างาน"
           tips={[
             "รายการด้านล่างแสดงเฉพาะพนักงานที่กำลังปฏิบัติงานหรืออยู่ในระหว่างการระดมพล (Mobilizing)",
-            "ท่านสามารถดูประวัติพนักงานและใบเซอร์สำคัญได้โดยคลิกที่ 'ดูประวัติ'",
+            "รายการที่ระบุ 'Operational Lock' คือพนักงานที่ยืนยันการลงงานแล้ว ไม่สามารถเปลี่ยนแปลงผ่านระบบพอร์ทัลได้",
             "หากท่านต้องการขอเปลี่ยนตัวพนักงานหรือมีข้อสงสัย กรุณาติดต่อฝ่ายปฏิบัติการ (Operations) ของ OPEC"
           ]}
         />
@@ -127,15 +128,20 @@ export default function ClientManpowerPage() {
                     <TableBody>
                       {filteredPersonnel.map((asgn) => {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
+                        const isOpLocked = ['CONFIRMED', 'ACTIVE', 'CLOSED'].includes(asgn.deploymentStatus);
+                        
                         return (
-                          <TableRow key={asgn.id} className="hover:bg-muted/20 transition-all group">
+                          <TableRow key={asgn.id} className={`${isOpLocked ? 'bg-slate-50/30' : ''} hover:bg-muted/20 transition-all group`}>
                             <TableCell className="pl-6 py-4">
                               <div className="flex items-center gap-3">
                                 <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
                                   {worker?.firstName.charAt(0)}
                                 </div>
                                 <div className="flex flex-col">
-                                  <span className="font-bold text-sm text-primary">{worker?.firstName} {worker?.lastName}</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-sm text-primary">{worker?.firstName} {worker?.lastName}</span>
+                                    {isOpLocked && <Lock className="h-3 w-3 text-amber-600" title="Operational Lock - Finalized" />}
+                                  </div>
                                   <span className="text-[10px] text-muted-foreground">National ID: {worker?.thaiNationalId.substring(0, 10)}...</span>
                                 </div>
                               </div>
@@ -155,9 +161,12 @@ export default function ClientManpowerPage() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Badge variant={asgn.deploymentStatus === 'ACTIVE' ? 'default' : 'secondary'} className={asgn.deploymentStatus === 'ACTIVE' ? 'bg-green-600' : 'uppercase text-[9px]'}>
-                                {asgn.deploymentStatus}
-                              </Badge>
+                              <div className="flex flex-col gap-1">
+                                <Badge variant={asgn.deploymentStatus === 'ACTIVE' ? 'default' : 'secondary'} className={asgn.deploymentStatus === 'ACTIVE' ? 'bg-green-600' : 'uppercase text-[9px]'}>
+                                  {asgn.deploymentStatus}
+                                </Badge>
+                                {isOpLocked && <span className="text-[8px] text-amber-700 font-bold uppercase tracking-tighter">Operational Lock</span>}
+                              </div>
                             </TableCell>
                             <TableCell className="text-right pr-6">
                               <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group">

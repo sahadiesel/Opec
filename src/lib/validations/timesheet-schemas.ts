@@ -57,6 +57,7 @@ export const DailyTimesheetSchema = z.object({
     'DRAFT', 
     'SUBMITTED', 
     'OPS_REVIEWED', 
+    'HR_APPROVED',
     'CLIENT_APPROVED', 
     'VERIFIED_PAPER',
     'LOCKED', 

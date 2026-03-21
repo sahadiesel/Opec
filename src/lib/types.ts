@@ -64,6 +64,7 @@ export type DeploymentStatus =
   | 'READINESS_CHECK'     // อยู่ระหว่างตรวจความพร้อม
   | 'CLIENT_SUBMITTED'    // ส่งรายชื่อให้ลูกค้าพิจารณา
   | 'CLIENT_APPROVED'     // ลูกค้าอนุมัติแล้ว
+  | 'CONFIRMED'           // ยืนยันการมอบหมาย (Internal Manager Confirmation)
   | 'READY_TO_MOB'        // พร้อมเดินทาง
   | 'MOBILIZING'          // อยู่ระหว่างเดินทาง
   | 'ACTIVE'              // ปฏิบัติงาน (On-site)
@@ -548,6 +549,7 @@ export type DailyTimesheetStatus =
   | 'DRAFT' 
   | 'SUBMITTED' 
   | 'OPS_REVIEWED' 
+  | 'HR_APPROVED'
   | 'CLIENT_APPROVED' 
   | 'VERIFIED_PAPER' 
   | 'LOCKED' 
