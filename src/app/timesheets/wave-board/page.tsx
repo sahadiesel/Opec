@@ -25,7 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { PurchaseOrder, Wave, Assignment, Worker, DailyTimesheet, RateConditionEventType, User } from '@/lib/types';
+import { PurchaseOrder, Wave, Assignment, Worker, DailyTimesheet, RateConditionEventType, User, JobMode } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { Badge } from '@/components/ui/badge';
@@ -161,12 +161,12 @@ export default function WaveTimesheetBoardPage() {
           customerId: wave?.customerId || '',
           projectName: wave?.projectName || '',
           positionId: asgn?.positionId || '',
-          workMode: asgn?.workMode || 'OFFSHORE',
+          workMode: asgn?.workMode, // Derived directly from assignment context
           shiftType: 'DAY' as any,
         };
       });
 
-      const results = await service.bulkUpsertTimesheets(payloads, currentUser);
+      const results = await service.bulkUpsertTimesheets(payloads as Partial<DailyTimesheet>[], currentUser);
       toast({ 
         title: "บันทึกสำเร็จ (Save Board Success)", 
         description: `สร้างใหม่: ${results.created}, อัปเดต: ${results.updated}, ข้ามรายการล็อก: ${results.skipped}` 

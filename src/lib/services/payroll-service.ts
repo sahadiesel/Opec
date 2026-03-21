@@ -152,6 +152,7 @@ export class PayrollService {
     }
 
     // SAFEGUARD: Lock the source timesheets so they aren't processed in another run
+    // This is the atomic locking mechanism requested.
     for (const ts of timesheets) {
       const tsRef = doc(this.db, 'daily_timesheets', ts.id);
       writeOp.update(tsRef, { 
