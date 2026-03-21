@@ -7,24 +7,22 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { 
   Users, 
   Waves, 
-  ClipboardCheck, 
   Clock, 
-  CheckCircle2, 
   ChevronRight, 
   LayoutDashboard,
-  Building2,
   HardHat,
   MapPin,
   Calendar,
-  Briefcase,
   Activity,
   ShoppingCart,
-  FileText,
   AlertCircle,
-  TrendingUp,
-  ArrowRight,
   FileBarChart,
-  ShieldCheck
+  ShieldCheck,
+  Truck,
+  Building2,
+  FileText,
+  Receipt,
+  Wallet
 } from 'lucide-react';
 import { 
   User, 
@@ -33,8 +31,6 @@ import {
   DailyTimesheet, 
   Worker, 
   PurchaseOrder, 
-  MainContract,
-  WorkerWaveAcceptance,
   TaxInvoice
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -45,6 +41,7 @@ import Link from 'next/link';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { differenceInDays, parseISO, startOfDay } from 'date-fns';
+import { Separator } from '@/components/ui/separator';
 
 export default function ClientDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -61,7 +58,6 @@ export default function ClientDashboardPage() {
   }, [currentUser]);
 
   // --- Scoped Queries ---
-  
   const queryService = useMemo(() => firestore ? new CustomerQueryService(firestore) : null, [firestore]);
 
   const wavesQuery = useMemoFirebase(() => queryService?.getScopedWavesQuery(currentUser), [queryService, currentUser]);
@@ -72,8 +68,7 @@ export default function ClientDashboardPage() {
 
   const tsQuery = useMemoFirebase(() => {
     const base = queryService?.getScopedTimesheetsQuery(currentUser);
-    // Display finalized logs mostly
-    return base ? query(base as any, where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED']), limit(10)) : null;
+    return base ? query(base as any, where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED']), limit(5)) : null;
   }, [queryService, currentUser]);
   const { data: recentTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
 
@@ -90,7 +85,6 @@ export default function ClientDashboardPage() {
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   // --- Stats Calculation ---
-
   const stats = useMemo(() => {
     const activeHeadcount = assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0;
     const mobilising = assignments?.filter(a => ['READY_TO_MOB', 'MOBILIZING'].includes(a.deploymentStatus)).length || 0;
@@ -148,58 +142,31 @@ export default function ClientDashboardPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
-        {/* Header */}
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <LayoutDashboard className="h-8 w-8" /> แดชบอร์ดสรุปงานโครงการ (Project Overview Dashboard)
+            <LayoutDashboard className="h-8 w-8" /> แดชบอร์ดโครงการ (Project Transparency Dashboard)
           </h1>
           <p className="text-muted-foreground text-lg italic">
-            ติดตามสถานะพนักงาน แผนการส่งตัว และเอกสารสรุปงานสำหรับ {currentUser.displayName}
+            ศูนย์รวมข้อมูลการดำเนินงาน เอกสาร และสถานะกำลังพลสำหรับ {currentUser.displayName}
           </p>
         </div>
 
-        {/* Top Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard 
-            title="พนักงานหน้างาน" 
-            value={stats.activeHeadcount} 
-            sub="Active Personnel" 
-            icon={HardHat} 
-            colorClass="border-l-blue-600" 
-          />
-          <StatCard 
-            title="กำลังระดมพล" 
-            value={stats.mobilising} 
-            sub="In-Mob Pipeline" 
-            icon={Truck} 
-            colorClass="border-l-indigo-500" 
-          />
-          <StatCard 
-            title="รอบงานที่ดำเนินการ" 
-            value={stats.activeWaves} 
-            sub="Active Deployment Waves" 
-            icon={Waves} 
-            colorClass="border-l-green-600" 
-          />
-          <StatCard 
-            title="ใบสั่งซื้อโครงการ" 
-            value={stats.totalPOs} 
-            sub="Purchase Orders" 
-            icon={ShoppingCart} 
-            colorClass="border-l-amber-500" 
-          />
+          <StatCard title="พนักงานหน้างาน" value={stats.activeHeadcount} sub="Active Personnel" icon={HardHat} colorClass="border-l-blue-600" />
+          <StatCard title="กำลังส่งตัว" value={stats.mobilising} sub="In-Mob Pipeline" icon={Truck} colorClass="border-l-indigo-500" />
+          <StatCard title="รอบงานปฏิบัติการ" value={stats.activeWaves} sub="Active Waves" icon={Waves} colorClass="border-l-green-600" />
+          <StatCard title="ยอดสั่งซื้อรวม" value={stats.totalPOs} sub="Purchase Orders" icon={ShoppingCart} colorClass="border-l-amber-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Operational Summary */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="shadow-md border-none overflow-hidden">
               <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <Activity className="h-5 w-5" /> สถานะพนักงานปฏิบัติงาน (On-site Deployment)
+                    <Activity className="h-5 w-5" /> ตารางการปฏิบัติงาน (Active Roster)
                   </CardTitle>
-                  <CardDescription>สรุปรายชื่อพนักงานและระยะเวลาคงเหลือในรอบปัจจุบัน</CardDescription>
+                  <CardDescription>ความคืบหน้าของรอบการทำงานพนักงานปัจจุบัน</CardDescription>
                 </div>
                 <Button variant="ghost" size="sm" className="text-xs" asChild>
                   <Link href="/client-portal/waves">ดูทั้งหมด <ChevronRight className="h-4 w-4" /></Link>
@@ -211,13 +178,13 @@ export default function ClientDashboardPage() {
                     <TableRow className="bg-muted/30">
                       <TableHead className="pl-6">พนักงาน (Worker)</TableHead>
                       <TableHead>โครงการ (Project)</TableHead>
-                      <TableHead className="text-center">สะสม (Worked)</TableHead>
-                      <TableHead className="text-right pr-6">คงเหลือ (Days left)</TableHead>
+                      <TableHead className="text-center">Worked</TableHead>
+                      <TableHead className="text-right pr-6">Days left</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {activeWorkerStats.map(w => (
-                      <TableRow key={w.id} className="hover:bg-muted/10 transition-colors">
+                      <TableRow key={w.id} className="hover:bg-muted/10">
                         <TableCell className="pl-6">
                           <div className="flex flex-col">
                             <span className="font-bold text-sm text-primary">{w.name}</span>
@@ -228,7 +195,7 @@ export default function ClientDashboardPage() {
                         <TableCell className="text-center">
                           <div className="flex flex-col items-center gap-1">
                             <span className="font-black text-blue-700">{w.daysWorked} วัน</span>
-                            <div className="w-24 h-1 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="w-20 h-1 bg-slate-100 rounded-full overflow-hidden">
                               <div className="h-full bg-blue-500" style={{ width: `${w.percent}%` }} />
                             </div>
                           </div>
@@ -236,11 +203,6 @@ export default function ClientDashboardPage() {
                         <TableCell className="text-right pr-6 font-bold text-slate-600">{w.remaining} วัน</TableCell>
                       </TableRow>
                     ))}
-                    {activeWorkerStats.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={4} className="py-10 text-center text-muted-foreground italic">ไม่มีพนักงานปฏิบัติงานอยู่ในขณะนี้</TableCell>
-                      </TableRow>
-                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -250,7 +212,7 @@ export default function ClientDashboardPage() {
               <Card className="shadow-md border-none overflow-hidden">
                 <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <FileBarChart className="h-4 w-4 text-primary" /> ใบกำกับภาษีล่าสุด (Recent Invoices)
+                    <Wallet className="h-4 w-4 text-primary" /> เอกสารการเงินล่าสุด
                   </CardTitle>
                   <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
                     <Link href="/client-portal/billing">ดูทั้งหมด</Link>
@@ -270,7 +232,6 @@ export default function ClientDashboardPage() {
                         </div>
                       </div>
                     ))}
-                    {!recentInvoices?.length && <p className="p-10 text-center text-xs text-muted-foreground italic">ไม่มีข้อมูลใบกำกับภาษี</p>}
                   </div>
                 </CardContent>
               </Card>
@@ -278,7 +239,7 @@ export default function ClientDashboardPage() {
               <Card className="shadow-md border-none overflow-hidden">
                 <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
                   <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-primary" /> บันทึกเวลาล่าสุด (Activity Logs)
+                    <Clock className="h-4 w-4 text-primary" /> บันทึกเวลาล่าสุด (Verified Logs)
                   </CardTitle>
                   <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
                     <Link href="/client-portal/timesheets">ดูทั้งหมด</Link>
@@ -290,75 +251,41 @@ export default function ClientDashboardPage() {
                       <div key={ts.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
                         <div className="space-y-0.5">
                           <p className="font-bold text-primary">{ts.workerNameSnapshot}</p>
-                          <p className="text-[10px] text-muted-foreground">{ts.date} | {ts.eventType}</p>
+                          <p className="text-[10px] text-muted-foreground">{ts.date} | {ts.sourceDocumentNo || 'N/A'}</p>
                         </div>
                         <Badge variant="secondary" className="text-[8px] font-bold h-4 uppercase">
-                          {ts.status === 'VERIFIED_PAPER' ? 'Verified (Paper)' : ts.status}
+                          {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
                         </Badge>
                       </div>
                     ))}
-                    {!recentTimesheets?.length && <p className="p-10 text-center text-xs text-muted-foreground italic">ไม่พบบันทึกเวลาที่สรุปแล้ว</p>}
                   </div>
                 </CardContent>
               </Card>
             </div>
           </div>
 
-          {/* Sidebar Portal Summary */}
           <div className="space-y-6">
             <Card className="bg-primary text-primary-foreground shadow-lg overflow-hidden border-none">
               <CardHeader className="pb-4 border-b border-white/10">
                 <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                  <ShieldCheck className="h-4 w-4" /> ข้อมูลการเข้าใช้งาน (My Context)
+                  <ShieldCheck className="h-4 w-4" /> แหล่งข้อมูล (Portal Access)
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
-                <div className="p-3 bg-white/10 rounded-lg border border-white/10">
-                  <p className="text-[10px] font-black uppercase opacity-60 mb-1">Company Account:</p>
-                  <p className="font-bold text-sm truncate">{currentUser.displayName}</p>
-                </div>
                 <div className="space-y-2">
-                  <ShortcutItem href="/client-portal/waves" label="ดูรายชื่อพนักงาน" sub="Current Roster" icon={HardHat} />
-                  <ShortcutItem href="/client-portal/timesheets" label="ประวัติลงเวลา" sub="Activity Summary" icon={History} />
-                  <ShortcutItem href="/client-portal/billing" label="เอกสารทางบัญชี" sub="Invoices & AR" icon={Receipt} />
+                  <ShortcutItem href="/client-portal/waves" label="รายชื่อกำลังพล" sub="Personnel Roster" icon={HardHat} />
+                  <ShortcutItem href="/client-portal/timesheets" label="บันทึกเวลาและหลักฐาน" sub="Verified Evidence" icon={FileText} />
+                  <ShortcutItem href="/client-portal/billing" label="ประวัติวางบิล/ชำระเงิน" sub="Billing & Invoices" icon={Receipt} />
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-md border-none overflow-hidden">
-              <CardHeader className="bg-muted/30 border-b">
-                <CardTitle className="text-xs font-black uppercase text-muted-foreground flex items-center gap-2">
-                  <Waves className="h-3 w-3" /> รอบงานที่ดำเนินการ (Active Waves)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4 space-y-4">
-                {waves?.filter(w => w.status === 'ACTIVE').slice(0, 3).map(wave => (
-                  <div key={wave.id} className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <p className="text-xs font-bold text-primary">{wave.waveCode}</p>
-                      <Badge variant="outline" className="text-[9px]">{wave.rotationPattern}</Badge>
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                      <MapPin className="h-3 w-3" /> {wave.siteLocation}
-                    </div>
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                      <Calendar className="h-3 w-3" /> {wave.startDate} - {wave.endDate}
-                    </div>
-                    <Separator className="mt-2" />
-                  </div>
-                ))}
-                {!waves?.filter(w => w.status === 'ACTIVE').length && (
-                  <p className="text-center text-xs text-muted-foreground italic">ไม่มีรอบงานที่ดำเนินการอยู่</p>
-                )}
               </CardContent>
             </Card>
 
             <PageGuidance 
-              title="แนะนำการใช้งาน Portal"
+              title="แนะนำการตรวจสอบ"
               tips={[
-                "ระบบบันทึกเวลาเป็นแบบ Paper-First ซึ่ง OPEC จะตรวจสอบและอัปโหลดสถานะขึ้นระบบให้ท่านตรวจสอบได้แบบ Real-time",
-                "ท่านสามารถคลิกที่เมนู 'เอกสารทางบัญชี' เพื่อตรวจสอบยอดค้างชำระและรายการวางบิลรายเดือน",
-                "หากพบข้อมูลพนักงานหรือชั่วโมงทำงานไม่ถูกต้อง กรุณาใช้ปุ่ม 'แจ้งปัญหา' ในหน้าแสดงผลรายละเอียด"
+                "ท่านสามารถตรวจสอบเลขที่ Slip จากตารางบันทึกเวลาเพื่อสอบทานกับสำเนาที่หน้างาน",
+                "เอกสารการเงินประกอบด้วย ใบวางบิล (Notes), ใบกำกับภาษี (Invoices) และใบเสร็จ (Receipts)",
+                "ใช้ระบบ 'Report' หากพบข้อมูลที่ไม่ตรงตามจริงเพื่อรับการตรวจสอบเร่งด่วน"
               ]}
             />
           </div>
@@ -399,5 +326,3 @@ function ShortcutItem({ href, label, sub, icon: Icon }: any) {
     </Link>
   );
 }
-
-import { Separator } from '@/components/ui/separator';
