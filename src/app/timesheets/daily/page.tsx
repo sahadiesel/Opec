@@ -28,7 +28,9 @@ import {
   ShieldAlert,
   Send,
   FileCheck,
-  FileText
+  FileText,
+  UserCheck,
+  PenTool
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -52,6 +54,7 @@ import { TimesheetService } from '@/lib/services/timesheet-service';
 import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import Link from 'next/link';
+import { Separator } from '@/components/ui/separator';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work Day)',
@@ -96,7 +99,9 @@ export default function DailyTimesheetsPage() {
     normalHours: 8,
     status: 'DRAFT',
     sourceType: 'PAPER',
-    sourceDocumentNo: ''
+    sourceDocumentNo: '',
+    supervisorSignedBy: '',
+    clientSignedBy: '',
   });
 
   const handleCreate = async () => {
@@ -130,6 +135,17 @@ export default function DailyTimesheetsPage() {
       }], currentUser);
 
       setIsCreateOpen(false);
+      setNewTs({
+        date: new Date().toISOString().split('T')[0],
+        eventType: 'work_day',
+        shiftType: 'DAY',
+        normalHours: 8,
+        status: 'DRAFT',
+        sourceType: 'PAPER',
+        sourceDocumentNo: '',
+        supervisorSignedBy: '',
+        clientSignedBy: '',
+      });
       toast({ title: "บันทึกใบลงเวลาสำเร็จ" });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e.message });
@@ -199,13 +215,13 @@ export default function DailyTimesheetsPage() {
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold">
-                  <Plus className="h-5 w-5" /> เพิ่มรายบุคคล (Manual Entry)
+                  <Plus className="h-5 w-5" /> บันทึกรายบุคคล (Manual Entry)
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle>บันทึกเวลาทำงานรายวัน (Worker Timesheet)</DialogTitle>
-                  <DialogDescription>บันทึกเวลาทำงานรายวันสำหรับลูกจ้างหน้างาน</DialogDescription>
+                  <DialogTitle>บันทึกเวลาทำงานจากหลักฐานกระดาษ (Entry from Paper)</DialogTitle>
+                  <DialogDescription>กรอกข้อมูลเวลาทำงานที่อ้างอิงจากใบลงเวลาที่เซ็นรับรองแล้ว</DialogDescription>
                 </DialogHeader>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                   <div className="space-y-2">
@@ -215,7 +231,7 @@ export default function DailyTimesheetsPage() {
                   <div className="space-y-2">
                     <Label className="font-bold">ประเภทกะ (Shift)</Label>
                     <Select onValueChange={(v: any) => setNewTs({...newTs, shiftType: v})} value={newTs.shiftType}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="DAY">กลางวัน (Day)</SelectItem>
                         <SelectItem value="NIGHT">กลางคืน (Night)</SelectItem>
@@ -226,7 +242,7 @@ export default function DailyTimesheetsPage() {
                   <div className="space-y-2 md:col-span-2">
                     <Label className="font-bold">เลือกคนงานหน้างาน (Field Worker) *</Label>
                     <Select onValueChange={v => setNewTs({...newTs, workerId: v, assignmentId: ''})}>
-                      <SelectTrigger><SelectValue placeholder="ค้นหาลูกจ้างหน้างาน (Field only)..." /></SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue placeholder="ค้นหาลูกจ้างหน้างาน (Field only)..." /></SelectTrigger>
                       <SelectContent>
                         {workers?.map(w => (
                           <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
@@ -237,7 +253,7 @@ export default function DailyTimesheetsPage() {
                   <div className="space-y-2 md:col-span-2">
                     <Label className="font-bold">เลือกงานที่มอบหมาย (Assignment) *</Label>
                     <Select onValueChange={v => setNewTs({...newTs, assignmentId: v})} disabled={!newTs.workerId}>
-                      <SelectTrigger><SelectValue placeholder="เลืองโครงการ/เวฟ..." /></SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue placeholder="เลือกโครงการ/เวฟ..." /></SelectTrigger>
                       <SelectContent>
                         {assignments?.filter(a => a.workerId === newTs.workerId && a.deploymentStatus !== 'CLOSED').map(a => (
                           <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.assignmentNo})</SelectItem>
@@ -248,7 +264,7 @@ export default function DailyTimesheetsPage() {
                   <div className="space-y-2">
                     <Label className="font-bold">ประเภทเหตุการณ์ (Event) *</Label>
                     <Select onValueChange={(v: any) => setNewTs({...newTs, eventType: v})} value={newTs.eventType}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {Object.entries(EVENT_TYPE_LABELS).map(([k, v]) => (
                           <SelectItem key={k} value={k}>{v}</SelectItem>
@@ -258,21 +274,26 @@ export default function DailyTimesheetsPage() {
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ชั่วโมงงานปกติ (Normal Hrs)</Label>
-                    <Input type="number" value={newTs.normalHours} onChange={e => setNewTs({...newTs, normalHours: parseInt(e.target.value)})} />
+                    <Input type="number" className="h-10 font-bold" value={newTs.normalHours} onChange={e => setNewTs({...newTs, normalHours: parseInt(e.target.value)})} />
                   </div>
 
                   <Separator className="md:col-span-2 my-2" />
                   
                   <div className="space-y-2 md:col-span-2">
                     <Label className="font-bold text-blue-700 flex items-center gap-2">
-                      <FileText className="h-4 w-4" /> ข้อมูลหลักฐานกระดาษ (Evidence)
+                      <FileCheck className="h-4 w-4" /> ข้อมูลหลักฐานและการยืนยัน (Evidence & Confirmation)
                     </Label>
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="font-bold">ประเภทแหล่งข้อมูล (Source)</Label>
+                    <Label className="font-bold">เลขที่ใบลงเวลา (Slip No.)</Label>
+                    <Input value={newTs.sourceDocumentNo} onChange={e => setNewTs({...newTs, sourceDocumentNo: e.target.value})} placeholder="ระบุเลขที่ใบ slip..." className="h-10" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="font-bold">ประเภทแหล่งข้อมูล</Label>
                     <Select onValueChange={(v: any) => setNewTs({...newTs, sourceType: v})} value={newTs.sourceType}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="PAPER">ใบลงเวลากระดาษ (Paper)</SelectItem>
                         <SelectItem value="DIGITAL">บันทึกดิจิทัล (Digital)</SelectItem>
@@ -281,15 +302,20 @@ export default function DailyTimesheetsPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="font-bold">เลขที่ใบลงเวลา (Slip No.)</Label>
-                    <Input value={newTs.sourceDocumentNo} onChange={e => setNewTs({...newTs, sourceDocumentNo: e.target.value})} placeholder="ระบุเลขที่ slip..." />
+                    <Label className="font-bold">ผู้ควบคุมงานที่ลงนาม (Supervisor)</Label>
+                    <Input value={newTs.supervisorSignedBy} onChange={e => setNewTs({...newTs, supervisorSignedBy: e.target.value})} placeholder="ชื่อผู้เซ็นคุมงาน..." className="h-10" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="font-bold">ลูกค้าที่ลงนาม (Client Signatory)</Label>
+                    <Input value={newTs.clientSignedBy} onChange={e => setNewTs({...newTs, clientSignedBy: e.target.value})} placeholder="ชื่อลูกค้าที่เซ็นรับรอง..." className="h-10" />
                   </div>
                 </div>
-                <DialogFooter>
+                <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-4 mt-2 border-t">
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                  <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                  <Button onClick={handleCreate} className="bg-primary font-bold px-8 shadow-md" disabled={isCreating}>
                     {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                    บันทึกข้อมูล (Save)
+                    บันทึกข้อมูล (Confirm Entry)
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -300,7 +326,7 @@ export default function DailyTimesheetsPage() {
         <PageGuidance 
           tips={[
             "ระบบรองรับทั้งการอนุมัติผ่าน Portal และการยืนยันจากหลักฐานกระดาษที่มีลายเซ็นลูกค้า",
-            "ลำดับงาน: บันทึกร่าง -> ส่งตรวจภายใน -> ผู้จัดการอนุมัติภายใน -> ยืนยันลายเซ็นลูกค้า (Digital/Paper)",
+            "พนักงานออฟฟิศสามารถระบุชื่อผู้ลงนามบนเอกสาร (Supervisor/Client) เพื่อใช้เป็นหลักฐานการตรวจสอบย้อนหลัง",
             "เฉพาะรายการที่สถานะเป็น CLIENT_APPROVED หรือ VERIFIED_PAPER เท่านั้นที่จะนำไปจ่ายเงินและวางบิล"
           ]}
         />
@@ -315,8 +341,8 @@ export default function DailyTimesheetsPage() {
                   <TableRow>
                     <TableHead className="pl-6 py-4 font-bold">วันที่ (Date)</TableHead>
                     <TableHead className="font-bold">คนงาน (Worker)</TableHead>
+                    <TableHead className="font-bold">อ้างอิงเอกสาร (Evidence)</TableHead>
                     <TableHead className="font-bold">ประเภทงาน (Event)</TableHead>
-                    <TableHead className="font-bold">โครงการ (Project)</TableHead>
                     <TableHead className="font-bold text-center">ชั่วโมง (Hrs)</TableHead>
                     <TableHead className="font-bold">สถานะ (Status)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -343,15 +369,24 @@ export default function DailyTimesheetsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
+                          {ts.sourceDocumentNo ? (
+                            <div className="flex flex-col">
+                              <span className="text-xs font-mono font-bold text-blue-700 flex items-center gap-1">
+                                <FileText className="h-3 w-3" /> {ts.sourceDocumentNo}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground uppercase flex items-center gap-1">
+                                {ts.sourceType === 'PAPER' ? <PenTool className="h-2 w-2" /> : <UserCheck className="h-2 w-2" />}
+                                {ts.sourceType || 'N/A'}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">No evidence ref</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
                           <Badge variant="outline" className="text-[10px] bg-white border-primary/20 font-bold uppercase">
                             {ts.eventType.replace('_', ' ')}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1.5 text-xs font-medium">
-                            <Briefcase className="h-3 w-3 text-muted-foreground" />
-                            <span className="truncate max-w-[150px]">{ts.projectName}</span>
-                          </div>
                         </TableCell>
                         <TableCell className="text-center font-black">{ts.normalHours}</TableCell>
                         <TableCell>{getStatusBadge(ts.status)}</TableCell>
