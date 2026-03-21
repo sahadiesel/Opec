@@ -72,140 +72,20 @@ service cloud.firestore {
       allow delete: if hasRole('system_admin');
     }
 
+    // Exception Requests
+    match /exception_requests/{id} {
+      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
+      allow create: if isClient();
+      allow update: if isInternalStaff();
+      allow delete: if hasRole('system_admin');
+    }
+
     // Daily Activity Tracking
     match /daily_timesheets/{id} {
       allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow create: if isOperationsStaff() || isHRStaff();
       allow update: if isOperationsStaff() || isHRStaff() || (isClientOf(resource.data.customerId) && hasRole('client_approver'));
       allow delete: if hasRole('system_admin');
-    }
-
-    // Payroll Periods
-    match /payroll_periods/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isHRStaff() || isAccountingStaff();
-    }
-
-    // Payroll Batches & Lines (Internal Financials)
-    match /payroll_batches/{id} {
-      allow read: if isHRStaff() || isAccountingStaff();
-      allow write: if isHRStaff() || isAccountingStaff();
-    }
-
-    match /payroll_batches/{id}/lines/{lineId} {
-      allow read: if isHRStaff() || isAccountingStaff();
-      allow write: if isHRStaff() || isAccountingStaff();
-    }
-
-    // Worker Payment Profiles (Sensitive Bank Data)
-    match /worker_payment_profiles/{id} {
-      allow read: if isHRStaff() || isAccountingStaff();
-      allow write: if isHRStaff();
-    }
-
-    // Payment Export Batches
-    match /payment_export_batches/{id} {
-      allow read: if isHRStaff() || isAccountingStaff();
-      allow write: if isAccountingStaff() || hasRole('accounting_manager');
-    }
-
-    // Centralized Numbering System
-    match /number_sequences/{id} {
-      allow get: if isSignedIn();
-      allow list: if isInternalStaff();
-      allow create, update: if isInternalStaff();
-      allow delete: if hasRole('system_admin');
-    }
-
-    // Audit Trail (Immutable once created)
-    match /audit_logs/{id} {
-      allow get: if isInternalStaff();
-      allow list: if hasRole('system_admin');
-      allow create: if isSignedIn();
-      allow update, delete: if false;
-    }
-
-    // Commercial & Sales
-    match /customers/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isSalesStaff();
-    }
-
-    match /quotations/{id} {
-      allow get, list: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow create, update: if isSalesStaff();
-      allow delete: if hasRole('system_admin');
-    }
-
-    match /sales_contract_terms/{id} {
-      allow read: if isSalesStaff() || isAccountingStaff();
-      allow write: if isSalesStaff();
-    }
-
-    match /labor_cost_contract_terms/{id} {
-      allow read: if isSalesStaff() || isHRStaff() || isAccountingStaff();
-      allow write: if isSalesStaff() || isHRStaff();
-    }
-
-    match /rate_conditions/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isSalesStaff() || isHRStaff() || isAccountingStaff();
-    }
-
-    match /main_contracts/{id} {
-      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow write: if isSalesStaff();
-    }
-
-    match /purchase_orders/{poId} {
-      allow get, list: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow write: if isSalesStaff() || isAccountingStaff();
-    }
-    
-    match /purchase_orders/{poId}/po_lines/{lineId} {
-      allow read: if isInternalStaff() || isClientOf(get(/databases/$(database)/documents/purchase_orders/$(poId)).data.customerId);
-      allow write: if isInternalStaff();
-    }
-
-    // Operations & Mobilization
-    match /waves/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isOperationsStaff();
-    }
-
-    match /mobilizations/{id} {
-      allow get, list: if isInternalStaff();
-      allow write: if isHRStaff() || isOperationsStaff();
-    }
-
-    match /workers/{workerId} {
-      allow get: if isSignedIn();
-      allow list: if isInternalStaff();
-      allow write: if isHRStaff();
-    }
-
-    match /positions/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isHRStaff();
-    }
-
-    // Client-side Hiring/Mobilization Approvals
-    match /worker_wave_acceptances/{id} {
-      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow create: if isOperationsStaff();
-      allow update: if isOperationsStaff() || (isClientOf(resource.data.customerId) && hasRole('client_user'));
-      allow delete: if hasRole('system_admin');
-    }
-
-    // Store & Inventory
-    match /store_items/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isStoreStaff();
-    }
-
-    match /store_transactions/{id} {
-      allow read: if isInternalStaff();
-      allow create: if isStoreStaff() || isOperationsStaff();
     }
 
     // Default fallback

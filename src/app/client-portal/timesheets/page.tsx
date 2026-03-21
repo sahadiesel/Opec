@@ -24,7 +24,8 @@ import {
   ShieldCheck,
   Loader2,
   Lock,
-  AlertTriangle
+  AlertTriangle,
+  RotateCcw
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User as AppUser, DailyTimesheet, Worker } from '@/lib/types';
@@ -35,6 +36,7 @@ import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { DisputeService } from '@/lib/services/dispute-service';
+import { ExceptionRequestService } from '@/lib/services/exception-request-service';
 import { 
   Dialog, 
   DialogContent, 
@@ -63,10 +65,11 @@ export default function ClientTimesheetViewPage() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isDisputeOpen, setIsDisputeOpen] = useState(false);
+  const [isExceptionOpen, setIsExceptionOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedTs, setSelectedTs] = useState<DailyTimesheet | null>(null);
-  const [disputeComment, setDisputeComment] = useState('');
-  const [isSubmittingDispute, setIsSubmittingDispute] = useState(false);
+  const [comment, setComment] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -81,10 +84,9 @@ export default function ClientTimesheetViewPage() {
     
     if (!baseQuery) return null;
 
-    // Filter for finalized logs that the client should see
     return query(
       baseQuery,
-      where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED', 'OPS_REVIEWED', 'HR_APPROVED'])
+      where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED', 'OPS_REVIEWED', 'HR_APPROVED', 'SUBMITTED'])
     );
   }, [firestore, currentUser]);
   
@@ -100,16 +102,16 @@ export default function ClientTimesheetViewPage() {
   }, [timesheets, searchTerm]);
 
   const handleReportIssue = async () => {
-    if (!selectedTs || !disputeComment || !firestore || !currentUser) return;
+    if (!selectedTs || !comment || !firestore || !currentUser) return;
     
-    setIsSubmittingDispute(true);
+    setIsSubmitting(true);
     try {
       const service = new DisputeService(firestore);
       await service.reportIssue({
         category: 'TIMESHEET',
         referenceId: selectedTs.id,
         referenceNo: selectedTs.sourceDocumentNo || `TS-${selectedTs.date}`,
-        description: disputeComment
+        description: comment
       }, currentUser);
 
       toast({ 
@@ -117,11 +119,38 @@ export default function ClientTimesheetViewPage() {
         description: "เจ้าหน้าที่ OPEC จะตรวจสอบหลักฐานและติดต่อกลับโดยเร็ว" 
       });
       setIsDisputeOpen(false);
-      setDisputeComment('');
+      setComment('');
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e.message });
     } finally {
-      setIsSubmittingDispute(false);
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestException = async () => {
+    if (!selectedTs || !comment || !firestore || !currentUser) return;
+    
+    setIsSubmitting(true);
+    try {
+      const service = new ExceptionRequestService(firestore);
+      await service.createRequest({
+        type: 'TIMESHEET_CORRECTION',
+        referenceId: selectedTs.id,
+        referenceNo: selectedTs.sourceDocumentNo || `TS-${selectedTs.date}`,
+        reason: comment,
+        user: currentUser
+      });
+
+      toast({ 
+        title: "ส่งคำขอแก้ไขกรณีพิเศษสำเร็จ", 
+        description: "ฝ่ายบุคคล (HR) จะตรวจสอบเหตุผลและติดต่อกลับเพื่อดำเนินการ" 
+      });
+      setIsExceptionOpen(false);
+      setComment('');
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -148,8 +177,8 @@ export default function ClientTimesheetViewPage() {
           title="นโยบายความโปร่งใส (Transparency Policy)"
           tips={[
             "รายการ 'VERIFIED (PAPER)' คือรายการที่ได้รับการตรวจสอบลายเซ็นจากใบ Slip ฉบับจริงโดยเจ้าหน้าที่ OPEC แล้ว",
-            "รายการที่สถานะเป็น 'LOCKED' หรือ 'HR APPROVED' จะถูกส่งเข้ากระบวนการจ่ายเงินแล้วและไม่สามารถแจ้งแก้ไขตามปกติได้",
-            "หากท่านต้องการตรวจสอบรูปถ่ายเอกสารหรือมีข้อสงสัยในจำนวนชั่วโมง กรุณาใช้ปุ่ม 'แจ้งปัญหา'"
+            "รายการที่สถานะเป็น 'LOCKED' หรือ 'HR APPROVED' จะถูกส่งเข้ากระบวนการจ่ายเงินแล้ว ไม่สามารถแจ้งปัญหาปกติได้",
+            "หากจำเป็นต้องแก้ไขรายการที่ล็อกแล้ว กรุณาใช้ปุ่ม 'ขอแก้ไขกรณีพิเศษ' เพื่อส่งเรื่องให้ฝ่ายบุคคลพิจารณา"
           ]}
         />
 
@@ -234,11 +263,6 @@ export default function ClientTimesheetViewPage() {
                       </TableRow>
                     );
                   })}
-                  {filteredTimesheets.length === 0 && !isTsLoading && (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบบันทึกชั่วโมงทำงานในช่วงเวลานี้</TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             )}
@@ -299,33 +323,26 @@ export default function ClientTimesheetViewPage() {
                       <span className="text-[10px] text-muted-foreground uppercase font-bold">Evidence Type:</span>
                       <p className="font-bold">{selectedTs.sourceType || 'PAPER'}</p>
                     </div>
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-muted-foreground uppercase font-bold">Verified Date:</span>
-                      <p className="font-bold text-slate-700">{selectedTs.clientSignedDate || selectedTs.date}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-muted-foreground uppercase font-bold">System Confirmation:</span>
-                      <p className="text-[10px] text-green-700 font-bold italic">Confirmed via verified paper signature</p>
-                    </div>
                   </div>
                 </div>
 
-                {selectedTs.status === 'LOCKED' || selectedTs.status === 'HR_APPROVED' ? (
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex gap-3">
-                    <Lock className="h-5 w-5 text-amber-600 shrink-0" />
-                    <div className="space-y-1">
-                      <p className="text-xs font-bold text-amber-900">Approved & Finalized (ล็อกข้อมูลแล้ว)</p>
-                      <p className="text-[10px] text-amber-700 leading-relaxed">
-                        รายการนี้ถูกอนุมัติเข้าสู่กระบวนการจ่ายเงินแล้ว ท่านไม่สามารถแจ้งปัญหาผ่านระบบปกติได้ 
-                        หากจำเป็นต้องแก้ไขเป็นกรณีพิเศษ กรุณาติดต่อเจ้าหน้าที่ OPEC โดยตรง
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex gap-2 pt-2">
-                    <Button variant="outline" className="flex-1 gap-2 font-bold" disabled>
-                      <Download className="h-4 w-4" /> Download PDF Proof
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" className="flex-1 gap-2 font-bold" disabled>
+                    <Download className="h-4 w-4" /> Download PDF Proof
+                  </Button>
+                  
+                  {(selectedTs.status === 'LOCKED' || selectedTs.status === 'HR_APPROVED') ? (
+                    <Button 
+                      variant="ghost" 
+                      className="text-amber-600 hover:bg-amber-50 font-bold"
+                      onClick={() => {
+                        setIsDetailOpen(false);
+                        setIsExceptionOpen(true);
+                      }}
+                    >
+                      <RotateCcw className="h-4 w-4 mr-2" /> ขอแก้ไขกรณีพิเศษ
                     </Button>
+                  ) : (
                     <Button 
                       variant="ghost" 
                       className="text-destructive hover:bg-destructive/5 font-bold"
@@ -336,14 +353,14 @@ export default function ClientTimesheetViewPage() {
                     >
                       <MessageSquareWarning className="h-4 w-4 mr-2" /> แจ้งปัญหา (Report Issue)
                     </Button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
           </DialogContent>
         </Dialog>
 
-        {/* Dispute Dialog */}
+        {/* Standard Dispute Dialog */}
         <Dialog open={isDisputeOpen} onOpenChange={setIsDisputeOpen}>
           <DialogContent>
             <DialogHeader>
@@ -360,17 +377,51 @@ export default function ClientTimesheetViewPage() {
                 <Label className="font-bold text-primary">รายละเอียดปัญหา / ข้อมูลที่ถูกต้อง</Label>
                 <Textarea 
                   placeholder="เช่น จำนวนชั่วโมงไม่ตรงกับใบ Slip, ประเภทงานไม่ถูกต้อง..." 
-                  value={disputeComment}
-                  onChange={e => setDisputeComment(e.target.value)}
+                  value={comment}
+                  onChange={e => setComment(e.target.value)}
                   className="min-h-[120px]"
                 />
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsDisputeOpen(false)} disabled={isSubmittingDispute}>ยกเลิก</Button>
-              <Button onClick={handleReportIssue} className="bg-primary font-bold shadow-lg h-11 px-8" disabled={isSubmittingDispute || !disputeComment}>
-                {isSubmittingDispute ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              <Button variant="outline" onClick={() => setIsDisputeOpen(false)} disabled={isSubmitting}>ยกเลิก</Button>
+              <Button onClick={handleReportIssue} className="bg-primary font-bold shadow-lg h-11 px-8" disabled={isSubmitting || !comment}>
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 ส่งเรื่องตรวจสอบ (Submit Query)
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Exception Request Dialog */}
+        <Dialog open={isExceptionOpen} onOpenChange={setIsExceptionOpen}>
+          <DialogContent className="border-t-8 border-t-amber-500">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <RotateCcw className="h-5 w-5 text-amber-600" /> ขอแก้ไขข้อมูลที่อนุมัติแล้ว (Special Exception)
+              </DialogTitle>
+              <DialogDescription>เนื่องจากข้อมูลถูกล็อกเพื่อสรุปยอดเงินแล้ว การแก้ไขต้องได้รับการพิจารณาจากฝ่ายบุคคล (HR) เป็นกรณีพิเศษ</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="bg-amber-50 p-3 rounded border border-amber-100 text-[10px] text-amber-800 leading-relaxed">
+                <Info className="h-3 w-3 inline mr-1" />
+                คำขอนี้จะถูกส่งไปยังคิวงานของ HR Manager โดยตรง กรุณาระบุเหตุผลที่ชัดเจนว่าเหตุใดจึงต้องมีการปรับเปลี่ยนหลังจากมีการยืนยันยอดแล้ว
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold text-primary">เหตุผลความจำเป็นในการแก้ไข (Reason for Special Correction)</Label>
+                <Textarea 
+                  placeholder="กรุณาระบุรายละเอียดข้อผิดพลาดที่ตรวจพบ..." 
+                  value={comment}
+                  onChange={e => setComment(e.target.value)}
+                  className="min-h-[120px]"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsExceptionOpen(false)} disabled={isSubmitting}>ยกเลิก</Button>
+              <Button onClick={handleRequestException} className="bg-amber-600 hover:bg-amber-700 text-white font-bold h-11 px-8" disabled={isSubmitting || !comment}>
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                ส่งคำขอให้ HR (Submit to HR)
               </Button>
             </DialogFooter>
           </DialogContent>

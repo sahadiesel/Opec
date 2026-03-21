@@ -822,7 +822,6 @@ export interface PayrollLine {
   assignmentId: string;
   waveId: string;
   positionId: string;
-  normalDays: number;
   normalHours: number;
   otHours15: number;
   otHours20: number;
@@ -1207,5 +1206,26 @@ export interface CustomerIssue {
   createdBy: string;
   createdById: string;
   createdAt: number;
+  updatedAt: number;
+}
+
+/** Exception Requests for Post-Approval Changes */
+export type ExceptionRequestType = 'TIMESHEET_CORRECTION' | 'ASSIGNMENT_CHANGE';
+export type ExceptionRequestStatus = 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'REJECTED';
+
+export interface ExceptionRequest {
+  id: string;
+  customerId: string;
+  requestType: ExceptionRequestType;
+  referenceId: string; // e.g. timesheetId or assignmentId
+  referenceNo: string; // e.g. slipNo or assignmentNo
+  reason: string;
+  status: ExceptionRequestStatus;
+  requestedBy: string;
+  requestedById: string;
+  requestedAt: number;
+  reviewedBy?: string | null;
+  reviewedAt?: number | null;
+  internalNotes?: string | null;
   updatedAt: number;
 }

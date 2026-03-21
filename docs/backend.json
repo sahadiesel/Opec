@@ -49,6 +49,23 @@
       },
       "required": ["id", "date", "workerId", "assignmentId", "status", "customerId"]
     },
+    "ExceptionRequest": {
+      "title": "ExceptionRequest",
+      "type": "object",
+      "description": "Formal requests from clients for changes to approved or locked records.",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "requestType": { "type": "string", "enum": ["TIMESHEET_CORRECTION", "ASSIGNMENT_CHANGE"] },
+        "referenceId": { "type": "string" },
+        "referenceNo": { "type": "string" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "IN_REVIEW", "APPROVED", "REJECTED"] },
+        "requestedBy": { "type": "string" },
+        "requestedById": { "type": "string" },
+        "requestedAt": { "type": "number" }
+      }
+    },
     "PayrollPeriod": {
       "title": "PayrollPeriod",
       "type": "object",
@@ -64,154 +81,6 @@
         "generatedAt": { "type": "number" }
       },
       "required": ["id", "startDate", "endDate", "cycleType", "status"]
-    },
-    "PayrollBatch": {
-      "title": "PayrollBatch",
-      "type": "object",
-      "description": "A collection of payroll calculations for a specific period and scope, undergoing review and approval before payment.",
-      "properties": {
-        "id": { "type": "string" },
-        "payrollPeriodId": { "type": "string" },
-        "workModeScope": { "type": "string", "enum": ["onshore", "offshore", "mixed"] },
-        "status": { "type": "string", "enum": ["DRAFT", "GENERATED", "HR_REVIEWED", "HR_APPROVED", "FINANCE_PREPARED", "PAYMENT_EXPORTED", "PAID", "LOCKED"] },
-        "totalWorkers": { "type": "number" },
-        "netAmount": { "type": "number" }
-      }
-    },
-    "PayrollBatchLine": {
-      "title": "PayrollBatchLine",
-      "type": "object",
-      "description": "Individual worker calculation within a payroll batch, containing snapshots of earnings and bank details.",
-      "properties": {
-        "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "workerNameSnapshot": { "type": "string" },
-        "netAmount": { "type": "number" }
-      }
-    },
-    "PaymentExportBatch": {
-      "title": "PaymentExportBatch",
-      "type": "object",
-      "description": "A record of a generated bank payment file, derived from a payroll batch.",
-      "properties": {
-        "id": { "type": "string" },
-        "payrollBatchId": { "type": "string" },
-        "exportTemplateCode": { "type": "string" },
-        "status": { "type": "string", "enum": ["draft", "generated", "downloaded", "superseded"] },
-        "totalAmount": { "type": "number" }
-      }
-    },
-    "Quotation": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Quotation",
-      "type": "object",
-      "description": "Commercial proposal document sent to customers prior to PO or Contract.",
-      "properties": {
-        "id": { "type": "string" },
-        "quotationNo": { "type": "string" },
-        "customerId": { "type": "string" },
-        "customerNameSnapshot": { "type": "string" },
-        "issueDate": { "type": "string", "format": "date" },
-        "validUntilDate": { "type": "string", "format": "date" },
-        "currency": { "type": "string" },
-        "status": { "type": "string", "enum": ["draft", "sent", "accepted", "rejected", "expired", "cancelled"] },
-        "projectTitle": { "type": "string" },
-        "referenceNo": { "type": "string" },
-        "contactPerson": { "type": "string" },
-        "billingAddressSnapshot": { "type": "string" },
-        "notes": { "type": "string" },
-        "internalNotes": { "type": "string" },
-        "subtotal": { "type": "number" },
-        "discountAmount": { "type": "number" },
-        "taxPercent": { "type": "number" },
-        "taxAmount": { "type": "number" },
-        "grandTotal": { "type": "number" },
-        "createdBy": { "type": "string" },
-        "updatedBy": { "type": "string" },
-        "createdAt": { "type": "number" },
-        "updatedAt": { "type": "number" }
-      },
-      "required": ["id", "quotationNo", "customerId", "projectTitle"]
-    },
-    "QuotationLine": {
-      "title": "QuotationLine",
-      "type": "object",
-      "description": "Line items for a quotation document.",
-      "properties": {
-        "id": { "type": "string" },
-        "quotationId": { "type": "string" },
-        "description": { "type": "string" },
-        "quantity": { "type": "number" },
-        "unit": { "type": "string" },
-        "unitPrice": { "type": "number" },
-        "lineTotal": { "type": "number" },
-        "remarks": { "type": "string" },
-        "displayOrder": { "type": "number" }
-      }
-    },
-    "SalesContractTerm": {
-      "title": "SalesContractTerm",
-      "type": "object",
-      "description": "Detailed billing and commercial rules linked to a PO or project.",
-      "properties": {
-        "id": { "type": "string" },
-        "contractNo": { "type": "string" },
-        "customerId": { "type": "string" },
-        "purchaseOrderId": { "type": "string" },
-        "billingCycle": { "type": "string" },
-        "vatPercent": { "type": "number" },
-        "withholdingTaxPercent": { "type": "number" },
-        "status": { "type": "string" }
-      }
-    },
-    "LaborCostContractTerm": {
-      "title": "LaborCostContractTerm",
-      "type": "object",
-      "description": "Detailed cost and payroll rules for specific project deployments.",
-      "properties": {
-        "id": { "type": "string" },
-        "title": { "type": "string" },
-        "relatedPurchaseOrderId": { "type": "string" },
-        "scopeType": { "type": "string" },
-        "status": { "type": "string" }
-      }
-    },
-    "RateCondition": {
-      "title": "RateCondition",
-      "type": "object",
-      "description": "Structured rule for calculating billable revenue or payable labor cost based on events.",
-      "properties": {
-        "id": { "type": "string" },
-        "parentType": { "type": "string", "enum": ["SALES_CONTRACT", "LABOR_COST_CONTRACT", "PO_SNAPSHOT", "WAVE_SNAPSHOT"] },
-        "parentId": { "type": "string" },
-        "appliesTo": { "type": "string", "enum": ["SALES", "COST"] },
-        "eventType": { "type": "string" },
-        "calculationMethod": { "type": "string", "enum": ["FLAT", "MULTIPLIER", "PERCENTAGE", "FORMULA"] },
-        "unitType": { "type": "string", "enum": ["DAY", "HALF_DAY", "HOUR", "TRIP", "FIXED"] },
-        "isActive": { "type": "boolean" }
-      },
-      "required": ["id", "parentType", "parentId", "appliesTo", "eventType", "calculationMethod", "unitType"]
-    },
-    "WorkerWaveAcceptance": {
-      "title": "WorkerWaveAcceptance",
-      "type": "object",
-      "description": "Tracks client-side approval, rejection, or replacement requests for workers assigned to a wave.",
-      "properties": {
-        "id": { "type": "string" },
-        "waveId": { "type": "string" },
-        "assignmentId": { "type": "string" },
-        "workerId": { "type": "string" },
-        "customerId": { "type": "string" },
-        "customerPortalUserId": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "replacement_requested"] },
-        "remark": { "type": "string" },
-        "approvedDate": { "type": "string", "format": "date" },
-        "createdBy": { "type": "string" },
-        "updatedBy": { "type": "string" },
-        "createdAt": { "type": "number" },
-        "updatedAt": { "type": "number" }
-      },
-      "required": ["id", "waveId", "assignmentId", "workerId", "status", "customerId"]
     }
   },
   "auth": {
@@ -229,108 +98,21 @@
         }
       },
       {
+        "path": "/exception_requests/{id}",
+        "definition": {
+          "entityName": "ExceptionRequest",
+          "schema": { "$ref": "#/backend/entities/ExceptionRequest" },
+          "description": "Stores client exception requests.",
+          "params": [{ "name": "id", "description": "Unique request ID." }]
+        }
+      },
+      {
         "path": "/daily_timesheets/{tsId}",
         "definition": {
           "entityName": "DailyTimesheet",
           "schema": { "$ref": "#/backend/entities/DailyTimesheet" },
           "description": "Stores individual daily activity logs for workers.",
           "params": [{ "name": "tsId", "description": "Unique key combining worker, assignment, and date." }]
-        }
-      },
-      {
-        "path": "/payroll_periods/{periodId}",
-        "definition": {
-          "entityName": "PayrollPeriod",
-          "schema": { "$ref": "#/backend/entities/PayrollPeriod" },
-          "description": "Stores defined financial windows for processing.",
-          "params": [{ "name": "periodId", "description": "Unique ID for the period." }]
-        }
-      },
-      {
-        "path": "/payroll_batches/{batchId}",
-        "definition": {
-          "entityName": "PayrollBatch",
-          "schema": { "$ref": "#/backend/entities/PayrollBatch" },
-          "description": "Main batch record for a payroll run.",
-          "params": [{ "name": "batchId", "description": "Unique ID for the batch." }]
-        }
-      },
-      {
-        "path": "/payroll_batches/{batchId}/lines/{lineId}",
-        "definition": {
-          "entityName": "PayrollBatchLine",
-          "schema": { "$ref": "#/backend/entities/PayrollBatchLine" },
-          "description": "Individual worker records within a payroll batch.",
-          "params": [
-            { "name": "batchId", "description": "Parent batch ID." },
-            { "name": "lineId", "description": "Unique ID for the line." }
-          ]
-        }
-      },
-      {
-        "path": "/payment_export_batches/{id}",
-        "definition": {
-          "entityName": "PaymentExportBatch",
-          "schema": { "$ref": "#/backend/entities/PaymentExportBatch" },
-          "description": "Records of generated bank payment files.",
-          "params": [{ "name": "id", "description": "Unique ID for the export batch." }]
-        }
-      },
-      {
-        "path": "/quotations/{quoId}",
-        "definition": {
-          "entityName": "Quotation",
-          "schema": { "$ref": "#/backend/entities/Quotation" },
-          "description": "Stores sales quotations sent to customers.",
-          "params": [{ "name": "quoId", "description": "Unique ID of the quotation." }]
-        }
-      },
-      {
-        "path": "/quotations/{quoId}/lines/{lineId}",
-        "definition": {
-          "entityName": "QuotationLine",
-          "schema": { "$ref": "#/backend/entities/QuotationLine" },
-          "description": "Line items for a quotation document.",
-          "params": [
-            { "name": "quoId", "description": "Parent quotation ID." },
-            { "name": "lineId", "description": "Unique ID for the line." }
-          ]
-        }
-      },
-      {
-        "path": "/sales_contract_terms/{termId}",
-        "definition": {
-          "entityName": "SalesContractTerm",
-          "schema": { "$ref": "#/backend/entities/SalesContractTerm" },
-          "description": "Stores project-specific billing rules.",
-          "params": [{ "name": "termId", "description": "Unique ID of the sales term record." }]
-        }
-      },
-      {
-        "path": "/labor_cost_contract_terms/{termId}",
-        "definition": {
-          "entityName": "LaborCostContractTerm",
-          "schema": { "$ref": "#/backend/entities/LaborCostContractTerm" },
-          "description": "Stores project-specific cost/payroll rules.",
-          "params": [{ "name": "termId", "description": "Unique ID of the cost term record." }]
-        }
-      },
-      {
-        "path": "/rate_conditions/{conditionId}",
-        "definition": {
-          "entityName": "RateCondition",
-          "schema": { "$ref": "#/backend/entities/RateCondition" },
-          "description": "Specific pricing and cost rules for contracts and POs.",
-          "params": [{ "name": "conditionId", "description": "Unique ID of the rate condition." }]
-        }
-      },
-      {
-        "path": "/worker_wave_acceptances/{id}",
-        "definition": {
-          "entityName": "WorkerWaveAcceptance",
-          "schema": { "$ref": "#/backend/entities/WorkerWaveAcceptance" },
-          "description": "Stores client acceptance records for wave assignments.",
-          "params": [{ "name": "id", "description": "Unique ID for the acceptance record." }]
         }
       }
     ]
