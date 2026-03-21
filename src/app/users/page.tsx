@@ -366,7 +366,7 @@ export default function UsersPage() {
 
         {/* Access Editor Modal */}
         <Dialog open={isEditDialogOpen} onOpenChange={handleOpenChange}>
-          <DialogContent className="max-w-3xl border-t-8 border-t-primary">
+          <DialogContent className="max-w-3xl border-t-8 border-t-primary max-h-[96vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-2xl flex items-center gap-3">
                 <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
@@ -376,7 +376,7 @@ export default function UsersPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-4">
               <div className="space-y-6">
                 <div className="space-y-3">
                   <Label className="font-black text-primary uppercase tracking-wider text-[10px]">1. สถานะบัญชี (Account Status)</Label>
