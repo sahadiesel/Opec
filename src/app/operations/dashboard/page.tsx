@@ -90,12 +90,12 @@ export default function OperationsDashboardPage() {
   const urgentTasks = useMemo(() => {
     const tasks: any[] = [];
     
-    // Exception Requests (Assignment Changes)
+    // 1. Exception Requests (Assignment Changes)
     pendingExceptions?.forEach(req => {
       tasks.push({
         id: req.id,
         type: 'Personnel Change',
-        label: `Request to change: ${req.referenceNo}`,
+        label: `Client request: ${req.referenceNo}`,
         status: 'PENDING',
         link: `/assignments/${req.referenceId}`,
         priority: 'high',
@@ -103,7 +103,7 @@ export default function OperationsDashboardPage() {
       });
     });
 
-    // Incomplete Readiness for upcoming mobs
+    // 2. Incomplete Readiness for upcoming mobs
     assignments?.filter(a => a.readinessStatus === 'incomplete' && a.deploymentStatus === 'READINESS_CHECK').slice(0, 5).forEach(a => {
       const worker = allWorkers?.find(w => w.id === a.workerId);
       tasks.push({
@@ -160,7 +160,7 @@ export default function OperationsDashboardPage() {
           <StatCard title="กำลังปฏิบัติงาน" value={stats.activeAsgn} sub="Active Assignments" icon={Users} colorClass="border-l-blue-600" />
           <StatCard title="เวฟที่ดำเนินการอยู่" value={stats.activeWaves} sub="Current Active Waves" icon={Waves} colorClass="border-l-green-600" />
           <StatCard title="กำลังส่งตัว" value={stats.pendingMob} sub="In-Transit / Dispatch" icon={Truck} colorClass="border-l-purple-600" />
-          <StatCard title="คำขอเปลี่ยนตัว" value={stats.changeReqs} sub="Special Change Requests" icon={RotateCcw} colorClass="border-l-amber-500" />
+          <StatCard title="คำขอเปลี่ยนตัว" value={stats.changeReqs} sub="Change Request Queue" icon={RotateCcw} colorClass="border-l-amber-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -212,7 +212,16 @@ export default function OperationsDashboardPage() {
           </div>
 
           <div className="space-y-6">
-            {/* Sidebar content remains consistent... */}
+            <Card className="bg-blue-50 border-blue-100 shadow-none">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-bold uppercase text-blue-800 flex items-center gap-2">
+                  <Info className="h-3 w-3" /> Mob Prep Guidance
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-[10px] text-blue-700 leading-relaxed">
+                ตรวจสอบความพร้อม (Readiness) ให้ครบ 100% ก่อนยืนยันการระดมพล เพื่อป้องกันความเสี่ยงในการถูกปฏิเสธหน้างานโดยลูกค้า
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>

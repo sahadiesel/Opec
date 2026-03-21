@@ -26,9 +26,9 @@ import {
   User, 
   Worker, 
   PayrollRun, 
-  OfficePayrollRun, 
   Position,
-  ExceptionRequest
+  ExceptionRequest,
+  DailyTimesheet
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
@@ -77,6 +77,16 @@ export default function HRDashboardPage() {
   }, [firestore, isHR]);
   const { data: pendingExceptions } = useCollection<ExceptionRequest>(exceptionQuery as any);
 
+  const correctionTsQuery = useMemoFirebase(() => {
+    if (!firestore || !isHR) return null;
+    return query(
+      collection(firestore, 'daily_timesheets'),
+      where('status', '==', 'CORRECTION_REQUIRED'),
+      limit(10)
+    );
+  }, [firestore, isHR]);
+  const { data: correctionTs } = useCollection<DailyTimesheet>(correctionTsQuery as any);
+
   const positionsQuery = useMemoFirebase(() => (firestore && isHR ? collection(firestore, 'positions') : null), [firestore, isHR]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
@@ -85,12 +95,12 @@ export default function HRDashboardPage() {
   const pendingHRTasks = useMemo(() => {
     const tasks: any[] = [];
     
-    // Exception Requests (Corrections)
+    // 1. Exception Requests (Corrections)
     pendingExceptions?.forEach(req => {
       tasks.push({
         id: req.id,
         type: 'Correction Req',
-        label: `Post-Approval correction: ${req.referenceNo}`,
+        label: `Client request: ${req.referenceNo}`,
         status: 'PENDING',
         link: `/timesheets/daily/${req.referenceId}`,
         priority: 'high',
@@ -98,7 +108,21 @@ export default function HRDashboardPage() {
       });
     });
 
-    // Payroll Tasks
+    // 2. Timesheets requiring correction (Payroll Hold)
+    correctionTs?.forEach(ts => {
+      tasks.push({
+        id: ts.id,
+        type: 'Payroll Hold',
+        label: `Correction Required: ${ts.workerNameSnapshot}`,
+        sub: ts.date,
+        status: 'CORRECTION',
+        link: `/timesheets/daily/${ts.id}`,
+        priority: 'high',
+        icon: AlertTriangle
+      });
+    });
+
+    // 3. Payroll Tasks
     payrollRuns?.forEach(run => {
       tasks.push({
         id: run.id,
@@ -112,7 +136,7 @@ export default function HRDashboardPage() {
     });
 
     return tasks;
-  }, [payrollRuns, pendingExceptions]);
+  }, [payrollRuns, pendingExceptions, correctionTs]);
 
   const stats = useMemo(() => {
     if (!workers) return { total: 0, ready: 0, missingCert: 0, medExpired: 0 };
@@ -156,7 +180,7 @@ export default function HRDashboardPage() {
           <StatCard title="ขาดใบรับรอง" value={stats.missingCert} sub="Missing Certs" icon={AlertTriangle} colorClass="border-l-orange-500" />
           <StatCard title="ตรวจสุขภาพหมดอายุ" value={stats.medExpired} sub="Expired Medical" icon={Stethoscope} colorClass="border-l-red-600" />
           <StatCard title="งานค้าง HR" value={pendingHRTasks.length} sub="Pending Tasks" icon={Clock} colorClass="border-l-purple-600" />
-          <StatCard title="คำขอแก้ไข" value={pendingExceptions?.length || 0} sub="Special Corrections" icon={RotateCcw} colorClass="border-l-amber-500" />
+          <StatCard title="คำขอแก้ไข" value={(pendingExceptions?.length || 0) + (correctionTs?.length || 0)} sub="Correction Queue" icon={RotateCcw} colorClass="border-l-amber-500" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -187,6 +211,7 @@ export default function HRDashboardPage() {
                               <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{task.label}</p>
                               <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
                                 <span>{task.type}</span>
+                                {task.sub && <span>• {task.sub}</span>}
                                 <span>•</span>
                                 <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
                               </div>
@@ -208,7 +233,16 @@ export default function HRDashboardPage() {
           </div>
 
           <div className="space-y-6">
-            {/* Sidebar content remains consistent... */}
+            <Card className="bg-amber-50 border-amber-100 shadow-none">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-bold uppercase text-amber-800 flex items-center gap-2">
+                  <AlertTriangle className="h-3 w-3" /> Payroll Lock Reminder
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-[10px] text-amber-700 leading-relaxed">
+                รายการที่สถานะเป็น 'CORRECTION_REQUIRED' จะไม่ถูกนำไปคำนวณในงวด Payroll กรุณาเร่งประสานงานแก้ไขและยืนยันยอดให้ทันรอบการจ่าย
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
