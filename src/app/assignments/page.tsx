@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -24,7 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, increment, updateDoc } from 'firebase/firestore';
+import { collection, doc, increment, updateDoc, collectionGroup } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
@@ -74,6 +75,9 @@ export default function AssignmentsPage() {
   const positionsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'positions') : null), [firestore, isAuthorized]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
+  const poLinesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collectionGroup(firestore, 'po_lines') : null), [firestore, isAuthorized]);
+  const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
@@ -90,6 +94,11 @@ export default function AssignmentsPage() {
 
     const wave = allWaves?.find(w => w.id === selectedWaveId);
     if (!wave) return;
+
+    // Resolve Context from PO Line and Position Matrix
+    const poLine = allPOLines?.find(l => l.id === wave.poLineId);
+    const position = allPositions?.find(p => p.id === poLine?.positionId);
+    const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
 
     setIsCreating(true);
     try {
@@ -110,7 +119,7 @@ export default function AssignmentsPage() {
         poId: wave.poId,
         contractId: '', 
         waveId: selectedWaveId,
-        positionId: '', 
+        positionId: position?.id || poLine?.positionId || '', 
         customerId: wave.customerId,
         projectName: wave.projectName,
         startDate: startDate,
@@ -118,6 +127,7 @@ export default function AssignmentsPage() {
         deploymentStatus: 'DRAFT',
         clientApprovalStatus: 'NOT_SUBMITTED',
         readinessStatus: 'incomplete',
+        workMode: resolvedWorkMode,
         readinessSummary: {
           passportValid: 'missing',
           medicalValid: 'missing',

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { 
@@ -100,7 +101,7 @@ export class TimesheetService {
       eventType: 'work_day' as RateConditionEventType,
       normalHours: 8,
       status: 'DRAFT',
-      workMode: 'OFFSHORE', 
+      workMode: asgn.workMode || 'OFFSHORE', 
       shiftType: 'DAY'
     }));
   }

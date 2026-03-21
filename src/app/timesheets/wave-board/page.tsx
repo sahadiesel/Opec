@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -160,7 +161,7 @@ export default function WaveTimesheetBoardPage() {
           customerId: wave?.customerId || '',
           projectName: wave?.projectName || '',
           positionId: asgn?.positionId || '',
-          workMode: 'OFFSHORE' as any,
+          workMode: asgn?.workMode || 'OFFSHORE',
           shiftType: 'DAY' as any,
         };
       });
