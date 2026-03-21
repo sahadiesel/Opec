@@ -1189,3 +1189,21 @@ export interface TaxInvoice {
 }
 
 export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+
+/** Simple Customer Issue / Dispute Request */
+export type IssueCategory = 'TIMESHEET' | 'BILLING_NOTE' | 'TAX_INVOICE' | 'RECEIPT' | 'GENERAL';
+export type IssueStatus = 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED';
+
+export interface CustomerIssue {
+  id: string;
+  customerId: string;
+  category: IssueCategory;
+  referenceId: string; // The ID of the document being reported
+  referenceNo: string; // The display code (Slip No, Invoice No)
+  description: string;
+  status: IssueStatus;
+  createdBy: string;
+  createdById: string;
+  createdAt: number;
+  updatedAt: number;
+}

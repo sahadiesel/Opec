@@ -21,21 +21,36 @@ import {
   Info,
   BadgeCheck,
   Calculator,
-  Wallet
+  Wallet,
+  MessageSquareWarning,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { TaxInvoice, User, AccountsReceivable, BillingNote, Receipt as ReceiptType } from '@/lib/types';
+import { TaxInvoice, User as AppUser, AccountsReceivable, BillingNote, Receipt as ReceiptType, IssueCategory } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, orderBy } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DisputeService } from '@/lib/services/dispute-service';
+import { useToast } from '@/hooks/use-toast';
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription,
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 
 export default function ClientBillingViewPage() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -43,6 +58,12 @@ export default function ClientBillingViewPage() {
   }, []);
 
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Dispute Dialog State
+  const [isDisputeOpen, setIsDisputeOpen] = useState(false);
+  const [disputeContext, setDisputeContext] = useState<{ category: IssueCategory, id: string, no: string } | null>(null);
+  const [disputeComment, setDisputeComment] = useState('');
+  const [isSubmittingDispute, setIsSubmittingDispute] = useState(false);
 
   // 1. Data Queries scoped to client customerId
   const invQuery = useMemoFirebase(() => {
@@ -92,6 +113,37 @@ export default function ClientBillingViewPage() {
       count: arItems.length
     };
   }, [arItems]);
+
+  const handleOpenDispute = (category: IssueCategory, id: string, no: string) => {
+    setDisputeContext({ category, id, no });
+    setIsDisputeOpen(true);
+  };
+
+  const handleReportIssue = async () => {
+    if (!disputeContext || !disputeComment || !firestore || !currentUser) return;
+    
+    setIsSubmittingDispute(true);
+    try {
+      const service = new DisputeService(firestore);
+      await service.reportIssue({
+        category: disputeContext.category,
+        referenceId: disputeContext.id,
+        referenceNo: disputeContext.no,
+        description: disputeComment
+      }, currentUser);
+
+      toast({ 
+        title: "รับเรื่องตรวจสอบแล้ว (Request Received)", 
+        description: "เจ้าหน้าที่ฝ่ายบัญชี OPEC จะตรวจสอบความถูกต้องและติดต่อกลับโดยเร็ว" 
+      });
+      setIsDisputeOpen(false);
+      setDisputeComment('');
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally {
+      setIsSubmittingDispute(false);
+    }
+  };
 
   if (isUserLoading || !currentUser) return null;
 
@@ -193,9 +245,14 @@ export default function ClientBillingViewPage() {
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right pr-6">
-                              <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group">
-                                <Download className="h-3.5 w-3.5 mr-1.5" /> PDF
-                              </Button>
+                              <div className="flex justify-end gap-2">
+                                <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('TAX_INVOICE', inv.id, inv.taxInvoiceNo)}>
+                                  <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
+                                </Button>
+                                <Button size="sm" variant="ghost" className="font-bold text-xs h-8">
+                                  <Download className="h-3.5 w-3.5 mr-1.5" /> PDF
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -220,7 +277,8 @@ export default function ClientBillingViewPage() {
                         <TableHead className="font-bold">วันที่วางบิล</TableHead>
                         <TableHead className="font-bold">วันครบกำหนด</TableHead>
                         <TableHead className="text-right font-bold">ยอดสุทธิ</TableHead>
-                        <TableHead className="font-bold text-right pr-6">สถานะ</TableHead>
+                        <TableHead className="font-bold">สถานะ</TableHead>
+                        <TableHead className="text-right pr-6">จัดการ</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -230,8 +288,13 @@ export default function ClientBillingViewPage() {
                           <TableCell className="text-sm font-medium">{note.billingDate}</TableCell>
                           <TableCell className="text-sm font-medium text-red-600">{note.dueDate}</TableCell>
                           <TableCell className="text-right font-bold text-primary">฿ {note.netAmount.toLocaleString()}</TableCell>
-                          <TableCell className="text-right pr-6">
+                          <TableCell>
                             <Badge variant="outline" className="uppercase text-[9px]">{note.status}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right pr-6">
+                            <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('BILLING_NOTE', note.id, note.billingNoteNo)}>
+                              <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -255,7 +318,8 @@ export default function ClientBillingViewPage() {
                         <TableHead className="font-bold">วันที่รับเงิน</TableHead>
                         <TableHead className="font-bold">วิธีชำระ</TableHead>
                         <TableHead className="text-right font-bold">ยอดเงินที่ได้รับ</TableHead>
-                        <TableHead className="text-right pr-6">สถานะ</TableHead>
+                        <TableHead className="text-right">สถานะ</TableHead>
+                        <TableHead className="text-right pr-6">จัดการ</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -269,8 +333,13 @@ export default function ClientBillingViewPage() {
                           <TableCell className="text-sm font-medium">{r.receiptDate}</TableCell>
                           <TableCell className="text-xs uppercase font-bold text-muted-foreground">{r.paymentMethod}</TableCell>
                           <TableCell className="text-right font-black text-primary">฿ {r.receivedAmount.toLocaleString()}</TableCell>
-                          <TableCell className="text-right pr-6">
+                          <TableCell className="text-right">
                             <Badge className="bg-green-600 text-[10px] uppercase">{r.status}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right pr-6">
+                            <Button size="sm" variant="ghost" className="font-bold text-xs h-8 group" onClick={() => handleOpenDispute('RECEIPT', r.id, r.receiptNo)}>
+                              <MessageSquareWarning className="h-3.5 w-3.5 mr-1.5" /> แจ้งปัญหา
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -281,6 +350,40 @@ export default function ClientBillingViewPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Dispute Dialog */}
+        <Dialog open={isDisputeOpen} onOpenChange={setIsDisputeOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>แจ้งปัญหาข้อมูลเอกสาร (Report Issue)</DialogTitle>
+              <DialogDescription>ระบุรายละเอียดข้อมูลที่ต้องการให้เจ้าหน้าที่ฝ่ายบัญชี OPEC ตรวจสอบแก้ไข</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              {disputeContext && (
+                <div className="p-3 bg-muted rounded-lg text-xs space-y-1">
+                  <p><b>ประเภทเอกสาร:</b> {disputeContext.category}</p>
+                  <p><b>เลขที่อ้างอิง:</b> {disputeContext.no}</p>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label className="font-bold text-primary">รายละเอียดความไม่ถูกต้อง / ข้อมูลที่ต้องการแจ้ง</Label>
+                <Textarea 
+                  placeholder="เช่น ยอดเงินไม่ตรงกับใบสั่งซื้อ, วันที่ครบกำหนดไม่ถูกต้อง, ยังไม่ได้รับต้นฉบับ..." 
+                  value={disputeComment}
+                  onChange={e => setDisputeComment(e.target.value)}
+                  className="min-h-[120px]"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsDisputeOpen(false)} disabled={isSubmittingDispute}>ยกเลิก</Button>
+              <Button onClick={handleReportIssue} className="bg-primary font-bold shadow-lg h-11 px-8" disabled={isSubmittingDispute || !disputeComment}>
+                {isSubmittingDispute ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                ส่งเรื่องตรวจสอบ (Submit Query)
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

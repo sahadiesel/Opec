@@ -21,7 +21,8 @@ import {
   PenTool,
   Paperclip,
   Download,
-  ShieldCheck
+  ShieldCheck,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User as AppUser, DailyTimesheet, Worker } from '@/lib/types';
@@ -31,6 +32,7 @@ import { collection, query, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
+import { DisputeService } from '@/lib/services/dispute-service';
 import { 
   Dialog, 
   DialogContent, 
@@ -62,6 +64,7 @@ export default function ClientTimesheetViewPage() {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [selectedTs, setSelectedTs] = useState<DailyTimesheet | null>(null);
   const [disputeComment, setDisputeComment] = useState('');
+  const [isSubmittingDispute, setIsSubmittingDispute] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -94,11 +97,30 @@ export default function ClientTimesheetViewPage() {
     );
   }, [timesheets, searchTerm]);
 
-  const handleReportIssue = () => {
-    if (!selectedTs || !disputeComment) return;
-    toast({ title: "รับเรื่องตรวจสอบแล้ว (Request Received)", description: "เจ้าหน้าที่ OPEC จะตรวจสอบหลักฐานและติดต่อกลับโดยเร็ว" });
-    setIsDisputeOpen(false);
-    setDisputeComment('');
+  const handleReportIssue = async () => {
+    if (!selectedTs || !disputeComment || !firestore || !currentUser) return;
+    
+    setIsSubmittingDispute(true);
+    try {
+      const service = new DisputeService(firestore);
+      await service.reportIssue({
+        category: 'TIMESHEET',
+        referenceId: selectedTs.id,
+        referenceNo: selectedTs.sourceDocumentNo || `TS-${selectedTs.date}`,
+        description: disputeComment
+      }, currentUser);
+
+      toast({ 
+        title: "รับเรื่องตรวจสอบแล้ว (Request Received)", 
+        description: "เจ้าหน้าที่ OPEC จะตรวจสอบหลักฐานและติดต่อกลับโดยเร็ว" 
+      });
+      setIsDisputeOpen(false);
+      setDisputeComment('');
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e.message });
+    } finally {
+      setIsSubmittingDispute(false);
+    }
   };
 
   const openDetail = (ts: DailyTimesheet) => {
@@ -133,7 +155,7 @@ export default function ClientTimesheetViewPage() {
           <div className="relative w-full max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input 
-              placeholder="ค้นหาชื่อพนักงาน, วันที่ หรือเลขที่ Slip..." 
+              placeholder="ค้นหาตามวันที่ หรือเลขที่ Slip..." 
               className="pl-9 h-11" 
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
@@ -328,8 +350,11 @@ export default function ClientTimesheetViewPage() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsDisputeOpen(false)}>ยกเลิก</Button>
-              <Button onClick={handleReportIssue} className="bg-primary font-bold shadow-lg h-11 px-8">ส่งเรื่องตรวจสอบ (Submit Query)</Button>
+              <Button variant="outline" onClick={() => setIsDisputeOpen(false)} disabled={isSubmittingDispute}>ยกเลิก</Button>
+              <Button onClick={handleReportIssue} className="bg-primary font-bold shadow-lg h-11 px-8" disabled={isSubmittingDispute || !disputeComment}>
+                {isSubmittingDispute ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                ส่งเรื่องตรวจสอบ (Submit Query)
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
