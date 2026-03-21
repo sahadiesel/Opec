@@ -147,7 +147,6 @@ export default function PermissionProfilesPage() {
 
   const [activeTab, setActiveTab] = useState('profiles');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [selectedProfile, setSelectedUser] = useState<PermissionProfile | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   // Editor Form State
@@ -494,8 +493,7 @@ export default function PermissionProfilesPage() {
                   <div className="text-3xl font-black text-slate-600">{auditSummary.inactive} ชุด</div>
                   <p className="text-[10px] text-muted-foreground mt-1">สิทธิ์ที่ถูกปิดใช้งานชั่วคราว</p>
                 </CardContent>
-              </Card>
-            </div>
+              </div>
 
             <Card>
               <CardHeader>
@@ -649,8 +647,8 @@ export default function PermissionProfilesPage() {
             </div>
 
             <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setIsEditorOpen(false)} disabled={isSaving}>ยกเลิก</Button>
-              <Button onClick={handleSaveProfile} className="bg-primary font-bold shadow-md" disabled={isSaving}>
+              <Button variant="outline" onClick={() => setIsEditorOpen(false)}>ยกเลิก</Button>
+              <Button onClick={handleSaveProfile} disabled={isSaving} className="bg-primary font-bold shadow-md">
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                 บันทึกโปรไฟล์
               </Button>

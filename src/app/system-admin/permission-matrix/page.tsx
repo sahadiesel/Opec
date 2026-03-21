@@ -64,7 +64,7 @@ const DEPARTMENTS: { id: DeptType; label: string }[] = [
   { id: 'operations', label: 'Operations (ปฏิบัติการ)' },
   { id: 'sales', label: 'Sales (การขาย)' },
   { id: 'accounting', label: 'Accounting (บัญชี)' },
-  { id: id: 'store', label: 'Store (คลัง)' },
+  { id: 'store', label: 'Store (คลัง)' },
   { id: 'client', label: 'Client (ลูกค้า)' },
 ];
 
