@@ -39,6 +39,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
+import { isAdminUser } from '@/lib/auth-mapping';
 
 export default function OperationsDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -50,39 +51,41 @@ export default function OperationsDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isOperations = useMemo(() => {
-    return currentUser?.department === 'operations' || currentUser?.department === 'admin';
+  const isOperationsAuthorized = useMemo(() => {
+    if (!currentUser) return false;
+    const authRoles = ['operations_manager', 'operations_officer', 'system_admin'];
+    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
   }, [currentUser]);
 
   // --- Operations Data Queries ---
   
   const mobQuery = useMemoFirebase(() => {
-    if (!firestore || !isOperations) return null;
+    if (!firestore || !isOperationsAuthorized) return null;
     return collection(firestore, 'mobilizations');
-  }, [firestore, isOperations]);
+  }, [firestore, isOperationsAuthorized]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(mobQuery as any);
 
   const wavesQuery = useMemoFirebase(() => {
-    if (!firestore || !isOperations) return null;
+    if (!firestore || !isOperationsAuthorized) return null;
     return collection(firestore, 'waves');
-  }, [firestore, isOperations]);
+  }, [firestore, isOperationsAuthorized]);
   const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
   const exceptionQuery = useMemoFirebase(() => {
-    if (!firestore || !isOperations) return null;
+    if (!firestore || !isOperationsAuthorized) return null;
     return query(
       collection(firestore, 'exception_requests'), 
       where('requestType', '==', 'ASSIGNMENT_CHANGE'),
       where('status', '==', 'PENDING'),
       limit(10)
     );
-  }, [firestore, isOperations]);
+  }, [firestore, isOperationsAuthorized]);
   const { data: pendingExceptions } = useCollection<ExceptionRequest>(exceptionQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !isOperations) return null;
+    if (!firestore || !isOperationsAuthorized) return null;
     return collection(firestore, 'workers');
-  }, [firestore, isOperations]);
+  }, [firestore, isOperationsAuthorized]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   // --- Computed Operations Stats ---
@@ -132,7 +135,7 @@ export default function OperationsDashboardPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  if (!isOperations) {
+  if (!isOperationsAuthorized) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
@@ -164,6 +167,7 @@ export default function OperationsDashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Work Queue Section */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="shadow-md border-none overflow-hidden">
               <CardHeader className="bg-primary/5 border-b pb-4">

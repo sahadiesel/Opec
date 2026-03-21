@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -37,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { isAdminUser } from '@/lib/auth-mapping';
 
 export default function SalesDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -48,51 +50,53 @@ export default function SalesDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isSales = useMemo(() => {
-    return currentUser?.department === 'sales' || currentUser?.department === 'admin';
+  const isSalesAuthorized = useMemo(() => {
+    if (!currentUser) return false;
+    const authRoles = ['sales_manager', 'sales_officer', 'system_admin'];
+    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
   }, [currentUser]);
 
   // --- Sales Data Queries ---
   
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore || !isSales) return null;
+    if (!firestore || !isSalesAuthorized) return null;
     return collection(firestore, 'customers');
-  }, [firestore, isSales]);
+  }, [firestore, isSalesAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const quoQuery = useMemoFirebase(() => {
-    if (!firestore || !isSales) return null;
+    if (!firestore || !isSalesAuthorized) return null;
     // Query active quotations (draft or sent)
     return query(collection(firestore, 'quotations'), where('status', 'in', ['draft', 'sent']), limit(10));
-  }, [firestore, isSales]);
+  }, [firestore, isSalesAuthorized]);
   const { data: activeQuotations } = useCollection<Quotation>(quoQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !isSales) return null;
+    if (!firestore || !isSalesAuthorized) return null;
     return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
-  }, [firestore, isSales]);
+  }, [firestore, isSalesAuthorized]);
   const { data: activeContracts } = useCollection<MainContract>(contractsQuery as any);
 
   const posQuery = useMemoFirebase(() => {
-    if (!firestore || !isSales) return null;
+    if (!firestore || !isSalesAuthorized) return null;
     return query(collection(firestore, 'purchase_orders'), where('status', '==', 'active'));
-  }, [firestore, isSales]);
+  }, [firestore, isSalesAuthorized]);
   const { data: activePOs } = useCollection<PurchaseOrder>(posQuery as any);
 
   const pendingApprovalsQuery = useMemoFirebase(() => {
-    if (!firestore || !isSales) return null;
+    if (!firestore || !isSalesAuthorized) return null;
     return query(
       collection(firestore, 'mobilizations'), 
       where('clientApprovalStatus', 'in', ['PENDING', 'REJECTED']),
       limit(20)
     );
-  }, [firestore, isSales]);
+  }, [firestore, isSalesAuthorized]);
   const { data: pendingApprovals, isLoading: isApprovalsLoading } = useCollection<Assignment>(pendingApprovalsQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !isSales) return null;
+    if (!firestore || !isSalesAuthorized) return null;
     return collection(firestore, 'workers');
-  }, [firestore, isSales]);
+  }, [firestore, isSalesAuthorized]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   // --- Computed Sales Stats ---
@@ -152,7 +156,7 @@ export default function SalesDashboardPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  if (!isSales) {
+  if (!isSalesAuthorized) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
@@ -319,7 +323,7 @@ export default function SalesDashboardPage() {
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 ตรวจสอบ PO Lines ที่จำนวนพนักงานครบถ้วนแล้ว (Full Quota) เพื่อประสานงานขอเปิดใบสั่งซื้อเพิ่มเติมหากลูกค้าต้องการกำลังคนเพิ่ม
               </CardContent>
-            </Card>
+            </div>
           </div>
         </div>
       </div>

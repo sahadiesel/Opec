@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { isAdminUser } from '@/lib/auth-mapping';
 
 export default function HRDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -48,46 +49,48 @@ export default function HRDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isHR = useMemo(() => {
-    return currentUser?.department === 'hr' || currentUser?.department === 'admin';
+  const isHRAuthorized = useMemo(() => {
+    if (!currentUser) return false;
+    const authRoles = ['hr_manager', 'hr_officer', 'system_admin'];
+    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
   }, [currentUser]);
 
   // --- HR Data Queries ---
   
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !isHR) return null;
+    if (!firestore || !isHRAuthorized) return null;
     return collection(firestore, 'workers');
-  }, [firestore, isHR]);
+  }, [firestore, isHRAuthorized]);
   const { data: workers, isLoading: isWorkersLoading } = useCollection<Worker>(workersQuery as any);
 
   const payrollQuery = useMemoFirebase(() => {
-    if (!firestore || !isHR) return null;
+    if (!firestore || !isHRAuthorized) return null;
     return query(collection(firestore, 'payroll_runs'), where('status', 'in', ['DRAFT', 'HR_REVIEW', 'CALCULATED']), limit(10));
-  }, [firestore, isHR]);
+  }, [firestore, isHRAuthorized]);
   const { data: payrollRuns } = useCollection<PayrollRun>(payrollQuery as any);
 
   const exceptionQuery = useMemoFirebase(() => {
-    if (!firestore || !isHR) return null;
+    if (!firestore || !isHRAuthorized) return null;
     return query(
       collection(firestore, 'exception_requests'), 
       where('requestType', '==', 'TIMESHEET_CORRECTION'),
       where('status', '==', 'PENDING'),
       limit(10)
     );
-  }, [firestore, isHR]);
+  }, [firestore, isHRAuthorized]);
   const { data: pendingExceptions } = useCollection<ExceptionRequest>(exceptionQuery as any);
 
   const correctionTsQuery = useMemoFirebase(() => {
-    if (!firestore || !isHR) return null;
+    if (!firestore || !isHRAuthorized) return null;
     return query(
       collection(firestore, 'daily_timesheets'),
       where('status', '==', 'CORRECTION_REQUIRED'),
       limit(10)
     );
-  }, [firestore, isHR]);
+  }, [firestore, isHRAuthorized]);
   const { data: correctionTs } = useCollection<DailyTimesheet>(correctionTsQuery as any);
 
-  const positionsQuery = useMemoFirebase(() => (firestore && isHR ? collection(firestore, 'positions') : null), [firestore, isHR]);
+  const positionsQuery = useMemoFirebase(() => (firestore && isHRAuthorized ? collection(firestore, 'positions') : null), [firestore, isHRAuthorized]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
   // --- Computed HR Tasks ---
@@ -150,7 +153,7 @@ export default function HRDashboardPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  if (!isHR) {
+  if (!isHRAuthorized) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">

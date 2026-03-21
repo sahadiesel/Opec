@@ -39,6 +39,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
+import { isAdminUser } from '@/lib/auth-mapping';
 
 export default function AccountingDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -50,46 +51,48 @@ export default function AccountingDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isAccounting = useMemo(() => {
-    return currentUser?.department === 'accounting' || currentUser?.department === 'admin';
+  const isAccountingAuthorized = useMemo(() => {
+    if (!currentUser) return false;
+    const authRoles = ['accounting_manager', 'accounting_officer', 'system_admin'];
+    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
   }, [currentUser]);
 
   // --- Financial Data Queries ---
   
   const bnQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccounting) return null;
+    if (!firestore || !isAccountingAuthorized) return null;
     return query(collection(firestore, 'billing_notes'), where('status', 'in', ['ISSUED', 'SUBMITTED', 'PARTIALLY_PAID']), limit(20));
-  }, [firestore, isAccounting]);
+  }, [firestore, isAccountingAuthorized]);
   const { data: billingNotes } = useCollection<BillingNote>(bnQuery as any);
 
   const invQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccounting) return null;
+    if (!firestore || !isAccountingAuthorized) return null;
     return query(collection(firestore, 'tax_invoices'), where('status', '==', 'DRAFT'), limit(20));
-  }, [firestore, isAccounting]);
+  }, [firestore, isAccountingAuthorized]);
   const { data: draftInvoices } = useCollection<TaxInvoice>(invQuery as any);
 
   const arQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccounting) return null;
+    if (!firestore || !isAccountingAuthorized) return null;
     return query(collection(firestore, 'accounts_receivable'), where('status', 'in', ['OPEN', 'PARTIALLY_PAID', 'OVERDUE']));
-  }, [firestore, isAccounting]);
+  }, [firestore, isAccountingAuthorized]);
   const { data: arItems } = useCollection<AccountsReceivable>(arQuery as any);
 
   const apQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccounting) return null;
+    if (!firestore || !isAccountingAuthorized) return null;
     return query(collection(firestore, 'accounts_payable'), where('status', 'in', ['OPEN', 'PARTIALLY_PAID', 'OVERDUE']));
-  }, [firestore, isAccounting]);
+  }, [firestore, isAccountingAuthorized]);
   const { data: apItems } = useCollection<AccountsPayable>(apQuery as any);
 
   const prQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccounting) return null;
+    if (!firestore || !isAccountingAuthorized) return null;
     return query(collection(firestore, 'payroll_runs'), where('status', '==', 'HR_APPROVED'), limit(10));
-  }, [firestore, isAccounting]);
+  }, [firestore, isAccountingAuthorized]);
   const { data: pendingPayroll } = useCollection<PayrollRun>(prQuery as any);
 
   const bankQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccounting) return null;
+    if (!firestore || !isAccountingAuthorized) return null;
     return collection(firestore, 'bank_accounts');
-  }, [firestore, isAccounting]);
+  }, [firestore, isAccountingAuthorized]);
   const { data: bankAccounts } = useCollection<BankAccount>(bankQuery as any);
 
   // --- Computed Stats ---
@@ -150,7 +153,7 @@ export default function AccountingDashboardPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  if (!isAccounting) {
+  if (!isAccountingAuthorized) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
@@ -327,7 +330,7 @@ export default function AccountingDashboardPage() {
                 <CardTitle className="text-xs font-bold uppercase text-amber-800 flex items-center gap-2">
                   <AlertTriangle className="h-3 w-3" /> Liquidity Alert
                 </CardTitle>
-              </CardHeader>
+              </Header>
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 ติดตามลูกหนี้เกินกำหนด (Overdue AR) เพื่อรักษาสภาพคล่อง และวางแผนจ่ายเจ้าหนี้ (AP) ตามวันครบกำหนด
               </CardContent>
