@@ -20,7 +20,8 @@ import {
   ClipboardCheck,
   CheckCircle2,
   Copy,
-  Send
+  Send,
+  Lock
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -68,7 +69,7 @@ export default function WaveTimesheetBoardPage() {
 
   const waveQuery = useMemoFirebase(() => {
     if (!firestore || !selectedPoId) return null;
-    return query(collection(firestore, 'waves'), where('poId', '==', selectedPoId));
+    return query(collection(firestore, 'waves'), where('poId', '==', setSelectedPoId ? selectedPoId : ''));
   }, [firestore, selectedPoId]);
   const { data: waves } = useCollection<Wave>(waveQuery as any);
 
@@ -121,13 +122,17 @@ export default function WaveTimesheetBoardPage() {
 
   const applyBulk = (field: keyof DailyTimesheet, value: any) => {
     const updated = { ...rosterData };
+    const service = new TimesheetService(firestore!);
+    
     Object.keys(updated).forEach(wid => {
-      if (updated[wid].status !== 'CLIENT_APPROVED' && updated[wid].status !== 'LOCKED') {
+      const currentStatus = updated[wid].status as DailyTimesheetStatus;
+      // SILENT EDIT PREVENTION: Only apply bulk to editable records
+      if (service.canEdit(currentStatus)) {
         updated[wid] = { ...updated[wid], [field]: value };
       }
     });
     setRosterData(updated);
-    toast({ title: "Bulk Apply Complete", description: `Set all to ${value}` });
+    toast({ title: "Bulk Apply Complete", description: `Applied to editable records.` });
   };
 
   const handleClonePrevious = async () => {
@@ -154,6 +159,13 @@ export default function WaveTimesheetBoardPage() {
       const payloads = Object.values(rosterData).map(ts => {
         const worker = workers?.find(w => w.id === ts.workerId);
         const asgn = assignments?.find(a => a.id === ts.assignmentId);
+        
+        // SILENT EDIT PREVENTION: If record is already finalized, skip it in payload
+        // The service already handles this, but we filter here for cleaner audit logs
+        if (ts.status && service.isFinalized(ts.status as DailyTimesheetStatus)) {
+          return null;
+        }
+
         return {
           ...ts,
           workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
@@ -168,7 +180,13 @@ export default function WaveTimesheetBoardPage() {
           shiftType: 'DAY' as any,
           status: finalize ? ('OPS_REVIEWED' as DailyTimesheetStatus) : (ts.status || 'DRAFT')
         };
-      });
+      }).filter(Boolean);
+
+      if (payloads.length === 0) {
+        toast({ title: "No changes", description: "All visible records are locked or unchanged." });
+        setIsSaving(false);
+        return;
+      }
 
       const results = await service.bulkUpsertTimesheets(payloads as Partial<DailyTimesheet>[], currentUser);
       toast({ 
@@ -212,8 +230,8 @@ export default function WaveTimesheetBoardPage() {
         <PageGuidance 
           title="คู่มือการบันทึกแบบกลุ่ม (Bulk Entry Guide)"
           tips={[
-            "ปุ่ม 'บันทึกร่าง' จะเก็บข้อมูลไว้ตรวจสอบภายในแผนก Ops เท่านั้น",
-            "ปุ่ม 'ยืนยันและส่งตรวจ' จะส่งข้อมูลไปยัง Client Portal เพื่อให้ลูกค้าอนุมัติ (Status: OPS_REVIEWED)",
+            "เฉพาะรายการที่ยังไม่ถูกล็อก (Not Finalized) เท่านั้นที่สามารถแก้ไขในโหมด Bulk ได้",
+            "หากรายการใดขึ้นไอคอนแม่กุญแจ (Lock) แสดงว่าได้รับการอนุมัติจากลูกค้าหรืออยู่ในงวด Payroll แล้ว",
             "ข้อมูลที่ลูกค้าอนุมัติแล้วจะไม่สามารถแก้ไขได้ผ่านหน้าจอนี้"
           ]}
         />
@@ -291,7 +309,8 @@ export default function WaveTimesheetBoardPage() {
                       {assignments?.map((asgn) => {
                         const worker = workers?.find(w => w.id === asgn.workerId);
                         const row = rosterData[asgn.workerId] || {};
-                        const isLocked = row.status === 'CLIENT_APPROVED' || row.status === 'LOCKED' || row.status === 'OPS_REVIEWED';
+                        const tsService = new TimesheetService(firestore!);
+                        const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
 
                         return (
                           <TableRow key={asgn.id} className={isLocked ? "bg-slate-50 opacity-80" : "hover:bg-muted/20"}>
@@ -345,15 +364,20 @@ export default function WaveTimesheetBoardPage() {
                               />
                             </TableCell>
                             <TableCell>
-                              {row.status ? (
-                                <Badge variant="outline" className={`text-[9px] font-black uppercase ${
-                                  row.status === 'CLIENT_APPROVED' ? 'bg-green-50 text-green-700 border-green-200' : 
-                                  row.status === 'OPS_REVIEWED' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                                  row.status === 'SUBMITTED' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100'
-                                }`}>
-                                  {row.status}
-                                </Badge>
-                              ) : <span className="text-[10px] text-muted-foreground italic">No Log</span>}
+                              <div className="flex items-center gap-2">
+                                {isLocked && <Lock className="h-3 w-3 text-muted-foreground" title="Locked Document" />}
+                                {row.status ? (
+                                  <Badge variant="outline" className={`text-[9px] font-black uppercase ${
+                                    row.status === 'CLIENT_APPROVED' ? 'bg-green-50 text-green-700 border-green-200' : 
+                                    row.status === 'VERIFIED_PAPER' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                    row.status === 'LOCKED' ? 'bg-slate-900 text-white' :
+                                    row.status === 'OPS_REVIEWED' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                    'bg-slate-100'
+                                  }`}>
+                                    {row.status}
+                                  </Badge>
+                                ) : <span className="text-[10px] text-muted-foreground italic">No Log</span>}
+                              </div>
                             </TableCell>
                             <TableCell className="text-right pr-6">
                               <Input 

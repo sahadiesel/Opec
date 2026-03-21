@@ -47,9 +47,11 @@ export class TimesheetService {
 
   /**
    * Business Control: Defines which states allow for direct field modification.
+   * Finalized financial records are strictly read-only.
    */
   canEdit(status: DailyTimesheetStatus): boolean {
-    return ['DRAFT', 'REJECTED', 'CORRECTION_REQUIRED', 'SUBMITTED', 'OPS_REVIEWED'].includes(status);
+    const finalizedStatuses: DailyTimesheetStatus[] = ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED'];
+    return !finalizedStatuses.includes(status);
   }
 
   /**
@@ -84,36 +86,8 @@ export class TimesheetService {
   }
 
   /**
-   * Generates initial draft objects for an entire Wave roster.
-   */
-  async generateDraftsForWave(waveId: string, date: string): Promise<Partial<DailyTimesheet>[]> {
-    const roster = await this.getWaveRosterForDate(waveId, date);
-    
-    return roster.map(asgn => ({
-      date,
-      workerId: asgn.workerId,
-      assignmentId: asgn.id,
-      waveId: asgn.waveId,
-      purchaseOrderId: asgn.poId,
-      poLineId: asgn.poLineId,
-      contractId: asgn.contractId,
-      customerId: asgn.customerId,
-      projectName: asgn.projectName,
-      positionId: asgn.positionId,
-      eventType: 'work_day' as RateConditionEventType,
-      normalHours: 8,
-      status: 'DRAFT',
-      workMode: asgn.workMode, 
-      shiftType: 'DAY',
-      sourceType: 'PAPER',
-      readyForPayroll: false,
-      readyForBilling: false
-    }));
-  }
-
-  /**
    * Performs a bulk upsert of timesheets for a Wave.
-   * Safeguard: Strictly skips any record already approved by client or locked.
+   * Safeguard: Strictly skips any record already finalized or locked.
    */
   async bulkUpsertTimesheets(timesheets: Partial<DailyTimesheet>[], user: User) {
     const batch = writeBatch(this.db);
@@ -128,6 +102,7 @@ export class TimesheetService {
 
       if (existingSnap.exists()) {
         const current = existingSnap.data() as DailyTimesheet;
+        // SILENT EDIT PREVENTION: Check if already finalized
         if (this.isFinalized(current.status)) {
           results.skipped++;
           continue;
@@ -168,33 +143,38 @@ export class TimesheetService {
     return results;
   }
 
-  async copyFromPreviousDay(waveId: string, targetDate: string, user: User) {
-    const prevDate = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
+  /**
+   * Controlled Correction Flow:
+   * Moves a finalized record back to CORRECTION_REQUIRED and resets readiness.
+   * This prevents silent overwrites of billed/paid data.
+   */
+  async requestCorrection(id: string, user: User, reason: string) {
+    const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
     
-    const q = query(
-      this.getCollection(),
-      where('waveId', '==', waveId),
-      where('date', '==', prevDate)
-    );
-    
-    const snap = await getDocs(q);
-    if (snap.empty) return { created: 0, updated: 0, skipped: 0, msg: 'No source data found for yesterday' };
+    const current = snap.data() as DailyTimesheet;
+    if (current.status === 'LOCKED') {
+      throw new Error('Cannot request correction for record locked in Payroll Batch.');
+    }
 
-    const payloads = snap.docs.map(d => {
-      const data = d.data() as DailyTimesheet;
-      return {
-        ...data,
-        id: undefined, 
-        date: targetDate,
-        status: 'DRAFT' as DailyTimesheetStatus,
-        readyForPayroll: false,
-        readyForBilling: false,
-        createdAt: undefined,
-        updatedAt: undefined
-      };
+    await updateDoc(docRef, {
+      status: 'CORRECTION_REQUIRED',
+      readyForPayroll: false,
+      readyForBilling: false,
+      remark: `Correction Request: ${reason}`,
+      updatedAt: Date.now(),
     });
 
-    return this.bulkUpsertTimesheets(payloads, user);
+    await writeAuditLog(this.db, user, {
+      actionType: 'CORRECTION_REQ',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      timesheetId: id,
+      reasonText: reason,
+      sourceModule: 'operations',
+      afterSummary: 'Finalized timesheet flagged for correction. Financial readiness reset.'
+    });
   }
 
   async submitTimesheet(id: string, user: User) {
@@ -214,10 +194,6 @@ export class TimesheetService {
     });
   }
 
-  /**
-   * Internal review by manager. 
-   * RULE: Once internally approved, it is ready for Payroll, even if client hasn't officially billed.
-   */
   async markAsReviewed(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
@@ -238,10 +214,6 @@ export class TimesheetService {
     });
   }
 
-  /**
-   * Client approval via Paper Evidence.
-   * RULE: Sets both Payroll and Billing readiness to TRUE.
-   */
   async markAsVerifiedPaper(id: string, user: User) {
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {

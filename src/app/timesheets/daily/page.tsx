@@ -32,7 +32,9 @@ import {
   UserCheck,
   PenTool,
   Coins,
-  Receipt
+  Receipt,
+  RotateCcw,
+  Lock
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -186,6 +188,20 @@ export default function DailyTimesheetsPage() {
     }
   };
 
+  const handleRequestCorrection = async (tsId: string) => {
+    if (!firestore || !currentUser) return;
+    const reason = prompt('กรุณาระบุเหตุผลที่ต้องแก้ไข (Reason for correction):');
+    if (!reason) return;
+
+    try {
+      const service = new TimesheetService(firestore);
+      await service.requestCorrection(tsId, currentUser, reason);
+      toast({ title: "ส่งกลับไปแก้ไขสำเร็จ", description: "รายการนี้ถูกดึงออกจากระบบสรุปยอดแล้ว" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Action Failed", description: e.message });
+    }
+  };
+
   const getStatusBadge = (status: DailyTimesheetStatus) => {
     switch (status) {
       case 'DRAFT': return <Badge variant="outline" className="bg-slate-50">DRAFT</Badge>;
@@ -193,8 +209,9 @@ export default function DailyTimesheetsPage() {
       case 'OPS_REVIEWED': return <Badge variant="outline" className="bg-amber-50 text-amber-700">OPS REVIEWED</Badge>;
       case 'CLIENT_APPROVED': return <Badge className="bg-green-600">CLIENT APPROVED</Badge>;
       case 'VERIFIED_PAPER': return <Badge className="bg-blue-700 text-white font-bold"><FileCheck className="h-3 w-3 mr-1" /> VERIFIED PAPER</Badge>;
-      case 'LOCKED': return <Badge className="bg-primary font-black uppercase"><Clock className="h-3 w-3 mr-1" /> LOCKED</Badge>;
+      case 'LOCKED': return <Badge className="bg-primary font-black uppercase"><Lock className="h-3 w-3 mr-1" /> LOCKED</Badge>;
       case 'REJECTED': return <Badge variant="destructive">REJECTED</Badge>;
+      case 'CORRECTION_REQUIRED': return <Badge variant="outline" className="border-red-500 text-red-600 bg-red-50 animate-pulse">CORRECTION</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
@@ -333,9 +350,9 @@ export default function DailyTimesheetsPage() {
 
         <PageGuidance 
           tips={[
-            "ระบบแยกสิทธิ์ Payroll Readiness (จ่ายเงิน) ออกจาก Billing Readiness (วางบิล)",
-            "การ Approve ภายใน (Ops Review) จะทำให้จ่ายเงินคนงานได้ แต่จะยังวางบิลไม่ได้จนกว่าลูกค้าจะเซ็นรับรอง",
-            "เฉพาะรายการที่สถานะเป็น CLIENT_APPROVED หรือ VERIFIED_PAPER เท่านั้นที่จะนำไปวางบิลลูกค้า"
+            "รายการที่สถานะเป็น 'LOCKED' ถูกนำเข้าสู่กระบวนการจ่ายเงินแล้ว จะไม่สามารถแก้ไขหรือส่งกลับได้",
+            "หากต้องการแก้ไขรายการที่ 'APPROVED' แล้วแต่ยังไม่ถูก 'LOCKED' ให้ใช้ปุ่ม 'Flag for Correction'",
+            "การ Flag Correction จะรีเซ็ตสถานะการจ่ายเงินและการวางบิลของรายการนั้นทันทีเพื่อความปลอดภัย"
           ]}
         />
 
@@ -359,11 +376,13 @@ export default function DailyTimesheetsPage() {
                 <TableBody>
                   {timesheets?.map((ts) => {
                     const worker = workers?.find(w => w.id === ts.workerId);
-                    const canSubmit = ts.status === 'DRAFT' || ts.status === 'REJECTED';
+                    const canSubmit = ts.status === 'DRAFT' || ts.status === 'REJECTED' || ts.status === 'CORRECTION_REQUIRED';
                     const canVerifyPaper = ts.status === 'OPS_REVIEWED';
+                    const canRequestCorrection = (ts.status === 'CLIENT_APPROVED' || ts.status === 'VERIFIED_PAPER') && ts.status !== 'LOCKED';
+                    const isLocked = ts.status === 'LOCKED';
                     
                     return (
-                      <TableRow key={ts.id} className="hover:bg-muted/30 transition-colors">
+                      <TableRow key={ts.id} className={`${isLocked ? "bg-slate-50/50" : "hover:bg-muted/30"} transition-colors`}>
                         <TableCell className="pl-6 py-4">
                           <div className="flex items-center gap-2 text-sm font-bold text-primary">
                             <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
@@ -415,6 +434,12 @@ export default function DailyTimesheetsPage() {
                                 <FileCheck className="h-3 w-3" /> ยืนยันกระดาษ
                               </Button>
                             )}
+                            {canRequestCorrection && (
+                              <Button size="sm" variant="ghost" className="h-8 gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 font-bold" onClick={() => handleRequestCorrection(ts.id)}>
+                                <RotateCcw className="h-3 w-3" /> Flag Correction
+                              </Button>
+                            )}
+                            {isLocked && <Lock className="h-4 w-4 text-muted-foreground/40 self-center mr-2" />}
                             <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
                               <Link href={`/timesheets/daily/${ts.id}`}><ChevronRight className="h-4 w-4" /></Link>
                             </Button>
