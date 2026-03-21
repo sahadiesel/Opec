@@ -129,7 +129,9 @@ export interface User {
   isActive: boolean;
   approvalStatus: ApprovalStatus;
   permissionProfileKey?: string | null;
-  assignedRoleKey?: BusinessRoleKey | null; // For simplified UI
+  permissionProfileKeys?: string[]; // Multi-profile support
+  assignedRoleKey?: BusinessRoleKey | null; // Primary role for legacy compatibility
+  assignedRoleKeys?: BusinessRoleKey[]; // Multi-role support
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;

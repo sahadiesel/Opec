@@ -8,7 +8,7 @@
  */
 
 import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel } from './types';
-import { inferDeptAndLevel, isAdminUser } from './auth-mapping';
+import { inferDeptAndLevel, isAdminUser, BUSINESS_ROLES, BusinessRoleKey } from './auth-mapping';
 
 /**
  * Registry of all modules in the system.
@@ -244,11 +244,12 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
 /**
  * Primary helper to check permissions for a specific module
  * Maps business "Intents" to the 5 standard boolean flags.
+ * Supports aggregation across multiple profiles.
  */
 export function getPermissions(
   user: User | null, 
   moduleKey: ModuleKey, 
-  profile?: PermissionProfile | null
+  profiles?: PermissionProfile[] | PermissionProfile | null
 ): ModulePermission {
   if (!user || !user.isActive) return NO_ACCESS;
 
@@ -262,53 +263,78 @@ export function getPermissions(
     return NO_ACCESS;
   }
 
-  // 3. Profile-based check (Primary)
-  if (profile && profile.isActive && profile.permissions?.[moduleKey]) {
-    return profile.permissions[moduleKey];
+  // 3. Profile-based check (Primary with Aggregation)
+  const profileList = Array.isArray(profiles) ? profiles : (profiles ? [profiles] : []);
+  const activeProfiles = profileList.filter((p): p is PermissionProfile => !!p && p.isActive);
+
+  if (activeProfiles.length > 0) {
+    return activeProfiles.reduce((acc, p) => {
+      const modPerm = p.permissions?.[moduleKey] || NO_ACCESS;
+      return {
+        view: acc.view || modPerm.view,
+        create: acc.create || modPerm.create,
+        edit: acc.edit || modPerm.edit,
+        delete: acc.delete || modPerm.delete,
+        approve: acc.approve || modPerm.approve,
+      };
+    }, { ...NO_ACCESS });
   }
 
-  // 4. Graceful Fallback Logic (Legacy Support & Automated Scoping)
-  const { dept, level } = inferDeptAndLevel(user);
-  
-  if (moduleKey === 'overview_dashboard') return READ_ONLY;
-  
-  // 4a. Automated Customer Portal Fallbacks
-  if (user.userType === 'customer_portal' || dept === 'client') {
-    const isApprover = user.portalRole === 'approver' || level === 'manager';
-    
-    if (moduleKey === 'client_portal' || moduleKey === 'timesheets') {
-      return isApprover ? { ...READ_ONLY, approve: true, edit: true } : READ_ONLY;
-    }
-    if (['workers', 'quotations', 'customer_pos', 'main_contracts'].includes(moduleKey)) {
-      return READ_ONLY;
-    }
-    // Strict block on internal modules for customers
-    return NO_ACCESS;
-  }
+  // 4. Graceful Fallback Logic (Role-Aware)
+  const roleKeys = user.assignedRoleKeys || (user.assignedRoleKey ? [user.assignedRoleKey] : []);
+  const depts = new Set<DeptType>();
+  roleKeys.forEach(rk => {
+    const role = BUSINESS_ROLES[rk as BusinessRoleKey];
+    if (role) depts.add(role.dept);
+  });
+  if (user.department) depts.add(user.department);
 
-  // 4b. Basic Internal Operational Fallbacks
-  if (dept === 'hr' && ['workers', 'positions', 'timesheets', 'worker_payroll'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (dept === 'store' && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (dept === 'accounting' && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (dept === 'operations' && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
+  let aggregate: ModulePermission = { ...NO_ACCESS };
   
-  return NO_ACCESS;
+  if (moduleKey === 'overview_dashboard') aggregate.view = true;
+
+  depts.forEach(dept => {
+    let p = { ...NO_ACCESS };
+    if (user.userType === 'customer_portal' || dept === 'client') {
+      const level = user.portalRole === 'approver' ? 'manager' : 'viewer';
+      if (moduleKey === 'client_portal' || moduleKey === 'timesheets') {
+        p = (level === 'manager') ? { ...READ_ONLY, approve: true, edit: true } : READ_ONLY;
+      } else if (['workers', 'quotations', 'customer_pos', 'main_contracts'].includes(moduleKey)) {
+        p = READ_ONLY;
+      }
+    } else {
+      if (dept === 'hr' && ['workers', 'positions', 'timesheets', 'worker_payroll'].includes(moduleKey)) p = OFFICER_ACCESS;
+      else if (dept === 'store' && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) p = OFFICER_ACCESS;
+      else if (dept === 'accounting' && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills'].includes(moduleKey)) p = OFFICER_ACCESS;
+      else if (dept === 'operations' && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) p = OFFICER_ACCESS;
+    }
+
+    aggregate = {
+      view: aggregate.view || p.view,
+      create: aggregate.create || p.create,
+      edit: aggregate.edit || p.edit,
+      delete: aggregate.delete || p.delete,
+      approve: aggregate.approve || p.approve,
+    };
+  });
+
+  return aggregate;
 }
 
 /**
  * Functional shorthand helpers
  */
-export const canView = (user: User | null, moduleKey: ModuleKey, profile?: PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profile).view;
+export const canView = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+  getPermissions(user, moduleKey, profiles).view;
 
-export const canCreate = (user: User | null, moduleKey: ModuleKey, profile?: PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profile).create;
+export const canCreate = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+  getPermissions(user, moduleKey, profiles).create;
 
-export const canEdit = (user: User | null, moduleKey: ModuleKey, profile?: PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profile).edit;
+export const canEdit = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+  getPermissions(user, moduleKey, profiles).edit;
 
-export const canDelete = (user: User | null, moduleKey: ModuleKey, profile?: PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profile).delete;
+export const canDelete = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+  getPermissions(user, moduleKey, profiles).delete;
 
-export const canApprove = (user: User | null, moduleKey: ModuleKey, profile?: PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profile).approve;
+export const canApprove = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+  getPermissions(user, moduleKey, profiles).approve;

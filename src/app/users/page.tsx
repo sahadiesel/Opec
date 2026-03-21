@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -25,9 +26,6 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, writeBatch } from 'firebase/firestore';
-import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -45,13 +43,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { collection, doc, writeBatch } from 'firebase/firestore';
+import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   BUSINESS_ROLES, 
   isAdminUser, 
-  getFieldsForBusinessRole,
-  deriveBusinessRoleKey,
+  getFieldsForBusinessRoles,
+  deriveBusinessRoleKeys,
   getMigratedUserFields
 } from '@/lib/auth-mapping';
 import { getBaselineProfiles } from '@/lib/permissions';
@@ -65,7 +68,7 @@ export default function UsersPage() {
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [editedRole, setEditedRole] = useState<BusinessRoleKey | ''>('');
+  const [editedRoles, setEditedRoles] = useState<BusinessRoleKey[]>([]);
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -104,20 +107,20 @@ export default function UsersPage() {
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
-    const currentRole = user.assignedRoleKey || deriveBusinessRoleKey(user);
-    setEditedRole(currentRole);
+    const roles = deriveBusinessRoleKeys(user);
+    setEditedRoles(roles);
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
   };
 
   const handleSaveUser = async () => {
-    if (!firestore || !selectedUser || !editedRole) return;
+    if (!firestore || !selectedUser || editedRoles.length === 0) return;
     setIsSaving(true);
 
     try {
       const userRef = doc(firestore, 'users', selectedUser.id);
-      const mappedFields = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
+      const mappedFields = getFieldsForBusinessRoles(editedRoles);
       
       const updateData: Partial<User> = {
         ...mappedFields,
@@ -129,7 +132,6 @@ export default function UsersPage() {
 
       updateDocumentNonBlocking(userRef, updateData);
       
-      // Delay to allow Firestore state to propagate slightly before closing
       setTimeout(() => {
         setIsSaving(false);
         setIsEditDialogOpen(false);
@@ -151,45 +153,38 @@ export default function UsersPage() {
     
     const batch = writeBatch(firestore);
     let repairedCount = 0;
-    let profilesCreatedCount = 0;
     
     const baselineProfiles = getBaselineProfiles();
     const existingProfileKeys = new Set(profiles?.map(p => p.profileKey) || []);
-    const pendingProfileKeys = new Set<string>();
 
     try {
       for (const user of users) {
         const migratedFields = getMigratedUserFields(user);
-        const targetProfileKey = migratedFields.permissionProfileKey;
+        const targetProfileKeys = migratedFields.permissionProfileKeys || [];
 
-        // 1. Check if we need to create a missing profile document
-        if (targetProfileKey && !existingProfileKeys.has(targetProfileKey) && !pendingProfileKeys.has(targetProfileKey)) {
-          const baseline = baselineProfiles.find(p => p.profileKey === targetProfileKey);
-          if (baseline) {
-            const profileRef = doc(firestore, 'permission_profiles', targetProfileKey);
-            batch.set(profileRef, {
-              ...baseline,
-              id: targetProfileKey,
-              updatedAt: Date.now(),
-              updatedBy: currentUser.displayName + ' (System Auto-Repair)'
-            });
-            pendingProfileKeys.add(targetProfileKey);
-            profilesCreatedCount++;
+        for (const pk of targetProfileKeys) {
+          if (!existingProfileKeys.has(pk)) {
+            const baseline = baselineProfiles.find(p => p.profileKey === pk);
+            if (baseline) {
+              const profileRef = doc(firestore, 'permission_profiles', pk);
+              batch.set(profileRef, {
+                ...baseline,
+                id: pk,
+                updatedAt: Date.now(),
+                updatedBy: currentUser.displayName + ' (Auto-Repair)'
+              }, { merge: true });
+              existingProfileKeys.add(pk);
+            }
           }
         }
 
-        // 2. Sync user document fields
         const userRef = doc(firestore, 'users', user.id);
         batch.update(userRef, migratedFields);
         repairedCount++;
       }
 
       await batch.commit();
-      
-      toast({ 
-        title: "ซ่อมสิทธิ์สำเร็จ (Repair Complete)", 
-        description: `ซ่อมแซมผู้ใช้ ${repairedCount} ราย และสร้างโปรไฟล์มาตรฐาน ${profilesCreatedCount} รายการ` 
-      });
+      toast({ title: "Access Repair Complete", description: `Updated ${repairedCount} users.` });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Repair Failed", description: err.message });
     } finally {
@@ -205,19 +200,15 @@ export default function UsersPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
-
-  if (!isUserAdmin) {
-    return (
-      <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-          <ShieldCheck className="h-12 w-12 text-destructive opacity-50" />
-          <h2 className="text-xl font-bold">Access Restricted</h2>
-          <p className="text-muted-foreground">Only System Administrators can manage users.</p>
-        </div>
-      </AppShell>
+  const toggleRole = (roleKey: BusinessRoleKey) => {
+    setEditedRoles(prev => 
+      prev.includes(roleKey) 
+        ? prev.filter(r => r !== roleKey) 
+        : [...prev, roleKey]
     );
-  }
+  };
+
+  if (isUserLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -225,10 +216,10 @@ export default function UsersPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <ShieldCheck className="h-8 w-8" /> จัดการผู้ใช้งาน (User Access Management)
+              <ShieldCheck className="h-8 w-8 text-primary" /> จัดการผู้ใช้งาน (User Access Management)
             </h1>
             <p className="text-muted-foreground text-lg">
-              เลือกบทบาทให้ผู้ใช้ ระบบจะกำหนดข้อมูลสิทธิ์ภายในให้อัตโนมัติ (Select a role and the system will apply internal access settings automatically).
+              กำหนดบทบาทหน้าที่และสิทธิ์การใช้งานระบบ (Multi-role support enabled).
             </p>
           </div>
           <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
@@ -260,17 +251,15 @@ export default function UsersPage() {
                   <TableRow>
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
-                    <TableHead>บทบาทหน้าที่ (Assigned Role)</TableHead>
-                    <TableHead>ความสมบูรณ์ (Integrity)</TableHead>
+                    <TableHead>บทบาทหน้าที่ (Assigned Roles)</TableHead>
+                    <TableHead>สิทธิ์เชิงแผนก</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.map((u) => {
-                    const roleKey = u.assignedRoleKey || deriveBusinessRoleKey(u);
-                    const roleInfo = BUSINESS_ROLES[roleKey];
-                    const hasProfile = profiles?.some(p => p.profileKey === u.permissionProfileKey);
-                    const isInternal = !['client', 'client_viewer', 'client_approver'].includes(roleKey);
+                    const roles = deriveBusinessRoleKeys(u);
+                    const isInternal = u.userType !== 'customer_portal';
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -288,19 +277,22 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{roleInfo?.labelTh || roleKey}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{roleInfo?.labelEn || 'Custom Role'}</span>
+                          <div className="flex flex-wrap gap-1">
+                            {roles.map(rk => {
+                              const info = BUSINESS_ROLES[rk];
+                              return (
+                                <Badge key={rk} variant="outline" className="text-[9px] uppercase font-bold bg-white">
+                                  {info?.labelTh || rk}
+                                </Badge>
+                              );
+                            })}
                           </div>
                         </TableCell>
                         <TableCell>
-                          {isInternal && !u.permissionProfileKey ? (
-                            <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50 text-[9px]">Unassigned</Badge>
-                          ) : isInternal && !hasProfile ? (
-                            <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 text-[9px]">Profile Missing</Badge>
-                          ) : (
-                            <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          )}
+                          <div className="flex gap-1">
+                            <Badge variant="secondary" className="text-[9px] capitalize">{u.department}</Badge>
+                            <Badge variant="outline" className="text-[9px] capitalize">{u.level}</Badge>
+                          </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>
@@ -327,10 +319,10 @@ export default function UsersPage() {
           <DialogContent className="max-w-3xl border-t-8 border-t-primary">
             <DialogHeader>
               <DialogTitle className="text-2xl flex items-center gap-3">
-                <UserCog className="h-7 w-7 text-primary" /> แก้ไขการเข้าใช้งาน: {selectedUser?.displayName}
+                <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
               </DialogTitle>
               <DialogDescription className="italic">
-                กำหนดบทบาทหลักของพนักงานเพื่อให้ระบบตั้งค่าสิทธิ์เข้าถึงโมดูลต่าง ๆ โดยอัตโนมัติ
+                กำหนดบทบาทหน้าที่ของพนักงาน (Multiple roles allowed).
               </DialogDescription>
             </DialogHeader>
 
@@ -339,7 +331,7 @@ export default function UsersPage() {
                 <div className="space-y-3">
                   <Label className="font-black text-primary uppercase tracking-wider text-[10px]">1. สถานะบัญชี (Account Status)</Label>
                   <Select value={editedStatus} onValueChange={(v: ApprovalStatus) => setEditedStatus(v)}>
-                    <SelectTrigger className="h-12 font-bold text-lg border-2">
+                    <SelectTrigger className="h-12 font-bold border-2">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -352,71 +344,63 @@ export default function UsersPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">2. บทบาทหลัก (Primary Business Role)</Label>
-                  <Select value={editedRole} onValueChange={(v: BusinessRoleKey) => setEditedRole(v)}>
-                    <SelectTrigger className="h-12 font-bold text-lg border-2 border-primary/20">
-                      <SelectValue placeholder="เลือกบทบาท..." />
-                    </SelectTrigger>
-                    <SelectContent>
+                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">2. บทบาทหน้าที่ (Assigned Roles)</Label>
+                  <ScrollArea className="h-[300px] border rounded-md p-4 bg-muted/10">
+                    <div className="space-y-4">
                       {Object.values(BUSINESS_ROLES).map(role => (
-                        <SelectItem key={role.key} value={role.key}>
-                          <div className="flex flex-col text-left py-1">
-                            <span className="font-bold">{role.labelTh}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{role.labelEn}</span>
+                        <div key={role.key} className="flex items-start space-x-3 p-2 hover:bg-white rounded transition-colors">
+                          <Checkbox 
+                            id={`role-${role.key}`} 
+                            checked={editedRoles.includes(role.key)}
+                            onCheckedChange={() => toggleRole(role.key)}
+                          />
+                          <div className="grid gap-1.5 leading-none">
+                            <Label htmlFor={`role-${role.key}`} className="font-bold text-sm cursor-pointer">
+                              {role.labelTh}
+                            </Label>
+                            <p className="text-[9px] text-muted-foreground uppercase">{role.labelEn}</p>
                           </div>
-                        </SelectItem>
+                        </div>
                       ))}
-                    </SelectContent>
-                  </Select>
-                  {editedRole && (
-                    <p className="text-xs text-muted-foreground bg-muted/50 p-3 rounded-md border-l-4 border-primary">
-                      <Info className="h-3.5 w-3.5 inline mr-1 text-primary" />
-                      {BUSINESS_ROLES[editedRole as BusinessRoleKey].descriptionTh}
-                    </p>
-                  )}
+                    </div>
+                  </ScrollArea>
                 </div>
               </div>
 
-              <div className="bg-primary/5 p-6 rounded-xl border border-primary/10 space-y-4">
+              <div className="bg-primary/5 p-6 rounded-xl border border-primary/10 space-y-4 flex flex-col">
                 <Label className="font-black text-primary flex items-center gap-2 uppercase text-[10px] tracking-widest">
                   <Shield className="h-4 w-4" /> สรุปสิทธิ์ที่จะได้รับ (Access Preview)
                 </Label>
                 <Separator className="bg-primary/10" />
-                <div className="space-y-3">
-                  {editedRole ? (
+                <div className="space-y-4 flex-1">
+                  {editedRoles.length > 0 ? (
                     <div className="space-y-4">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">สิทธิ์ระดับแผนก (Dept):</span>
-                        <Badge variant="outline" className="capitalize font-bold bg-white">{BUSINESS_ROLES[editedRole as BusinessRoleKey].dept}</Badge>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">ระดับความสำคัญ (Level):</span>
-                        <Badge variant="secondary" className="capitalize font-bold">{BUSINESS_ROLES[editedRole as BusinessRoleKey].level}</Badge>
-                      </div>
-                      
-                      <div className="pt-2">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase mb-2">โมดูลหลัก (Key Access):</p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <AccessBadge roleKey={editedRole as BusinessRoleKey} module="Workers" />
-                          <AccessBadge roleKey={editedRole as BusinessRoleKey} module="Payroll" />
-                          <AccessBadge roleKey={editedRole as BusinessRoleKey} module="Sales" />
-                          <AccessBadge roleKey={editedRole as BusinessRoleKey} module="Accounting" />
+                      <div className="space-y-2">
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase">แผนกที่เกี่ยวข้อง (Departments):</p>
+                        <div className="flex flex-wrap gap-1">
+                          {Array.from(new Set(editedRoles.map(rk => BUSINESS_ROLES[rk]?.dept))).map(d => (
+                            <Badge key={d} variant="outline" className="bg-white capitalize text-[10px]">{d}</Badge>
+                          ))}
                         </div>
                       </div>
+                      <Separator className="bg-primary/10" />
+                      <p className="text-[10px] text-muted-foreground italic leading-relaxed">
+                        ระบบจะรวมสิทธิ์การเข้าถึงจากทุกโปรไฟล์ที่เลือกแบบสะสม (Additive Permissions).
+                      </p>
                     </div>
                   ) : (
-                    <div className="py-10 text-center space-y-3">
+                    <div className="py-20 text-center space-y-3">
                       <Clock className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกบทบาทเพื่อดูตัวอย่างสิทธิ์</p>
+                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกบทบาทอย่างน้อย 1 รายการ</p>
                     </div>
                   )}
                 </div>
                 
-                <div className="mt-auto pt-4">
+                <div className="pt-4 border-t border-primary/10">
                   <Label className="text-[10px] font-bold text-muted-foreground">บันทึกภายใน (Internal Notes)</Label>
                   <Textarea 
-                    placeholder="ระบุเหตุผลการกำหนดสิทธิ์ หรือข้อมูลเพิ่มเติม..." 
-                    className="mt-2 text-xs bg-white min-h-[80px]" 
+                    placeholder="ระบุเหตุผลการกำหนดสิทธิ์..." 
+                    className="mt-2 text-xs bg-white min-h-[100px]" 
                     value={notes}
                     onChange={e => setNotes(e.target.value)}
                   />
@@ -428,34 +412,16 @@ export default function UsersPage() {
               <Button variant="outline" className="h-12 px-8" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>ยกเลิก</Button>
               <Button 
                 onClick={handleSaveUser} 
-                disabled={isSaving || !editedRole} 
+                disabled={isSaving || editedRoles.length === 0} 
                 className="bg-primary font-black h-12 px-10 shadow-lg text-lg"
               >
                 {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-5 w-5 mr-2" />}
-                บันทึกสิทธิ์ (Apply Role)
+                บันทึกสิทธิ์ (Apply Changes)
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
     </AppShell>
-  );
-}
-
-function AccessBadge({ roleKey, module }: { roleKey: BusinessRoleKey, module: string }) {
-  const hasAccess = useMemo(() => {
-    if (roleKey === 'system_admin') return true;
-    if (module === 'Workers' && ['hr_manager', 'hr_officer', 'operations_manager', 'operations_officer'].includes(roleKey)) return true;
-    if (module === 'Payroll' && ['hr_manager', 'accounting_manager', 'accounting_officer'].includes(roleKey)) return true;
-    if (module === 'Sales' && ['sales_manager', 'sales_officer', 'accounting_manager'].includes(roleKey)) return true;
-    if (module === 'Accounting' && ['accounting_manager', 'accounting_officer', 'sales_manager'].includes(roleKey)) return true;
-    return false;
-  }, [roleKey, module]);
-
-  return (
-    <div className={`flex items-center gap-2 px-2 py-1.5 rounded border text-[10px] font-bold ${hasAccess ? 'bg-green-50 border-green-200 text-green-700' : 'bg-slate-50 border-slate-100 text-slate-400 opacity-50'}`}>
-      {hasAccess ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-      {module}
-    </div>
   );
 }

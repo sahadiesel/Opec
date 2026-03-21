@@ -42,7 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isAdminUser, inferDeptAndLevel } from '@/lib/auth-mapping';
-import { getPermissions, SYSTEM_MODULES } from '@/lib/permissions';
+import { getPermissions, SYSTEM_MODULES, NO_ACCESS } from '@/lib/permissions';
 import { useRouter } from 'next/navigation';
 
 export default function PermissionAuditPage() {
@@ -90,7 +90,8 @@ export default function PermissionAuditPage() {
     
     return users.map(user => {
       const { dept, level } = inferDeptAndLevel(user);
-      const profile = profiles.find(p => p.profileKey === user.permissionProfileKey);
+      const profileKeys = user.permissionProfileKeys || (user.permissionProfileKey ? [user.permissionProfileKey] : []);
+      const matchedProfiles = profiles.filter(p => profileKeys.includes(p.profileKey));
       
       let effectiveSummary = 'Missing Profile';
       let status: 'ok' | 'warning' | 'error' = 'warning';
@@ -100,29 +101,22 @@ export default function PermissionAuditPage() {
         effectiveSummary = 'Admin (Bypass)';
         status = 'ok';
         badges.push('Admin Bypass');
-      } else if (user.permissionProfileKey) {
-        if (profile) {
-          if (profile.isActive) {
-            effectiveSummary = profile.profileNameEn || profile.profileKey;
-            status = 'ok';
-          } else {
-            effectiveSummary = 'Profile Inactive';
-            status = 'error';
+      } else if (profileKeys.length > 0) {
+        if (matchedProfiles.length > 0) {
+          effectiveSummary = `${matchedProfiles.length} Profiles`;
+          status = 'ok';
+          if (matchedProfiles.some(p => !p.isActive)) {
+            badges.push('Partial Inactive');
+            status = 'warning';
           }
         } else {
-          effectiveSummary = 'Profile Not Found';
+          effectiveSummary = 'Profiles Not Found';
           status = 'error';
         }
       } else {
         effectiveSummary = 'Legacy Fallback';
         status = 'warning';
         badges.push('Legacy Fallback');
-      }
-
-      const hasMismatchedContext = profile && (profile.department !== dept || profile.level !== level);
-      if (hasMismatchedContext) {
-        status = 'warning';
-        badges.push('Context Mismatch');
       }
 
       return {
@@ -132,7 +126,7 @@ export default function PermissionAuditPage() {
         effectiveSummary,
         status,
         badges,
-        profile,
+        profileCount: matchedProfiles.length,
         hasProblems: status !== 'ok'
       };
     });
@@ -156,7 +150,7 @@ export default function PermissionAuditPage() {
     if (!profiles || !users) return [];
     return profiles.map(p => ({
       ...p,
-      userCount: users.filter(u => u.permissionProfileKey === p.profileKey).length
+      userCount: users.filter(u => (u.permissionProfileKeys?.includes(p.profileKey) || u.permissionProfileKey === p.profileKey)).length
     }));
   }, [profiles, users]);
 
@@ -166,11 +160,12 @@ export default function PermissionAuditPage() {
     if (explorerType === 'user') {
       const user = users?.find(u => u.id === selectedExplorerId);
       if (!user) return null;
-      const profile = profiles?.find(p => p.profileKey === user.permissionProfileKey);
+      const profileKeys = user.permissionProfileKeys || (user.permissionProfileKey ? [user.permissionProfileKey] : []);
+      const matchedProfiles = profiles?.filter(p => profileKeys.includes(p.profileKey)) || [];
       
       const permissions: Record<string, ModulePermission> = {};
       SYSTEM_MODULES.forEach(m => {
-        permissions[m.key] = getPermissions(user, m.key as any, profile);
+        permissions[m.key] = getPermissions(user, m.key as any, matchedProfiles);
       });
       return permissions;
     } else {
@@ -201,7 +196,7 @@ export default function PermissionAuditPage() {
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
               <SearchCheck className="h-8 w-8 text-primary" /> ตรวจสอบสิทธิ์การใช้งาน (Permission Audit)
             </h1>
-            <p className="text-muted-foreground text-lg">ตรวจสอบสิทธิ์การเข้าถึงเมนูและการทำงานรายบุคคล (Compliance & Security Audit)</p>
+            <p className="text-muted-foreground text-lg">ตรวจสอบสิทธิ์การเข้าถึงจริง (Multi-role aggregation check enabled)</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" className="gap-2 h-11" onClick={() => router.push('/system-admin/permission-matrix')}>
@@ -273,7 +268,7 @@ export default function PermissionAuditPage() {
                       <TableRow>
                         <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                         <TableHead>แผนก / ระดับ</TableHead>
-                        <TableHead>Profile Assigned</TableHead>
+                        <TableHead>Active Profiles</TableHead>
                         <TableHead>สิทธิ์การเข้าถึงจริง (Effective Access)</TableHead>
                         <TableHead className="text-right pr-6">จัดการ</TableHead>
                       </TableRow>
@@ -294,11 +289,7 @@ export default function PermissionAuditPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {u.permissionProfileKey ? (
-                              <Badge variant="outline" className="font-mono text-[10px] bg-blue-50 text-blue-700">{u.permissionProfileKey}</Badge>
-                            ) : (
-                              <span className="text-[10px] text-muted-foreground italic">Not Assigned</span>
-                            )}
+                            <Badge variant="secondary" className="font-mono text-[10px]">{u.profileCount} Assigned</Badge>
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -335,7 +326,7 @@ export default function PermissionAuditPage() {
                   <CardTitle className="text-red-700 flex items-center gap-2">
                     <ShieldAlert className="h-5 w-5" /> ตรวจพบจุดเสี่ยง (Security Risks)
                   </CardTitle>
-                  <CardDescription>รายการที่ต้องได้รับการแก้ไขทันทีเพื่อให้ระบบสิทธิ์ทำงานได้ถูกต้อง</CardDescription>
+                  <CardDescription>รายการที่ต้องได้รับการแก้ไขเพื่อให้ระบบสิทธิ์สมบูรณ์</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {auditData.filter(u => u.status === 'error').map(u => (
@@ -358,9 +349,9 @@ export default function PermissionAuditPage() {
               <Card className="border-l-8 border-l-amber-500">
                 <CardHeader>
                   <CardTitle className="text-amber-700 flex items-center gap-2">
-                    <Info className="h-5 w-5" /> Legacy & Fallback Items
+                    <Info className="h-5 w-5" /> Legacy Logic Items
                   </CardTitle>
-                  <CardDescription>ผู้ใช้งานที่ยังใช้สิทธิ์แบบเดิม แนะนำให้ย้ายเข้าสู่ Permission Profile</CardDescription>
+                  <CardDescription>ผู้ใช้ที่ยังไม่ได้รับการย้ายเข้าสู่โครงสร้างสิทธิ์แบบโปรไฟล์เต็มรูปแบบ</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {auditData.filter(u => u.status === 'warning').map(u => (
@@ -369,9 +360,7 @@ export default function PermissionAuditPage() {
                         <p className="text-sm font-bold text-amber-900">{u.displayName}</p>
                         <p className="text-xs text-amber-700">{u.effectiveSummary}</p>
                       </div>
-                      <Button size="sm" variant="outline" onClick={() => {
-                        router.push(`/users`);
-                      }}>Assign Profile</Button>
+                      <Button size="sm" variant="outline" onClick={() => router.push('/users')}>Update</Button>
                     </div>
                   ))}
                 </CardContent>
@@ -419,7 +408,7 @@ export default function PermissionAuditPage() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-[10px] text-muted-foreground">
-                          {new Date(p.updatedAt).toLocaleDateString()}<br/>โดย {p.updatedBy}
+                          {new Date(p.updatedAt).toLocaleDateString()}
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" onClick={() => {
@@ -444,7 +433,7 @@ export default function PermissionAuditPage() {
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-primary" /> Effective Permissions Explorer</CardTitle>
-                    <CardDescription>วิเคราะห์สิทธิ์การเข้าถึงจริงรายโมดูล (Real-time Effective Permission Analysis)</CardDescription>
+                    <CardDescription>วิเคราะห์สิทธิ์การเข้าถึงจริงรายโมดูล (Union of all assigned profiles)</CardDescription>
                   </div>
                   <div className="flex gap-2">
                     <Select value={explorerType} onValueChange={(v: any) => {
@@ -493,7 +482,7 @@ export default function PermissionAuditPage() {
                     </TableHeader>
                     <TableBody>
                       {SYSTEM_MODULES.map(mod => {
-                        const perms = explorerPermissions?.[mod.key] || { view: false, create: false, edit: false, delete: false, approve: false };
+                        const perms = explorerPermissions?.[mod.key] || { ...NO_ACCESS };
                         return (
                           <TableRow key={mod.key} className="hover:bg-muted/10">
                             <TableCell className="pl-6 py-2">

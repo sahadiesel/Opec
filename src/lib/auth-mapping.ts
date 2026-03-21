@@ -201,22 +201,55 @@ export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
 }
 
 /**
- * Generates technical fields based on a Business Role assignment
+ * Derives all Business Role Keys based on canonical roleIds
  */
-export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User> {
-  const role = BUSINESS_ROLES[roleKey];
-  if (!role) throw new Error(`Invalid business role key: ${roleKey}`);
+export function deriveBusinessRoleKeys(user: Partial<User>): BusinessRoleKey[] {
+  if (user.assignedRoleKeys && user.assignedRoleKeys.length > 0) {
+    return user.assignedRoleKeys;
+  }
+  
+  const roleKey = deriveBusinessRoleKey(user);
+  return [roleKey];
+}
 
-  const profileKey = role.dept === 'client' ? 'client_user' : `${role.dept}_${role.level}`;
+/**
+ * Generates technical fields based on a list of Business Role assignments
+ */
+export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<User> {
+  if (roleKeys.length === 0) return {};
+
+  const allRoleIds = new Set<RoleType>();
+  const allProfileKeys = new Set<string>();
+  
+  roleKeys.forEach(key => {
+    const role = BUSINESS_ROLES[key];
+    if (role) {
+      allRoleIds.add(role.canonicalRole);
+      const profileKey = role.dept === 'client' ? 'client_user' : `${role.dept}_${role.level}`;
+      allProfileKeys.add(profileKey);
+    }
+  });
+
+  // Primary display context from the first role in the list
+  const primary = BUSINESS_ROLES[roleKeys[0]];
 
   return {
-    assignedRoleKey: roleKey,
-    department: role.dept,
-    level: role.level,
-    roleIds: [role.canonicalRole],
-    permissionProfileKey: profileKey,
+    assignedRoleKeys: roleKeys,
+    assignedRoleKey: roleKeys[0], // Single primary for backward compatibility
+    roleIds: Array.from(allRoleIds),
+    permissionProfileKeys: Array.from(allProfileKeys),
+    permissionProfileKey: Array.from(allProfileKeys)[0], // Single primary for legacy support
+    department: primary.dept,
+    level: primary.level,
     updatedAt: Date.now()
   };
+}
+
+/**
+ * Generates technical fields based on a single Business Role assignment
+ */
+export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User> {
+  return getFieldsForBusinessRoles([roleKey]);
 }
 
 /**
@@ -224,17 +257,8 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
  * Used by the system repair tools.
  */
 export function getMigratedUserFields(user: Partial<User>): Partial<User> {
-  const roleKey = deriveBusinessRoleKey(user);
-  const mapped = getFieldsForBusinessRole(roleKey);
-  
-  return {
-    assignedRoleKey: roleKey,
-    department: mapped.department,
-    level: mapped.level,
-    roleIds: mapped.roleIds,
-    permissionProfileKey: mapped.permissionProfileKey,
-    updatedAt: Date.now()
-  };
+  const roleKeys = deriveBusinessRoleKeys(user);
+  return getFieldsForBusinessRoles(roleKeys);
 }
 
 /**
