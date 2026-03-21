@@ -11,7 +11,7 @@ import {
   writeBatch, 
   updateDoc,
   CollectionReference,
-  runTransaction
+  limit
 } from 'firebase/firestore';
 import { 
   PayrollBatch, 
@@ -21,8 +21,7 @@ import {
   User, 
   WorkerPaymentProfile,
   RateCondition,
-  LaborCostContractTerm,
-  PayrollBatchStatus
+  LaborCostContractTerm
 } from '@/lib/types';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
@@ -42,6 +41,7 @@ export class PayrollService {
   /**
    * Generates a new Payroll Batch from client-approved timesheets.
    * Snapshots worker data and rates to ensure historical stability.
+   * TRANSITION: Marks source timesheets as LOCKED to prevent double processing.
    */
   async generatePayrollBatch(
     periodId: string, 
@@ -53,7 +53,8 @@ export class PayrollService {
     if (!periodSnap.exists()) throw new Error('Payroll period not found');
     const period = periodSnap.data() as PayrollPeriod;
 
-    // RULE: Only include Client Approved timesheets in payroll
+    // RULE: Only include Client Approved timesheets in payroll.
+    // Excludes DRAFT, SUBMITTED, and already LOCKED items.
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
@@ -71,7 +72,7 @@ export class PayrollService {
       throw new Error('No client-approved timesheets found for this period');
     }
 
-    // Load master rules
+    // Load master rules for calculation
     const [rateConditionsSnap, costTermsSnap] = await Promise.all([
       getDocs(collection(this.db, 'rate_conditions')),
       getDocs(collection(this.db, 'labor_cost_contract_terms'))
@@ -91,6 +92,7 @@ export class PayrollService {
     const lines: PayrollBatchLine[] = [];
 
     let batchGross = 0;
+    const writeOp = writeBatch(this.db);
 
     for (const workerId in workerMap) {
       const workerTs = workerMap[workerId];
@@ -136,12 +138,23 @@ export class PayrollService {
         earningsBreakdown,
         deductionsBreakdown: {},
         grossAmount: workerGross,
-        netAmount: workerGross, // Simplification for MVP
+        netAmount: workerGross,
         exportStatus: 'pending'
       };
 
       lines.push(line);
       batchGross += workerGross;
+    }
+
+    // SAFEGUARD: Lock the source timesheets so they aren't processed in another run
+    for (const ts of timesheets) {
+      const tsRef = doc(this.db, 'daily_timesheets', ts.id);
+      writeOp.update(tsRef, { 
+        status: 'LOCKED', 
+        lockedAt: Date.now(),
+        lockedBy: user.displayName,
+        updatedAt: Date.now()
+      });
     }
 
     const newBatch: PayrollBatch = {
@@ -159,7 +172,6 @@ export class PayrollService {
       updatedAt: Date.now(),
     };
 
-    const writeOp = writeBatch(this.db);
     writeOp.set(batchRef, PayrollBatchSchema.parse(newBatch));
     lines.forEach(line => {
       const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', line.id);
@@ -175,7 +187,7 @@ export class PayrollService {
       payrollBatchId: batchId,
       entityLabel: `${period.label} Batch`,
       sourceModule: 'hr',
-      afterSummary: `Generated batch for ${lines.length} workers. Total: ${batchGross}`
+      afterSummary: `Generated batch for ${lines.length} workers. Total Gross: ${batchGross}. Source timesheets locked.`
     });
 
     return batchId;
