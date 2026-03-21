@@ -54,7 +54,6 @@ export class PayrollService {
     const period = periodSnap.data() as PayrollPeriod;
 
     // RULE: Only include Client Approved timesheets in payroll.
-    // Excludes DRAFT, SUBMITTED, and already LOCKED items.
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
@@ -112,7 +111,6 @@ export class PayrollService {
       let workerGross = 0;
 
       for (const ts of workerTs) {
-        // Resolve project-specific cost term if possible, otherwise use main contract fallback
         const contract = allCostTerms.find(ct => 
           ct.id === ts.laborCostContractTermId || 
           (ct.relatedPurchaseOrderId === ts.purchaseOrderId && ct.status === 'ACTIVE')
@@ -151,8 +149,7 @@ export class PayrollService {
       batchGross += workerGross;
     }
 
-    // SAFEGUARD: Lock the source timesheets so they aren't processed in another run
-    // This is the atomic locking mechanism requested.
+    // SAFEGUARD: Lock the source timesheets using atomic WriteBatch
     for (const ts of timesheets) {
       const tsRef = doc(this.db, 'daily_timesheets', ts.id);
       writeOp.update(tsRef, { 
@@ -193,7 +190,7 @@ export class PayrollService {
       payrollBatchId: batchId,
       entityLabel: `${period.label} Batch`,
       sourceModule: 'hr',
-      afterSummary: `Generated batch for ${lines.length} workers. Total Gross: ${batchGross}. Source timesheets locked.`
+      afterSummary: `Generated batch for ${lines.length} workers. Source timesheets locked.`
     });
 
     return batchId;

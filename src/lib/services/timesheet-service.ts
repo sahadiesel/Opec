@@ -101,7 +101,7 @@ export class TimesheetService {
       eventType: 'work_day' as RateConditionEventType,
       normalHours: 8,
       status: 'DRAFT',
-      // CRITICAL: derived from assignment context (no hardcoding)
+      // CRITICAL: deriving workMode from assignment context ONLY (no hardcoding)
       workMode: asgn.workMode, 
       shiftType: 'DAY'
     }));

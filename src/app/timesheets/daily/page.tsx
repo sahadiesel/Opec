@@ -108,7 +108,7 @@ export default function DailyTimesheetsPage() {
 
       if (!asgn) throw new Error("Could not resolve assignment context");
 
-      // CRITICAL: deriving workMode from assignment context ONLY (no hardcoding)
+      // CRITICAL: deriving workMode from assignment context ONLY
       await service.bulkUpsertTimesheets([{
         ...newTs,
         workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',

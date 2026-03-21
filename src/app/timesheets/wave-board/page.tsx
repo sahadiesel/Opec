@@ -161,7 +161,7 @@ export default function WaveTimesheetBoardPage() {
           customerId: wave?.customerId || '',
           projectName: wave?.projectName || '',
           positionId: asgn?.positionId || '',
-          // CRITICAL: derived from specific assignment context (no hardcoding)
+          // CRITICAL: derived from assignment context
           workMode: asgn?.workMode, 
           shiftType: 'DAY' as any,
         };
