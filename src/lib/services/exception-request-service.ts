@@ -1,3 +1,4 @@
+
 'use client';
 
 import { 
@@ -78,9 +79,7 @@ export class ExceptionRequestService {
   }) {
     const { requestId, status, user, internalNotes } = params;
     const requestRef = doc(this.getCollection(), requestId);
-    const requestSnap = await doc(this.getCollection(), requestId); // In real use we'd get data first
     
-    // We need the request data to know what record to update
     const batch = writeBatch(this.db);
     
     // 1. Update the request itself

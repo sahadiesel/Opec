@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -262,7 +263,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
               <CardHeader className="pb-2">
                 <CardTitle className="text-[10px] font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
                   <History className="h-3 w-3" /> Audit Log
-                </CardTitle>
+                </Title>
               </CardHeader>
               <CardContent className="text-[10px] space-y-2">
                 <div className="flex justify-between">

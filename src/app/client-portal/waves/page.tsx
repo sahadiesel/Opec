@@ -244,7 +244,19 @@ export default function ClientManpowerPage() {
           </div>
 
           <div className="space-y-6">
-            {/* Sidebar content remains the same... */}
+            {/* Sidebar content simplified */}
+            <Card className="bg-primary text-primary-foreground shadow-lg overflow-hidden border-none">
+              <CardHeader className="pb-4 border-b border-white/10">
+                <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
+                  <Clock className="h-4 w-4" /> Operational Policy
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-4">
+                <p className="text-xs opacity-80 leading-relaxed italic">
+                  การจัดการกำลังพลเป็นหัวใจสำคัญของโครงการ รายการที่ได้รับ "Operational Lock" หมายถึงพนักงานได้รับการยืนยันการปฏิบัติงานแล้ว หากจำเป็นต้องมีการเปลี่ยนแปลงกะทันหัน กรุณาใช้ปุ่ม "ขอเปลี่ยนแปลง" เพื่อดำเนินการผ่านฝ่ายปฏิบัติการ
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
