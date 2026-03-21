@@ -19,7 +19,8 @@ import {
   Filter, 
   ArrowRight,
   Info,
-  Loader2
+  Loader2,
+  Users
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Worker, ReadinessStatus, User, Position } from '@/lib/types';
@@ -141,7 +142,7 @@ export default function WorkersPage() {
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
           <h2 className="text-xl font-bold">Access Denied (จำกัดสิทธิ์เข้าถึง)</h2>
-          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ</p>
+          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงข้อมูลพนักงานหน้างาน กรุณาติดต่อผู้ดูแลระบบ</p>
         </div>
       </AppShell>
     );
@@ -152,18 +153,18 @@ export default function WorkersPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <HardHat className="h-8 w-8" /> ทะเบียนคนงาน (Worker Directory)
+            <HardHat className="h-8 w-8" /> ทะเบียนคนงานหน้างาน (Field Workers Directory)
           </h1>
           <p className="text-muted-foreground text-lg">
-            บริหารจัดการฐานข้อมูลคนงาน ตรวจสอบความพร้อม (Readiness Matrix) และการปฏิบัติตามมาตรฐานความปลอดภัย Offshore
+            จัดการฐานข้อมูลลูกจ้างหน้างาน (Workforce) ตรวจสอบความพร้อม และการปฏิบัติตามมาตรฐานความปลอดภัย
           </p>
         </div>
 
-        <Alert variant="destructive" className="bg-destructive/5 border-destructive/20 shadow-sm">
-          <ShieldAlert className="h-5 w-5" />
-          <AlertTitle className="font-bold text-lg">การตรวจสอบความพร้อมก่อนส่งตัว (Compliance & Readiness Check)</AlertTitle>
+        <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
+          <Info className="h-5 w-5 text-blue-600" />
+          <AlertTitle className="font-bold text-lg">การแยกประเภทบุคลากร (Personnel Silo Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            คนงานทุกคนที่จะถูกมอบหมายงาน (Assignment) จะต้องมีสถานะเป็น <b className="text-green-700 underline">READY</b> เท่านั้น ซึ่งหมายถึงมีใบรับรองความปลอดภัย (BOSIET/FOET) และผลตรวจร่างกายที่ยังไม่หมดอายุตามเกณฑ์มาตรฐานหน้างาน
+            หน้าจอนี้สำหรับ <b>ลูกจ้างหน้างาน (Field Labor)</b> เท่านั้น หากต้องการจัดการพนักงานออฟฟิศส่วนกลาง (HR, IT, Finance) กรุณาไปที่เมนู <b>"พนักงานออฟฟิศ"</b>
           </AlertDescription>
         </Alert>
 
@@ -181,14 +182,14 @@ export default function WorkersPage() {
             {can('workers').create && (
               <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
                 <DialogTrigger asChild>
-                  <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90">
-                    <Plus className="h-5 w-5" /> ลงทะเบียนคนงานใหม่ (New Registration)
+                  <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 font-bold">
+                    <Plus className="h-5 w-5" /> ลงทะเบียนลูกจ้างหน้างานใหม่
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-3xl">
                   <DialogHeader>
-                    <DialogTitle>ลงทะเบียนคนงานใหม่ (Worker Registration)</DialogTitle>
-                    <DialogDescription>กรอกข้อมูลพื้นฐานตามบัตรประชาชนและพาสปอร์ตเพื่อเริ่มบันทึกประวัติ</DialogDescription>
+                    <DialogTitle>ลงทะเบียนคนงานหน้างานใหม่ (Worker Registration)</DialogTitle>
+                    <DialogDescription>บันทึกประวัติลูกจ้างสำหรับงานโครงการหน้างาน (Onshore/Offshore Labor)</DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-2 gap-4 py-4">
                     <div className="grid gap-2 col-span-2">
@@ -211,7 +212,7 @@ export default function WorkersPage() {
                     <div className="grid gap-2">
                       <Label>ตำแหน่งหลัก (Primary Position)</Label>
                       <Select onValueChange={v => setNewWorker({...newWorker, currentPositionId: v})}>
-                        <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
+                        <SelectTrigger><SelectValue placeholder="เลือกตำแหน่งงาน..." /></SelectTrigger>
                         <SelectContent>
                           {positions?.map(p => <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>)}
                         </SelectContent>
@@ -222,7 +223,7 @@ export default function WorkersPage() {
                     <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
                     <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
                       {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      บันทึกประวัติ (Save Profile)
+                      บันทึกประวัติลูกจ้าง (Save)
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -239,7 +240,7 @@ export default function WorkersPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">รหัส / ชื่อคนงาน (Worker)</TableHead>
+                    <TableHead className="font-bold py-4 pl-6">รหัส / ชื่อคนงาน (Field Worker)</TableHead>
                     <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
                     <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
@@ -286,44 +287,6 @@ export default function WorkersPage() {
               </Table>
             )}
           </CardContent>
-        </Card>
-
-        <Card className="bg-primary/5 border-primary/10 border-dashed">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg flex items-center gap-2 text-primary font-bold">
-              <Info className="h-5 w-5" /> แนวทางปฏิบัติถัดไป (Next-Step Guidance)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
-                <div>
-                  <p className="font-bold">อัปเดตใบรับรอง (Update Certificates)</p>
-                  <p className="text-muted-foreground text-xs">คลิกที่คนงานเพื่อเพิ่มใบเซอร์ BOSIET หรือผลตรวจร่างกายที่ขาดหายไป</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
-                <div>
-                  <p className="font-bold">ยืนยันสถานะความพร้อม (Validate Readiness)</p>
-                  <p className="text-muted-foreground text-xs">สถานะต้องเปลี่ยนเป็น READY ก่อนที่จะสามารถส่งตัวเข้ากลุ่มการส่งตัว (Waves) ได้</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-primary/10 p-2 rounded text-primary font-bold">3</div>
-                <div>
-                  <p className="font-bold">การส่งตัวคนงาน (Staff Mobilization)</p>
-                  <p className="text-muted-foreground text-xs">ไปที่เมนู 'การมอบหมาย' เพื่อเชื่อมโยงคนงานที่พร้อมเข้ากับโครงการของลูกค้า</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-          <CardFooter className="pt-0 justify-end">
-            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
-              <a href="/assignments">ไปยังเมนูการมอบหมายงาน (Assignments) <ArrowRight className="h-4 w-4" /></a>
-            </Button>
-          </CardFooter>
         </Card>
       </div>
     </AppShell>

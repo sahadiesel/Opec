@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -69,6 +68,7 @@ export default function AssignmentsPage() {
   const wavesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'waves') : null), [firestore, isAuthorized]);
   const { data: allWaves } = useCollection<Wave>(wavesQuery as any);
 
+  // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
   const workersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'workers') : null), [firestore, isAuthorized]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
@@ -178,10 +178,10 @@ export default function AssignmentsPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <UserPlus className="h-8 w-8" /> การมอบหมายงาน (Assignments)
+            <UserPlus className="h-8 w-8" /> การมอบหมายลูกจ้าง (Worker Assignments)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้กำหนดว่า worker คนใดจะไปทำงานในตำแหน่งใด ภายใต้ Customer PO และ Wave ใด
+            กำหนดรายชื่อ <b>ลูกจ้างหน้างาน (Field Workers)</b> เข้าสู่โครงการและรอบการทำงาน (Wave)
           </p>
         </div>
 
@@ -193,41 +193,28 @@ export default function AssignmentsPage() {
           </div>
         ) : (
           <>
-            <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
-              <AlertTriangle className="h-5 w-5 text-amber-600" />
-              <AlertTitle className="font-bold text-lg text-amber-900">ระเบียบความพร้อมนอกชายฝั่ง (Offshore Readiness Policy)</AlertTitle>
-              <AlertDescription className="text-sm">
-                Worker จะไม่สามารถ Mobilize ได้ หากเอกสารหรืออุปกรณ์ยังไม่พร้อมตามเกณฑ์ที่กำหนด
-              </AlertDescription>
-            </Alert>
-
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="ค้นหาตามคนงาน, Wave หรือรหัส PO..." className="pl-9 h-11" />
+                  <Input placeholder="ค้นหาตามลูกจ้าง, Wave หรือรหัส PO..." className="pl-9 h-11" />
                 </div>
                 <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
               </div>
               <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogTrigger asChild>
                   <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
-                    <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (New Assignment)
+                    <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (Field Assignment)
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>สร้างการมอบหมายงาน</DialogTitle>
-                    <DialogDescription>เลือกคนงานและเชื่อมต่อเข้ากับรอบการทำงาน (Wave) ของโครงการ</DialogDescription>
+                    <DialogTitle>มอบหมายงาน (Field Crew Assignment)</DialogTitle>
+                    <DialogDescription>เลือกคนงานหน้างานและเชื่อมต่อเข้ากับรอบการทำงาน (Wave) ของโครงการ</DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                     <div className="space-y-2 md:col-span-2">
-                      <Label>เลขที่การมอบหมาย (Internal Ref)</Label>
-                      <Input value={getPreviewPattern('assignment')} disabled className="bg-muted/50 font-mono font-bold text-primary" />
-                      <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>เลือกรอบการทำงาน (Active Wave)</Label>
+                      <Label className="font-bold">เลือกรอบการทำงาน (Active Wave)</Label>
                       <Select onValueChange={setSelectedWaveId}>
                         <SelectTrigger className="h-11"><SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." /></SelectTrigger>
                         <SelectContent>
@@ -238,22 +225,23 @@ export default function AssignmentsPage() {
                       </Select>
                     </div>
                     <div className="space-y-2 md:col-span-2">
-                      <Label>เลือกคนงานที่มีความพร้อม</Label>
+                      <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
                       <Select onValueChange={setSelectedWorkerId}>
-                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
+                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงาน (Field Workforce only)..." /></SelectTrigger>
                         <SelectContent>
                           {allWorkers?.map(w => (
-                            <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName}</SelectItem>
+                            <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      <p className="text-[10px] text-muted-foreground italic">* เฉพาะรายชื่อจากฐานข้อมูล Worker (Field labor) เท่านั้นที่จะแสดงที่นี่</p>
                     </div>
                     <div className="space-y-2">
-                      <Label>วันที่เริ่มงาน (Start Date)</Label>
+                      <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>
                       <Input type="date" className="h-11" value={startDate} onChange={e => setStartDate(e.target.value)} />
                     </div>
                     <div className="space-y-2">
-                      <Label>วันที่สิ้นสุดงาน (End Date)</Label>
+                      <Label className="font-bold">วันที่สิ้นสุดงาน (End Date)</Label>
                       <Input type="date" className="h-11" value={endDate} onChange={e => setEndDate(e.target.value)} />
                     </div>
                   </div>
@@ -276,7 +264,7 @@ export default function AssignmentsPage() {
                   <Table>
                     <TableHeader className="bg-muted/50">
                       <TableRow>
-                        <TableHead className="font-bold py-4 pl-6">เลขที่ / คนงาน</TableHead>
+                        <TableHead className="font-bold py-4 pl-6">เลขที่ / ลูกจ้างหน้างาน</TableHead>
                         <TableHead className="font-bold">Wave & โครงการ</TableHead>
                         <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
                         <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>

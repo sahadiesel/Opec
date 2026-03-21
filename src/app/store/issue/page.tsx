@@ -18,7 +18,8 @@ import {
   Inbox,
   FileText,
   AlertTriangle,
-  PackageOpen
+  PackageOpen,
+  ShieldAlert
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { collection, doc, query, where, getDocs, updateDoc, increment, writeBatch } from 'firebase/firestore';
@@ -52,7 +53,7 @@ export default function IssueItemsPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  // Data Queries
+  // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
@@ -209,17 +210,17 @@ export default function IssueItemsPage() {
           <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
           <div className="flex-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <PackageMinus className="h-8 w-8 text-orange-600" /> เบิกของ / จ่ายของ (Issue to Worker)
+              <PackageMinus className="h-8 w-8 text-orange-600" /> เบิกอุปกรณ์ให้ลูกจ้างหน้างาน (Issue to Field Worker)
             </h1>
-            <p className="text-muted-foreground text-lg">ใช้สำหรับเบิก PPE หรือเครื่องมือจากคลังไปให้ลูกจ้าง โดยต้องผูกกับ Assignment และ Wave</p>
+            <p className="text-muted-foreground text-lg">ใช้สำหรับเบิก PPE หรือเครื่องมือให้ <b>ลูกจ้างหน้างาน (Field Workforce)</b> โดยต้องผูกกับ Assignment และ Wave</p>
           </div>
         </div>
 
         <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
-          <AlertTriangle className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold uppercase tracking-wider">นโยบายการเบิกอุปกรณ์ (Compliance Warning)</AlertTitle>
+          <ShieldAlert className="h-5 w-5 text-amber-600" />
+          <AlertTitle className="font-bold uppercase tracking-wider">นโยบายการเบิกจ่ายพัสดุ (Field Issue Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            ระบบจะอนุญาตให้เบิกเฉพาะอุปกรณ์ที่กำหนดไว้ใน <b>Position Requirement</b> เท่านั้น เพื่อควบคุมต้นทุนและมาตรฐานความปลอดภัย
+            ระบบอนุญาตให้เบิกพัสดุให้เฉพาะผู้ที่มีรายชื่อในฐานข้อมูล <b>ลูกจ้างหน้างาน (Field Workers)</b> เท่านั้น พนักงานบริษัท (Office Staff) ไม่ได้รับอนุญาตให้ใช้ใบเบิกในหมวดนี้
           </AlertDescription>
         </Alert>
 
@@ -229,27 +230,27 @@ export default function IssueItemsPage() {
             <Card className="shadow-md">
               <CardHeader className="border-b bg-muted/20">
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Inbox className="h-5 w-5 text-primary" /> ข้อมูลการเบิก (Issuance Context)
+                  <Inbox className="h-5 w-5 text-primary" /> เลือกคนงานและงาน (Field Recipient Context)
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label className="font-bold">เลือกคนงาน (Select Worker)</Label>
+                    <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
                     <Select onValueChange={setSelectedWorkerId} value={selectedWorkerId}>
-                      <SelectTrigger className="h-11"><SelectValue placeholder="พิมพ์เพื่อค้นหาคนงาน..." /></SelectTrigger>
+                      <SelectTrigger className="h-11"><SelectValue placeholder="พิมพ์เพื่อค้นหาลูกจ้างหน้างาน..." /></SelectTrigger>
                       <SelectContent>
                         {allWorkers?.map(w => (
-                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.thaiNationalId})</SelectItem>
+                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="font-bold">เลือกงาน (Select Assignment)</Label>
+                    <Label className="font-bold">เลือกงานที่มอบหมาย (Assignment)</Label>
                     <Select onValueChange={setSelectedAsgnId} value={selectedAsgnId} disabled={!selectedWorkerId}>
-                      <SelectTrigger className="h-11"><SelectValue placeholder="เลือกงานที่คนงานกำลังรับผิดชอบ..." /></SelectTrigger>
+                      <SelectTrigger className="h-11"><SelectValue placeholder="เลือกงานโครงการที่คนงานกำลังทำ..." /></SelectTrigger>
                       <SelectContent>
                         {assignments?.map(a => (
                           <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.deploymentStatus})</SelectItem>
@@ -448,18 +449,6 @@ export default function IssueItemsPage() {
                   บันทึกโดย: {currentUser.displayName}
                 </p>
               </CardFooter>
-            </Card>
-
-            <Card className="bg-primary/5 border-dashed border-2">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-bold uppercase flex items-center gap-2 text-primary">
-                  <Info className="h-4 w-4" /> สรุป Position Match
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-[10px] text-muted-foreground leading-relaxed">
-                ขณะนี้คุณกำลังเบิกอุปกรณ์ภายใต้ข้อกำหนดของตำแหน่ง <b>{position?.positionName || '...'}</b> 
-                ระบบได้กรองเฉพาะ PPE ({posPPE.length}) และ เครื่องมือ ({posTools.length}) ที่มีสิทธิ์เบิกได้ตามสัญญา
-              </CardContent>
             </Card>
           </div>
         </div>

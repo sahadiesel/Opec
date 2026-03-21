@@ -25,7 +25,8 @@ import {
   XCircle,
   Clock,
   Building2,
-  Briefcase
+  Briefcase,
+  ShieldAlert
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
@@ -63,6 +64,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
 
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // STRICT ENFORCEMENT: Only from 'office_staff' collection
   const staffQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'office_staff') : null), [firestore]);
   const { data: allStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
@@ -95,6 +97,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
       const batch = writeBatch(firestore);
       const linesCol = collection(firestore, 'office_payroll_runs', id, 'lines');
       
+      // ONLY Internal Office Staff
       const activeStaff = allStaff.filter(s => s.status === 'ACTIVE');
       let totalGross = 0;
       let totalNet = 0;
@@ -175,7 +178,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Office Payroll Detail (งวดเงินเดือนออฟฟิศ)</h1>
+              <h1 className="text-2xl font-bold tracking-tight">Office Payroll Details (การจ่ายเงินพนักงานบริษัท)</h1>
               <p className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -191,19 +194,19 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           </div>
         </div>
 
-        {isLocked && (
-          <Alert className="bg-slate-100 border-slate-300 shadow-sm">
-            <ShieldCheck className="h-5 w-5 text-primary" />
-            <AlertTitle className="font-bold">LOCKED - Read Only Access</AlertTitle>
-            <AlertDescription>งวดการจ่ายนี้ถูกล็อกและผ่านการเบิกจ่ายโดยฝ่ายการเงินเรียบร้อยแล้ว</AlertDescription>
-          </Alert>
-        )}
+        <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
+          <ShieldAlert className="h-5 w-5 text-blue-600" />
+          <AlertTitle className="font-bold">ระบบจ่ายเงินพนักงานภายใน (Internal Staff Payroll)</AlertTitle>
+          <AlertDescription className="text-sm">
+            งวดการจ่ายนี้สำหรับ <b>พนักงานออฟฟิศ (Office Staff)</b> เท่านั้น รายการนี้จะไม่รวมลูกจ้างหน้างาน (Field Workers) และไม่เกี่ยวข้องกับระบบ Billing ลูกค้า
+          </AlertDescription>
+        </Alert>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="จำนวนพนักงาน" value={`${run.staffCount} คน`} sub="Active Office Staff" icon={Users} colorClass="border-l-blue-600" />
-          <StatCard title="ยอดจ่ายรวม (Gross)" value={`฿${run.grossAmount.toLocaleString()}`} sub="Base + Allowances" icon={Calculator} colorClass="border-l-amber-500" />
-          <StatCard title="หักภาษี/SSO" value={`฿${run.totalDeductions.toLocaleString()}`} sub="Total Deductions" icon={TrendingUp} colorClass="border-l-red-500" />
-          <StatCard title="ยอดจ่ายสุทธิ (Net)" value={`฿${run.netAmount.toLocaleString()}`} sub="Total Payable" icon={Coins} colorClass="border-l-green-600" />
+          <StatCard title="จำนวนพนักงาน" value={`${run.staffCount} คน`} sub="Internal Office Staff" icon={Users} colorClass="border-l-blue-600" />
+          <StatCard title="ยอดจ่ายรวม (Gross)" value={`฿${run.grossAmount.toLocaleString()}`} sub="Base Salary + Fixed Allowances" icon={Calculator} colorClass="border-l-amber-500" />
+          <StatCard title="หักภาษี/SSO" value={`฿${run.totalDeductions.toLocaleString()}`} sub="Statutory Deductions" icon={TrendingUp} colorClass="border-l-red-500" />
+          <StatCard title="ยอดจ่ายสุทธิ (Net)" value={`฿${run.netAmount.toLocaleString()}`} sub="Net Staff Payable" icon={Coins} colorClass="border-l-green-600" />
         </div>
 
         <Tabs defaultValue="lines" className="w-full">
@@ -219,8 +222,8 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
-                  <CardTitle className="text-lg">รายการจ่ายเงินพนักงาน (HR Preparation)</CardTitle>
-                  <CardDescription>ฝ่ายบุคคลเตรียมรายการจากฐานข้อมูลพนักงานออฟฟิศ</CardDescription>
+                  <CardTitle className="text-lg">รายการจ่ายเงินพนักงานบริษัท (Internal Settlement)</CardTitle>
+                  <CardDescription>สรุปยอดจ่ายตามฐานข้อมูลพนักงานออฟฟิศส่วนกลาง</CardDescription>
                 </div>
                 {!isLocked && (
                   <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">

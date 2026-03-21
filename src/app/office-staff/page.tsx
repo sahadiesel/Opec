@@ -17,7 +17,8 @@ import {
   Calendar,
   AlertCircle,
   Info,
-  Trash2
+  Trash2,
+  ShieldAlert
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { OfficeStaff, User, StaffStatus, EmploymentType } from '@/lib/types';
@@ -97,18 +98,18 @@ export default function OfficeStaffPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <UserSearch className="h-8 w-8" /> พนักงานออฟฟิศ (Office Staff)
+            <UserSearch className="h-8 w-8" /> พนักงานออฟฟิศ (Office Staff Directory)
           </h1>
           <p className="text-muted-foreground text-lg">
-            จัดการข้อมูลพนักงานออฟฟิศ เช่น แผนก ตำแหน่ง เงินเดือน และสถานะการจ้างงาน
+            จัดการข้อมูลพนักงานบริษัทส่วนกลาง (Internal Employees) รวมถึงตำแหน่งและฐานเงินเดือนรายเดือน
           </p>
         </div>
 
         <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
-          <AlertCircle className="h-5 w-5 text-blue-600" />
-          <AlertTitle className="font-bold text-lg">ระบบจัดการพนักงานภายใน (Internal Staff Policy)</AlertTitle>
+          <ShieldAlert className="h-5 w-5 text-blue-600" />
+          <AlertTitle className="font-bold text-lg">นโยบายการแยกข้อมูลพนักงาน (Strict Data Separation)</AlertTitle>
           <AlertDescription className="text-sm">
-            ข้อมูลพนักงานออฟฟิศจะถูกใช้ในระบบเงินเดือน Office Payroll กรุณาตรวจสอบเลขที่บัญชีธนาคารและฐานเงินเดือนให้ถูกต้อง
+            ระบบแยกฐานข้อมูลพนักงานออฟฟิศ (Office Staff) ออกจากคนงานหน้างาน (Field Workers) อย่างเด็ดขาด <b>ห้ามใช้ประวัติในหมวดนี้สำหรับการมอบหมายงาน (Assignment) เข้าโครงการของลูกค้า</b>
           </AlertDescription>
         </Alert>
 
@@ -147,7 +148,7 @@ export default function OfficeStaffPage() {
             </Select>
           </div>
           <Button className="gap-2 h-11 px-6 bg-primary font-bold shadow-md" onClick={() => router.push('/office-staff/new')}>
-            <Plus className="h-5 w-5" /> เพิ่มพนักงาน (Add Staff)
+            <Plus className="h-5 w-5" /> เพิ่มพนักงานออฟฟิศ (Add Staff)
           </Button>
         </div>
 
@@ -232,8 +233,8 @@ export default function OfficeStaffPage() {
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-blue-100 p-2 rounded text-blue-700 font-bold">1</div>
                 <div>
-                  <p className="font-bold">แยกประเภทพนักงาน (Staff Separation)</p>
-                  <p className="text-muted-foreground text-xs"><b>Worker</b> = ลูกจ้าง offshore | <b>Office Staff</b> = พนักงานบริษัท (ห้ามนำมาคำนวณปนกันในระบบจ่ายเงิน)</p>
+                  <p className="font-bold">ระบบแยกประเภทบุคลากร (Staff Separation)</p>
+                  <p className="text-muted-foreground text-xs"><b>Worker</b> = ลูกจ้าง offshore (Field labor) | <b>Office Staff</b> = พนักงานบริษัทส่วนกลาง ห้ามใช้ระบบลงเวลาร่วมกัน</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">

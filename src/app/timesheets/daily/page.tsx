@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -24,7 +23,8 @@ import {
   Loader2,
   Trash2,
   Grid3X3,
-  ArrowRight
+  ArrowRight,
+  ShieldAlert
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -77,6 +77,7 @@ export default function DailyTimesheetsPage() {
   }, [firestore]);
   const { data: timesheets, isLoading: isTsLoading } = useCollection<DailyTimesheet>(tsQuery as any);
 
+  // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
   const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
@@ -149,7 +150,7 @@ export default function DailyTimesheetsPage() {
               <Clock className="h-8 w-8" /> ประวัติการลงเวลา (Timesheet History)
             </h1>
             <p className="text-muted-foreground text-lg italic">
-              ตรวจสอบและติดตามสถานะใบลงเวลาทำงานรายวันของคนงานทั้งหมด
+              ตรวจสอบและติดตามสถานะใบลงเวลาทำงานรายวันของ <b>ลูกจ้างหน้างาน (Field Workers)</b>
             </p>
           </div>
           
@@ -167,8 +168,8 @@ export default function DailyTimesheetsPage() {
               </DialogTrigger>
               <DialogContent className="max-w-xl">
                 <DialogHeader>
-                  <DialogTitle>บันทึกเวลาทำงานรายวัน (Manual Entry)</DialogTitle>
-                  <DialogDescription>ใช้ในกรณีพิเศษที่ไม่ต้องการบันทึกผ่านหน้า Wave Board</DialogDescription>
+                  <DialogTitle>บันทึกเวลาทำงานรายวัน (Worker Timesheet)</DialogTitle>
+                  <DialogDescription>บันทึกเวลาทำงานรายวันสำหรับลูกจ้างหน้างาน</DialogDescription>
                 </DialogHeader>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                   <div className="space-y-2">
@@ -187,12 +188,12 @@ export default function DailyTimesheetsPage() {
                     </Select>
                   </div>
                   <div className="space-y-2 md:col-span-2">
-                    <Label className="font-bold">เลือกคนงาน (Worker) *</Label>
+                    <Label className="font-bold">เลือกคนงานหน้างาน (Field Worker) *</Label>
                     <Select onValueChange={v => setNewTs({...newTs, workerId: v, assignmentId: ''})}>
-                      <SelectTrigger><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="ค้นหาลูกจ้างหน้างาน (Field only)..." /></SelectTrigger>
                       <SelectContent>
                         {workers?.map(w => (
-                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName}</SelectItem>
+                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -236,22 +237,13 @@ export default function DailyTimesheetsPage() {
           </div>
         </div>
 
-        <Card className="bg-blue-50 border-blue-200 shadow-sm border-l-8 border-l-blue-600">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div className="flex items-start gap-3">
-              <div className="bg-white p-2 rounded-full shadow-sm">
-                <Grid3X3 className="h-6 w-6 text-blue-600" />
-              </div>
-              <div className="space-y-1">
-                <p className="font-black text-blue-900 leading-none">แนะนำการลงเวลาแบบ Wave-Based</p>
-                <p className="text-xs text-blue-700">สำหรับการลงเวลาคนงานจำนวนมาก (30-40 คน) แนะนำให้ใช้หน้า Wave Daily Board เพื่อความรวดเร็วและแม่นยำ</p>
-              </div>
-            </div>
-            <Button variant="outline" className="bg-white text-blue-700 hover:bg-blue-100 font-bold" asChild>
-              <Link href="/timesheets/wave-board">ไปที่ Wave Board <ArrowRight className="h-4 w-4 ml-2" /></Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
+          <ShieldAlert className="h-5 w-5 text-amber-600" />
+          <AlertTitle className="font-bold">ข้อควรระวัง (Data Integrity Rule)</AlertTitle>
+          <AlertDescription className="text-sm">
+            ระบบลงเวลานี้ใช้สำหรับ <b>ลูกจ้างหน้างาน (Field Workers)</b> เพื่อคำนวณรายรับโครงการและจ่ายเงินเดือนคนงาน ห้ามนำพนักงานออฟฟิศมาบันทึกเวลาในส่วนนี้
+          </AlertDescription>
+        </Alert>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
