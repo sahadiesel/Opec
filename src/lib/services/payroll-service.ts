@@ -1,3 +1,4 @@
+
 'use client';
 
 import { 
@@ -39,8 +40,8 @@ export class PayrollService {
   }
 
   /**
-   * Generates a new Payroll Batch from client-approved timesheets.
-   * Snapshots worker data and rates to ensure historical stability.
+   * Generates a new Payroll Batch from approved timesheets.
+   * Supports both digital (CLIENT_APPROVED) and manual (VERIFIED_PAPER) approvals.
    * TRANSITION: Marks source timesheets as LOCKED to prevent double processing.
    */
   async generatePayrollBatch(
@@ -53,12 +54,12 @@ export class PayrollService {
     if (!periodSnap.exists()) throw new Error('Payroll period not found');
     const period = periodSnap.data() as PayrollPeriod;
 
-    // RULE: Only include Client Approved timesheets in payroll.
+    // RULE: Only include approved timesheets in payroll (Digital or Paper-verified).
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
       where('date', '<=', period.endDate),
-      where('status', '==', 'CLIENT_APPROVED')
+      where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER'])
     );
     const tsSnap = await getDocs(tsQuery);
     let timesheets = tsSnap.docs.map(d => ({ ...d.data(), id: d.id } as DailyTimesheet));
@@ -68,7 +69,7 @@ export class PayrollService {
     }
 
     if (timesheets.length === 0) {
-      throw new Error('No client-approved timesheets found for this period');
+      throw new Error('No approved timesheets found for this period');
     }
 
     // Load master rules for calculation

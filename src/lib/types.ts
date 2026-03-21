@@ -511,13 +511,27 @@ export interface DailyTimesheet {
   quantityOverride?: number;
   remark?: string;
   status: DailyTimesheetStatus;
+  // Metadata for Paper-first/Portal flow
+  approvalSource?: 'PORTAL' | 'PAPER';
+  evidenceConfirmedBy?: string;
+  evidenceConfirmedAt?: number;
+  clientApprovedBy?: string;
+  clientApprovedAt?: number;
   createdAt: number;
   updatedAt: number;
   lockedAt?: number;
   lockedBy?: string;
 }
 
-export type DailyTimesheetStatus = 'DRAFT' | 'SUBMITTED' | 'OPS_REVIEWED' | 'CLIENT_APPROVED' | 'LOCKED' | 'REJECTED' | 'CORRECTION_REQUIRED';
+export type DailyTimesheetStatus = 
+  | 'DRAFT' 
+  | 'SUBMITTED' 
+  | 'OPS_REVIEWED' 
+  | 'CLIENT_APPROVED' 
+  | 'VERIFIED_PAPER' 
+  | 'LOCKED' 
+  | 'REJECTED' 
+  | 'CORRECTION_REQUIRED';
 
 export type RateConditionEventType = 
   | 'work_day' 

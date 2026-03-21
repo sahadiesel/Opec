@@ -58,10 +58,14 @@ export const DailyTimesheetSchema = z.object({
     'SUBMITTED', 
     'OPS_REVIEWED', 
     'CLIENT_APPROVED', 
+    'VERIFIED_PAPER',
     'LOCKED', 
     'REJECTED', 
     'CORRECTION_REQUIRED'
   ]),
+  approvalSource: z.enum(['PORTAL', 'PAPER']).optional().nullable(),
+  evidenceConfirmedBy: z.string().optional().nullable(),
+  evidenceConfirmedAt: z.number().optional().nullable(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

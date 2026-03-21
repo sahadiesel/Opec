@@ -56,7 +56,7 @@ export class TimesheetService {
    * Business Control: Defines states that are considered finalized for financial use.
    */
   isFinalized(status: DailyTimesheetStatus): boolean {
-    return ['CLIENT_APPROVED', 'LOCKED'].includes(status);
+    return ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED'].includes(status);
   }
 
   /**
@@ -201,7 +201,7 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Submitted daily log for review'
+      afterSummary: 'Submitted daily log for internal review'
     });
   }
 
@@ -218,7 +218,27 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Operations reviewed and submitted to client'
+      afterSummary: 'Operations reviewed and internally approved'
+    });
+  }
+
+  async markAsVerifiedPaper(id: string, user: User) {
+    const docRef = doc(this.getCollection(), id);
+    await updateDoc(docRef, {
+      status: 'VERIFIED_PAPER',
+      approvalSource: 'PAPER',
+      evidenceConfirmedBy: user.displayName,
+      evidenceConfirmedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'VERIFY_PAPER',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      timesheetId: id,
+      sourceModule: 'operations',
+      afterSummary: 'Verified client signature from paper evidence'
     });
   }
 }

@@ -26,7 +26,8 @@ import {
   Grid3X3,
   ArrowRight,
   ShieldAlert,
-  Send
+  Send,
+  FileCheck
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
@@ -136,8 +137,21 @@ export default function DailyTimesheetsPage() {
     if (!firestore || !currentUser) return;
     try {
       const service = new TimesheetService(firestore);
-      await service.markAsReviewed(tsId, currentUser);
-      toast({ title: "ส่งข้อมูลตรวจรับสำเร็จ", description: "รายการถูกส่งไปยัง Client Portal แล้ว" });
+      await service.submitTimesheet(tsId, currentUser);
+      toast({ title: "ส่งข้อมูลตรวจรับสำเร็จ", description: "รายการถูกส่งไปยังผู้จัดการเพื่อตรวจสอบภายใน" });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Error", description: e.message });
+    }
+  };
+
+  const handleVerifyPaper = async (tsId: string) => {
+    if (!firestore || !currentUser) return;
+    if (!confirm('ยืนยันว่าได้รับเอกสารที่มีลายเซ็นลูกค้าแล้วใช่หรือไม่?')) return;
+    
+    try {
+      const service = new TimesheetService(firestore);
+      await service.markAsVerifiedPaper(tsId, currentUser);
+      toast({ title: "ยืนยันหลักฐานกระดาษสำเร็จ", description: "รายการนี้พร้อมสำหรับการสรุปยอด Payroll/Billing แล้ว" });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Error", description: e.message });
     }
@@ -149,6 +163,7 @@ export default function DailyTimesheetsPage() {
       case 'SUBMITTED': return <Badge variant="outline" className="bg-blue-50 text-blue-700">SUBMITTED</Badge>;
       case 'OPS_REVIEWED': return <Badge variant="outline" className="bg-amber-50 text-amber-700">OPS REVIEWED</Badge>;
       case 'CLIENT_APPROVED': return <Badge className="bg-green-600">CLIENT APPROVED</Badge>;
+      case 'VERIFIED_PAPER': return <Badge className="bg-blue-700 text-white font-bold"><FileCheck className="h-3 w-3 mr-1" /> VERIFIED PAPER</Badge>;
       case 'LOCKED': return <Badge className="bg-primary font-black uppercase"><Clock className="h-3 w-3 mr-1" /> LOCKED</Badge>;
       case 'REJECTED': return <Badge variant="destructive">REJECTED</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
@@ -253,13 +268,13 @@ export default function DailyTimesheetsPage() {
           </div>
         </div>
 
-        <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
-          <ShieldAlert className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold">นโยบายการตรวจสอบ (Review Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            รายการที่อยู่ในสถานะ DRAFT จะยังไม่ปรากฏในหน้า Client Portal กรุณากด <b>"ส่งตรวจ"</b> เพื่อให้ลูกค้าพิจารณาและรับรองชั่วโมงทำงาน
-          </AlertDescription>
-        </Alert>
+        <PageGuidance 
+          tips={[
+            "ระบบรองรับทั้งการอนุมัติผ่าน Portal และการยืนยันจากหลักฐานกระดาษที่มีลายเซ็นลูกค้า",
+            "ลำดับงาน: บันทึกร่าง -> ส่งตรวจภายใน -> ผู้จัดการอนุมัติภายใน -> ยืนยันลายเซ็นลูกค้า (Digital/Paper)",
+            "เฉพาะรายการที่สถานะเป็น CLIENT_APPROVED หรือ VERIFIED_PAPER เท่านั้นที่จะนำไปจ่ายเงินและวางบิล"
+          ]}
+        />
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
@@ -282,6 +297,7 @@ export default function DailyTimesheetsPage() {
                   {timesheets?.map((ts) => {
                     const worker = workers?.find(w => w.id === ts.workerId);
                     const canSubmit = ts.status === 'DRAFT' || ts.status === 'REJECTED';
+                    const canVerifyPaper = ts.status === 'OPS_REVIEWED';
                     
                     return (
                       <TableRow key={ts.id} className="hover:bg-muted/30 transition-colors">
@@ -317,7 +333,14 @@ export default function DailyTimesheetsPage() {
                                 <Send className="h-3 w-3" /> ส่งตรวจ
                               </Button>
                             )}
-                            <Button variant="ghost" size="icon" className="h-8 w-8"><ChevronRight className="h-4 w-4" /></Button>
+                            {canVerifyPaper && (
+                              <Button size="sm" variant="outline" className="h-8 gap-1 text-green-700 border-green-200 bg-green-50 font-bold" onClick={() => handleVerifyPaper(ts.id)}>
+                                <FileCheck className="h-3 w-3" /> ยืนยันกระดาษ
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+                              <Link href={`/timesheets/daily/${ts.id}`}><ChevronRight className="h-4 w-4" /></Link>
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
