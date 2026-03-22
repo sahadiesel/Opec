@@ -1,9 +1,23 @@
+
 /**
  * @fileOverview OPEC OpsFlow - Centralized Permissions & Authorization Source of Truth.
  * Handles data normalization for single/multi-role users and provides consistent helpers.
  */
 
 import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel, RoleType } from './types';
+
+/**
+ * List of fields that govern system access.
+ * These should ONLY be modified by a system_admin.
+ */
+export const SECURITY_SENSITIVE_FIELDS = [
+  'roleId', 'roleIds', 
+  'assignedRoleKey', 'assignedRoleKeys', 
+  'permissionProfileKey', 'permissionProfileKeys', 
+  'department', 'level', 
+  'isActive', 'approvalStatus',
+  'customerId', 'userType', 'portalRole', 'mustResetPassword'
+];
 
 /**
  * Registry of all modules in the system.

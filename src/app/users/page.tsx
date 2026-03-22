@@ -68,7 +68,7 @@ import {
   deriveBusinessRoleKeys,
   getMigratedUserFields
 } from '@/lib/auth-mapping';
-import { getBaselineProfiles } from '@/lib/permissions';
+import { getBaselineProfiles, SECURITY_SENSITIVE_FIELDS } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 
 export default function UsersPage() {
@@ -160,21 +160,38 @@ export default function UsersPage() {
     setSelectedUser(null);
   };
 
+  /**
+   * Secured Save Action: 
+   * Construct update object and strictly filter sensitive fields if not a system_admin.
+   */
   const handleSaveUser = async () => {
-    if (!firestore || !selectedUser || editedRoles.length === 0) return;
+    if (!firestore || !selectedUser || editedRoles.length === 0 || !currentUser) return;
     setIsSaving(true);
 
     try {
       const userRef = doc(firestore, 'users', selectedUser.id);
-      const mappedFields = getFieldsForBusinessRoles(editedRoles);
       
-      const updateData: Partial<User> = {
-        ...mappedFields,
-        approvalStatus: editedStatus,
-        isActive: editedStatus === 'ACTIVE',
+      // Constructing update object
+      let updateData: any = {
         notes: notes,
         updatedAt: Date.now()
       };
+
+      // ONLY system_admin can modify roles and statuses.
+      // This is a client-side safeguard mirrored in Firestore Rules.
+      if (isUserAdmin) {
+        const mappedFields = getFieldsForBusinessRoles(editedRoles);
+        updateData = {
+          ...updateData,
+          ...mappedFields,
+          approvalStatus: editedStatus,
+          isActive: editedStatus === 'ACTIVE',
+        };
+      } else {
+        // If somehow a non-admin gets here (e.g. self-editing from user list)
+        // We strictly strip any sensitive fields.
+        SECURITY_SENSITIVE_FIELDS.forEach(f => delete updateData[f]);
+      }
 
       updateDocumentNonBlocking(userRef, updateData);
       
@@ -184,7 +201,7 @@ export default function UsersPage() {
         setSelectedUser(null);
         toast({ 
           title: "บันทึกข้อมูลสำเร็จ (Saved)", 
-          description: `อัปเดตสิทธิ์ของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
+          description: `อัปเดตข้อมูลของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
         });
       }, 150);
 
@@ -240,7 +257,7 @@ export default function UsersPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (!firestore) return;
+    if (!firestore || !isUserAdmin) return;
     if (confirm('ยืนยันการลบผู้ใช้งาน?')) {
       deleteDocumentNonBlocking(doc(firestore, 'users', id));
       toast({ title: "ลบผู้ใช้เรียบร้อยแล้ว" });
@@ -351,7 +368,9 @@ export default function UsersPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleEditUser(u)}>แก้ไขสิทธิ์ (Edit Access)</DropdownMenuItem>
-                              <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(u.id)}>ลบผู้ใช้ (Delete User)</DropdownMenuItem>
+                              {isUserAdmin && (
+                                <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(u.id)}>ลบผู้ใช้ (Delete User)</DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -380,7 +399,11 @@ export default function UsersPage() {
               <div className="space-y-6">
                 <div className="space-y-3">
                   <Label className="font-black text-primary uppercase tracking-wider text-[10px]">1. สถานะบัญชี (Account Status)</Label>
-                  <Select value={editedStatus} onValueChange={(v: ApprovalStatus) => setEditedStatus(v)}>
+                  <Select 
+                    disabled={!isUserAdmin}
+                    value={editedStatus} 
+                    onValueChange={(v: ApprovalStatus) => setEditedStatus(v)}
+                  >
                     <SelectTrigger className="h-12 font-bold border-2">
                       <SelectValue />
                     </SelectTrigger>
@@ -401,6 +424,7 @@ export default function UsersPage() {
                         <div key={role.key} className="flex items-start space-x-3 p-2 hover:bg-white rounded transition-colors">
                           <Checkbox 
                             id={`role-${role.key}`} 
+                            disabled={!isUserAdmin}
                             checked={editedRoles.includes(role.key)}
                             onCheckedChange={() => toggleRole(role.key)}
                           />
@@ -436,6 +460,12 @@ export default function UsersPage() {
                         </div>
                       </div>
                       <Separator className="bg-primary/10" />
+                      {!isUserAdmin && (
+                        <Alert variant="destructive" className="bg-red-50 py-2 border-red-100">
+                          <AlertTriangle className="h-3 w-3" />
+                          <AlertDescription className="text-[9px] font-bold">เฉพาะแอดมินเท่านั้นที่สามารถเปลี่ยนบทบาทได้</AlertDescription>
+                        </Alert>
+                      )}
                       <div className="p-3 bg-white/50 rounded border border-dashed border-blue-200">
                         <p className="text-[10px] text-blue-800 italic leading-relaxed">
                           <Info className="h-3 w-3 inline mr-1" />

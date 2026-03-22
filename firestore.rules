@@ -62,13 +62,33 @@ service cloud.firestore {
       return isClient() && getUserData().customerId == cid;
     }
 
+    /** 
+     * Security Safeguard: Identify fields that control access. 
+     * Only system_admin can modify these.
+     */
+    function isModifyingSecurityFields() {
+      let securityFields = [
+        'roleId', 'roleIds', 
+        'assignedRoleKey', 'assignedRoleKeys', 
+        'permissionProfileKey', 'permissionProfileKeys', 
+        'department', 'level', 
+        'isActive', 'approvalStatus',
+        'customerId', 'userType', 'portalRole'
+      ];
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(securityFields);
+    }
+
     // --- COLLECTION RULES ---
 
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isInternalStaff();
       allow create: if isOwner(userId) || hasRole('system_admin');
-      allow update: if isOwner(userId) || hasRole('system_admin');
+      
+      // PREVENT ESCALATION: Owners cannot change their own roles/status.
+      // Only system_admin has full write access to security fields.
+      allow update: if (isOwner(userId) && !isModifyingSecurityFields()) || hasRole('system_admin');
+      
       allow delete: if hasRole('system_admin');
     }
 
