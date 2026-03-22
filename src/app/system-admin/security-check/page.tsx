@@ -19,7 +19,10 @@ import {
   Building2,
   Coins,
   ArrowRight,
-  Database
+  Database,
+  PlayCircle,
+  FlaskConical,
+  Activity
 } from 'lucide-react';
 import { User, PermissionProfile } from '@/lib/types';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
@@ -32,6 +35,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { runPermissionLogicSuite, ValidationSummary } from '@/lib/utils/permission-tester';
 
 export default function SecurityCheckPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -48,9 +52,23 @@ export default function SecurityCheckPage() {
 
   // Checklist state
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  
+  // Test Suite State
+  const [testSummary, setTestSummary] = useState<ValidationSummary | null>(null);
+  const [isRunningTests, setIsRunningTests] = useState(false);
 
   const toggleItem = (id: string) => {
     setCheckedItems(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleRunTests = () => {
+    setIsRunningTests(true);
+    // Add small delay for UX feel
+    setTimeout(() => {
+      const summary = runPermissionLogicSuite();
+      setTestSummary(summary);
+      setIsRunningTests(false);
+    }, 600);
   };
 
   if (isUserLoading || isPermLoading || !currentUser) return null;
@@ -90,9 +108,59 @@ export default function SecurityCheckPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
+            {/* Automated Logic Tests Section */}
+            <Card className="shadow-md overflow-hidden border-blue-100">
+              <CardHeader className="bg-blue-50/50 border-b border-blue-100 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2 text-blue-800">
+                    <FlaskConical className="h-5 w-5" /> ตรวจสอบตรรกะสิทธิ์อัตโนมัติ (Permission Logic Suite)
+                  </CardTitle>
+                  <CardDescription>ทดสอบการรวมสิทธิ์ (Aggregation) และการแยกแผนก (Isolation) ระดับโค้ด</CardDescription>
+                </div>
+                <Button 
+                  onClick={handleRunTests} 
+                  disabled={isRunningTests}
+                  className="bg-blue-600 hover:bg-blue-700 font-bold"
+                >
+                  {isRunningTests ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <PlayCircle className="h-4 w-4 mr-2" />}
+                  รันการทดสอบ (Run Tests)
+                </Button>
+              </CardHeader>
+              <CardContent className="p-0">
+                {!testSummary ? (
+                  <div className="py-12 text-center space-y-3">
+                    <Activity className="h-10 w-10 mx-auto text-slate-200" />
+                    <p className="text-sm text-muted-foreground italic">ยังไม่มีการทดสอบในเซสชันนี้</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    <div className="p-4 bg-slate-50 flex items-center justify-between">
+                      <span className="text-xs font-black uppercase tracking-widest text-slate-500">Test Case / Requirement</span>
+                      <Badge variant={testSummary.failed > 0 ? "destructive" : "default"} className={testSummary.failed === 0 ? "bg-green-600" : ""}>
+                        {testSummary.passed} / {testSummary.total} Passed
+                      </Badge>
+                    </div>
+                    {testSummary.results.map((res, i) => (
+                      <div key={i} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                        <div className="space-y-0.5">
+                          <p className="text-sm font-bold text-primary">{res.name}</p>
+                          <p className={`text-[10px] ${res.passed ? 'text-slate-500' : 'text-red-600 font-bold'}`}>{res.message}</p>
+                        </div>
+                        {res.passed ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <XCircle className="h-5 w-5 text-red-600" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card className="shadow-md">
               <CardHeader className="bg-primary/5 border-b">
-                <CardTitle className="text-lg flex items-center gap-2">
+                <CardTitle className="text-lg flex items-center gap-2 text-primary">
                   <Database className="h-5 w-5 text-primary" /> รายการตรวจสอบสิทธิ์ (Compliance Checklist)
                 </CardTitle>
                 <CardDescription>กรุณาตรวจสอบว่ากฎการเข้าถึงทำงานตามนโยบายบริษัท</CardDescription>
