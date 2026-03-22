@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { ShieldAlert, Lock, Mail, User, RefreshCw, UserCheck, CheckCircle2, Shield, Wrench } from 'lucide-react';
+import { ShieldAlert, Lock, Mail, User, RefreshCw, UserCheck, CheckCircle2, Shield, Wrench, Loader2 } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
 import { doc, getDoc, setDoc, collection, getDocs, limit, query } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
@@ -132,15 +132,40 @@ export default function SetupAdminPage() {
     try {
       const now = Date.now();
       
-      let dept: any = 'admin';
-      let level: any = 'admin';
+      let dept: any = 'hr';
+      let level: any = 'officer';
       
-      if (repairRole.startsWith('hr_')) {
-        dept = 'hr';
-        level = repairRole.includes('manager') ? 'manager' : 'officer';
-      } else if (repairRole.startsWith('accounting')) {
+      // Extensive mapping for all OPEC roles
+      if (repairRole === 'system_admin') {
+        dept = 'admin';
+        level = 'admin';
+      } else if (repairRole === 'accounting_manager') {
         dept = 'accounting';
-        level = repairRole.includes('manager') ? 'manager' : 'officer';
+        level = 'manager';
+      } else if (repairRole === 'accounting_officer') {
+        dept = 'accounting';
+        level = 'officer';
+      } else if (repairRole === 'hr_manager') {
+        dept = 'hr';
+        level = 'manager';
+      } else if (repairRole === 'hr_officer' || repairRole === 'payroll_officer') {
+        dept = 'hr';
+        level = 'officer';
+      } else if (repairRole === 'operations_manager') {
+        dept = 'operations';
+        level = 'manager';
+      } else if (repairRole === 'operations_officer') {
+        dept = 'operations';
+        level = 'officer';
+      } else if (repairRole === 'sales_manager') {
+        dept = 'sales';
+        level = 'manager';
+      } else if (repairRole === 'sales_officer') {
+        dept = 'sales';
+        level = 'officer';
+      } else if (repairRole === 'store_officer') {
+        dept = 'store';
+        level = 'officer';
       }
 
       const legacyRoles = getLegacyRoles(dept, level);
@@ -166,12 +191,12 @@ export default function SetupAdminPage() {
         await setDoc(doc(firestore, 'roles_system_admin', repairUid), { assignedAt: now }, { merge: true });
       }
 
-      toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว กรุณา Logout และเข้าสู่ระบบใหม่อีกครั้ง` });
+      toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว` });
       
       // Clear local storage to force refresh on next login
       localStorage.removeItem('opsflow_user');
       
-      setTimeout(() => router.push('/'), 2500);
+      setTimeout(() => router.push('/'), 2000);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error.message });
     } finally {
@@ -243,7 +268,7 @@ export default function SetupAdminPage() {
                 <Wrench className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 font-bold">Fix Permission Denied</AlertTitle>
                 <AlertDescription className="text-amber-700 text-xs leading-relaxed">
-                  หากคุณพบข้อผิดพลาด "Missing or insufficient permissions" ให้ระบุ UID ของคุณและเลือกบทบาท System Admin เพื่อซ่อมแซมสิทธิ์ในระบบฐานข้อมูล (Synchronize RoleIds)
+                  หากคุณพบข้อผิดพลาด "Missing or insufficient permissions" ให้ระบุ UID ของคุณและเลือกบทบาทที่ถูกต้องเพื่อซ่อมแซมสิทธิ์ในระบบฐานข้อมูล
                 </AlertDescription>
               </Alert>
               
@@ -267,15 +292,23 @@ export default function SetupAdminPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="system_admin">System Admin (สิทธิ์สูงสุด)</SelectItem>
-                    <SelectItem value="hr_manager">HR Manager</SelectItem>
                     <SelectItem value="accounting_manager">Accounting Manager</SelectItem>
+                    <SelectItem value="accounting_officer">Accounting Officer</SelectItem>
+                    <SelectItem value="hr_manager">HR Manager</SelectItem>
+                    <SelectItem value="hr_officer">HR Officer</SelectItem>
+                    <SelectItem value="payroll_officer">Payroll Officer (HR)</SelectItem>
+                    <SelectItem value="operations_manager">Operations Manager</SelectItem>
+                    <SelectItem value="operations_officer">Operations Officer</SelectItem>
+                    <SelectItem value="sales_manager">Sales Manager</SelectItem>
+                    <SelectItem value="sales_officer">Sales Officer</SelectItem>
+                    <SelectItem value="store_officer">Store Officer</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-2">
               <Button onClick={handleRepair} className="w-full h-12 font-black bg-primary text-lg shadow-lg" disabled={isSubmitting || !repairUid}>
-                {isSubmitting ? <RefreshCw className="animate-spin mr-2" /> : <UserCheck className="mr-2" />}
+                {isSubmitting ? <Loader2 className="animate-spin mr-2 h-5 w-5" /> : <UserCheck className="mr-2" />}
                 ซ่อมแซมสิทธิ์บัญชีนี้ (Apply Repair)
               </Button>
               <Button variant="ghost" onClick={() => router.push('/')} className="w-full">กลับไปหน้าหลัก</Button>
