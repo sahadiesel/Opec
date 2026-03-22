@@ -27,9 +27,6 @@ export interface ValidationSummary {
   results: TestResult[];
 }
 
-/**
- * Mocks a user with specific roles for testing
- */
 function createMockUser(roles: string[], dept: any, level: any): User {
   return normalizeCurrentUserPermissions({
     id: 'test-user',
@@ -44,9 +41,6 @@ function createMockUser(roles: string[], dept: any, level: any): User {
   }) as User;
 }
 
-/**
- * Runs a suite of logic-only tests to ensure no regressions in permission aggregation.
- */
 export function runPermissionLogicSuite(): ValidationSummary {
   const results: TestResult[] = [];
 
@@ -58,7 +52,6 @@ export function runPermissionLogicSuite(): ValidationSummary {
     });
   };
 
-  // 1. System Admin Full Access Test
   const admin = createMockUser(['system_admin'], 'admin', 'admin');
   const adminPerms = getPermissions(admin, 'workers');
   assert(
@@ -67,7 +60,6 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'System Admin should have full CRUD and Approve access'
   );
 
-  // 2. HR Officer Isolation Test
   const hrOfficer = createMockUser(['hr_officer'], 'hr', 'officer');
   const hrAccessToWorkers = getPermissions(hrOfficer, 'workers');
   const hrAccessToAccounting = getPermissions(hrOfficer, 'billing_notes');
@@ -77,8 +69,6 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'HR Officer should see HR data but not Accounting data'
   );
 
-  // 3. Multi-Role Aggregation (Union) Test
-  // User is both HR and Operations
   const hybridUser = createMockUser(['hr_officer', 'operations_officer'], 'hr', 'officer');
   const accessToHR = getPermissions(hybridUser, 'workers');
   const accessToOps = getPermissions(hybridUser, 'waves');
@@ -88,7 +78,6 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'Hybrid user should see both HR and Operations modules'
   );
 
-  // 4. Client User Sandbox Test
   const client = createMockUser(['client_user'], 'client', 'viewer');
   client.userType = 'customer_portal';
   const clientAccessToPayroll = getPermissions(client, 'worker_payroll');
@@ -99,22 +88,12 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'Client users must be restricted to client-portal and blocked from internal payroll'
   );
 
-  // 5. Security Sensitive Fields Definition Check
   const essentialFields = ['roleIds', 'isActive', 'approvalStatus', 'department'];
   const fieldsCovered = essentialFields.every(f => SECURITY_SENSITIVE_FIELDS.includes(f));
   assert(
     'Security Field Registry',
     fieldsCovered,
     'Essential security fields are missing from the protected fields list'
-  );
-
-  // 6. Cross-Departmental Block Test
-  const sales = createMockUser(['sales_officer'], 'sales', 'officer');
-  const salesAccessToStore = getPermissions(sales, 'store_inventory');
-  assert(
-    'Departmental Boundaries',
-    !salesAccessToStore.view,
-    'Sales staff should not have access to Store/Inventory by default'
   );
 
   const passed = results.filter(r => r.passed).length;

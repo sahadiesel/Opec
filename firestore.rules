@@ -31,15 +31,15 @@ service cloud.firestore {
     }
 
     function isHRStaff() {
-      return hasRole('hr_manager') || hasRole('hr_officer') || hasRole('system_admin');
+      return hasRole('hr_manager') || hasRole('hr_officer') || hasRole('payroll_officer') || hasRole('system_admin');
     }
 
     function isOperationsStaff() {
-      return hasRole('operations_officer') || hasRole('operations_manager') || hasRole('system_admin');
+      return hasRole('operations_officer') || hasRole('operations_manager') || hasRole('safety_officer') || hasRole('system_admin');
     }
 
     function isAccountingStaff() {
-      return hasRole('accounting_manager') || hasRole('accounting_officer') || hasRole('system_admin');
+      return hasRole('accounting_manager') || hasRole('accounting_officer') || hasRole('finance_officer') || hasRole('system_admin');
     }
 
     function isSalesStaff() {
@@ -62,10 +62,7 @@ service cloud.firestore {
       return isClient() && getUserData().customerId == cid;
     }
 
-    /** 
-     * Security Safeguard: Identify fields that control access. 
-     * Only system_admin can modify these.
-     */
+    /** Security Safeguard: Only system_admin can modify security fields. */
     function isModifyingSecurityFields() {
       let securityFields = [
         'roleId', 'roleIds', 
@@ -73,7 +70,7 @@ service cloud.firestore {
         'permissionProfileKey', 'permissionProfileKeys', 
         'department', 'level', 
         'isActive', 'approvalStatus',
-        'customerId', 'userType', 'portalRole'
+        'customerId', 'userType', 'portalRole', 'mustResetPassword'
       ];
       return request.resource.data.diff(resource.data).affectedKeys().hasAny(securityFields);
     }
@@ -84,82 +81,23 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if isInternalStaff();
       allow create: if isOwner(userId) || hasRole('system_admin');
-      
-      // PREVENT ESCALATION: Owners cannot change their own roles/status.
-      // Only system_admin has full write access to security fields.
       allow update: if (isOwner(userId) && !isModifyingSecurityFields()) || hasRole('system_admin');
-      
       allow delete: if hasRole('system_admin');
     }
 
-    // Commercial & Sales
-    match /customers/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isSalesStaff() || isAccountingStaff();
-      
-      match /contact_persons/{cid} {
-        allow read, write: if isSalesStaff() || isAccountingStaff();
-      }
-    }
-
-    match /quotations/{id} {
-      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow write: if isSalesStaff();
-      
-      match /lines/{lid} {
-        allow read, write: if isSalesStaff();
-      }
-    }
-
-    match /main_contracts/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isSalesStaff() || isAccountingStaff();
-      
-      match /position_rates/{rid} {
-        allow read, write: if isSalesStaff() || isAccountingStaff();
-      }
-    }
-
-    match /sales_contract_terms/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isSalesStaff() || isAccountingStaff();
-    }
-
-    match /purchase_orders/{id} {
-      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow write: if isSalesStaff() || isAccountingStaff() || isOperationsStaff();
-      
-      match /po_lines/{lid} {
-        allow read, write: if isSalesStaff() || isAccountingStaff() || isOperationsStaff();
-      }
-    }
-
-    // HR & Workforce
     match /workers/{id} {
-      allow read: if isInternalStaff();
+      allow read: if isInternalStaff() || isClient();
       allow write: if isHRStaff();
-      
-      match /{allSubcollections=**} {
-        allow read, write: if isHRStaff();
-      }
     }
 
     match /positions/{id} {
-      allow read: if isInternalStaff();
+      allow read: if isInternalStaff() || isClient();
       allow write: if isHRStaff();
-      
-      match /{allSubcollections=**} {
-        allow read, write: if isHRStaff();
-      }
-    }
-
-    match /office_staff/{id} {
-      allow read, write: if isHRStaff();
     }
 
     match /labor_cost_contract_terms/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isHRStaff() || isAccountingStaff();
+      allow read: if isHRStaff() || isAccountingStaff();
+      allow write: if isHRStaff();
     }
 
     match /payroll_runs/{id} {
@@ -168,19 +106,12 @@ service cloud.firestore {
 
     match /payroll_batches/{id} {
       allow read, write: if isHRStaff() || isAccountingStaff();
-      match /lines/{lid} {
-        allow read, write: if isHRStaff() || isAccountingStaff();
-      }
     }
 
     match /office_payroll_runs/{id} {
       allow read, write: if isHRStaff() || isAccountingStaff();
-      match /lines/{lid} {
-        allow read, write: if isHRStaff() || isAccountingStaff();
-      }
     }
 
-    // Operations
     match /waves/{id} {
       allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow write: if isOperationsStaff();
@@ -191,22 +122,6 @@ service cloud.firestore {
       allow write: if isOperationsStaff() || isHRStaff();
     }
 
-    // Activity & Timesheets
-    match /daily_timesheets/{id} {
-      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow create: if isOperationsStaff() || isHRStaff();
-      allow update: if isOperationsStaff() || isHRStaff() || isAccountingStaff();
-      allow delete: if hasRole('system_admin');
-    }
-
-    match /exception_requests/{id} {
-      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
-      allow create: if isClient();
-      allow update: if isInternalStaff();
-      allow delete: if hasRole('system_admin');
-    }
-
-    // Store & Procurement
     match /vendors/{id} {
       allow read: if isInternalStaff();
       allow write: if isStoreStaff() || isAccountingStaff();
@@ -215,9 +130,6 @@ service cloud.firestore {
     match /purchases/{id} {
       allow read: if isInternalStaff();
       allow write: if isStoreStaff() || isAccountingStaff();
-      match /lines/{lid} {
-        allow read, write: if isStoreStaff() || isAccountingStaff();
-      }
     }
 
     match /store_items/{id} {
@@ -230,37 +142,34 @@ service cloud.firestore {
       allow write: if isStoreStaff();
     }
 
-    match /store_receipts/{id} {
+    match /customers/{id} {
       allow read: if isInternalStaff();
-      allow write: if isStoreStaff();
-      match /items/{iid} { allow read, write: if isStoreStaff(); }
+      allow write: if isSalesStaff() || isAccountingStaff();
     }
 
-    match /store_issue_slips/{id} {
-      allow read: if isInternalStaff();
-      allow write: if isStoreStaff();
-      match /items/{iid} { allow read, write: if isStoreStaff(); }
+    match /quotations/{id} {
+      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
+      allow write: if isSalesStaff();
     }
 
-    match /store_return_slips/{id} {
+    match /main_contracts/{id} {
       allow read: if isInternalStaff();
-      allow write: if isStoreStaff();
-      match /items/{iid} { allow read, write: if isStoreStaff(); }
+      allow write: if isSalesStaff() || isAccountingStaff();
     }
 
-    match /store_writeoffs/{id} {
+    match /sales_contract_terms/{id} {
       allow read: if isInternalStaff();
-      allow write: if isStoreStaff();
-      match /items/{iid} { allow read, write: if isStoreStaff(); }
+      allow write: if isSalesStaff() || isAccountingStaff();
     }
 
-    // Finance & Accounting
+    match /purchase_orders/{id} {
+      allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
+      allow write: if isSalesStaff() || isAccountingStaff() || isOperationsStaff();
+    }
+
     match /billing_notes/{id} {
       allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow write: if isAccountingStaff();
-      match /lines/{lid} {
-        allow read, write: if isAccountingStaff();
-      }
     }
 
     match /tax_invoices/{id} {
@@ -271,9 +180,6 @@ service cloud.firestore {
     match /receipts/{id} {
       allow read: if isInternalStaff() || isClientOf(resource.data.customerId);
       allow write: if isAccountingStaff();
-      match /allocations/{aid} {
-        allow read, write: if isAccountingStaff();
-      }
     }
 
     match /accounts_receivable/{id} {
@@ -293,21 +199,14 @@ service cloud.firestore {
       allow read, write: if isAccountingStaff();
     }
 
-    // System & Infrastructure
-    match /system/{id} {
+    match /number_sequences/{id} {
       allow read: if isSignedIn();
-      allow write: if hasRole('system_admin');
+      allow write: if isInternalStaff();
     }
 
     match /audit_logs/{id} {
-      allow read: if isInternalStaff();
+      allow read: if isSystemAdmin() || hasRole('hr_manager') || hasRole('accounting_manager');
       allow create: if isSignedIn();
-      allow update, delete: if false; // Audit logs are immutable
-    }
-
-    match /number_sequences/{id} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn(); // Transactions need to increment counters
     }
 
     match /permission_profiles/{id} {

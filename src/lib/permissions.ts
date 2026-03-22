@@ -21,7 +21,6 @@ export const SECURITY_SENSITIVE_FIELDS = [
 
 /**
  * Registry of all modules in the system.
- * These keys are used in the UI and Permission Profiles.
  */
 export const SYSTEM_MODULES = [
   { group: 'Overview', key: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Main Dashboard)' },
@@ -72,24 +71,20 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> =
 
 /**
  * Normalizes user data to ensure role arrays and status fields are populated correctly.
- * Supports backward compatibility for single-role users.
  */
 export function normalizeCurrentUserPermissions(user: any): User | null {
   if (!user) return null;
 
-  // Normalize roleIds (Canonical roles used in firestore rules)
   const roleIds = Array.isArray(user.roleIds) ? [...user.roleIds] : [];
   if (user.roleId && !roleIds.includes(user.roleId)) {
     roleIds.push(user.roleId as RoleType);
   }
 
-  // Normalize business role keys
   const assignedRoleKeys = Array.isArray(user.assignedRoleKeys) ? [...user.assignedRoleKeys] : [];
   if (user.assignedRoleKey && !assignedRoleKeys.includes(user.assignedRoleKey)) {
     assignedRoleKeys.push(user.assignedRoleKey);
   }
 
-  // Normalize profile keys
   const permissionProfileKeys = Array.isArray(user.permissionProfileKeys) ? [...user.permissionProfileKeys] : [];
   if (user.permissionProfileKey && !permissionProfileKeys.includes(user.permissionProfileKey)) {
     permissionProfileKeys.push(user.permissionProfileKey);
@@ -104,8 +99,6 @@ export function normalizeCurrentUserPermissions(user: any): User | null {
     approvalStatus: user.approvalStatus ?? (user.isActive ? 'ACTIVE' : 'PENDING')
   } as User;
 }
-
-// --- BASIC ROLE HELPERS ---
 
 /** Checks if user has a specific role (canonical or business key) */
 export function hasRole(user: User | null, roleKey: string): boolean {
@@ -125,8 +118,6 @@ export function hasRole(user: User | null, roleKey: string): boolean {
 export function hasAnyRole(user: User | null, roleKeys: string[]): boolean {
   return roleKeys.some(key => hasRole(user, key));
 }
-
-// --- DEPARTMENTAL STAFF HELPERS (Aligned with firestore.rules) ---
 
 export const isSystemAdmin = (user: User | null) => hasRole(user, 'system_admin');
 
@@ -153,12 +144,6 @@ export const isClient = (user: User | null) => {
   return user.userType === 'customer_portal' || hasAnyRole(user, ['client_user', 'client', 'client_approver', 'client_viewer']);
 };
 
-// --- CORE PERMISSION LOGIC ---
-
-/**
- * Primary helper to check permissions for a specific module.
- * Automatically resolves aliases (e.g. 'purchase_orders' resolves to 'customer_pos').
- */
 export function getPermissions(
   user: User | null, 
   rawModuleKey: string, 
@@ -169,20 +154,16 @@ export function getPermissions(
   const u = normalizeCurrentUserPermissions(user);
   if (!u || !u.isActive) return NO_ACCESS;
 
-  // 0. Resolve Aliases (e.g. Domain Name -> UI Module Key)
   const moduleKey = resolvePermissionModuleKey(rawModuleKey);
 
-  // 1. Full Admin Override
   if (isSystemAdmin(u)) {
     return FULL_ACCESS;
   }
 
-  // 2. Others must be approved
   if (u.approvalStatus !== 'ACTIVE') {
     return NO_ACCESS;
   }
 
-  // 3. Profile-based check (Aggregated)
   const profileList = Array.isArray(profiles) ? profiles : (profiles ? [profiles] : []);
   const activeProfiles = profileList.filter((p): p is PermissionProfile => !!p && p.isActive);
 
@@ -199,7 +180,6 @@ export function getPermissions(
     }, { ...NO_ACCESS });
   }
 
-  // 4. Graceful Fallback Logic (Legacy/Role-Aware)
   if (moduleKey === 'overview_dashboard') return { ...READ_ONLY, view: true };
 
   if (isClient(u)) {
@@ -210,7 +190,6 @@ export function getPermissions(
     if (['workers', 'quotations', 'customer_pos', 'main_contracts'].includes(moduleKey)) return READ_ONLY;
   }
 
-  // Departmental Fallbacks
   if (isHRStaff(u) && ['workers', 'positions', 'timesheets', 'worker_payroll', 'office_staff', 'labor_cost_contract_terms'].includes(moduleKey)) return OFFICER_ACCESS;
   if (isStoreStaff(u) && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) return OFFICER_ACCESS;
   if (isAccountingStaff(u) && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills', 'accounts_receivable', 'accounts_payable', 'bank_accounts'].includes(moduleKey)) return OFFICER_ACCESS;
@@ -235,9 +214,6 @@ export const canDelete = (user: User | null, moduleKey: string, profiles?: Permi
 export const canApprove = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).approve;
 
-/**
- * Generates baseline profiles for the auto-repair and migration tools.
- */
 export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   const depts: DeptType[] = ['hr', 'operations', 'sales', 'accounting', 'store'];
   const baselines: Partial<PermissionProfile>[] = [

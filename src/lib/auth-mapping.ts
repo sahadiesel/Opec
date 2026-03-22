@@ -6,9 +6,6 @@
 import { DeptType, AccessLevel, RoleType, User, ApprovalStatus, BusinessRoleKey } from './types';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
 
-/**
- * Definition of a Business-facing role
- */
 export interface BusinessRole {
   key: BusinessRoleKey;
   labelTh: string;
@@ -19,9 +16,6 @@ export interface BusinessRole {
   descriptionTh: string;
 }
 
-/**
- * Master Dictionary of Business Roles (Role Templates)
- */
 export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
   system_admin: {
     key: 'system_admin',
@@ -133,9 +127,6 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
   }
 };
 
-/**
- * Legacy to Canonical Compatibility Map
- */
 export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
   finance_officer: 'accounting_officer',
   payroll_officer: 'hr_officer',
@@ -147,9 +138,6 @@ export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
   safety_officer: 'operations_officer'
 };
 
-/**
- * Infers Dept and Level from legacy roleIds if new fields are missing.
- */
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
   if (!user) return { dept: 'hr', level: 'viewer' };
   
