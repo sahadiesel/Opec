@@ -2,22 +2,17 @@
 'use client';
 
 /**
- * @fileOverview OPEC OpsFlow - Permissions & UI Access Utility
- * Primary source of truth for what a user can see and do.
- * Maps operational intents (e.g., "Generate Payroll") to the ModulePermission matrix.
+ * @fileOverview OPEC OpsFlow - Centralized Permissions & Authorization Source of Truth.
+ * Handles data normalization for single/multi-role users and provides consistent helpers.
  */
 
-import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel } from './types';
-import { inferDeptAndLevel, isAdminUser, BUSINESS_ROLES, BusinessRoleKey } from './auth-mapping';
+import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel, RoleType } from './types';
 
 /**
  * Registry of all modules in the system.
- * This is the canonical source of truth for module keys and their UI groups.
  */
 export const SYSTEM_MODULES = [
   { group: 'Overview', key: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Main Dashboard)' },
-  
-  // Commercial
   { group: 'Commercial (การค้า)', key: 'customers', label: 'ทะเบียนลูกค้า (Customers)' },
   { group: 'Commercial (การค้า)', key: 'main_contracts', label: 'สัญญาหลัก (Contracts)' },
   { group: 'Commercial (การค้า)', key: 'customer_pos', label: 'ใบสั่งซื้อลูกค้า (Customer POs)' },
@@ -25,8 +20,6 @@ export const SYSTEM_MODULES = [
   { group: 'Commercial (การค้า)', key: 'sales_contract_terms', label: 'เงื่อนไขการขาย (Sales Terms)' },
   { group: 'Commercial (การค้า)', key: 'rate_conditions', label: 'กฎการคำนวณราคา (Rate Conditions)' },
   { group: 'Commercial (การค้า)', key: 'profit_estimates', label: 'ประมาณการกำไร (Profit Estimates)' },
-  
-  // HR & Payroll
   { group: 'HR & Payroll (บุคคล)', key: 'timesheets', label: 'ลงเวลาทำงาน (Timesheets)' },
   { group: 'HR & Payroll (บุคคล)', key: 'worker_payroll', label: 'จ่ายเงินคนงาน (Worker Payroll)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_payroll', label: 'เงินเดือนออฟฟิศ (Office Payroll)' },
@@ -35,16 +28,12 @@ export const SYSTEM_MODULES = [
   { group: 'HR & Payroll (บุคคล)', key: 'positions', label: 'ตำแหน่งงาน (Positions)' },
   { group: 'HR & Payroll (บุคคล)', key: 'workers', label: 'ทะเบียนคนงาน (Workers)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_staff', label: 'พนักงานออฟฟิศ (Office Staff)' },
-  
-  // Operations
   { group: 'Operations (ปฏิบัติการ)', key: 'waves', label: 'กลุ่มรอบการทำงาน (Waves)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'assignments', label: 'การมอบหมายงาน (Assignments)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'mobilization', label: 'การเตรียมส่งตัว (Mobilization)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
-  { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การสั่งซื้อ (Purchases)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การซื้อสินค้า/บริการ (Purchases)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
-  
-  // Finance
   { group: 'Finance & Accounting (การเงิน)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
   { group: 'Finance & Accounting (การเงิน)', key: 'tax_invoices', label: 'ใบกำกับภาษี (Tax Invoices)' },
   { group: 'Finance & Accounting (การเงิน)', key: 'receipts', label: 'ใบเสร็จรับเงิน (Receipts)' },
@@ -53,217 +42,131 @@ export const SYSTEM_MODULES = [
   { group: 'Finance & Accounting (การเงิน)', key: 'accounts_payable', label: 'เจ้าหนี้การค้า (AP)' },
   { group: 'Finance & Accounting (การเงิน)', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
   { group: 'Finance & Accounting (การเงิน)', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
-  
-  // System
   { group: 'Administration (ระบบ)', key: 'system_admin', label: 'จัดการผู้ใช้/ระบบ (System Admin)' },
   { group: 'Administration (ระบบ)', key: 'client_portal', label: 'Client Portal (หน้าของลูกค้า)' },
   { group: 'Administration (ระบบ)', key: 'document_numbering', label: 'รันเลขที่เอกสาร (Numbering)' },
   { group: 'Administration (ระบบ)', key: 'audit_logs', label: 'ประวัติกิจกรรม (Audit Logs)' },
 ] as const;
 
-/**
- * Extract ModuleKey type from the registry
- */
 export type ModuleKey = typeof SYSTEM_MODULES[number]['key'];
 
-/**
- * Default Permission Templates
- */
 export const FULL_ACCESS: ModulePermission = { view: true, create: true, edit: true, delete: true, approve: true };
 export const OFFICER_ACCESS: ModulePermission = { view: true, create: true, edit: true, delete: false, approve: false };
 export const READ_ONLY: ModulePermission = { view: true, create: false, edit: false, delete: false, approve: false };
 export const NO_ACCESS: ModulePermission = { view: false, create: false, edit: false, delete: false, approve: false };
 
-/**
- * Initial empty template for permissions
- */
 export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = 
   SYSTEM_MODULES.reduce((acc, mod) => ({ ...acc, [mod.key]: NO_ACCESS }), {});
 
 /**
- * Baseline Permission Profile Definitions
- * Defines standard role-to-module mappings for the Opec OpsFlow platform.
+ * Normalizes user data to ensure role arrays and status fields are populated correctly.
+ * Supports backward compatibility for single-role users.
  */
-export function getBaselineProfiles(): Partial<PermissionProfile>[] {
-  const baseline = (key: string, nameEn: string, nameTh: string, dept: DeptType, level: AccessLevel, perms: Record<string, Partial<ModulePermission>>) => ({
-    profileKey: key,
-    profileNameEn: nameEn,
-    profileNameTh: nameTh,
-    department: dept,
-    level: level,
-    isActive: true,
-    notes: 'Generated by system baseline tool',
-    permissions: SYSTEM_MODULES.reduce((acc, mod) => {
-      const p = perms[mod.key] || NO_ACCESS;
-      return { 
-        ...acc, 
-        [mod.key]: { ...NO_ACCESS, ...p } 
-      };
-    }, {} as Record<string, ModulePermission>)
-  });
+export function normalizeCurrentUserPermissions(user: any): User | null {
+  if (!user) return null;
 
-  return [
-    // 1. Admin Admin
-    baseline('admin_admin', 'System Administrator', 'ผู้ดูแลระบบสูงสุด', 'admin', 'admin', 
-      SYSTEM_MODULES.reduce((acc, mod) => ({ ...acc, [mod.key]: FULL_ACCESS }), {})
-    ),
+  // Normalize roleIds (Canonical roles used in firestore rules)
+  const roleIds = Array.isArray(user.roleIds) ? [...user.roleIds] : [];
+  if (user.roleId && !roleIds.includes(user.roleId)) {
+    roleIds.push(user.roleId as RoleType);
+  }
 
-    // 2. HR Manager
-    baseline('hr_manager', 'HR Manager', 'ผู้จัดการฝ่ายบุคคล', 'hr', 'manager', {
-      overview_dashboard: READ_ONLY,
-      positions: { ...OFFICER_ACCESS, approve: true, delete: true },
-      workers: { ...OFFICER_ACCESS, approve: true, delete: true },
-      timesheets: { view: true, approve: true }, 
-      worker_payroll: { view: true, create: true, approve: true }, 
-      office_payroll: { view: true, create: true, approve: true },
-      office_staff: { ...OFFICER_ACCESS, approve: true },
-      waves: READ_ONLY,
-      assignments: READ_ONLY,
-      mobilization: READ_ONLY,
-      labor_cost_contract_terms: { ...OFFICER_ACCESS, approve: true, delete: true },
-      rate_conditions: { ...OFFICER_ACCESS, approve: true, delete: true },
-      profit_estimates: READ_ONLY,
-    }),
+  // Normalize business role keys
+  const assignedRoleKeys = Array.isArray(user.assignedRoleKeys) ? [...user.assignedRoleKeys] : [];
+  if (user.assignedRoleKey && !assignedRoleKeys.includes(user.assignedRoleKey)) {
+    assignedRoleKeys.push(user.assignedRoleKey);
+  }
 
-    // 3. HR Officer
-    baseline('hr_officer', 'HR Officer', 'เจ้าหน้าที่ฝ่ายบุคคล', 'hr', 'officer', {
-      overview_dashboard: READ_ONLY,
-      positions: OFFICER_ACCESS,
-      workers: OFFICER_ACCESS,
-      timesheets: { view: true, create: true, edit: true }, 
-      worker_payroll: { view: true }, 
-      waves: READ_ONLY,
-      assignments: READ_ONLY,
-      mobilization: READ_ONLY,
-      labor_cost_contract_terms: OFFICER_ACCESS,
-      rate_conditions: OFFICER_ACCESS,
-    }),
+  // Normalize profile keys
+  const permissionProfileKeys = Array.isArray(user.permissionProfileKeys) ? [...user.permissionProfileKeys] : [];
+  if (user.permissionProfileKey && !permissionProfileKeys.includes(user.permissionProfileKey)) {
+    permissionProfileKeys.push(user.permissionProfileKey);
+  }
 
-    // 4. Operations Manager
-    baseline('operations_manager', 'Operations Manager', 'ผู้จัดการฝ่ายปฏิบัติการ', 'operations', 'manager', {
-      overview_dashboard: READ_ONLY,
-      waves: { ...OFFICER_ACCESS, approve: true, delete: true },
-      assignments: { ...OFFICER_ACCESS, approve: true },
-      mobilization: { ...OFFICER_ACCESS, approve: true },
-      timesheets: { view: true, create: true, edit: true, approve: true }, 
-      workers: READ_ONLY,
-      positions: READ_ONLY,
-      profit_estimates: READ_ONLY,
-    }),
-
-    // 5. Operations Officer
-    baseline('operations_officer', 'Operations Officer', 'เจ้าหน้าที่ฝ่ายปฏิบัติการ', 'operations', 'officer', {
-      overview_dashboard: READ_ONLY,
-      waves: OFFICER_ACCESS,
-      assignments: OFFICER_ACCESS,
-      mobilization: OFFICER_ACCESS,
-      timesheets: { view: true, create: true, edit: true }, 
-      workers: READ_ONLY,
-    }),
-
-    // 6. Accounting Manager
-    baseline('accounting_manager', 'Accounting Manager', 'ผู้จัดการฝ่ายบัญชี', 'accounting', 'manager', {
-      overview_dashboard: READ_ONLY,
-      billing_notes: { ...OFFICER_ACCESS, approve: true, delete: true },
-      tax_invoices: { ...OFFICER_ACCESS, approve: true, delete: true },
-      receipts: { ...OFFICER_ACCESS, approve: true },
-      ap_bills: { ...OFFICER_ACCESS, approve: true },
-      cashbook: { ...OFFICER_ACCESS, approve: true },
-      bank_accounts: { ...OFFICER_ACCESS, approve: true },
-      accounts_receivable: READ_ONLY,
-      accounts_payable: READ_ONLY,
-      worker_payroll: { view: true, edit: true, approve: true }, 
-      office_payroll: { view: true, edit: true, approve: true },
-      payment_export_batches: { view: true, create: true, approve: true }, 
-      sales_contract_terms: READ_ONLY,
-      labor_cost_contract_terms: READ_ONLY,
-      rate_conditions: READ_ONLY,
-      profit_estimates: READ_ONLY,
-    }),
-
-    // 7. Accounting Officer
-    baseline('accounting_officer', 'Accounting Officer', 'เจ้าหน้าที่ฝ่ายบัญชี', 'accounting', 'officer', {
-      overview_dashboard: OFFICER_ACCESS,
-      billing_notes: OFFICER_ACCESS,
-      tax_invoices: OFFICER_ACCESS,
-      receipts: OFFICER_ACCESS,
-      ap_bills: OFFICER_ACCESS,
-      cashbook: OFFICER_ACCESS,
-      accounts_receivable: READ_ONLY,
-      accounts_payable: READ_ONLY,
-      worker_payroll: { view: true },
-      sales_contract_terms: READ_ONLY,
-      labor_cost_contract_terms: READ_ONLY,
-    }),
-
-    // 8. Sales Manager
-    baseline('sales_manager', 'Sales Manager', 'ผู้จัดการฝ่ายขาย', 'sales', 'manager', {
-      overview_dashboard: READ_ONLY,
-      customers: { ...OFFICER_ACCESS, approve: true, delete: true },
-      main_contracts: { ...OFFICER_ACCESS, approve: true, delete: true },
-      customer_pos: { ...OFFICER_ACCESS, approve: true },
-      quotations: { ...OFFICER_ACCESS, approve: true, delete: true },
-      sales_contract_terms: { ...OFFICER_ACCESS, approve: true, delete: true },
-      rate_conditions: OFFICER_ACCESS,
-      profit_estimates: READ_ONLY,
-      billing_notes: READ_ONLY,
-    }),
-
-    // 9. Sales Officer
-    baseline('sales_officer', 'Sales Officer', 'เจ้าหน้าที่ฝ่ายขาย', 'sales', 'officer', {
-      overview_dashboard: READ_ONLY,
-      customers: OFFICER_ACCESS,
-      main_contracts: OFFICER_ACCESS,
-      customer_pos: OFFICER_ACCESS,
-      quotations: OFFICER_ACCESS,
-      sales_contract_terms: OFFICER_ACCESS,
-      profit_estimates: READ_ONLY,
-    }),
-
-    // 10. Store Officer
-    baseline('store_officer', 'Store Officer', 'เจ้าหน้าที่คลังสินค้า', 'store', 'officer', {
-      overview_dashboard: READ_ONLY,
-      vendors: OFFICER_ACCESS,
-      purchases: OFFICER_ACCESS,
-      store_inventory: OFFICER_ACCESS,
-      ap_bills: READ_ONLY,
-    }),
-
-    // 11. Client User
-    baseline('client_user', 'Client User', 'ลูกค้า', 'client', 'viewer', {
-      overview_dashboard: READ_ONLY,
-      client_portal: { view: true, approve: true, edit: true }, 
-      timesheets: { view: true, approve: true },
-      workers: READ_ONLY,
-      quotations: READ_ONLY,
-      customer_pos: READ_ONLY,
-    })
-  ];
+  return {
+    ...user,
+    roleIds,
+    assignedRoleKeys,
+    permissionProfileKeys,
+    isActive: user.isActive ?? (user.approvalStatus === 'ACTIVE'),
+    approvalStatus: user.approvalStatus ?? (user.isActive ? 'ACTIVE' : 'PENDING')
+  } as User;
 }
+
+// --- BASIC ROLE HELPERS ---
+
+/** Checks if user has a specific role (canonical or business key) */
+export function hasRole(user: User | null, roleKey: string): boolean {
+  if (!user) return false;
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return false;
+  
+  return (
+    u.roleIds.includes(roleKey as RoleType) || 
+    u.assignedRoleKeys?.includes(roleKey as any) ||
+    u.roleId === roleKey ||
+    u.assignedRoleKey === roleKey
+  );
+}
+
+/** Checks if user has any of the provided roles */
+export function hasAnyRole(user: User | null, roleKeys: string[]): boolean {
+  return roleKeys.some(key => hasRole(user, key));
+}
+
+// --- DEPARTMENTAL STAFF HELPERS (Aligned with firestore.rules) ---
+
+export const isSystemAdmin = (user: User | null) => hasRole(user, 'system_admin');
+
+export const isHRStaff = (user: User | null) => 
+  hasAnyRole(user, ['hr_manager', 'hr_officer', 'payroll_officer', 'system_admin']);
+
+export const isOperationsStaff = (user: User | null) => 
+  hasAnyRole(user, ['operations_manager', 'operations_officer', 'safety_officer', 'system_admin']);
+
+export const isSalesStaff = (user: User | null) => 
+  hasAnyRole(user, ['sales_manager', 'sales_officer', 'system_admin']);
+
+export const isAccountingStaff = (user: User | null) => 
+  hasAnyRole(user, ['accounting_manager', 'accounting_officer', 'finance_officer', 'system_admin']);
+
+export const isStoreStaff = (user: User | null) => 
+  hasAnyRole(user, ['store_manager', 'store_officer', 'system_admin']);
+
+export const isInternalStaff = (user: User | null) => 
+  isHRStaff(user) || isOperationsStaff(user) || isSalesStaff(user) || isAccountingStaff(user) || isStoreStaff(user);
+
+export const isClient = (user: User | null) => {
+  if (!user) return false;
+  return user.userType === 'customer_portal' || hasAnyRole(user, ['client_user', 'client', 'client_approver', 'client_viewer']);
+};
+
+// --- CORE PERMISSION LOGIC ---
 
 /**
  * Primary helper to check permissions for a specific module
- * Maps business "Intents" to the 5 standard boolean flags.
- * Supports aggregation across multiple profiles.
  */
 export function getPermissions(
   user: User | null, 
   moduleKey: ModuleKey, 
   profiles?: PermissionProfile[] | PermissionProfile | null
 ): ModulePermission {
-  if (!user || !user.isActive) return NO_ACCESS;
+  if (!user) return NO_ACCESS;
+  
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u || !u.isActive) return NO_ACCESS;
 
-  // 1. Full Admin Override - High Priority Bypass
-  if (isAdminUser(user)) {
+  // 1. Full Admin Override
+  if (isSystemAdmin(u)) {
     return FULL_ACCESS;
   }
 
-  // 2. Others must be approved to access anything
-  if (user.approvalStatus !== 'ACTIVE') {
+  // 2. Others must be approved
+  if (u.approvalStatus !== 'ACTIVE') {
     return NO_ACCESS;
   }
 
-  // 3. Profile-based check (Primary with Aggregation)
+  // 3. Profile-based check (Aggregated)
   const profileList = Array.isArray(profiles) ? profiles : (profiles ? [profiles] : []);
   const activeProfiles = profileList.filter((p): p is PermissionProfile => !!p && p.isActive);
 
@@ -280,50 +183,27 @@ export function getPermissions(
     }, { ...NO_ACCESS });
   }
 
-  // 4. Graceful Fallback Logic (Role-Aware)
-  const roleKeys = user.assignedRoleKeys || (user.assignedRoleKey ? [user.assignedRoleKey] : []);
-  const depts = new Set<DeptType>();
-  roleKeys.forEach(rk => {
-    const role = BUSINESS_ROLES[rk as BusinessRoleKey];
-    if (role) depts.add(role.dept);
-  });
-  if (user.department) depts.add(user.department);
+  // 4. Graceful Fallback Logic (Legacy/Role-Aware)
+  if (moduleKey === 'overview_dashboard') return { ...READ_ONLY, view: true };
 
-  let aggregate: ModulePermission = { ...NO_ACCESS };
-  
-  if (moduleKey === 'overview_dashboard') aggregate.view = true;
-
-  depts.forEach(dept => {
-    let p = { ...NO_ACCESS };
-    if (user.userType === 'customer_portal' || dept === 'client') {
-      const level = user.portalRole === 'approver' ? 'manager' : 'viewer';
-      if (moduleKey === 'client_portal' || moduleKey === 'timesheets') {
-        p = (level === 'manager') ? { ...READ_ONLY, approve: true, edit: true } : READ_ONLY;
-      } else if (['workers', 'quotations', 'customer_pos', 'main_contracts'].includes(moduleKey)) {
-        p = READ_ONLY;
-      }
-    } else {
-      if (dept === 'hr' && ['workers', 'positions', 'timesheets', 'worker_payroll'].includes(moduleKey)) p = OFFICER_ACCESS;
-      else if (dept === 'store' && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) p = OFFICER_ACCESS;
-      else if (dept === 'accounting' && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills'].includes(moduleKey)) p = OFFICER_ACCESS;
-      else if (dept === 'operations' && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) p = OFFICER_ACCESS;
+  if (isClient(u)) {
+    if (moduleKey === 'client_portal' || moduleKey === 'timesheets') {
+      const level = u.portalRole === 'approver' ? 'manager' : 'viewer';
+      return (level === 'manager') ? { ...READ_ONLY, approve: true, edit: true } : READ_ONLY;
     }
+    if (['workers', 'quotations', 'customer_pos', 'main_contracts'].includes(moduleKey)) return READ_ONLY;
+  }
 
-    aggregate = {
-      view: aggregate.view || p.view,
-      create: aggregate.create || p.create,
-      edit: aggregate.edit || p.edit,
-      delete: aggregate.delete || p.delete,
-      approve: aggregate.approve || p.approve,
-    };
-  });
+  // Departmental Fallbacks
+  if (isHRStaff(u) && ['workers', 'positions', 'timesheets', 'worker_payroll', 'office_staff'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isStoreStaff(u) && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isAccountingStaff(u) && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills', 'accounts_receivable', 'accounts_payable'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isSalesStaff(u) && ['customers', 'main_contracts', 'quotations', 'customer_pos', 'sales_contract_terms'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isOperationsStaff(u) && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
 
-  return aggregate;
+  return NO_ACCESS;
 }
 
-/**
- * Functional shorthand helpers
- */
 export const canView = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).view;
 
