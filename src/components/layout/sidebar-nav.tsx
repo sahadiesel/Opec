@@ -2,14 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Users, 
+import {
+  LayoutDashboard,
+  Users,
   ShieldCheck,
   ClipboardList,
   ShoppingCart,
   UserPlus,
-  CircleDollarSign,
   Clock,
   Warehouse,
   ShieldAlert,
@@ -30,36 +29,34 @@ import {
   PackageSearch,
   Inbox,
   LockKeyhole,
-  Grid,
-  SearchCheck,
   Settings,
   FileSignature,
   Hash,
   Scale,
   Calculator,
   CalendarDays,
-  UserCheck,
-  ClipboardCheck,
   History,
   Grid3X3,
   Lock,
-  FileBarChart
+  FileBarChart,
 } from 'lucide-react';
-import { 
-  Sidebar, 
-  SidebarContent, 
-  SidebarGroup, 
-  SidebarGroupContent, 
-  SidebarGroupLabel, 
-  SidebarHeader, 
-  SidebarMenu, 
-  SidebarMenuButton, 
-  SidebarMenuItem 
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
 import { ModuleKey, canView } from '@/lib/permissions';
 import { isAdminUser } from '@/lib/auth-mapping';
 import { UI_LABELS } from '@/lib/constants/labels';
+
+type NavAudience = 'internal' | 'client' | 'admin';
 
 interface NavItem {
   key: ModuleKey;
@@ -70,28 +67,30 @@ interface NavItem {
 
 interface NavGroup {
   label: string;
+  audience: NavAudience;
   items: NavItem[];
 }
 
 const navGroups: NavGroup[] = [
   {
     label: 'ภาพรวม (Overview)',
-    items: [
-      { key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/', icon: LayoutDashboard },
-    ]
+    audience: 'internal',
+    items: [{ key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/', icon: LayoutDashboard }],
   },
   {
     label: 'งานขายและสัญญา (Commercial)',
+    audience: 'internal',
     items: [
       { key: 'customers', title: UI_LABELS.CUSTOMERS, href: '/customers', icon: Users },
       { key: 'quotations', title: UI_LABELS.QUOTATIONS, href: '/quotations', icon: FileSignature },
       { key: 'main_contracts', title: UI_LABELS.MAIN_CONTRACTS, href: '/main-contracts', icon: ClipboardList },
       { key: 'sales_contract_terms', title: 'เงื่อนไขการขาย (Sales Terms)', href: '/sales-terms', icon: Scale },
       { key: 'customer_pos', title: UI_LABELS.CUSTOMER_POS, href: '/purchase-orders', icon: ShoppingCart },
-    ]
+    ],
   },
   {
     label: 'บุคคลและเงินเดือน (HR & Payroll)',
+    audience: 'internal',
     items: [
       { key: 'timesheets', title: 'ลงเวลาแบบกลุ่ม (Wave Daily Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
       { key: 'timesheets', title: 'ประวัติลงเวลารายวัน (History)', href: '/timesheets/daily', icon: Clock },
@@ -102,10 +101,11 @@ const navGroups: NavGroup[] = [
       { key: 'positions', title: UI_LABELS.POSITIONS, href: '/positions', icon: Activity },
       { key: 'workers', title: UI_LABELS.WORKERS, href: '/workers', icon: HardHat },
       { key: 'office_staff', title: UI_LABELS.OFFICE_STAFF, href: '/office-staff', icon: UserSearch },
-    ]
+    ],
   },
   {
     label: 'งานปฏิบัติการ (Operations)',
+    audience: 'internal',
     items: [
       { key: 'waves', title: UI_LABELS.WAVES, href: '/waves', icon: Waves },
       { key: 'assignments', title: UI_LABELS.ASSIGNMENTS, href: '/assignments', icon: UserPlus },
@@ -113,10 +113,11 @@ const navGroups: NavGroup[] = [
       { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
       { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
       { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
-    ]
+    ],
   },
   {
     label: 'การเงินและบัญชี (Finance & Accounting)',
+    audience: 'internal',
     items: [
       { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
       { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
@@ -126,10 +127,11 @@ const navGroups: NavGroup[] = [
       { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
       { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
       { key: 'bank_accounts', title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard },
-    ]
+    ],
   },
   {
     label: 'การจัดการระบบ (Administration)',
+    audience: 'admin',
     items: [
       { key: 'system_admin', title: 'จัดการผู้ใช้/ระบบ (User Access)', href: '/users', icon: ShieldCheck },
       { key: 'system_admin', title: 'การเข้าใช้งานของลูกค้า', href: '/system-admin/customer-portal', icon: Lock },
@@ -137,23 +139,44 @@ const navGroups: NavGroup[] = [
       { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'audit_logs', title: 'ประวัติกิจกรรม (Audit Logs)', href: '/system-admin/audit-logs', icon: History },
-      { key: 'client_portal', title: 'Client Portal Preview', href: '/client-portal/dashboard', icon: ShieldAlert },
-    ]
+    ],
   },
   {
     label: 'ลูกค้า (Project Portal)',
+    audience: 'client',
     items: [
       { key: 'client_portal', title: 'หน้าหลัก (Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
       { key: 'client_portal', title: 'ประวัติกำลังพล (Personnel)', href: '/client-portal/waves', icon: HardHat },
       { key: 'client_portal', title: 'หลักฐานการลงเวลา (Activity)', href: '/client-portal/timesheets', icon: Clock },
       { key: 'client_portal', title: 'การเงินและวางบิล (Billing)', href: '/client-portal/billing', icon: FileBarChart },
-    ]
-  }
+    ],
+  },
 ];
 
-export function SidebarNav({ user, profiles }: { user: User; profiles?: PermissionProfile[] | null }) {
+function isClientPortalUser(user: User): boolean {
+  return user.userType === 'customer_portal' || user.accessGroup === 'client';
+}
+
+function canSeeGroup(group: NavGroup, user: User, isAdmin: boolean): boolean {
+  const clientUser = isClientPortalUser(user);
+
+  if (group.audience === 'admin') return isAdmin;
+  if (group.audience === 'client') return clientUser;
+  if (group.audience === 'internal') return !clientUser;
+
+  return false;
+}
+
+export function SidebarNav({
+  user,
+  profiles,
+}: {
+  user: User;
+  profiles?: PermissionProfile[] | null;
+}) {
   const pathname = usePathname();
   const isAdmin = isAdminUser(user);
+  const profile = profiles?.[0] ?? null;
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">
@@ -168,11 +191,12 @@ export function SidebarNav({ user, profiles }: { user: User; profiles?: Permissi
           </div>
         </div>
       </SidebarHeader>
+
       <SidebarContent className="py-4">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter(item =>
-            isAdmin || canView(user, item.key, profiles?.[0] ?? null)
-          );
+          if (!canSeeGroup(group, user, isAdmin)) return null;
+
+          const visibleItems = group.items.filter((item) => isAdmin || canView(user, item.key, profile));
 
           if (visibleItems.length === 0) return null;
 
@@ -181,18 +205,21 @@ export function SidebarNav({ user, profiles }: { user: User; profiles?: Permissi
               <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
                 {group.label}
               </SidebarGroupLabel>
+
               <SidebarGroupContent>
                 <SidebarMenu>
                   {visibleItems.map((item) => (
                     <SidebarMenuItem key={`${item.key}-${item.href}`}>
-                      <SidebarMenuButton 
-                        asChild 
-                        isActive={pathname === item.href} 
+                      <SidebarMenuButton
+                        asChild
+                        isActive={pathname === item.href}
                         tooltip={item.title}
                         className={`transition-all duration-200 ${pathname === item.href ? 'font-bold' : ''}`}
                       >
                         <Link href={item.href}>
-                          <item.icon className={`h-4 w-4 ${pathname === item.href ? 'text-primary' : 'text-muted-foreground'}`} />
+                          <item.icon
+                            className={`h-4 w-4 ${pathname === item.href ? 'text-primary' : 'text-muted-foreground'}`}
+                          />
                           <span className="font-semibold text-xs tracking-tight">{item.title}</span>
                         </Link>
                       </SidebarMenuButton>
