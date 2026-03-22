@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { User, BusinessRoleKey, DeptType } from '@/lib/types';
+import { User, BusinessRoleKey } from '@/lib/types';
 import { 
   ShieldCheck, 
   Users, 
@@ -26,17 +26,15 @@ import {
   Clock, 
   LayoutGrid, 
   TrendingUp,
-  Receipt,
-  FileText,
-  Lock,
+  Building2,
   KeyRound,
-  Building2
+  Lock
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import { signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { isAdminUser, BUSINESS_ROLES, inferDeptAndLevel } from '@/lib/auth-mapping';
+import { isAdminUser, BUSINESS_ROLES } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HELP_TEXTS } from '@/lib/constants/help-texts';
@@ -54,6 +52,7 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
+import { normalizeCurrentUserPermissions } from '@/lib/permissions';
 
 export default function Home() {
   const router = useRouter();
@@ -75,14 +74,21 @@ export default function Home() {
   const { toast } = useToast();
   
   const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
-  const { data: latestUserDoc, isLoading: isDocLoading } = useDoc<User>(userDocRef as any);
+  const { data: rawUserDoc, isLoading: isDocLoading } = useDoc<User>(userDocRef as any);
+
+  // Normalize user doc as soon as it arrives
+  const latestUserDoc = useMemo(() => {
+    return rawUserDoc ? normalizeCurrentUserPermissions(rawUserDoc) : null;
+  }, [rawUserDoc]);
 
   useEffect(() => {
     setIsLoaded(true);
     const stored = localStorage.getItem('opsflow_user');
     if (stored) {
       try {
-        setUser(JSON.parse(stored));
+        // Try to normalize cached data too
+        const parsed = JSON.parse(stored);
+        setUser(normalizeCurrentUserPermissions(parsed));
       } catch (e) { console.error(e); }
     }
   }, []);
@@ -98,7 +104,7 @@ export default function Home() {
     if (latestUserDoc) {
       // Security Guard: Check inactivity
       if (!latestUserDoc.isActive || latestUserDoc.approvalStatus === 'SUSPENDED') {
-        toast({ variant: "destructive", title: "Access Blocked", description: "Your account is currently inactive." });
+        toast({ variant: "destructive", title: "Access Blocked", description: "บัญชีของคุณถูกระงับการใช้งาน" });
         handleLogout();
         return;
       }
@@ -113,6 +119,7 @@ export default function Home() {
         setShowResetDialog(true);
       }
 
+      // Sync State and Cache with Normalized Data
       setUser(latestUserDoc);
       localStorage.setItem('opsflow_user', JSON.stringify(latestUserDoc));
     }
@@ -123,7 +130,7 @@ export default function Home() {
     return latestUserDoc.isActive && latestUserDoc.approvalStatus === 'ACTIVE';
   }, [latestUserDoc, isDocLoading]);
 
-  const { can, check } = usePermissions(latestUserDoc || null);
+  const { can, check } = usePermissions(user);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,7 +141,8 @@ export default function Home() {
       const snap = await getDoc(docRef);
       
       if (snap.exists()) {
-        const userData = snap.data() as User;
+        const userData = normalizeCurrentUserPermissions(snap.data());
+        if (!userData) throw new Error("Invalid user data");
         
         // 1. Check Activity Status
         if (!userData.isActive || userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
@@ -170,28 +178,24 @@ export default function Home() {
   const handlePasswordReset = async () => {
     if (!auth.currentUser || !latestUserDoc) return;
     if (newPassword !== confirmNewPassword) {
-      toast({ variant: "destructive", title: "Validation Error", description: "Passwords do not match." });
+      toast({ variant: "destructive", title: "Validation Error", description: "รหัสผ่านไม่ตรงกัน" });
       return;
     }
     if (newPassword.length < 8) {
-      toast({ variant: "destructive", title: "Weak Password", description: "Password must be at least 8 characters." });
+      toast({ variant: "destructive", title: "Weak Password", description: "รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร" });
       return;
     }
 
     setIsResetting(true);
     try {
-      // 1. Update Firebase Auth Password
       await updatePassword(auth.currentUser, newPassword);
-
-      // 2. Clear reset flag in Firestore
       const userRef = doc(firestore!, 'users', latestUserDoc.id);
       await updateDoc(userRef, { 
         mustResetPassword: false,
         updatedAt: Date.now()
       });
-
       setShowResetDialog(false);
-      toast({ title: "Password Updated", description: "You can now use the portal." });
+      toast({ title: "Password Updated", description: "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว" });
     } catch (err: any) {
       toast({ variant: "destructive", title: "Reset Failed", description: err.message });
     } finally {
@@ -249,12 +253,10 @@ export default function Home() {
     );
   }
 
-  const roleKey = latestUserDoc?.assignedRoleKey || 'hr_officer';
-  const roleInfo = BUSINESS_ROLES[roleKey as BusinessRoleKey];
-  
-  // Aggregate all unique departments for the welcome display
-  const activeRoleKeys = latestUserDoc?.assignedRoleKeys || [roleKey as BusinessRoleKey];
-  const allDepts = Array.from(new Set(activeRoleKeys.map(rk => BUSINESS_ROLES[rk]?.dept).filter(Boolean)));
+  // Home / Dashboard Content
+  const primaryRoleKey = user.assignedRoleKey || 'hr_officer';
+  const roleInfo = BUSINESS_ROLES[primaryRoleKey as BusinessRoleKey];
+  const allDepts = Array.from(new Set(user.assignedRoleKeys?.map(rk => BUSINESS_ROLES[rk]?.dept).filter(Boolean) || []));
 
   return (
     <AppShell user={user} onLogout={handleLogout}>
@@ -287,13 +289,13 @@ export default function Home() {
                 <p className="text-xs text-muted-foreground uppercase">{roleInfo?.labelEn || 'System User'}</p>
               </div>
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">สิทธิ์การเข้าถึง (Access Level)</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">สิทธิ์การเข้าถึง (Access Scope)</p>
                 <div className="flex flex-wrap items-center gap-2 mt-1">
-                  {allDepts.map(d => (
+                  {allDepts.length > 0 ? allDepts.map(d => (
                     <Badge key={d} variant="secondary" className="capitalize font-black flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100">
                       <Building2 className="h-2.5 w-2.5" /> {d}
                     </Badge>
-                  ))}
+                  )) : <Badge variant="outline">{user.department}</Badge>}
                   <span className="text-muted-foreground text-xs mx-1">/</span>
                   <Badge variant="outline" className="capitalize font-bold border-primary/20">{user.level}</Badge>
                 </div>
@@ -309,7 +311,6 @@ export default function Home() {
               <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการตามบทบาท</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {/* Role-based action prompts */}
               {(user.roleIds?.includes('hr_manager') || user.roleIds?.includes('hr_officer') || isAdminUser(user)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
                   <div className="flex items-center gap-3">
@@ -359,7 +360,7 @@ export default function Home() {
           </Card>
         </div>
 
-        {/* Action Grid (Department Shortcuts) */}
+        {/* Action Grid */}
         <div className="space-y-6">
           <div className="flex items-center gap-2">
             <LayoutGrid className="h-5 w-5 text-primary" />
@@ -367,59 +368,53 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {/* HR Section */}
-            {check('hr_dashboard' as any, 'view') || check('workers', 'view') || check('positions', 'view') ? (
+            {check('workers', 'view') && (
               <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
                 <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวมบุคคล" />
-                {check('workers', 'view') && <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />}
-                {check('positions', 'view') && <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />}
-                {check('office_staff', 'view') && <ShortcutLink href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Staff" />}
-                {check('worker_payroll', 'view') && <ShortcutLink href="/payroll" label="จ่ายเงินคนงาน" sub="Payroll" />}
+                <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />
+                <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
+                <ShortcutLink href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Staff" />
               </ShortcutGroup>
-            ) : null}
+            )}
 
-            {/* Sales Section */}
-            {check('sales_dashboard' as any, 'view') || check('customers', 'view') || check('main_contracts', 'view') ? (
+            {check('customers', 'view') && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
                 <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
-                {check('customers', 'view') && <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />}
-                {check('main_contracts', 'view') && <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />}
-                {check('customer_pos', 'view') && <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />}
+                <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
+                <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />
+                <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />
               </ShortcutGroup>
-            ) : null}
+            )}
 
-            {/* Operations Section */}
-            {check('operations_dashboard' as any, 'view') || check('waves', 'view') || check('assignments', 'view') ? (
+            {check('waves', 'view') && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
                 <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
-                {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
-                {check('assignments', 'view') && <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />}
-                {check('mobilization', 'view') && <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />}
+                <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />
+                <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
+                <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />
               </ShortcutGroup>
-            ) : null}
+            )}
 
-            {/* Finance Section */}
-            {check('accounting_dashboard' as any, 'view') || check('billing_notes', 'view') || check('cashbook', 'view') ? (
+            {check('cashbook', 'view') && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
                 <ShortcutLink href="/accounting/dashboard" label="Accounting Dashboard" sub="ภาพรวมบัญชี" />
-                {check('billing_notes', 'view') && <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />}
-                {check('cashbook', 'view') && <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />}
-                {check('ap_bills', 'view') && <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />}
+                <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
+                <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />
+                <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />
               </ShortcutGroup>
-            ) : null}
+            )}
 
-            {/* Store Section */}
-            {check('store_inventory', 'view') || check('vendors', 'view') ? (
+            {check('store_inventory', 'view') && (
               <ShortcutGroup title="คลังและจัดซื้อ (Store)" icon={Warehouse} color="border-l-amber-500">
-                {check('store_inventory', 'view') && <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />}
-                {check('vendors', 'view') && <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />}
-                {check('purchases', 'view') && <ShortcutLink href="/purchases" label="การสั่งซื้อ" sub="Purchases" />}
+                <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />
+                <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />
+                <ShortcutLink href="/purchases" label="การสั่งซื้อ" sub="Purchases" />
               </ShortcutGroup>
-            ) : null}
+            )}
           </div>
         </div>
 
-        {/* Restricted Access Warning (Fallback) */}
+        {/* Restricted Access Warning */}
         {!isInternalAuthorized && !isDocLoading && (
           <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
             <ShieldAlert className="h-6 w-6" />
@@ -464,12 +459,6 @@ export default function Home() {
                   placeholder="กรอกรหัสผ่านอีกครั้ง"
                   className="h-11"
                 />
-              </div>
-              <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex gap-3">
-                <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
-                <p className="text-[10px] text-blue-700 leading-relaxed font-medium">
-                  รหัสผ่านควรประกอบด้วย ตัวอักษรพิมพ์ใหญ่ พิมพ์เล็ก และตัวเลข เพื่อป้องกันการคาดเดา
-                </p>
               </div>
             </div>
             <DialogFooter className="sm:justify-between gap-2">
