@@ -3,7 +3,7 @@
  * Centralized mapping from Business Roles to Dept + Level + Canonical Roles.
  */
 
-import { DeptType, AccessLevel, RoleType, User, ApprovalStatus, BusinessRoleKey } from './types';
+import { DeptType, AccessLevel, RoleType, User, ApprovalStatus, BusinessRoleKey, DataAccessClass, UserType } from './types';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
 
 export interface BusinessRole {
@@ -202,6 +202,15 @@ export function deriveBusinessRoleKeys(user: Partial<User>): BusinessRoleKey[] {
   return [roleKey];
 }
 
+/** Single field for Firestore rules: who may read internal collections (admin saves roles → updates this). */
+export function deriveDataAccess(roleKeys: BusinessRoleKey[]): DataAccessClass {
+  if (roleKeys.length === 0) return 'staff';
+  const onlyClient = roleKeys.every((k) => k === 'client_user');
+  if (onlyClient) return 'client';
+  if (roleKeys.includes('system_admin')) return 'admin';
+  return 'staff';
+}
+
 export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<User> {
   if (roleKeys.length === 0) return {};
 
@@ -218,6 +227,8 @@ export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<
   });
 
   const primary = BUSINESS_ROLES[roleKeys[0]];
+  const dataAccess = deriveDataAccess(roleKeys);
+  const userType: UserType = dataAccess === 'client' ? 'customer_portal' : 'internal';
 
   return {
     assignedRoleKeys: roleKeys,
@@ -227,6 +238,8 @@ export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<
     permissionProfileKey: Array.from(allProfileKeys)[0],
     department: primary.dept,
     level: primary.level,
+    dataAccess,
+    userType,
     updatedAt: Date.now()
   };
 }

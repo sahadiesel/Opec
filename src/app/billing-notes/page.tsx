@@ -40,6 +40,12 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import {
+  normalizeCurrentUserPermissions,
+  isAccountingStaff,
+  isSystemAdmin,
+  isSalesStaff,
+} from '@/lib/permissions';
 
 export default function BillingNotesPage() {
   const router = useRouter();
@@ -59,9 +65,12 @@ export default function BillingNotesPage() {
     }
   }, []);
 
+  // Align with permissions.ts + Firestore (accounting_officer, finance_officer, etc. via isAccountingStaff).
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'sales_officer', 'finance_officer', 'accounting_manager'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r as any)) || false;
+    if (!currentUser) return false;
+    const u = normalizeCurrentUserPermissions(currentUser);
+    if (!u) return false;
+    return isSystemAdmin(u) || isAccountingStaff(u) || isSalesStaff(u);
   }, [currentUser]);
 
   const notesQuery = useMemoFirebase(() => {

@@ -1,6 +1,6 @@
 /**
  * @fileOverview OPEC OpsFlow - Centralized Permissions & Authorization Source of Truth.
- * Handles data normalization for single/multi-role users and provides consistent helpers.
+ * Uses at most one permission profile for module checks (no additive merge across profiles).
  */
 
 import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel, RoleType } from './types';
@@ -16,7 +16,7 @@ export const SECURITY_SENSITIVE_FIELDS = [
   'permissionProfileKey', 'permissionProfileKeys', 
   'department', 'level', 
   'isActive', 'approvalStatus',
-  'customerId', 'userType', 'portalRole', 'mustResetPassword'
+  'customerId', 'userType', 'dataAccess', 'portalRole', 'mustResetPassword'
 ];
 
 /**
@@ -121,8 +121,20 @@ export function hasAnyRole(user: User | null, roleKeys: string[]): boolean {
 
 export const isSystemAdmin = (user: User | null) => hasRole(user, 'system_admin');
 
-export const isHRStaff = (user: User | null) => 
-  hasAnyRole(user, ['hr_manager', 'hr_officer', 'payroll_officer', 'system_admin']);
+/** Profile keys from permission_profiles / admin UI (often UPPER_SNAKE_CASE); must align with Firestore rules. */
+function permissionProfileKeysInclude(user: User | null, canonicalKeys: string[]): boolean {
+  if (!user) return false;
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return false;
+  const keys = new Set(
+    [...(u.permissionProfileKeys || []), u.permissionProfileKey].filter(Boolean).map((k) => String(k).toLowerCase())
+  );
+  return canonicalKeys.some((c) => keys.has(c.toLowerCase()));
+}
+
+export const isHRStaff = (user: User | null) =>
+  hasAnyRole(user, ['hr_manager', 'hr_officer', 'payroll_officer', 'system_admin']) ||
+  permissionProfileKeysInclude(user, ['hr_manager', 'hr_officer', 'payroll_officer']);
 
 export const isOperationsStaff = (user: User | null) => 
   hasAnyRole(user, ['operations_manager', 'operations_officer', 'safety_officer', 'system_admin']);
@@ -144,10 +156,20 @@ export const isClient = (user: User | null) => {
   return user.userType === 'customer_portal' || hasAnyRole(user, ['client_user', 'client', 'client_approver', 'client_viewer']);
 };
 
+/** Any active internal (non-portal) employee — use to load pages / Firestore lists; UI still uses getPermissions for actions. */
+export function isInternalUser(user: User | null): boolean {
+  if (!user) return false;
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return false;
+  if (!u.isActive) return false;
+  if (u.approvalStatus === 'SUSPENDED' || u.approvalStatus === 'REJECTED') return false;
+  return !isClient(u);
+}
+
 export function getPermissions(
-  user: User | null, 
-  rawModuleKey: string, 
-  profiles?: PermissionProfile[] | PermissionProfile | null
+  user: User | null,
+  rawModuleKey: string,
+  profile?: PermissionProfile | null
 ): ModulePermission {
   if (!user) return NO_ACCESS;
   
@@ -164,20 +186,8 @@ export function getPermissions(
     return NO_ACCESS;
   }
 
-  const profileList = Array.isArray(profiles) ? profiles : (profiles ? [profiles] : []);
-  const activeProfiles = profileList.filter((p): p is PermissionProfile => !!p && p.isActive);
-
-  if (activeProfiles.length > 0) {
-    return activeProfiles.reduce((acc, p) => {
-      const modPerm = p.permissions?.[moduleKey] || NO_ACCESS;
-      return {
-        view: acc.view || modPerm.view,
-        create: acc.create || modPerm.create,
-        edit: acc.edit || modPerm.edit,
-        delete: acc.delete || modPerm.delete,
-        approve: acc.approve || modPerm.approve,
-      };
-    }, { ...NO_ACCESS });
+  if (profile && profile.isActive) {
+    return profile.permissions?.[moduleKey] || NO_ACCESS;
   }
 
   if (moduleKey === 'overview_dashboard') return { ...READ_ONLY, view: true };
@@ -199,20 +209,20 @@ export function getPermissions(
   return NO_ACCESS;
 }
 
-export const canView = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profiles).view;
+export const canView = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
+  getPermissions(user, moduleKey, profile).view;
 
-export const canCreate = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profiles).create;
+export const canCreate = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
+  getPermissions(user, moduleKey, profile).create;
 
-export const canEdit = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profiles).edit;
+export const canEdit = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
+  getPermissions(user, moduleKey, profile).edit;
 
-export const canDelete = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profiles).delete;
+export const canDelete = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
+  getPermissions(user, moduleKey, profile).delete;
 
-export const canApprove = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
-  getPermissions(user, moduleKey, profiles).approve;
+export const canApprove = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
+  getPermissions(user, moduleKey, profile).approve;
 
 export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   const depts: DeptType[] = ['hr', 'operations', 'sales', 'accounting', 'store'];

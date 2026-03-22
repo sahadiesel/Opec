@@ -103,6 +103,8 @@ export default function SetupAdminPage() {
         level: 'admin',
         permissionProfileKey: 'admin_admin',
         assignedRoleKey: 'system_admin',
+        userType: 'internal' as const,
+        dataAccess: 'admin' as const,
         approvalStatus: 'ACTIVE',
         isActive: true,
         createdAt: now,

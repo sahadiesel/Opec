@@ -170,8 +170,8 @@ export function SidebarNav({ user, profiles }: { user: User; profiles?: Permissi
       </SidebarHeader>
       <SidebarContent className="py-4">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter(item => 
-            isAdmin || canView(user, item.key, profiles)
+          const visibleItems = group.items.filter(item =>
+            isAdmin || canView(user, item.key, profiles?.[0] ?? null)
           );
 
           if (visibleItems.length === 0) return null;

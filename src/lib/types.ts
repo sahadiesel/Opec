@@ -5,6 +5,8 @@
  */
 
 export type DeptType = 'admin' | 'hr' | 'operations' | 'sales' | 'accounting' | 'store' | 'client';
+
+/** Org / profile tier (PermissionProfile and legacy {@link User.level}). */
 export type AccessLevel = 'viewer' | 'officer' | 'manager' | 'admin';
 
 /** Job Policy Modes */
@@ -24,7 +26,6 @@ export type RoleType =
   | 'store_manager'
   | 'client_user'; 
 
-/** Business Role Keys for Simple Mode */
 export type BusinessRoleKey = 
   | 'system_admin'
   | 'sales_manager'
@@ -117,30 +118,51 @@ export type BillingStatus =
 export type ApprovalStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
 
 export type UserType = 'internal' | 'customer_portal';
+
+export type DataAccessClass = 'staff' | 'client' | 'admin';
+
 export type PortalRole = 'approver' | 'viewer';
 
 export interface User {
   id: string;
   email: string;
   displayName: string;
+
+  // FUTURE PRIMARY ACCESS MODEL (internal: accessGroup + accessLevel + allowedModules; portal separate)
+  userType?: 'internal' | 'customer_portal';
+  accessGroup?: 'admin' | 'operation' | 'accounting' | 'client';
+  accessLevel?: 'admin' | 'manager' | 'officer' | 'viewer';
+  allowedModules?: string[];
+  portalRole?: 'approver' | 'viewer';
+  customerId?: string | null;
+
+  // LEGACY / TRANSITIONAL ONLY — DO NOT EXPAND (kept for Firestore + UI until accessGroup migration)
+  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
   department: DeptType;
+  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
   level: AccessLevel;
+  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
+  roleId?: RoleType;
+  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
   roleIds: RoleType[];
+  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
+  permissionProfileKey?: string | null;
+  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
+  assignedRoleKey?: BusinessRoleKey | null;
+
+  /** Transitional storage only — do not add multi-profile aggregation; runtime should use {@link permissionProfileKey} or first entry. */
+  permissionProfileKeys?: string[];
+  /** Transitional storage only — do not add multi-role aggregation; prefer single {@link assignedRoleKey}. */
+  assignedRoleKeys?: BusinessRoleKey[];
+  dataAccess?: DataAccessClass;
+
   isActive: boolean;
   approvalStatus: ApprovalStatus;
-  permissionProfileKey?: string | null;
-  permissionProfileKeys?: string[]; // Multi-profile support
-  assignedRoleKey?: BusinessRoleKey | null; // Primary role for legacy compatibility
-  assignedRoleKeys?: BusinessRoleKey[]; // Multi-role support
   createdAt: number;
   updatedAt: number;
   lastLoginAt?: number;
   lastLogoutAt?: number;
   notes?: string;
-  customerId?: string | null;
-  // Additive fields for Customer Portal
-  userType?: UserType;
-  portalRole?: PortalRole;
   mustResetPassword?: boolean;
   allowedContractIds?: string[];
   allowedPurchaseOrderIds?: string[];

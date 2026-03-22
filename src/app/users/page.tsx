@@ -11,13 +11,9 @@ import {
   ShieldCheck, 
   UserCog, 
   Filter, 
-  CheckCircle2, 
-  XCircle, 
   Loader2, 
-  UserCheck,
   Save,
   MoreHorizontal,
-  Info,
   Shield,
   Clock,
   Mail,
@@ -54,18 +50,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, writeBatch } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   BUSINESS_ROLES, 
   isAdminUser, 
-  getFieldsForBusinessRoles,
-  deriveBusinessRoleKeys,
+  getFieldsForBusinessRole,
+  deriveBusinessRoleKey,
   getMigratedUserFields
 } from '@/lib/auth-mapping';
 import { getBaselineProfiles, SECURITY_SENSITIVE_FIELDS } from '@/lib/permissions';
@@ -81,7 +76,7 @@ export default function UsersPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
   
-  const [editedRoles, setEditedRoles] = useState<BusinessRoleKey[]>([]);
+  const [editedRole, setEditedRole] = useState<BusinessRoleKey | ''>('');
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -123,21 +118,20 @@ export default function UsersPage() {
    */
   const isDirty = useMemo(() => {
     if (!selectedUser) return false;
-    const initialRoles = deriveBusinessRoleKeys(selectedUser);
+    const initialRole = deriveBusinessRoleKey(selectedUser);
     const initialStatus = selectedUser.approvalStatus || (selectedUser.isActive ? 'ACTIVE' : 'PENDING');
     const initialNotes = selectedUser.notes || '';
 
-    const rolesChanged = JSON.stringify([...editedRoles].sort()) !== JSON.stringify([...initialRoles].sort());
+    const rolesChanged = editedRole !== initialRole;
     const statusChanged = editedStatus !== initialStatus;
     const notesChanged = notes !== initialNotes;
 
     return rolesChanged || statusChanged || notesChanged;
-  }, [selectedUser, editedRoles, editedStatus, notes]);
+  }, [selectedUser, editedRole, editedStatus, notes]);
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
-    const roles = deriveBusinessRoleKeys(user);
-    setEditedRoles(roles);
+    setEditedRole(deriveBusinessRoleKey(user));
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
@@ -165,7 +159,7 @@ export default function UsersPage() {
    * Construct update object and strictly filter sensitive fields if not a system_admin.
    */
   const handleSaveUser = async () => {
-    if (!firestore || !selectedUser || editedRoles.length === 0 || !currentUser) return;
+    if (!firestore || !selectedUser || !editedRole || !currentUser) return;
     setIsSaving(true);
 
     try {
@@ -180,7 +174,7 @@ export default function UsersPage() {
       // ONLY system_admin can modify roles and statuses.
       // This is a client-side safeguard mirrored in Firestore Rules.
       if (isUserAdmin) {
-        const mappedFields = getFieldsForBusinessRoles(editedRoles);
+        const mappedFields = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
         updateData = {
           ...updateData,
           ...mappedFields,
@@ -264,14 +258,6 @@ export default function UsersPage() {
     }
   };
 
-  const toggleRole = (roleKey: BusinessRoleKey) => {
-    setEditedRoles(prev => 
-      prev.includes(roleKey) 
-        ? prev.filter(r => r !== roleKey) 
-        : [...prev, roleKey]
-    );
-  };
-
   if (isUserLoading || !currentUser) return null;
 
   return (
@@ -283,7 +269,7 @@ export default function UsersPage() {
               <ShieldCheck className="h-8 w-8 text-primary" /> จัดการผู้ใช้งาน (User Access Management)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดบทบาทหน้าที่และสิทธิ์การใช้งานระบบ (Multi-role support enabled).
+              กำหนดบทบาทหน้าที่และสิทธิ์การใช้งานระบบ (เลือกได้ครั้งละหนึ่งบทบาท — ชั่วคราวจนกว่าจะย้ายเป็น accessGroup)
             </p>
           </div>
           <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
@@ -315,15 +301,15 @@ export default function UsersPage() {
                   <TableRow>
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
-                    <TableHead>บทบาทหน้าที่ (Assigned Roles)</TableHead>
+                    <TableHead>บทบาทหน้าที่ (Role)</TableHead>
                     <TableHead>สิทธิ์เชิงแผนก (Departments)</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.map((u) => {
-                    const roles = deriveBusinessRoleKeys(u);
-                    const depts = Array.from(new Set(roles.map(rk => BUSINESS_ROLES[rk]?.dept).filter(Boolean)));
+                    const rk = deriveBusinessRoleKey(u);
+                    const dept = BUSINESS_ROLES[rk]?.dept;
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -341,25 +327,16 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-wrap gap-1 max-w-[300px]">
-                            {roles.map(rk => {
-                              const info = BUSINESS_ROLES[rk];
-                              return (
-                                <Badge key={rk} variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary">
-                                  {info?.labelTh || rk}
-                                </Badge>
-                              );
-                            })}
-                          </div>
+                          <Badge variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary max-w-[280px] truncate">
+                            {BUSINESS_ROLES[rk]?.labelTh || rk}
+                          </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-wrap gap-1">
-                            {depts.map(d => (
-                              <Badge key={d} variant="secondary" className="text-[9px] capitalize font-bold flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100">
-                                <Building2 className="h-2 w-2" /> {d}
-                              </Badge>
-                            ))}
-                          </div>
+                          {dept && (
+                            <Badge variant="secondary" className="text-[9px] capitalize font-bold flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100 w-fit">
+                              <Building2 className="h-2 w-2" /> {dept}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>
@@ -391,7 +368,7 @@ export default function UsersPage() {
                 <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
               </DialogTitle>
               <DialogDescription className="italic">
-                กำหนดบทบาทหน้าที่ของพนักงาน (Multiple roles allowed).
+                เลือกบทบาทเดียวต่อผู้ใช้ (ชั่วคราว — รอโมเดล accessGroup/accessLevel)
               </DialogDescription>
             </DialogHeader>
 
@@ -417,46 +394,44 @@ export default function UsersPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">2. บทบาทหน้าที่ (Assigned Roles)</Label>
-                  <ScrollArea className="h-[300px] border rounded-md p-4 bg-muted/10">
-                    <div className="space-y-4">
-                      {Object.values(BUSINESS_ROLES).map(role => (
-                        <div key={role.key} className="flex items-start space-x-3 p-2 hover:bg-white rounded transition-colors">
-                          <Checkbox 
-                            id={`role-${role.key}`} 
-                            disabled={!isUserAdmin}
-                            checked={editedRoles.includes(role.key)}
-                            onCheckedChange={() => toggleRole(role.key)}
-                          />
-                          <div className="grid gap-1.5 leading-none">
-                            <Label htmlFor={`role-${role.key}`} className="font-bold text-sm cursor-pointer">
-                              {role.labelTh}
-                            </Label>
-                            <p className="text-[9px] text-muted-foreground uppercase">{role.labelEn}</p>
-                          </div>
-                        </div>
+                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">2. บทบาทหน้าที่ (Role)</Label>
+                  <Select
+                    disabled={!isUserAdmin}
+                    value={editedRole || undefined}
+                    onValueChange={(v) => setEditedRole(v as BusinessRoleKey)}
+                  >
+                    <SelectTrigger className="h-12 font-bold border-2">
+                      <SelectValue placeholder="เลือกบทบาทหนึ่งรายการ" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[280px]">
+                      {Object.values(BUSINESS_ROLES).map((role) => (
+                        <SelectItem key={role.key} value={role.key}>
+                          <span className="font-medium">{role.labelTh}</span>
+                          <span className="text-muted-foreground text-xs ml-2">({role.labelEn})</span>
+                        </SelectItem>
                       ))}
-                    </div>
-                  </ScrollArea>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
               <div className="bg-primary/5 p-6 rounded-xl border border-primary/10 space-y-4 flex flex-col">
                 <Label className="font-black text-primary flex items-center gap-2 uppercase text-[10px] tracking-widest">
-                  <Shield className="h-4 w-4" /> สรุปสิทธิ์ที่จะได้รับ (Access Preview)
+                  <Shield className="h-4 w-4" /> สรุป (ชั่วคราว)
                 </Label>
                 <Separator className="bg-primary/10" />
                 <div className="space-y-4 flex-1">
-                  {editedRoles.length > 0 ? (
+                  {editedRole ? (
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">แผนกที่เกี่ยวข้อง (Target Departments):</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">แผนก / ระดับ (จากบทบาทที่เลือก)</p>
                         <div className="flex flex-wrap gap-1">
-                          {Array.from(new Set(editedRoles.map(rk => BUSINESS_ROLES[rk]?.dept))).map(d => (
-                            <Badge key={d} variant="outline" className="bg-white capitalize text-[10px] font-black border-blue-200 text-blue-700">
-                              <Building2 className="h-2.5 w-2.5 mr-1" /> {d}
-                            </Badge>
-                          ))}
+                          <Badge variant="outline" className="bg-white capitalize text-[10px] font-black border-blue-200 text-blue-700">
+                            <Building2 className="h-2.5 w-2.5 mr-1" /> {BUSINESS_ROLES[editedRole as BusinessRoleKey]?.dept}
+                          </Badge>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {BUSINESS_ROLES[editedRole as BusinessRoleKey]?.level}
+                          </Badge>
                         </div>
                       </div>
                       <Separator className="bg-primary/10" />
@@ -466,17 +441,11 @@ export default function UsersPage() {
                           <AlertDescription className="text-[9px] font-bold">เฉพาะแอดมินเท่านั้นที่สามารถเปลี่ยนบทบาทได้</AlertDescription>
                         </Alert>
                       )}
-                      <div className="p-3 bg-white/50 rounded border border-dashed border-blue-200">
-                        <p className="text-[10px] text-blue-800 italic leading-relaxed">
-                          <Info className="h-3 w-3 inline mr-1" />
-                          ระบบจะรวมสิทธิ์การเข้าถึงจากทุกโปรไฟล์ที่เลือกแบบสะสม (Additive Permissions). ผู้ใช้จะเห็นเมนูและข้อมูลของทุกแผนกที่ระบุไว้
-                        </p>
-                      </div>
                     </div>
                   ) : (
                     <div className="py-20 text-center space-y-3">
                       <Clock className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกบทบาทอย่างน้อย 1 รายการ</p>
+                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกบทบาทหนึ่งรายการ</p>
                     </div>
                   )}
                 </div>
@@ -504,7 +473,7 @@ export default function UsersPage() {
               </Button>
               <Button 
                 onClick={handleSaveUser} 
-                disabled={isSaving || editedRoles.length === 0 || !isDirty} 
+                disabled={isSaving || !editedRole || !isDirty} 
                 className="bg-primary font-black h-12 px-10 shadow-lg text-lg"
               >
                 {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}

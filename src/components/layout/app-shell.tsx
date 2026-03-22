@@ -4,12 +4,13 @@
 import * as React from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { SidebarNav } from './sidebar-nav';
-import { User, PermissionProfile } from '@/lib/types';
+import { User } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LogOut, Shield, AlertTriangle, Info, Settings2, Building2 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useAuth, useCollection } from '@/firebase';
-import { doc, updateDoc, query, collection, where } from 'firebase/firestore';
+import { useFirestore, useDoc, useMemoFirebase, useAuth } from '@/firebase';
+import { doc, updateDoc } from 'firebase/firestore';
+import { usePermissionProfiles } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
 import { getEffectiveDepartment, getEffectiveLevel, isAdminUser } from '@/lib/auth-mapping';
 import { useRouter } from 'next/navigation';
@@ -38,22 +39,16 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const auth = useAuth();
   const router = useRouter();
 
-  // Multi-profile resolution logic
+  const { profiles, isLoading: isProfilesLoading } = usePermissionProfiles(user);
+
   const profileKeys = React.useMemo(() => {
-    if (!user) return [];
+    if (!user) return [] as string[];
     const keys = user.permissionProfileKeys || [];
     if (user.permissionProfileKey && !keys.includes(user.permissionProfileKey)) {
       return [...keys, user.permissionProfileKey];
     }
     return keys;
   }, [user]);
-
-  const profilesQuery = useMemoFirebase(() => {
-    if (!firestore || profileKeys.length === 0) return null;
-    return query(collection(firestore, 'permission_profiles'), where('profileKey', 'in', profileKeys));
-  }, [firestore, profileKeys]);
-
-  const { data: profiles, isLoading: isProfilesLoading } = useCollection<PermissionProfile>(profilesQuery as any);
 
   const handleLogout = async () => {
     if (user && firestore) {

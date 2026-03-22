@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { isAccountingStaff, isHRStaff } from '@/lib/permissions';
 
 export default function OfficePayrollPage() {
   const router = useRouter();
@@ -64,6 +65,13 @@ export default function OfficePayrollPage() {
     payrollPeriodEnd: '',
     notes: ''
   });
+
+  const isAuthorized = useMemo(
+    () =>
+      currentUser != null &&
+      (isHRStaff(currentUser) || isAccountingStaff(currentUser)),
+    [currentUser]
+  );
 
   const handleCreateRun = async () => {
     if (!firestore || !currentUser) return;

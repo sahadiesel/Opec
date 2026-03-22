@@ -42,6 +42,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { isInternalUser } from '@/lib/permissions';
 
 export default function CashbookPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -54,19 +55,21 @@ export default function CashbookPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'accounting_officer', 'accounting_manager'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
+  const canViewPage = useMemo(() => isInternalUser(currentUser), [currentUser]);
+
+  const canWriteCashbook = useMemo(() => {
+    const authRoles = ['system_admin', 'finance_officer', 'accounting_officer', 'accounting_manager'];
+    return currentUser?.roleIds?.some(r => authRoles.includes(r as string)) || false;
   }, [currentUser]);
 
   const entriesQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
+    if (!firestore || !canViewPage) return null;
     return query(collection(firestore, 'cashbook_entries'), orderBy('entryDate', 'desc'), limit(100));
-  }, [firestore, isAuthorized]);
+  }, [firestore, canViewPage]);
 
   const { data: entries, isLoading } = useCollection<CashbookEntry>(entriesQuery as any);
 
-  const bankAccountsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'bank_accounts') : null), [firestore, isAuthorized]);
+  const bankAccountsQuery = useMemoFirebase(() => (firestore && canViewPage ? collection(firestore, 'bank_accounts') : null), [firestore, canViewPage]);
   const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -176,9 +179,9 @@ export default function CashbookPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={canWriteCashbook && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canWriteCashbook}>
                 <Plus className="h-5 w-5" /> บันทึกรายการใหม่ (Manual Entry)
               </Button>
             </DialogTrigger>
