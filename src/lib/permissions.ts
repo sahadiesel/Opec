@@ -1,6 +1,3 @@
-
-'use client';
-
 /**
  * @fileOverview OPEC OpsFlow - Centralized Permissions & Authorization Source of Truth.
  * Handles data normalization for single/multi-role users and provides consistent helpers.
@@ -218,3 +215,64 @@ export const canDelete = (user: User | null, moduleKey: ModuleKey, profiles?: Pe
 
 export const canApprove = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).approve;
+
+/**
+ * Generates baseline profiles for the auto-repair and migration tools.
+ */
+export function getBaselineProfiles(): Partial<PermissionProfile>[] {
+  const depts: DeptType[] = ['hr', 'operations', 'sales', 'accounting', 'store'];
+  const baselines: Partial<PermissionProfile>[] = [
+    {
+      profileKey: 'admin_admin',
+      profileNameEn: 'System Administrator',
+      profileNameTh: 'ผู้ดูแลระบบสูงสุด',
+      department: 'admin',
+      level: 'admin',
+      isActive: true,
+      permissions: SYSTEM_MODULES.reduce((acc, mod) => ({ ...acc, [mod.key]: FULL_ACCESS }), {})
+    },
+    {
+      profileKey: 'client_user',
+      profileNameEn: 'Client Portal User',
+      profileNameTh: 'ลูกค้า / ผู้ใช้งานภายนอก',
+      department: 'client',
+      level: 'viewer',
+      isActive: true,
+      permissions: {
+        ...INITIAL_PERMISSIONS_TEMPLATE,
+        client_portal: READ_ONLY,
+        timesheets: READ_ONLY,
+      }
+    }
+  ];
+
+  depts.forEach(dept => {
+    baselines.push({
+      profileKey: `${dept}_manager`,
+      profileNameEn: `${dept.toUpperCase()} Manager`,
+      profileNameTh: `ผู้จัดการฝ่าย${dept}`,
+      department: dept,
+      level: 'manager',
+      isActive: true,
+      permissions: SYSTEM_MODULES.reduce((acc, mod) => {
+        const isRelevant = mod.key.includes(dept) || mod.group.toLowerCase().includes(dept);
+        return { ...acc, [mod.key]: isRelevant ? FULL_ACCESS : (mod.key === 'overview_dashboard' ? READ_ONLY : NO_ACCESS) };
+      }, {})
+    });
+
+    baselines.push({
+      profileKey: `${dept}_officer`,
+      profileNameEn: `${dept.toUpperCase()} Officer`,
+      profileNameTh: `เจ้าหน้าที่ฝ่าย${dept}`,
+      department: dept,
+      level: 'officer',
+      isActive: true,
+      permissions: SYSTEM_MODULES.reduce((acc, mod) => {
+        const isRelevant = mod.key.includes(dept) || mod.group.toLowerCase().includes(dept);
+        return { ...acc, [mod.key]: isRelevant ? OFFICER_ACCESS : (mod.key === 'overview_dashboard' ? READ_ONLY : NO_ACCESS) };
+      }, {})
+    });
+  });
+
+  return baselines;
+}

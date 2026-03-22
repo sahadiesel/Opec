@@ -1,4 +1,3 @@
-
 /**
  * OPEC OpsFlow - Authorization & Menu Mapping Configuration
  * Centralized mapping from Business Roles to Dept + Level + Canonical Roles.
@@ -242,6 +241,10 @@ export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<
     level: primary.level,
     updatedAt: Date.now()
   };
+}
+
+export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User> {
+  return getFieldsForBusinessRoles([roleKey]);
 }
 
 export function getMigratedUserFields(user: Partial<User>): Partial<User> {
