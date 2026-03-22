@@ -27,6 +27,7 @@ import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/no
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { isInternalStaff } from '@/lib/permissions';
 
 export default function CustomersPage() {
   const router = useRouter();
@@ -64,7 +65,7 @@ export default function CustomersPage() {
 
   // Guard for list queries
   const isStaff = useMemo(() => {
-    return user?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
+    return isInternalStaff(user);
   }, [user]);
 
   const customersQuery = useMemoFirebase(() => {

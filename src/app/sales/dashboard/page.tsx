@@ -37,7 +37,7 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { isAdminUser } from '@/lib/auth-mapping';
+import { isSalesStaff } from '@/lib/permissions';
 
 export default function SalesDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -50,9 +50,7 @@ export default function SalesDashboardPage() {
   }, []);
 
   const isSalesAuthorized = useMemo(() => {
-    if (!currentUser) return false;
-    const authRoles = ['sales_manager', 'sales_officer', 'system_admin'];
-    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
+    return isSalesStaff(currentUser);
   }, [currentUser]);
 
   // --- Sales Data Queries ---

@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -34,7 +33,7 @@ import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/fireb
 import { signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { isAdminUser, BUSINESS_ROLES } from '@/lib/auth-mapping';
+import { BUSINESS_ROLES } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HELP_TEXTS } from '@/lib/constants/help-texts';
@@ -52,7 +51,7 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
-import { normalizeCurrentUserPermissions } from '@/lib/permissions';
+import { normalizeCurrentUserPermissions, isSystemAdmin, isHRStaff, isOperationsStaff, isSalesStaff, isAccountingStaff, isStoreStaff } from '@/lib/permissions';
 
 export default function Home() {
   const router = useRouter();
@@ -130,7 +129,7 @@ export default function Home() {
     return latestUserDoc.isActive && latestUserDoc.approvalStatus === 'ACTIVE';
   }, [latestUserDoc, isDocLoading]);
 
-  const { can, check } = usePermissions(user);
+  const { check } = usePermissions(user);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -311,7 +310,7 @@ export default function Home() {
               <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการตามบทบาท</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {(user.roleIds?.includes('hr_manager') || user.roleIds?.includes('hr_officer') || isAdminUser(user)) && (
+              {(isHRStaff(user)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Users className="h-4 w-4" />
@@ -320,7 +319,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(user.roleIds?.includes('sales_manager') || user.roleIds?.includes('sales_officer') || isAdminUser(user)) && (
+              {(isSalesStaff(user)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/sales/dashboard')}>
                   <div className="flex items-center gap-3">
                     <TrendingUp className="h-4 w-4" />
@@ -329,7 +328,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(user.roleIds?.includes('accounting_manager') || user.roleIds?.includes('accounting_officer') || isAdminUser(user)) && (
+              {(isAccountingStaff(user)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/accounting/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Coins className="h-4 w-4" />
@@ -338,7 +337,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(user.roleIds?.includes('operations_manager') || user.roleIds?.includes('operations_officer') || isAdminUser(user)) && (
+              {(isOperationsStaff(user)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/operations/dashboard')}>
                   <div className="flex items-center gap-3">
                     <HardHat className="h-4 w-4" />
@@ -347,7 +346,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {isAdminUser(user) && (
+              {isSystemAdmin(user) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/users')}>
                   <div className="flex items-center gap-3">
                     <ShieldCheck className="h-4 w-4" />
@@ -368,7 +367,7 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {check('workers', 'view') && (
+            {isHRStaff(user) && (
               <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
                 <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวมบุคคล" />
                 <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />
@@ -377,7 +376,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {check('customers', 'view') && (
+            {isSalesStaff(user) && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
                 <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
                 <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
@@ -386,7 +385,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {check('waves', 'view') && (
+            {isOperationsStaff(user) && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
                 <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
                 <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />
@@ -395,7 +394,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {check('cashbook', 'view') && (
+            {isAccountingStaff(user) && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
                 <ShortcutLink href="/accounting/dashboard" label="Accounting Dashboard" sub="ภาพรวมบัญชี" />
                 <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
@@ -404,7 +403,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {check('store_inventory', 'view') && (
+            {isStoreStaff(user) && (
               <ShortcutGroup title="คลังและจัดซื้อ (Store)" icon={Warehouse} color="border-l-amber-500">
                 <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />
                 <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />

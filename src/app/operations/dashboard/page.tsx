@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -39,7 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
-import { isAdminUser } from '@/lib/auth-mapping';
+import { isOperationsStaff } from '@/lib/permissions';
 
 export default function OperationsDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -52,9 +51,7 @@ export default function OperationsDashboardPage() {
   }, []);
 
   const isOperationsAuthorized = useMemo(() => {
-    if (!currentUser) return false;
-    const authRoles = ['operations_manager', 'operations_officer', 'system_admin'];
-    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
+    return isOperationsStaff(currentUser);
   }, [currentUser]);
 
   // --- Operations Data Queries ---

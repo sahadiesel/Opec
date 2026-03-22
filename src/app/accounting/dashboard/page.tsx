@@ -38,7 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
-import { isAdminUser } from '@/lib/auth-mapping';
+import { isAccountingStaff } from '@/lib/permissions';
 
 export default function AccountingDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -51,9 +51,7 @@ export default function AccountingDashboardPage() {
   }, []);
 
   const isAccountingAuthorized = useMemo(() => {
-    if (!currentUser) return false;
-    const authRoles = ['accounting_manager', 'accounting_officer', 'system_admin'];
-    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
+    return isAccountingStaff(currentUser);
   }, [currentUser]);
 
   // --- Financial Data Queries ---

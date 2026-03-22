@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -37,7 +36,7 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { isAdminUser } from '@/lib/auth-mapping';
+import { isHRStaff } from '@/lib/permissions';
 
 export default function HRDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -50,9 +49,7 @@ export default function HRDashboardPage() {
   }, []);
 
   const isHRAuthorized = useMemo(() => {
-    if (!currentUser) return false;
-    const authRoles = ['hr_manager', 'hr_officer', 'system_admin'];
-    return currentUser.roleIds?.some(r => authRoles.includes(r)) || isAdminUser(currentUser);
+    return isHRStaff(currentUser);
   }, [currentUser]);
 
   // --- HR Data Queries ---
@@ -187,6 +184,7 @@ export default function HRDashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Action Queue Section */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="shadow-md border-none overflow-hidden">
               <CardHeader className="bg-primary/5 border-b pb-4">
