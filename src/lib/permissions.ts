@@ -1,10 +1,10 @@
-
 /**
  * @fileOverview OPEC OpsFlow - Centralized Permissions & Authorization Source of Truth.
  * Handles data normalization for single/multi-role users and provides consistent helpers.
  */
 
 import { User, PermissionProfile, ModulePermission, DeptType, AccessLevel, RoleType } from './types';
+import { resolvePermissionModuleKey } from './permission-module-map';
 
 /**
  * List of fields that govern system access.
@@ -21,6 +21,7 @@ export const SECURITY_SENSITIVE_FIELDS = [
 
 /**
  * Registry of all modules in the system.
+ * These keys are used in the UI and Permission Profiles.
  */
 export const SYSTEM_MODULES = [
   { group: 'Overview', key: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Main Dashboard)' },
@@ -155,17 +156,21 @@ export const isClient = (user: User | null) => {
 // --- CORE PERMISSION LOGIC ---
 
 /**
- * Primary helper to check permissions for a specific module
+ * Primary helper to check permissions for a specific module.
+ * Automatically resolves aliases (e.g. 'purchase_orders' resolves to 'customer_pos').
  */
 export function getPermissions(
   user: User | null, 
-  moduleKey: ModuleKey, 
+  rawModuleKey: string, 
   profiles?: PermissionProfile[] | PermissionProfile | null
 ): ModulePermission {
   if (!user) return NO_ACCESS;
   
   const u = normalizeCurrentUserPermissions(user);
   if (!u || !u.isActive) return NO_ACCESS;
+
+  // 0. Resolve Aliases (e.g. Domain Name -> UI Module Key)
+  const moduleKey = resolvePermissionModuleKey(rawModuleKey);
 
   // 1. Full Admin Override
   if (isSystemAdmin(u)) {
@@ -206,28 +211,28 @@ export function getPermissions(
   }
 
   // Departmental Fallbacks
-  if (isHRStaff(u) && ['workers', 'positions', 'timesheets', 'worker_payroll', 'office_staff'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isHRStaff(u) && ['workers', 'positions', 'timesheets', 'worker_payroll', 'office_staff', 'labor_cost_contract_terms'].includes(moduleKey)) return OFFICER_ACCESS;
   if (isStoreStaff(u) && ['store_inventory', 'vendors', 'purchases'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (isAccountingStaff(u) && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills', 'accounts_receivable', 'accounts_payable'].includes(moduleKey)) return OFFICER_ACCESS;
-  if (isSalesStaff(u) && ['customers', 'main_contracts', 'quotations', 'customer_pos', 'sales_contract_terms'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isAccountingStaff(u) && ['cashbook', 'billing_notes', 'tax_invoices', 'receipts', 'ap_bills', 'accounts_receivable', 'accounts_payable', 'bank_accounts'].includes(moduleKey)) return OFFICER_ACCESS;
+  if (isSalesStaff(u) && ['customers', 'main_contracts', 'quotations', 'customer_pos', 'sales_contract_terms', 'rate_conditions', 'profit_estimates'].includes(moduleKey)) return OFFICER_ACCESS;
   if (isOperationsStaff(u) && ['waves', 'assignments', 'mobilization', 'timesheets'].includes(moduleKey)) return OFFICER_ACCESS;
 
   return NO_ACCESS;
 }
 
-export const canView = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+export const canView = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).view;
 
-export const canCreate = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+export const canCreate = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).create;
 
-export const canEdit = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+export const canEdit = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).edit;
 
-export const canDelete = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+export const canDelete = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).delete;
 
-export const canApprove = (user: User | null, moduleKey: ModuleKey, profiles?: PermissionProfile[] | PermissionProfile | null) => 
+export const canApprove = (user: User | null, moduleKey: string, profiles?: PermissionProfile[] | PermissionProfile | null) => 
   getPermissions(user, moduleKey, profiles).approve;
 
 /**
