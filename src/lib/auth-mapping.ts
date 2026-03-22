@@ -4,6 +4,7 @@
  * - single-role primary mapping
  * - future model = accessGroup/accessLevel
  * - legacy business-role helpers retained for compatibility only
+ * - migration helpers now populate accessGroup/accessLevel/allowedModules/portalRole
  */
 
 import {
@@ -14,6 +15,7 @@ import {
   BusinessRoleKey,
   DataAccessClass,
   UserType,
+  PortalRole,
 } from './types';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
 
@@ -149,10 +151,83 @@ export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
   safety_officer: 'operations_officer',
 };
 
+export const OPERATION_DEFAULT_MODULES = [
+  'customers',
+  'quotations',
+  'main_contracts',
+  'sales_contract_terms',
+  'customer_pos',
+  'rate_conditions',
+  'profit_estimates',
+  'timesheets',
+  'worker_payroll',
+  'office_payroll',
+  'payment_export_batches',
+  'labor_cost_contract_terms',
+  'positions',
+  'workers',
+  'office_staff',
+  'waves',
+  'assignments',
+  'mobilization',
+] as const;
+
+export const ACCOUNTING_DEFAULT_MODULES = [
+  'customers',
+  'quotations',
+  'main_contracts',
+  'sales_contract_terms',
+  'customer_pos',
+  'timesheets',
+  'worker_payroll',
+  'office_payroll',
+  'payment_export_batches',
+  'labor_cost_contract_terms',
+  'positions',
+  'workers',
+  'office_staff',
+  'vendors',
+  'purchases',
+  'store_inventory',
+  'billing_notes',
+  'tax_invoices',
+  'receipts',
+  'ap_bills',
+  'accounts_receivable',
+  'accounts_payable',
+  'cashbook',
+  'bank_accounts',
+] as const;
+
 function canonicalizeRoleKey(roleKey?: string | null): BusinessRoleKey | null {
   if (!roleKey) return null;
   const mapped = LEGACY_TO_CANONICAL_MAP[roleKey] || roleKey;
   return mapped in BUSINESS_ROLES ? (mapped as BusinessRoleKey) : null;
+}
+
+function hasRawLegacyKey(user: Partial<User>, candidates: string[]): boolean {
+  const values = [
+    user.roleId,
+    user.assignedRoleKey,
+    ...(Array.isArray(user.roleIds) ? user.roleIds : []),
+    ...(Array.isArray(user.assignedRoleKeys) ? user.assignedRoleKeys : []),
+  ]
+    .filter(Boolean)
+    .map((v) => String(v));
+
+  return candidates.some((candidate) => values.includes(candidate));
+}
+
+function inferPortalRole(user: Partial<User>): PortalRole {
+  if (user.portalRole === 'approver' || user.portalRole === 'viewer') {
+    return user.portalRole;
+  }
+
+  if (hasRawLegacyKey(user, ['client_approver', 'customer_approver'])) {
+    return 'approver';
+  }
+
+  return 'viewer';
 }
 
 function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | null {
@@ -217,6 +292,16 @@ function mapBusinessRoleToAccessLevel(roleKey: BusinessRoleKey): 'admin' | 'mana
   if (roleKey === 'system_admin') return 'admin';
   if (roleKey === 'client_user') return 'viewer';
   return BUSINESS_ROLES[roleKey].level;
+}
+
+function getDefaultAllowedModules(
+  accessGroup: 'admin' | 'operation' | 'accounting' | 'client',
+  accessLevel: 'admin' | 'manager' | 'officer' | 'viewer'
+): string[] | undefined {
+  if (accessLevel !== 'officer') return undefined;
+  if (accessGroup === 'operation') return [...OPERATION_DEFAULT_MODULES];
+  if (accessGroup === 'accounting') return [...ACCOUNTING_DEFAULT_MODULES];
+  return undefined;
 }
 
 export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType; level: AccessLevel } {
@@ -301,6 +386,8 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
   const dataAccess = deriveDataAccess([roleKey]);
   const userType: UserType = dataAccess === 'client' ? 'customer_portal' : 'internal';
   const permissionProfileKey = getProfileKeyForRole(roleKey);
+  const portalRole: PortalRole | undefined = roleKey === 'client_user' ? 'viewer' : undefined;
+  const allowedModules = getDefaultAllowedModules(accessGroup, accessLevel);
 
   return {
     assignedRoleKey: roleKey,
@@ -313,8 +400,10 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
     level: role.level,
     accessGroup,
     accessLevel,
+    allowedModules,
     dataAccess,
     userType,
+    portalRole,
     updatedAt: Date.now(),
   };
 }
@@ -331,7 +420,19 @@ export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<
 
 export function getMigratedUserFields(user: Partial<User>): Partial<User> {
   const primary = deriveBusinessRoleKey(user);
-  return getFieldsForBusinessRole(primary);
+  const base = getFieldsForBusinessRole(primary);
+
+  if (primary === 'client_user') {
+    return {
+      ...base,
+      portalRole: inferPortalRole(user),
+      accessLevel: 'viewer',
+      allowedModules: undefined,
+      customerId: user.customerId ?? null,
+    };
+  }
+
+  return base;
 }
 
 export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {
