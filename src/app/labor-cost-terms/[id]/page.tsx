@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
@@ -33,7 +34,8 @@ import {
   Customer, 
   PurchaseOrder,
   LaborCostContractStatus,
-  LaborScopeType 
+  LaborScopeType,
+  MainContract 
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -43,6 +45,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { usePermissions } from '@/hooks/use-permissions';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
 import { writeAuditLog } from '@/lib/services/audit-service';
+import { hasMinimumLevel } from '@/lib/permission-core';
 
 export default function LaborCostTermDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -58,6 +61,9 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
 
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
 
+  // Management access check
+  const isManagement = useMemo(() => hasMinimumLevel(currentUser, 'manager'), [currentUser]);
+
   const termRef = useMemoFirebase(() => (firestore ? doc(firestore, 'labor_cost_contract_terms', id) : null), [firestore, id]);
   const { data: term, isLoading: isTermLoading } = useDoc<LaborCostContractTerm>(termRef as any);
 
@@ -66,6 +72,9 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
 
   const poQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders') : null), [firestore]);
   const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
+
+  const contractQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'main_contracts') : null), [firestore]);
+  const { data: allContracts } = useCollection<MainContract>(contractQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<LaborCostContractTerm>>({});
@@ -76,9 +85,10 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
 
   const customer = allCustomers?.find(c => c.id === term?.relatedCustomerId);
   const po = allPOs?.find(p => p.id === term?.relatedPurchaseOrderId);
+  const contract = allContracts?.find(c => c.id === term?.relatedContractId);
 
   const handleSave = () => {
-    if (!termRef || !currentUser || !can('labor_cost_contract_terms').edit) return;
+    if (!termRef || !currentUser || !isManagement) return;
     const updateData = { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName };
     updateDocumentNonBlocking(termRef, updateData);
     setIsEditing(false);
@@ -99,7 +109,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
   };
 
   const handleUpdateStatus = (newStatus: LaborCostContractStatus) => {
-    if (!termRef || !currentUser) return;
+    if (!termRef || !currentUser || !isManagement) return;
     updateDocumentNonBlocking(termRef, { status: newStatus, updatedAt: Date.now() });
 
     // Add Audit Log
@@ -160,7 +170,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
                       <CardTitle className="text-lg flex items-center gap-2"><Calculator className="h-5 w-5 text-primary" /> ขอบเขตต้นทุน (Labor Scope)</CardTitle>
                       <CardDescription>ระบุโครงการและขอบเขตพนักงานที่ใช้เงื่อนไขนี้</CardDescription>
                     </div>
-                    {can('labor_cost_contract_terms').edit && (
+                    {isManagement && (
                       <Button variant="outline" size="sm" onClick={() => setIsEditing(!isEditing)}>
                         {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
                       </Button>
@@ -177,6 +187,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
                         <Select disabled={!isEditing} value={formData.scopeType} onValueChange={(v: LaborScopeType) => setFormData({...formData, scopeType: v})}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="MASTER_CONTRACT">Master Contract (ตามสัญญาหลัก)</SelectItem>
                             <SelectItem value="SPECIFIC_PO">Specific PO (เฉพาะใบสั่งซื้อนี้)</SelectItem>
                             <SelectItem value="GENERAL_CUSTOMER">General Customer (เหมาทั้งลูกค้า)</SelectItem>
                             <SelectItem value="PROJECT_BASED">Project Based (ตามกลุ่มโครงการ)</SelectItem>
@@ -184,8 +195,12 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label className="font-bold">ใบสั่งซื้อที่อ้างอิง (Linked PO)</Label>
-                        <Input disabled value={po?.poCode || 'General Client Terms'} className="bg-muted/50 font-mono" />
+                        <Label className="font-bold">อ้างอิง (Linked Reference)</Label>
+                        <Input disabled value={
+                          formData.scopeType === 'MASTER_CONTRACT' ? (contract?.contractNumber || 'Master Terms') :
+                          formData.scopeType === 'SPECIFIC_PO' ? (po?.poCode || 'PO Terms') :
+                          'General Client Terms'
+                        } className="bg-muted/50 font-mono" />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">วันที่เริ่มใช้ (Effective)</Label>
@@ -222,14 +237,16 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
                     <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ (Workflow)</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3">
-                    {term.status === 'DRAFT' && (
+                    {term.status === 'DRAFT' && isManagement && (
                       <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('ACTIVE')}>
                         <CheckCircle2 className="h-4 w-4 mr-2" /> เปิดใช้งาน (Activate)
                       </Button>
                     )}
-                    <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CLOSED')}>
-                      ปิดการใช้งานชั่วคราว
-                    </Button>
+                    {isManagement && (
+                      <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CLOSED')}>
+                        ปิดการใช้งานชั่วคราว
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
 

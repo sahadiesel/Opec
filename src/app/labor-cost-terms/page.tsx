@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -18,10 +19,11 @@ import {
   Info,
   Loader2,
   Trash2,
-  Briefcase
+  Briefcase,
+  FileText
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { LaborCostContractTerm, User, Customer, PurchaseOrder, LaborCostContractStatus, LaborScopeType } from '@/lib/types';
+import { LaborCostContractTerm, User, Customer, PurchaseOrder, LaborCostContractStatus, LaborScopeType, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
@@ -42,6 +44,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { ContractTermsService } from '@/lib/services/contract-terms-service';
 import { usePermissions } from '@/hooks/use-permissions';
+import { hasMinimumLevel } from '@/lib/permission-core';
 
 export default function LaborCostTermsPage() {
   const router = useRouter();
@@ -56,6 +59,9 @@ export default function LaborCostTermsPage() {
   }, []);
 
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
+
+  // STRICT RULE: Management (Manager/Admin) only for creation/editing
+  const isManagement = useMemo(() => hasMinimumLevel(currentUser, 'manager'), [currentUser]);
 
   const termsQuery = useMemoFirebase(() => {
     if (!firestore || !can('labor_cost_contract_terms').view) return null;
@@ -77,12 +83,18 @@ export default function LaborCostTermsPage() {
   }, [firestore, canViewTerms]);
   const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
+  const contractsQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewTerms) return null;
+    return collection(firestore, 'main_contracts');
+  }, [firestore, canViewTerms]);
+  const { data: allContracts } = useCollection<MainContract>(contractsQuery as any);
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newTerm, setNewTerm] = useState<Partial<LaborCostContractTerm>>({
     id: getPreviewPattern('cost_term'),
     status: 'DRAFT',
-    scopeType: 'SPECIFIC_PO',
+    scopeType: 'GENERAL_CUSTOMER',
     effectiveDate: new Date().toISOString().split('T')[0],
     endDate: new Date(Date.now() + 31536000000).toISOString().split('T')[0]
   });
@@ -129,6 +141,7 @@ export default function LaborCostTermsPage() {
   const getScopeBadge = (scope: LaborScopeType) => {
     switch (scope) {
       case 'SPECIFIC_PO': return <Badge variant="outline" className="bg-blue-50 text-blue-700">Specific PO</Badge>;
+      case 'MASTER_CONTRACT': return <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">Master Contract</Badge>;
       case 'GENERAL_CUSTOMER': return <Badge variant="outline" className="bg-purple-50 text-purple-700">General Client</Badge>;
       case 'PROJECT_BASED': return <Badge variant="outline" className="bg-amber-50 text-amber-700">Project Based</Badge>;
       default: return <Badge variant="outline">{scope}</Badge>;
@@ -178,7 +191,7 @@ export default function LaborCostTermsPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          {can('labor_cost_contract_terms').create && (
+          {can('labor_cost_contract_terms').create && isManagement && (
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
                 <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
@@ -201,9 +214,10 @@ export default function LaborCostTermsPage() {
                   </div>
                   <div className="space-y-2 md:col-span-2">
                     <Label className="font-bold">ขอบเขตการใช้งาน (Scope)</Label>
-                    <Select onValueChange={(v: LaborScopeType) => setNewTerm({...newTerm, scopeType: v})} value={newTerm.scopeType}>
+                    <Select onValueChange={(v: LaborScopeType) => setNewTerm({...newTerm, scopeType: v, relatedPurchaseOrderId: undefined, relatedContractId: undefined})} value={newTerm.scopeType}>
                       <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="MASTER_CONTRACT">Master Contract (ตามสัญญาหลัก)</SelectItem>
                         <SelectItem value="SPECIFIC_PO">Specific PO (เฉพาะใบสั่งซื้อนี้)</SelectItem>
                         <SelectItem value="GENERAL_CUSTOMER">General Customer (เหมาทั้งลูกค้า)</SelectItem>
                         <SelectItem value="PROJECT_BASED">Project Based (ตามกลุ่มโครงการ)</SelectItem>
@@ -221,6 +235,35 @@ export default function LaborCostTermsPage() {
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {newTerm.scopeType === 'MASTER_CONTRACT' && (
+                    <div className="space-y-2 md:col-span-2">
+                      <Label className="font-bold flex items-center gap-2"><FileText className="h-4 w-4" /> เลือกสัญญาหลัก (Reference Contract)</Label>
+                      <Select onValueChange={v => setNewTerm({...newTerm, relatedContractId: v})} disabled={!newTerm.relatedCustomerId}>
+                        <SelectTrigger className="h-11 border-indigo-200"><SelectValue placeholder="เลือกสัญญาหลักที่อ้างอิง..." /></SelectTrigger>
+                        <SelectContent>
+                          {allContracts?.filter(c => c.customerId === newTerm.relatedCustomerId).map(c => (
+                            <SelectItem key={c.id} value={c.id}>{c.contractNumber} | {c.title}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {newTerm.scopeType === 'SPECIFIC_PO' && (
+                    <div className="space-y-2 md:col-span-2">
+                      <Label className="font-bold flex items-center gap-2"><ShoppingCart className="h-4 w-4" /> เลือกใบสั่งซื้อ (Reference PO)</Label>
+                      <Select onValueChange={v => setNewTerm({...newTerm, relatedPurchaseOrderId: v})} disabled={!newTerm.relatedCustomerId}>
+                        <SelectTrigger className="h-11 border-blue-200"><SelectValue placeholder="เลือกใบสั่งซื้อที่อ้างอิง..." /></SelectTrigger>
+                        <SelectContent>
+                          {allPOs?.filter(p => p.customerId === newTerm.relatedCustomerId).map(p => (
+                            <SelectItem key={p.id} value={p.id}>{p.poCode} | {p.projectName}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     <Label className="font-bold">วันที่เริ่ม (Effective)</Label>
                     <Input type="date" value={newTerm.effectiveDate} onChange={e => setNewTerm({...newTerm, effectiveDate: e.target.value})} />

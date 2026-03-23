@@ -1,3 +1,4 @@
+
 import { z } from 'zod';
 
 /**
@@ -32,8 +33,9 @@ export const LaborCostContractTermSchema = z.object({
   id: z.string().optional(),
   title: z.string().min(1, 'Title is required'),
   relatedCustomerId: z.string().min(1, 'Related Customer ID is required'),
-  relatedPurchaseOrderId: z.string().min(1, 'Related Purchase Order ID is required'),
-  scopeType: z.enum(['SPECIFIC_PO', 'GENERAL_CUSTOMER', 'PROJECT_BASED', 'OTHER']),
+  relatedPurchaseOrderId: z.string().optional().nullable(),
+  relatedContractId: z.string().optional().nullable(),
+  scopeType: z.enum(['SPECIFIC_PO', 'GENERAL_CUSTOMER', 'MASTER_CONTRACT', 'PROJECT_BASED', 'OTHER']),
   status: z.enum(['DRAFT', 'ACTIVE', 'EXPIRED', 'CLOSED', 'CANCELLED']),
   effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),

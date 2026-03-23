@@ -422,13 +422,14 @@ export interface SalesContractTerm {
 }
 
 export type LaborCostContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'CANCELLED';
-export type LaborScopeType = 'SPECIFIC_PO' | 'GENERAL_CUSTOMER' | 'PROJECT_BASED' | 'OTHER';
+export type LaborScopeType = 'SPECIFIC_PO' | 'GENERAL_CUSTOMER' | 'MASTER_CONTRACT' | 'PROJECT_BASED' | 'OTHER';
 
 export interface LaborCostContractTerm {
   id: string;
   title: string;
   relatedCustomerId: string;
-  relatedPurchaseOrderId: string;
+  relatedPurchaseOrderId?: string;
+  relatedContractId?: string;
   scopeType: LaborScopeType;
   status: LaborCostContractStatus;
   effectiveDate: string; // Date-only string (e.g., YYYY-MM-DD)
