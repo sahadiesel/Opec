@@ -16,22 +16,12 @@ import {
   updateDoc,
   setDoc,
   getDoc,
+  writeBatch,
 } from 'firebase/firestore';
 import {
-  SYSTEM_MODULES,
-  FULL_ACCESS,
-  OFFICER_ACCESS,
-  READ_ONLY,
-  NO_ACCESS,
-  type ModuleKey,
-  type ModulePermission,
+  getBaselineProfiles,
 } from '../permissions';
 import { sanitizeFirestorePayload } from '../utils';
-
-// ---------------------------------------------------------------------------
-// Canonical mapping (spec: admin, operation, accounting, client)
-// store_* → operation per "store อยู่ใน operation group"
-// ---------------------------------------------------------------------------
 
 export type CanonicalRoleKey =
   | 'admin_admin'
@@ -90,11 +80,6 @@ function hasAnyRole(user: Partial<User>, candidates: readonly string[]): string 
     if (values.includes(c)) return c;
   }
   return null;
-}
-
-function normalizeRoleString(v: unknown): string | null {
-  if (v == null) return null;
-  return String(v).trim().toLowerCase() || null;
 }
 
 /** Map legacy role/department to canonical. Returns null if unclear → needs_review. */
@@ -199,4 +184,140 @@ export function buildMigrationFields(
   return sanitizeFirestorePayload(patch);
 }
 
-// ... remaining logic ...
+export interface UserMigrationEntry {
+  userId: string;
+  email: string;
+  displayName: string;
+  legacyRole: string | null;
+  legacyDepartment: string | null;
+  legacyLevel: string | null;
+  mappedCanonical: string;
+  confidence: 'high' | 'medium' | 'low' | 'needs_review';
+  hasConflict: boolean;
+  patchApplied: boolean;
+}
+
+export interface MigrationReport {
+  timestamp: number;
+  actorUid: string;
+  dryRun: boolean;
+  usersProcessed: number;
+  usersPatched: number;
+  usersSkipped: number;
+  usersNeedsReview: number;
+  usersConflict: number;
+  profilesCreated: string[];
+  entries: UserMigrationEntry[];
+  errors: string[];
+}
+
+/**
+ * Executes the user authorization migration process.
+ */
+export async function runUserAuthMigration(
+  db: Firestore,
+  options: { actorUid: string; dryRun?: boolean; skipNeedsReview?: boolean }
+): Promise<MigrationReport> {
+  const { actorUid, dryRun = true, skipNeedsReview = true } = options;
+  const report: MigrationReport = {
+    timestamp: Date.now(),
+    actorUid,
+    dryRun,
+    usersProcessed: 0,
+    usersPatched: 0,
+    usersSkipped: 0,
+    usersNeedsReview: 0,
+    usersConflict: 0,
+    profilesCreated: [],
+    entries: [],
+    errors: [],
+  };
+
+  try {
+    // 1. Ensure baseline profiles exist if not dry run
+    if (!dryRun) {
+      const baselines = getBaselineProfiles();
+      const batch = writeBatch(db);
+      for (const p of baselines) {
+        if (!p.profileKey) continue;
+        const profileRef = doc(db, 'permission_profiles', p.profileKey);
+        const snap = await getDoc(profileRef);
+        if (!snap.exists()) {
+          batch.set(profileRef, {
+            ...p,
+            id: p.profileKey,
+            updatedAt: Date.now(),
+            updatedBy: 'Migration Tool',
+          });
+          report.profilesCreated.push(p.profileKey);
+        }
+      }
+      await batch.commit();
+    }
+
+    // 2. Fetch all users
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const users = usersSnap.docs.map(d => ({ ...d.data(), id: d.id } as User));
+    report.usersProcessed = users.length;
+
+    const batch = writeBatch(db);
+    let patchCount = 0;
+
+    for (const user of users) {
+      const mapping = mapLegacyToCanonical(user);
+      const entry: UserMigrationEntry = {
+        userId: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        legacyRole: user.assignedRoleKey || user.roleId || null,
+        legacyDepartment: user.department || null,
+        legacyLevel: user.level || null,
+        mappedCanonical: mapping.canonical,
+        confidence: mapping.confidence,
+        hasConflict: false,
+        patchApplied: false,
+      };
+
+      // Conflict check: if user already has new fields and they differ from mapping
+      const migrationFields = buildMigrationFields(user, mapping);
+      if (user.departmentGroup && user.departmentGroup !== migrationFields.departmentGroup) {
+        entry.hasConflict = true;
+        report.usersConflict++;
+      }
+
+      if (mapping.confidence === 'needs_review') {
+        report.usersNeedsReview++;
+      }
+
+      const shouldPatch = !entry.hasConflict && (mapping.confidence !== 'needs_review' || !skipNeedsReview);
+
+      if (shouldPatch) {
+        // Only patch if missing or changed
+        if (user.departmentGroup !== migrationFields.departmentGroup || user.accessLevel !== migrationFields.accessLevel) {
+          if (!dryRun) {
+            batch.update(doc(db, 'users', user.id), migrationFields);
+          }
+          entry.patchApplied = true;
+          report.usersPatched++;
+          patchCount++;
+        } else {
+          report.usersSkipped++;
+        }
+      } else {
+        report.usersSkipped++;
+      }
+
+      report.entries.push(entry);
+    }
+
+    if (!dryRun && patchCount > 0) {
+      await batch.commit();
+    }
+
+  } catch (e: any) {
+    console.error('Migration failed:', e);
+    report.errors.push(e.message);
+  }
+
+  return report;
+}
