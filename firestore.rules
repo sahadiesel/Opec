@@ -46,7 +46,6 @@ service cloud.firestore {
     // Legacy compatibility — single resolver (accessGroup / departmentGroup / role / department)
     // -------------------------------------------------------------------------
 
-    // Firestore rules: no if/else — use chained ternary only
     function legacyResolvedGroup() {
       let u = userData();
       return u == null ? null
@@ -58,8 +57,8 @@ service cloud.firestore {
         : (u.assignedRoleKey == 'operations_manager' || u.assignedRoleKey == 'operations_officer') ? 'operation'
         : (u.assignedRoleKey == 'sales_manager' || u.assignedRoleKey == 'sales_officer') ? 'operation'
         : u.assignedRoleKey == 'payroll_officer' ? 'operation'
-        : (u.roleIds != null && u.roleIds.hasAny(['system_admin'])) ? 'admin'
-        : (u.roleIds != null && u.roleIds.hasAny(['client_user'])) ? 'client'
+        : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['system_admin'])) ? 'admin'
+        : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['client_user'])) ? 'client'
         : u.roleId == 'system_admin' ? 'admin'
         : u.roleId == 'client_user' ? 'client'
         : u.department == 'admin' ? 'admin'
@@ -90,7 +89,7 @@ service cloud.firestore {
 
     function roleIds() {
       let u = userData();
-      return u != null && u.roleIds != null ? u.roleIds : [];
+      return u != null && u.roleIds != null && u.roleIds is list ? u.roleIds : [];
     }
 
     function userCustomerId() {
@@ -101,9 +100,6 @@ service cloud.firestore {
     function sameCustomerId(customerId) {
       return isClientUser() && userCustomerId() != null && userCustomerId() == customerId;
     }
-
-    // Client domain: read only for all business data. Exception: users/{ownId} update for
-    // profile/self-preference (non-security fields) via isOwner && !isModifyingSecurityFields.
 
     // -------------------------------------------------------------------------
     // Group predicates (UI / permission-core aligned)
@@ -130,7 +126,7 @@ service cloud.firestore {
       return isAdminUser();
     }
 
-    // Domain gates (coarse; fine-grained module checks stay in app)
+    // Domain gates
     function canAccessSales() {
       return isAdminUser()
         || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()));
@@ -145,7 +141,6 @@ service cloud.firestore {
         || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()));
     }
 
-    // Store / procurement: write = admin + operation; read = internal (incl. accounting for AP linkage)
     function canAccessStore() {
       return isAdminUser()
         || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()));
@@ -159,7 +154,6 @@ service cloud.firestore {
       return isAdminUser() || (isActiveUser() && isInternalUser() && isAccountingUser());
     }
 
-    // Internal read for dashboards (non-client)
     function internalRead() {
       return isSignedIn() && userExists() && isActiveUser() && isInternalUser();
     }
@@ -179,20 +173,18 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedFields);
     }
 
-    // Read own profile row (matches usePermissionProfiles: query where profileKey == user's key)
     function canReadOwnPermissionProfile(profileData) {
       let u = userData();
       return u != null && isActiveUser()
         && profileData.profileKey != null
         && (
           (u.permissionProfileKey != null && profileData.profileKey == u.permissionProfileKey)
-          || (u.permissionProfileKeys != null && u.permissionProfileKeys.hasAny([profileData.profileKey]))
+          || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny([profileData.profileKey]))
         );
     }
 
     // -------------------------------------------------------------------------
-    // USERS — admin-only list; self profile edit for preferences (incl. client)
-    // Client may update own doc for profile/preference fields only (non-security)
+    // USERS
     // -------------------------------------------------------------------------
     match /users/{userId} {
       allow get: if canManageSystem() || isOwner(userId);
@@ -210,7 +202,6 @@ service cloud.firestore {
       allow write: if canAccessSales();
     }
 
-    // Client domain: read only. No client create/update/delete.
     match /quotations/{id} {
       allow read: if internalRead() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessSales();
@@ -236,14 +227,13 @@ service cloud.firestore {
       allow write: if canAccessSales();
     }
 
-    // TODO: confirm collection name if profit estimates move out of subcollections
     match /profit_estimates/{id} {
       allow read: if internalRead();
       allow write: if canAccessSales();
     }
 
     // -------------------------------------------------------------------------
-    // Operations domain (waves, mobilization, dispatch — not accounting-only)
+    // Operations domain
     // -------------------------------------------------------------------------
     match /waves/{id} {
       allow read: if internalRead() || sameCustomerId(resource.data.customerId);
@@ -256,7 +246,7 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // HR domain (operation + accounting + admin)
+    // HR domain
     // -------------------------------------------------------------------------
     match /workers/{id} {
       allow read: if internalRead() || isClientUser();
@@ -313,14 +303,13 @@ service cloud.firestore {
       allow write: if canAccessHR();
     }
 
-    // Approvals / candidate acceptance: client read only; no client write.
     match /worker_wave_acceptances/{id} {
       allow read: if internalRead() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessOperations();
     }
 
     // -------------------------------------------------------------------------
-    // Store domain (procurement / inventory — write: admin + operation)
+    // Store domain
     // -------------------------------------------------------------------------
     match /vendors/{id} {
       allow read: if internalRead();
@@ -368,7 +357,7 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // Accounting domain (finance documents)
+    // Accounting domain
     // -------------------------------------------------------------------------
     match /billing_notes/{id} {
       allow read: if internalRead() || sameCustomerId(resource.data.customerId);
@@ -381,7 +370,13 @@ service cloud.firestore {
     }
 
     match /receipts/{id} {
-      allow read: if internalRead() || sameCustomerId(resource.data.customerId);
+      allow get: if internalRead() || sameCustomerId(resource.data.customerId);
+      allow list: if internalRead() || (isSignedIn() && isClientUser() && resource.data.customerId == userCustomerId());
+      allow write: if canAccessAccounting();
+    }
+
+    match /receipts/{id}/allocations/{allocId} {
+      allow read: if internalRead();
       allow write: if canAccessAccounting();
     }
 
@@ -411,15 +406,15 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // System collections (admin only)
+    // System collections
     // -------------------------------------------------------------------------
     match /number_sequences/{id} {
       allow read, write: if canManageSystem();
     }
 
-    // App shell loads one profile via list query (profileKey == user.permissionProfileKey)
     match /permission_profiles/{id} {
-      allow read: if canManageSystem() || canReadOwnPermissionProfile(resource.data);
+      allow get: if isSignedIn() && (canManageSystem() || canReadOwnPermissionProfile(resource.data));
+      allow list: if canManageSystem();
       allow write: if canManageSystem();
     }
 
@@ -435,8 +430,7 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // Audit logs: admin all; internal read; append-only
-    // TODO: row-level scope (actorUid / collection) if audit payload standardized
+    // Audit logs
     // -------------------------------------------------------------------------
     match /audit_logs/{id} {
       allow read: if canManageSystem() || internalRead();
@@ -444,22 +438,18 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // Approvals collections — client read only; no client write (extend if new collections added)
     match /approvals/{id} {
       allow read: if internalRead() || isClientUser();
       allow write: if canAccessHR() || canAccessOperations() || canManageSystem();
     }
 
-    // -------------------------------------------------------------------------
-    // Client portal bucket — client read only; write admin only
-    // -------------------------------------------------------------------------
     match /client_portal/{document=**} {
       allow read: if canManageSystem() || isClientUser();
       allow write: if canManageSystem();
     }
 
     // -------------------------------------------------------------------------
-    // Subcollections (mirror parent domain rules)
+    // Subcollections
     // -------------------------------------------------------------------------
     match /workers/{workerId}/{document=**} {
       allow read: if internalRead() || isClientUser();
@@ -534,10 +524,6 @@ service cloud.firestore {
       allow write: if canAccessHR();
     }
 
-    // -------------------------------------------------------------------------
-    // Default: deny unknown top-level collections (admin may still manage via console)
-    // TODO: add explicit rules when new collections are introduced
-    // -------------------------------------------------------------------------
     match /{document=**} {
       allow read, write: if canManageSystem();
     }

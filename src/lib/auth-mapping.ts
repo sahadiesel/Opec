@@ -290,25 +290,23 @@ function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | nul
 
   if (u.department === 'admin') return 'system_admin';
   if (u.department === 'client') return 'client_user';
+  if (u.department === 'accounting') return u.level === 'manager' ? 'accounting_manager' : 'accounting_officer';
+  if (u.department === 'store') return u.level === 'manager' ? 'store_manager' : 'store_officer';
   if (u.department === 'operations') return u.level === 'manager' ? 'operations_manager' : 'operations_officer';
   if (u.department === 'sales') return u.level === 'manager' ? 'sales_manager' : 'sales_officer';
   if (u.department === 'hr') return u.level === 'manager' ? 'hr_manager' : 'hr_officer';
-  if (u.department === 'accounting') return u.level === 'manager' ? 'accounting_manager' : 'accounting_officer';
-  if (u.department === 'store') return u.level === 'manager' ? 'store_manager' : 'store_officer';
 
   return 'hr_officer';
 }
 
 function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'operation' | 'accounting' | 'client' {
-  if (roleKey === 'system_admin') return 'admin';
+  if (roleKey === 'system_admin' || roleKey === 'admin_admin') return 'admin';
   if (roleKey === 'client_user') return 'client';
 
-  // Store moved to operation group per spec
   if (roleKey === 'accounting_manager' || roleKey === 'accounting_officer') {
     return 'accounting';
   }
 
-  // hr, operations, sales, store, operation_* -> operation
   return 'operation';
 }
 
@@ -397,7 +395,7 @@ export function deriveDataAccess(roleKeys: BusinessRoleKey[]): DataAccessClass {
 
 function getProfileKeyForRole(roleKey: BusinessRoleKey): string {
   if (roleKey === 'client_user') return 'client_user';
-  if (roleKey === 'admin_admin') return 'admin_admin';
+  if (roleKey === 'admin_admin' || roleKey === 'system_admin') return 'admin_admin';
   if (roleKey === 'operation_officer' || roleKey === 'operation_manager') return roleKey;
   const role = BUSINESS_ROLES[roleKey];
   return role ? `${role.dept}_${role.level}` : roleKey;
@@ -426,6 +424,7 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
     department: role.dept,
     level: role.level,
     accessGroup,
+    departmentGroup: accessGroup,
     accessLevel,
     allowedModules,
     dataAccess,

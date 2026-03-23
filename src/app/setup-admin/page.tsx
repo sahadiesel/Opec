@@ -1,3 +1,8 @@
+/**
+ * @fileOverview OPEC OpsFlow - System Bootstrap & Admin Recovery
+ * Corrects and backfills system administrator authorization fields.
+ * Includes baseline profile synchronization to ensure permissions docs exist.
+ */
 
 'use client';
 
@@ -7,20 +12,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { ShieldAlert, Lock, Mail, User, RefreshCw, UserCheck, CheckCircle2, Shield, Wrench, Loader2 } from 'lucide-react';
+import { ShieldAlert, RefreshCw, UserCheck, CheckCircle2, Shield, Wrench, Loader2, Zap } from 'lucide-react';
 import { useFirestore, useAuth, useUser } from '@/firebase';
-import { doc, getDoc, setDoc, collection, getDocs, limit, query } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, limit, query, writeBatch } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildAuthorizationForRepairRole } from '@/lib/auth-mapping';
+import { getBaselineProfiles } from '@/lib/permissions';
 
 export default function SetupAdminPage() {
   const [isChecking, setIsChecking] = useState(true);
   const [isBootstrapped, setIsBootstrapped] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
+  
   const [formData, setFormData] = useState({
     displayName: '',
     email: '',
@@ -66,6 +74,32 @@ export default function SetupAdminPage() {
     checkStatus();
   }, [firestore]);
 
+  /**
+   * Bulk ensures all standard permission profiles exist in the DB.
+   * This prevents "Profile Not Found" errors after user login.
+   */
+  const ensureEnvironmentProfiles = async () => {
+    if (!firestore) return;
+    const batch = writeBatch(firestore);
+    const baselines = getBaselineProfiles();
+    let created = 0;
+
+    for (const p of baselines) {
+      const key = p.profileKey!;
+      const profileRef = doc(firestore, 'permission_profiles', key);
+      batch.set(profileRef, {
+        ...p,
+        id: key,
+        updatedAt: Date.now(),
+        updatedBy: 'System Bootstrap Tool',
+      }, { merge: true });
+      created++;
+    }
+
+    await batch.commit();
+    return created;
+  };
+
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firestore || !auth) return;
@@ -82,6 +116,10 @@ export default function SetupAdminPage() {
 
     setIsSubmitting(true);
     try {
+      // 1. Create Baseline Environment (Profiles) first
+      await ensureEnvironmentProfiles();
+
+      // 2. Create the Auth Identity
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         formData.email,
@@ -94,23 +132,26 @@ export default function SetupAdminPage() {
       }
 
       const now = Date.now();
-      const auth = buildAuthorizationForRepairRole('system_admin');
+      const authPayload = buildAuthorizationForRepairRole('system_admin');
+      
       const adminData = {
-        ...auth,
+        ...authPayload,
         id: uid,
         email: formData.email,
         displayName: formData.displayName,
         approvalStatus: 'ACTIVE' as const,
         isActive: true,
+        userType: 'internal',
         createdAt: now,
         updatedAt: now,
       };
 
+      // 3. Set User Doc and Bootstrap metadata
       await setDoc(doc(firestore, 'users', uid), adminData);
       await setDoc(doc(firestore, 'roles_system_admin', uid), { assignedAt: now });
       await setDoc(doc(firestore, 'system', 'bootstrap'), { initializedAt: now, initializedBy: uid });
 
-      toast({ title: "ตั้งค่าระบบสำเร็จ", description: "บัญชี System Admin ถูกสร้างเรียบร้อยแล้ว" });
+      toast({ title: "ตั้งค่าระบบสำเร็จ", description: "บัญชี System Admin และโปรไฟล์สิทธิ์ถูกสร้างเรียบร้อยแล้ว" });
       localStorage.removeItem('opsflow_user');
       router.push('/');
     } catch (error: any) {
@@ -127,34 +168,49 @@ export default function SetupAdminPage() {
     }
     setIsSubmitting(true);
     try {
+      // 1. Always ensure profiles exist when repairing an admin
+      if (repairRole === 'system_admin' || repairRole === 'admin_admin') {
+        await ensureEnvironmentProfiles();
+      }
+
       const now = Date.now();
-      const auth = buildAuthorizationForRepairRole(repairRole);
+      const authPayload = buildAuthorizationForRepairRole(repairRole);
 
       const repairData: Record<string, unknown> = {
-        ...auth,
+        ...authPayload,
         id: repairUid,
         isActive: true,
         approvalStatus: 'ACTIVE',
+        userType: 'internal',
         updatedAt: now,
       };
 
       await setDoc(doc(firestore, 'users', repairUid), repairData, { merge: true });
       
-      // Also sync to legacy role collection if system_admin to ensure rules catch it
       if (repairRole === 'system_admin') {
         await setDoc(doc(firestore, 'roles_system_admin', repairUid), { assignedAt: now }, { merge: true });
       }
 
       toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว` });
-      
-      // Clear local storage to force refresh on next login
       localStorage.removeItem('opsflow_user');
-      
       setTimeout(() => router.push('/'), 2000);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error.message });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleInitializeEnv = async () => {
+    if (!firestore) return;
+    setIsInitializing(true);
+    try {
+      const count = await ensureEnvironmentProfiles();
+      toast({ title: "Environment Initialized", description: `Created/Updated ${count} permission profiles.` });
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Init Failed", description: e.message });
+    } finally {
+      setIsInitializing(false);
     }
   };
 
@@ -216,13 +272,13 @@ export default function SetupAdminPage() {
             </form>
           </TabsContent>
 
-          <TabsContent value="repair">
+          <TabsContent value="repair" className="space-y-4">
             <CardContent className="space-y-4 pt-4">
               <Alert className="bg-amber-50 border-amber-200">
                 <Wrench className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800 font-bold">Fix Permission Denied</AlertTitle>
                 <AlertDescription className="text-amber-700 text-xs leading-relaxed">
-                  หากคุณพบข้อผิดพลาด "Missing or insufficient permissions" ให้ระบุ UID ของคุณและเลือกบทบาทที่ถูกต้องเพื่อซ่อมแซมสิทธิ์ในระบบฐานข้อมูล
+                  หากคุณเป็น Admin แต่พบข้อผิดพลาดขณะดึง Profile สิทธิ์ ให้เลือก UID ของคุณแล้วกดปุ่มด้านล่างเพื่อซ่อมแซมฟิลด์สิทธิ์และสร้าง Profile เอกสารให้ใหม่
                 </AlertDescription>
               </Alert>
               
@@ -250,16 +306,26 @@ export default function SetupAdminPage() {
                     <SelectItem value="accounting_officer">Accounting Officer</SelectItem>
                     <SelectItem value="hr_manager">HR Manager</SelectItem>
                     <SelectItem value="hr_officer">HR Officer</SelectItem>
-                    <SelectItem value="payroll_officer">Payroll Officer (HR)</SelectItem>
                     <SelectItem value="operations_manager">Operations Manager</SelectItem>
                     <SelectItem value="operations_officer">Operations Officer</SelectItem>
                     <SelectItem value="sales_manager">Sales Manager</SelectItem>
                     <SelectItem value="sales_officer">Sales Officer</SelectItem>
-                    <SelectItem value="store_officer">Store Officer (→ operation)</SelectItem>
                     <SelectItem value="operation_officer">Operations Officer (รวม)</SelectItem>
                     <SelectItem value="operation_manager">Operations Manager (รวม)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="pt-2">
+                <Button 
+                  variant="outline" 
+                  className="w-full h-10 border-blue-200 text-blue-700 hover:bg-blue-50 gap-2"
+                  onClick={handleInitializeEnv}
+                  disabled={isInitializing}
+                >
+                  {isInitializing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                  Initialize Permission Profiles (Baseline)
+                </Button>
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-2">
