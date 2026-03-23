@@ -15,6 +15,7 @@ import {
   PortalRole,
 } from './types';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
+import { sanitizeFirestorePayload } from './utils';
 
 export interface BusinessRole {
   key: BusinessRoleKey;
@@ -135,7 +136,6 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     canonicalRole: 'client_user',
     descriptionTh: 'เข้าดูข้อมูลลูกค้าของตนเองและทำรายการใน client portal',
   },
-  // Canonical aggregate roles (migration targets)
   operation_officer: {
     key: 'operation_officer',
     labelTh: 'เจ้าหน้าที่ปฏิบัติการ',
@@ -434,18 +434,6 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
   };
 }
 
-/**
- * Transitional helper only.
- * IMPORTANT: does NOT preserve additive multi-role behavior.
- * Uses the first valid role as the effective role.
- */
-export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<User> {
-  const primary = roleKeys.find((key) => key in BUSINESS_ROLES) || 'hr_officer';
-  return getFieldsForBusinessRole(primary);
-}
-
-// --- Central authorization normalization (users page + repair; keep legacy role mapping here only) ---
-
 /** Map repair UI / legacy strings to a canonical BusinessRoleKey. */
 export function resolveRepairRoleKey(raw: string): BusinessRoleKey {
   const mapped = LEGACY_TO_CANONICAL_MAP[raw] ?? raw;
@@ -489,7 +477,7 @@ export function normalizeUserAuthorizationFields(draft: Partial<User>): Partial<
   if (!merged.level) merged.level = canonical.level;
 
   merged.updatedAt = Date.now();
-  return merged;
+  return sanitizeFirestorePayload(merged);
 }
 
 /** Full auth payload for setup-admin / emergency repair (role-based only). */

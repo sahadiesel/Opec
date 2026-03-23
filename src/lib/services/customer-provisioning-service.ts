@@ -29,6 +29,7 @@ import {
 } from '@/lib/types';
 import { getFieldsForBusinessRole } from '@/lib/auth-mapping';
 import { writeAuditLog } from './audit-service';
+import { sanitizeFirestorePayload } from '../utils';
 
 export class CustomerProvisioningService {
   constructor(private db: Firestore) {}
@@ -89,7 +90,7 @@ export class CustomerProvisioningService {
       };
 
       // 4. Persist to Firestore
-      await setDoc(doc(this.db, 'users', uid), userData);
+      await setDoc(doc(this.db, 'users', uid), sanitizeFirestorePayload(userData));
 
       // 5. Sign out the temporary secondary session immediately
       await signOut(secondaryAuth);

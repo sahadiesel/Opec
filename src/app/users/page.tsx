@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -20,7 +19,6 @@ import {
   AlertTriangle,
   RefreshCw,
   Building2,
-  ShieldAlert,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
@@ -65,8 +63,8 @@ import {
   getMigratedUserFields,
   normalizeUserAuthorizationFields,
   assertAtLeastOneOperationalAdminAfterChange,
-  countOperationalSystemAdmins,
   isOperationalSystemAdmin,
+  countOperationalSystemAdmins,
 } from '@/lib/auth-mapping';
 import {
   getBaselineProfiles,
@@ -77,6 +75,7 @@ import {
   deriveBusinessRoleKeyFromPermissionProfile,
 } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -249,7 +248,7 @@ export default function UsersPage() {
         SECURITY_SENSITIVE_FIELDS.forEach(f => delete updateData[f]);
       }
 
-      updateDocumentNonBlocking(userRef, updateData);
+      updateDocumentNonBlocking(userRef, sanitizeFirestorePayload(updateData));
       
       setTimeout(() => {
         setIsSaving(false);
@@ -299,7 +298,7 @@ export default function UsersPage() {
         }
 
         const userRef = doc(firestore, 'users', user.id);
-        batch.update(userRef, migratedFields);
+        batch.update(userRef, sanitizeFirestorePayload(migratedFields));
         repairedCount++;
       }
 

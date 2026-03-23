@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildAuthorizationForRepairRole } from '@/lib/auth-mapping';
 import { getBaselineProfiles } from '@/lib/permissions';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 export default function SetupAdminPage() {
   const [isChecking, setIsChecking] = useState(true);
@@ -147,7 +148,7 @@ export default function SetupAdminPage() {
       };
 
       // 3. Set User Doc and Bootstrap metadata
-      await setDoc(doc(firestore, 'users', uid), adminData);
+      await setDoc(doc(firestore, 'users', uid), sanitizeFirestorePayload(adminData));
       await setDoc(doc(firestore, 'roles_system_admin', uid), { assignedAt: now });
       await setDoc(doc(firestore, 'system', 'bootstrap'), { initializedAt: now, initializedBy: uid });
 
@@ -185,7 +186,7 @@ export default function SetupAdminPage() {
         updatedAt: now,
       };
 
-      await setDoc(doc(firestore, 'users', repairUid), repairData, { merge: true });
+      await setDoc(doc(firestore, 'users', repairUid), sanitizeFirestorePayload(repairData), { merge: true });
       
       if (repairRole === 'system_admin') {
         await setDoc(doc(firestore, 'roles_system_admin', repairUid), { assignedAt: now }, { merge: true });
