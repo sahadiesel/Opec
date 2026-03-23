@@ -40,7 +40,7 @@ import { Label } from '@/components/ui/label';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { isAccountingStaff, isHRStaff } from '@/lib/permissions';
+import { canView } from '@/lib/permissions';
 
 export default function OfficePayrollPage() {
   const router = useRouter();
@@ -53,7 +53,13 @@ export default function OfficePayrollPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const runsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'office_payroll_runs'), orderBy('payrollMonth', 'desc')) : null), [firestore]);
+  const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+
+  const runsQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return query(collection(firestore, 'office_payroll_runs'), orderBy('payrollMonth', 'desc'));
+  }, [firestore, isAuthorized]);
+  
   const { data: runs, isLoading } = useCollection<OfficePayrollRun>(runsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -65,13 +71,6 @@ export default function OfficePayrollPage() {
     payrollPeriodEnd: '',
     notes: ''
   });
-
-  const isAuthorized = useMemo(
-    () =>
-      currentUser != null &&
-      (isHRStaff(currentUser) || isAccountingStaff(currentUser)),
-    [currentUser]
-  );
 
   const handleCreateRun = async () => {
     if (!firestore || !currentUser) return;
@@ -123,6 +122,18 @@ export default function OfficePayrollPage() {
   };
 
   if (!currentUser) return null;
+
+  if (!isAuthorized) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">ไม่มีสิทธิ์เข้าถึง (Access Restricted)</h2>
+          <p className="text-muted-foreground">เฉพาะฝ่ายบริหารบุคคล (HR Manager) และผู้จัดการฝ่ายบัญชีเท่านั้นที่สามารถเข้าถึงระบบนี้ได้</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

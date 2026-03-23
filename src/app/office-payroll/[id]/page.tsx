@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -43,6 +43,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { canView } from '@/lib/permissions';
+import { Label } from '@/components/ui/label';
 
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -56,20 +58,22 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const runRef = useMemoFirebase(() => (firestore ? doc(firestore, 'office_payroll_runs', id) : null), [firestore, id]);
+  const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+
+  const runRef = useMemoFirebase(() => (firestore && isAuthorized ? doc(firestore, 'office_payroll_runs', id) : null), [firestore, id, isAuthorized]);
   const { data: run, isLoading: isRunLoading } = useDoc<OfficePayrollRun>(runRef as any);
 
-  const linesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'office_payroll_runs', id, 'lines') : null), [firestore, id]);
+  const linesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_payroll_runs', id, 'lines') : null), [firestore, id, isAuthorized]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<OfficePayrollLine>(linesQuery as any);
 
   const [isProcessing, setIsProcessing] = useState(false);
 
   // STRICT ENFORCEMENT: Only from 'office_staff' collection
-  const staffQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'office_staff') : null), [firestore]);
+  const staffQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_staff') : null), [firestore, isAuthorized]);
   const { data: allStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
   const handleUpdateStatus = (newStatus: PayrollRunStatus) => {
-    if (!firestore || !run) return;
+    if (!firestore || !run || !runRef) return;
     const updateData: any = { 
       status: newStatus, 
       updatedAt: Date.now()
@@ -85,12 +89,12 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
       updateData.lockedAt = Date.now();
     }
 
-    updateDocumentNonBlocking(runRef!, updateData);
+    updateDocumentNonBlocking(runRef, updateData);
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะงวดเป็น ${newStatus}` });
   };
 
   const handleCalculate = async () => {
-    if (!firestore || !run || !allStaff) return;
+    if (!firestore || !run || !allStaff || !runRef) return;
     setIsProcessing(true);
 
     try {
@@ -145,7 +149,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
 
       await batch.commit();
 
-      await updateDoc(runRef!, {
+      await updateDoc(runRef, {
         status: 'CALCULATED',
         staffCount: activeStaff.length,
         grossAmount: totalGross,
@@ -163,8 +167,31 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     }
   };
 
-  if (isRunLoading || !run || !currentUser) {
+  if (isRunLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
+  }
+
+  if (!isAuthorized) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">ไม่มีสิทธิ์เข้าถึง (Access Restricted)</h2>
+          <p className="text-muted-foreground">เฉพาะฝ่ายบริหารบุคคลและผู้จัดการฝ่ายการเงินเท่านั้นที่สามารถเข้าถึงข้อมูลรายละเอียดเงินเดือนได้</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!run) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="text-center py-20">
+          <AlertCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
+          <h2 className="text-xl font-bold">ไม่พบข้อมูลใบลงเวลา</h2>
+        </div>
+      </AppShell>
+    );
   }
 
   const isLocked = run.status === 'LOCKED';

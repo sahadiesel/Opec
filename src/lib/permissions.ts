@@ -176,7 +176,8 @@ export const NO_ACCESS: ModulePermission = {
 const MANAGEMENT_ONLY_MODULES = new Set<ModuleKey>([
   'main_contracts',
   'sales_contract_terms',
-  'labor_cost_contract_terms'
+  'labor_cost_contract_terms',
+  'office_payroll'
 ]);
 
 function clonePermission(permission: ModulePermission): ModulePermission {
@@ -341,7 +342,18 @@ function hasResolvedModuleAccess(
   if (!allowedGroupModules.has(moduleKey)) return clonePermission(NO_ACCESS);
 
   const level = getEffectiveAccessLevel(user);
-  if (level === 'admin' || level === 'manager') return clonePermission(FULL_ACCESS);
+  const u = normalizeCurrentUserPermissions(user);
+  
+  if (level === 'admin' || level === 'manager') {
+    // SPECIAL RULE: office_payroll is strictly hr_manager or accounting_manager only
+    if (moduleKey === 'office_payroll' && level === 'manager') {
+      const primaryRole = getPrimaryLegacyRole(u);
+      if (primaryRole !== 'hr_manager' && primaryRole !== 'accounting_manager') {
+        return clonePermission(NO_ACCESS);
+      }
+    }
+    return clonePermission(FULL_ACCESS);
+  }
   
   // BUSINESS RULE: Certain modules are strictly Manager/Admin only
   if (MANAGEMENT_ONLY_MODULES.has(moduleKey)) {
