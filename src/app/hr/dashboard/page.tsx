@@ -27,7 +27,8 @@ import {
   PayrollRun, 
   Position,
   ExceptionRequest,
-  DailyTimesheet
+  DailyTimesheet,
+  MainContract
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
@@ -90,6 +91,12 @@ export default function HRDashboardPage() {
   const positionsQuery = useMemoFirebase(() => (firestore && isHRAuthorized ? collection(firestore, 'positions') : null), [firestore, isHRAuthorized]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
+  const mainContractsQuery = useMemoFirebase(() => {
+    if (!firestore || !isHRAuthorized) return null;
+    return query(collection(firestore, 'main_contracts'), orderBy('updatedAt', 'desc'), limit(30));
+  }, [firestore, isHRAuthorized]);
+  const { data: mainContracts } = useCollection<MainContract>(mainContractsQuery as any);
+
   // --- Computed HR Tasks ---
 
   const pendingHRTasks = useMemo(() => {
@@ -135,18 +142,76 @@ export default function HRDashboardPage() {
       });
     });
 
+    // 4. Contracts with incomplete labor cost setup
+    (mainContracts || [])
+      .filter((c: any) => Number(c.costingMissingPositionsCount || 0) > 0)
+      .slice(0, 10)
+      .forEach((c: any) => {
+        tasks.push({
+          id: `contract-${c.id}`,
+          type: 'Cost Setup',
+          label: `Contract ${c.contractNumber || c.id} missing labor cost`,
+          sub: `Missing ${Number(c.costingMissingPositionsCount || 0)} positions`,
+          status: 'INCOMPLETE',
+          link: `/main-contracts/${c.id}`,
+          priority: 'high',
+          icon: AlertTriangle,
+        });
+      });
+
+    // 5. Workers requiring document/certificate completion
+    (workers || [])
+      .filter((w) => w.readinessStatus !== 'READY')
+      .slice(0, 10)
+      .forEach((w) => {
+        tasks.push({
+          id: `worker-${w.id}`,
+          type: 'Worker Readiness',
+          label: `${w.firstName} ${w.lastName}`,
+          sub: w.readinessStatus,
+          status: 'PENDING',
+          link: `/workers/${w.id}`,
+          priority: 'high',
+          icon: AlertTriangle,
+        });
+      });
+
+    // 6. Workers with expiry warning (assignable but close to expiry)
+    (workers || [])
+      .filter((w) => w.readinessStatus === 'READY' && w.complianceAlertLevel === 'warning')
+      .slice(0, 10)
+      .forEach((w) => {
+        tasks.push({
+          id: `worker-warning-${w.id}`,
+          type: 'Expiry Warning',
+          label: `${w.firstName} ${w.lastName}`,
+          sub: `เอกสารใกล้หมดอายุใน ${w.nearestExpiryInDays ?? '-'} วัน`,
+          status: 'WARNING',
+          link: `/workers/${w.id}`,
+          priority: 'medium',
+          icon: AlertTriangle,
+        });
+      });
+
     return tasks;
-  }, [payrollRuns, pendingExceptions, correctionTs]);
+  }, [payrollRuns, pendingExceptions, correctionTs, mainContracts, workers]);
 
   const stats = useMemo(() => {
-    if (!workers) return { total: 0, ready: 0, missingCert: 0, medExpired: 0 };
+    if (!workers) return { total: 0, ready: 0, missingCert: 0, medExpired: 0, docExpired: 0, expiringSoon: 0, blocked: 0 };
     return {
       total: workers.length,
       ready: workers.filter(w => w.readinessStatus === 'READY').length,
       missingCert: workers.filter(w => w.readinessStatus === 'MISSING_CERTIFICATE').length,
       medExpired: workers.filter(w => w.readinessStatus === 'MEDICAL_EXPIRED').length,
+      docExpired: workers.filter(w => w.readinessStatus === 'DOCUMENT_EXPIRED').length,
+      expiringSoon: workers.filter(w => w.readinessStatus === 'READY' && w.complianceAlertLevel === 'warning').length,
+      blocked: workers.filter(w => w.readinessStatus === 'BLOCKED').length,
     };
   }, [workers]);
+
+  const contractsMissingCost = useMemo(() => {
+    return (mainContracts || []).filter((c: any) => Number(c.costingMissingPositionsCount || 0) > 0);
+  }, [mainContracts]);
 
   if (isUserLoading || !currentUser) return null;
 
@@ -174,13 +239,17 @@ export default function HRDashboardPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           <StatCard title="ลูกจ้างทั้งหมด" value={stats.total} sub="Total Workers" icon={Users} colorClass="border-l-blue-600" />
           <StatCard title="พร้อมใช้งาน" value={stats.ready} sub="Ready Workers" icon={CheckCircle2} colorClass="border-l-green-600" />
           <StatCard title="ขาดใบรับรอง" value={stats.missingCert} sub="Missing Certs" icon={AlertTriangle} colorClass="border-l-orange-500" />
           <StatCard title="ตรวจสุขภาพหมดอายุ" value={stats.medExpired} sub="Expired Medical" icon={Stethoscope} colorClass="border-l-red-600" />
+          <StatCard title="เอกสารหมดอายุ" value={stats.docExpired} sub="Expired Documents" icon={FileText} colorClass="border-l-rose-600" />
+          <StatCard title="ใกล้หมดอายุ" value={stats.expiringSoon} sub="Expiry Warnings" icon={AlertTriangle} colorClass="border-l-orange-500" />
+          <StatCard title="บล็อก Assign" value={stats.blocked} sub="Blocked By Policy" icon={ShieldAlert} colorClass="border-l-red-600" />
           <StatCard title="งานค้าง HR" value={pendingHRTasks.length} sub="Pending Tasks" icon={Clock} colorClass="border-l-purple-600" />
           <StatCard title="คำขอแก้ไข" value={(pendingExceptions?.length || 0) + (correctionTs?.length || 0)} sub="Correction Queue" icon={RotateCcw} colorClass="border-l-amber-500" />
+          <StatCard title="สัญญาต้นทุนไม่ครบ" value={contractsMissingCost.length} sub="Contract Cost Gaps" icon={AlertTriangle} colorClass="border-l-rose-600" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -242,6 +311,25 @@ export default function HRDashboardPage() {
               </CardHeader>
               <CardContent className="text-[10px] text-amber-700 leading-relaxed">
                 รายการที่สถานะเป็น 'CORRECTION_REQUIRED' จะไม่ถูกนำไปคำนวณในงวด Payroll กรุณาเร่งประสานงานแก้ไขและยืนยันยอดให้ทันรอบการจ่าย
+              </CardContent>
+            </Card>
+
+            <Card className="bg-rose-50 border-rose-100 shadow-none">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-bold uppercase text-rose-800 flex items-center gap-2">
+                  <AlertTriangle className="h-3 w-3" /> Contract Cost Readiness
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {contractsMissingCost.length === 0 ? (
+                  <p className="text-[10px] text-rose-700">ไม่มีสัญญาที่ค้างกำหนดต้นทุนตำแหน่ง</p>
+                ) : (
+                  contractsMissingCost.slice(0, 6).map((c: any) => (
+                    <Link key={c.id} href={`/main-contracts/${c.id}`} className="block text-[10px] text-rose-700 hover:underline">
+                      {c.contractNumber || c.id}: ต้นทุนไม่ครบ {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                    </Link>
+                  ))
+                )}
               </CardContent>
             </Card>
           </div>

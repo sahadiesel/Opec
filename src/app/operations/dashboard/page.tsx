@@ -117,18 +117,33 @@ export default function OperationsDashboardPage() {
       });
     });
 
+    // 3. Workers near expiry (warning) / blocked for assignment
+    (allWorkers || []).filter(w => w.complianceAlertLevel === 'warning' || w.readinessStatus === 'BLOCKED').slice(0, 8).forEach((w) => {
+      tasks.push({
+        id: `worker-policy-${w.id}`,
+        type: w.readinessStatus === 'BLOCKED' ? 'Blocked Assign' : 'Expiry Warning',
+        label: `${w.firstName} ${w.lastName}`,
+        status: w.readinessStatus === 'BLOCKED' ? 'BLOCKED' : `เหลือ ${w.nearestExpiryInDays ?? '-'} วัน`,
+        link: `/workers/${w.id}`,
+        priority: w.readinessStatus === 'BLOCKED' ? 'high' : 'medium',
+        icon: AlertTriangle,
+      });
+    });
+
     return tasks;
   }, [assignments, pendingExceptions, allWorkers]);
 
   const stats = useMemo(() => {
-    if (!assignments || !waves) return { activeAsgn: 0, activeWaves: 0, pendingMob: 0, changeReqs: 0 };
+    if (!assignments || !waves) return { activeAsgn: 0, activeWaves: 0, pendingMob: 0, changeReqs: 0, expiringSoon: 0, blocked: 0 };
     return {
       activeAsgn: assignments.filter(a => a.deploymentStatus === 'ACTIVE').length,
       activeWaves: waves.filter(w => w.status === 'ACTIVE').length,
       pendingMob: assignments.filter(a => ['READY_TO_MOB', 'MOBILIZING'].includes(a.deploymentStatus)).length,
       changeReqs: pendingExceptions?.length || 0,
+      expiringSoon: (allWorkers || []).filter(w => w.readinessStatus === 'READY' && w.complianceAlertLevel === 'warning').length,
+      blocked: (allWorkers || []).filter(w => w.readinessStatus === 'BLOCKED').length,
     };
-  }, [assignments, waves, pendingExceptions]);
+  }, [assignments, waves, pendingExceptions, allWorkers]);
 
   if (isUserLoading || !currentUser) return null;
 
@@ -156,11 +171,13 @@ export default function OperationsDashboardPage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <StatCard title="กำลังปฏิบัติงาน" value={stats.activeAsgn} sub="Active Assignments" icon={Users} colorClass="border-l-blue-600" />
           <StatCard title="เวฟที่ดำเนินการอยู่" value={stats.activeWaves} sub="Current Active Waves" icon={Waves} colorClass="border-l-green-600" />
           <StatCard title="กำลังส่งตัว" value={stats.pendingMob} sub="In-Transit / Dispatch" icon={Truck} colorClass="border-l-purple-600" />
           <StatCard title="คำขอเปลี่ยนตัว" value={stats.changeReqs} sub="Change Request Queue" icon={RotateCcw} colorClass="border-l-amber-500" />
+          <StatCard title="เอกสารใกล้หมดอายุ" value={stats.expiringSoon} sub="Warning (Orange)" icon={AlertTriangle} colorClass="border-l-orange-500" />
+          <StatCard title="ห้าม Assign" value={stats.blocked} sub="Blocked (Red)" icon={ShieldAlert} colorClass="border-l-red-600" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

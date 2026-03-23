@@ -245,6 +245,12 @@ export interface Worker {
   jobMode: JobMode;
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
+  complianceAlertLevel?: 'ok' | 'warning' | 'blocked';
+  nearestExpiryInDays?: number | null;
+  nearestExpiryAt?: number | null;
+  totalWorkedHours?: number;
+  firstWorkedAt?: number | null;
+  lastWorkedAt?: number | null;
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountName?: string;
@@ -259,11 +265,29 @@ export interface Worker {
 
 export interface PositionCertificateRequirement {
   id: string;
+  templateId?: string;
+  requirementType?: 'certificate' | 'document';
   certificateName: string;
   certificateCode: string;
   required: boolean;
   validityMonths: number;
+  hasExpiry?: boolean;
   notes?: string;
+}
+
+export interface WorkerDocumentCatalogItem {
+  id: string;
+  itemName: string;
+  itemCode: string;
+  requirementType: 'certificate' | 'document';
+  hasExpiry: boolean;
+  defaultValidityMonths?: number;
+  alertBeforeExpiryDays?: number;
+  blockBeforeExpiryDays?: number;
+  description?: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface PositionPPERequirement {
@@ -316,6 +340,8 @@ export interface Customer {
   customerCode: string;
   name: string;
   taxId: string;
+  branchType?: 'head_office' | 'branch';
+  branchNo?: string;
   registeredAddress: string;
   billingAddress: string;
   phone?: string;
@@ -336,22 +362,56 @@ export interface ContactPerson {
   phone: string;
   email: string;
   isPrimary: boolean;
+  /** Optional contract-scoped contact. Empty means customer-level shared contact. */
+  contractId?: string;
   notes?: string;
 }
 
 export interface MainContract {
   id: string;
   contractNumber: string;
+  contractType?: 'master' | 'supplemental';
+  parentContractId?: string;
+  inheritTermsFromContractId?: string;
   customerId: string;
   title: string;
   projectId?: string;
   startDate: number;
   endDate: number;
-  status: 'pending' | 'active' | 'expired' | 'closed';
+  status: 'pending' | 'active' | 'revised' | 'expired' | 'closed';
   currency: string;
   billingTerms: string;
   paymentTerms: string;
+  rateMultiplierPolicy?: {
+    sell: {
+      otAfterShift: number;
+      holiday: number;
+      publicHoliday: number;
+      sunday: number;
+      sundayOt: number;
+      standby: number;
+      mobilization: number;
+      demobilization: number;
+      travel: number;
+    };
+    cost: {
+      otAfterShift: number;
+      holiday: number;
+      publicHoliday: number;
+      sunday: number;
+      sundayOt: number;
+      standby: number;
+      mobilization: number;
+      demobilization: number;
+      travel: number;
+    };
+  };
   notes?: string;
+  approvedAt?: number;
+  approvedBy?: string;
+  supersededByContractId?: string;
+  lastSubmittedAt?: number;
+  lastSubmittedBy?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -364,13 +424,35 @@ export interface PositionRate {
   billingUnit: 'daily' | 'monthly' | 'hourly';
   active: boolean;
   overtimeRule: string;
+  normalWorkHours?: 8 | 12;
+  sellOtRules?: {
+    afterShift?: number;
+    holiday?: number;
+    publicHoliday?: number;
+    sunday?: number;
+    sundayOt?: number;
+  };
+  costOtRules?: {
+    afterShift?: number;
+    holiday?: number;
+    publicHoliday?: number;
+    sunday?: number;
+    sundayOt?: number;
+  };
+  sellSpecialDays?: string[];
+  costSpecialDays?: string[];
   notes?: string;
 }
 
 export interface PurchaseOrder {
   id: string;
   poCode: string;
+  /** Customer-issued PO document number (external reference) */
+  customerPONumber?: string;
+  /** contract = based on active contract, quotation = based on approved/sent quotation */
+  poType?: 'contract' | 'quotation';
   contractId: string;
+  quotationId?: string;
   customerId: string;
   title: string;
   projectName: string;
@@ -646,6 +728,34 @@ export interface RateCondition {
   billableConditionText?: string;
   payableConditionText?: string;
   requiresApproval?: boolean;
+}
+
+export interface GlobalRateMultiplierPolicy {
+  id: string;
+  sell: {
+    otAfterShift: number;
+    holiday: number;
+    publicHoliday: number;
+    sunday: number;
+    sundayOt: number;
+    standby: number;
+    mobilization: number;
+    demobilization: number;
+    travel: number;
+  };
+  cost: {
+    otAfterShift: number;
+    holiday: number;
+    publicHoliday: number;
+    sunday: number;
+    sundayOt: number;
+    standby: number;
+    mobilization: number;
+    demobilization: number;
+    travel: number;
+  };
+  updatedAt: number;
+  updatedBy: string;
 }
 
 export interface ClientUser {
@@ -988,11 +1098,15 @@ export interface NumberSequence {
   updatedBy: string;
 }
 
-export type QuotationStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'cancelled';
+export type QuotationStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'cancelled' | 'revised';
 
 export interface Quotation {
   id: string;
   quotationNo: string;
+  baseQuotationNo?: string;
+  revisionNo?: number;
+  revisedFromQuotationId?: string;
+  supersededByQuotationId?: string;
   customerId: string;
   customerNameSnapshot?: string;
   issueDate: string;
@@ -1134,6 +1248,7 @@ export interface Vendor {
   vendorName: string;
   vendorType: VendorType;
   taxId: string;
+  branchType?: 'head_office' | 'branch';
   branchNo: string;
   contactName?: string;
   phone?: string;

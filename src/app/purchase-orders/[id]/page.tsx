@@ -32,7 +32,8 @@ import {
   Zap,
   BarChart3,
   Percent,
-  Scale
+  Scale,
+  ChevronRight
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -120,7 +121,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const [isAddLineOpen, setIsAddLineOpen] = useState(false);
   const [newLine, setNewLine] = useState<Partial<POLine>>({ 
     quantity: 1,
-    status: 'active'
+    status: 'active',
+    sellRateSnapshot: 0,
+    costBaselineSnapshot: 0,
+    billingUnitSnapshot: 'daily',
+    overtimeRuleSnapshot: '1.5x of Hourly Rate',
   });
 
   const [isCreatingSalesTerm, setIsCreatingSalesTerm] = useState(false);
@@ -136,6 +141,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   useEffect(() => {
     if (po) setEditedPO(po);
   }, [po]);
+
+  const isContractBasedPO = (po?.poType || 'contract') === 'contract';
+  const isLinkedContractActive = !isContractBasedPO || contract?.status === 'active';
 
   const handleSaveMaster = () => {
     if (!poRef || !currentUser) return;
@@ -159,11 +167,26 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const handleAddLine = () => {
     if (!poLinesQuery || !newLine.positionId || !currentUser) return;
-    
-    const rate = rates?.find(r => r.positionId === newLine.positionId);
-    if (!rate) {
-      toast({ variant: "destructive", title: "Error", description: "ไม่พบอัตราราคาสำหรับตำแหน่งนี้ในสัญญาหลัก" });
-      return;
+
+    let sellRateSnapshot = Number(newLine.sellRateSnapshot) || 0;
+    let costBaselineSnapshot = Number(newLine.costBaselineSnapshot) || 0;
+    let billingUnitSnapshot = newLine.billingUnitSnapshot || 'daily';
+    let overtimeRuleSnapshot = newLine.overtimeRuleSnapshot || '1.5x of Hourly Rate';
+
+    if (isContractBasedPO) {
+      if (!isLinkedContractActive) {
+        toast({ variant: "destructive", title: "สัญญายังไม่ Active", description: "ต้องเปิดสัญญาเป็น Active ก่อนเปิด/แก้ PO ตามสัญญา" });
+        return;
+      }
+      const rate = rates?.find(r => r.positionId === newLine.positionId);
+      if (!rate) {
+        toast({ variant: "destructive", title: "ไม่พบราคาในสัญญา", description: "ตำแหน่งนี้ยังไม่มีในสัญญาหลัก กรุณาเพิ่มในสัญญาก่อน" });
+        return;
+      }
+      sellRateSnapshot = Number(rate.sellRate) || 0;
+      costBaselineSnapshot = Number(rate.costBaseline) || 0;
+      billingUnitSnapshot = rate.billingUnit || 'daily';
+      overtimeRuleSnapshot = rate.overtimeRule || '1.5x of Hourly Rate';
     }
 
     addDocumentNonBlocking(poLinesQuery, {
@@ -172,10 +195,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       quantity: Number(newLine.quantity) || 1,
       startDate: newLine.startDate || po?.startDate || Date.now(),
       endDate: newLine.endDate || po?.endDate || Date.now(),
-      sellRateSnapshot: rate.sellRate,
-      costBaselineSnapshot: rate.costBaseline,
-      billingUnitSnapshot: rate.billingUnit,
-      overtimeRuleSnapshot: rate.overtimeRule,
+      sellRateSnapshot,
+      costBaselineSnapshot,
+      billingUnitSnapshot,
+      overtimeRuleSnapshot,
       status: 'active'
     });
 
@@ -191,7 +214,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     });
     
     setIsAddLineOpen(false);
-    setNewLine({ quantity: 1, status: 'active' });
+    setNewLine({
+      quantity: 1,
+      status: 'active',
+      sellRateSnapshot: 0,
+      costBaselineSnapshot: 0,
+      billingUnitSnapshot: 'daily',
+      overtimeRuleSnapshot: '1.5x of Hourly Rate',
+    });
     toast({ title: "เพิ่ม PO Line สำเร็จ" });
   };
 
@@ -284,6 +314,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               <p className="text-muted-foreground flex items-center gap-4 mt-1 text-sm">
                 <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
                 <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '...'}</span>
+                {po.customerPONumber && (
+                  <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> Customer PO: {po.customerPONumber}</span>
+                )}
               </p>
             </div>
           </div>
@@ -315,15 +348,24 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label className="font-bold">หัวข้อ / ชื่อโครงการ</Label>
-                    <Input disabled={!isEditing} value={isEditing ? editedPO.title : po.title} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
+                    <Input disabled={!isEditing} value={isEditing ? (editedPO.title || '') : (po.title || '')} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">เลขที่ Customer PO (PO Code)</Label>
-                    <Input disabled={!isEditing} value={isEditing ? editedPO.poCode : po.poCode} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
+                    <Input disabled={!isEditing} value={isEditing ? (editedPO.poCode || '') : (po.poCode || '')} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">เลขที่เอกสาร PO ของลูกค้า (External Ref)</Label>
+                    <Input
+                      disabled={!isEditing}
+                      value={isEditing ? (editedPO.customerPONumber || '') : (po.customerPONumber || '')}
+                      onChange={e => setEditedPO({...editedPO, customerPONumber: e.target.value})}
+                      placeholder="เช่น PO-CLIENT-2026-00123"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ชื่อโครงการเฉพาะทาง (Project Name)</Label>
-                    <Input disabled={!isEditing} value={isEditing ? editedPO.projectName : po.projectName} onChange={e => setEditedPO({...editedPO, projectName: e.target.value})} />
+                    <Input disabled={!isEditing} value={isEditing ? (editedPO.projectName || '') : (po.projectName || '')} onChange={e => setEditedPO({...editedPO, projectName: e.target.value})} />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -337,7 +379,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">สถานะใบสั่งซื้อ</Label>
-                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as any})} value={isEditing ? editedPO.status : po.status}>
+                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as any})} value={isEditing ? (editedPO.status || 'pending') : (po.status || 'pending')}>
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
@@ -349,7 +391,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">หมายเหตุ</Label>
-                  <Textarea disabled={!isEditing} value={isEditing ? editedPO.notes : po.notes} onChange={e => setEditedPO({...editedPO, notes: e.target.value})} />
+                  <Textarea disabled={!isEditing} value={isEditing ? (editedPO.notes || '') : (po.notes || '')} onChange={e => setEditedPO({...editedPO, notes: e.target.value})} />
                 </div>
               </CardContent>
             </Card>
@@ -361,6 +403,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <div>
                   <CardTitle>รายการจองโควต้ากำลังคน (PO Lines)</CardTitle>
                   <CardDescription>กำหนดจำนวนคนงานรายตำแหน่งและบันทึกอัตราราคา Snapshot</CardDescription>
+                  {!isLinkedContractActive && (
+                    <Badge variant="destructive" className="mt-2">สัญญาหลักยัง Pending - ยังไม่ควรเปิดงานต่อ</Badge>
+                  )}
                 </div>
                 <Dialog open={isAddLineOpen} onOpenChange={setIsAddLineOpen}>
                   <DialogTrigger asChild>
@@ -373,22 +418,38 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label className="font-bold">ตำแหน่งงาน (ที่ระบุในสัญญา)</Label>
-                        <Select onValueChange={v => setNewLine({...newLine, positionId: v})} value={newLine.positionId}>
+                        <Label className="font-bold">
+                          {isContractBasedPO ? 'ตำแหน่งงาน (ที่ระบุในสัญญา)' : 'ตำแหน่งงาน'}
+                        </Label>
+                        <Select onValueChange={v => setNewLine({...newLine, positionId: v})} value={newLine.positionId || ''}>
                           <SelectTrigger className="h-11"><SelectValue placeholder="เลือกตำแหน่งงาน..." /></SelectTrigger>
                           <SelectContent>
-                            {rates?.map(r => {
-                              const p = allPositions?.find(pos => pos.id === r.positionId);
-                              return (
-                                <SelectItem key={r.id} value={r.positionId}>{p?.positionName || r.positionId}</SelectItem>
-                              );
-                            })}
+                            {isContractBasedPO
+                              ? rates?.map(r => {
+                                  const p = allPositions?.find(pos => pos.id === r.positionId);
+                                  return <SelectItem key={r.id} value={r.positionId}>{p?.positionName || r.positionId}</SelectItem>;
+                                })
+                              : allPositions?.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                                ))}
                           </SelectContent>
                         </Select>
                       </div>
+                      {!isContractBasedPO && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label className="font-bold text-xs">ราคาขาย</Label>
+                            <Input type="number" value={Number(newLine.sellRateSnapshot ?? 0)} onChange={e => setNewLine({...newLine, sellRateSnapshot: Number(e.target.value)})} />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label className="font-bold text-xs">ต้นทุน</Label>
+                            <Input type="number" value={Number(newLine.costBaselineSnapshot ?? 0)} onChange={e => setNewLine({...newLine, costBaselineSnapshot: Number(e.target.value)})} />
+                          </div>
+                        </div>
+                      )}
                       <div className="grid gap-2">
                         <Label className="font-bold">จำนวนคนงานที่ต้องการ (Quantity)</Label>
-                        <Input type="number" min="1" value={newLine.quantity} onChange={e => setNewLine({...newLine, quantity: parseInt(e.target.value)})} className="h-11" />
+                        <Input type="number" min="1" value={Number(newLine.quantity ?? 1)} onChange={e => setNewLine({...newLine, quantity: Number(e.target.value) || 1})} className="h-11" />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
@@ -403,7 +464,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddLineOpen(false)}>ยกเลิก</Button>
-                      <Button onClick={handleAddLine} disabled={!newLine.positionId || !newLine.quantity} className="bg-primary font-bold px-8">เพิ่มรายการจอง</Button>
+                      <Button
+                        onClick={handleAddLine}
+                        disabled={
+                          !newLine.positionId
+                          || !newLine.quantity
+                          || (isContractBasedPO && !isLinkedContractActive)
+                        }
+                        className="bg-primary font-bold px-8"
+                      >
+                        เพิ่มรายการจอง
+                      </Button>
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
@@ -529,9 +600,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> To: {term.endDate}</span>
                         </div>
                       </div>
-                      <Button variant="ghost" className="w-full text-blue-700 font-bold text-xs h-8 group" asChild>
-                        <Link href={`/sales-terms/${term.id}`}>จัดการกฎราคาขาย (Sell Rates) <ChevronRight className="h-3 w-3 ml-1 group-hover:translate-x-1 transition-all" /></Link>
-                      </Button>
+                      <div className="w-full text-blue-700 font-bold text-xs h-8 flex items-center justify-center border border-blue-100 rounded-md bg-blue-50/20">
+                        กฎราคาขายผูกตามเอกสารต้นทาง
+                      </div>
                     </div>
                   ))}
                   {salesTerms?.length === 0 && (
@@ -548,11 +619,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <CardDescription>โครงสร้างค่าตอบแทนพนักงาน สำหรับใบสั่งซื้อนี้</CardDescription>
                   </div>
                   {costTerms?.length === 0 && (
-                    <Button variant="outline" className="gap-2 border-orange-600 text-orange-700 hover:bg-orange-50 font-bold" asChild>
-                      <Link href={`/labor-cost-terms`}>
-                        <Plus className="h-4 w-4" /> สร้าง Cost Term
-                      </Link>
-                    </Button>
+                    <Badge variant="outline" className="border-orange-300 text-orange-700 bg-orange-50">
+                      ไม่มีลิงก์เมนูเงื่อนไขตามโครงการ
+                    </Badge>
                   )}
                 </CardHeader>
                 <CardContent className="pt-6">
@@ -560,7 +629,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <div className="py-10 text-center text-muted-foreground italic text-sm">ยังไม่มีการกำหนดเงื่อนไขต้นทุนแรงงานที่ผูกกับ PO นี้</div>
                   ) : (
                     <div className="space-y-4">
-                      {costTerms.map(term => (
+                      {(costTerms || []).map(term => (
                         <div key={term.id} className="p-4 border border-orange-100 bg-orange-50/10 rounded-lg hover:bg-orange-50/30 transition-all group">
                           <div className="flex justify-between items-start mb-4">
                             <div className="space-y-1">
@@ -577,9 +646,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             <span><Calendar className="h-2.5 w-2.5 inline mr-1" /> Valid: {term.effectiveDate} ถึง {term.endDate}</span>
                           </div>
 
-                          <Button variant="ghost" className="w-full text-orange-700 font-bold text-xs h-8 group border border-orange-200 bg-white hover:bg-orange-50" asChild>
-                            <Link href={`/labor-cost-terms/${term.id}`}>จัดการกฎต้นทุน (Pay Rates) <ChevronRight className="h-3 w-3 ml-1 group-hover:translate-x-1 transition-all" /></Link>
-                          </Button>
+                          <div className="w-full text-orange-700 font-bold text-xs h-8 flex items-center justify-center border border-orange-200 rounded-md bg-orange-50/30">
+                            กฎต้นทุนผูกตามเอกสารต้นทาง
+                          </div>
                         </div>
                       ))}
                     </div>

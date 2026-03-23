@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { PurchaseOrder, User, Customer, MainContract } from '@/lib/types';
+import { PurchaseOrder, User, Customer, MainContract, Quotation } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -33,6 +33,7 @@ import { canView, canCreate } from '@/lib/permissions';
 
 export default function CustomerPOsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -52,10 +53,13 @@ export default function CustomerPOsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newPO, setNewPO] = useState<Partial<PurchaseOrder>>({
+    poType: 'contract',
     title: '',
     poCode: getPreviewPattern('customer_po'),
     customerId: '',
     contractId: '',
+    quotationId: '',
+    customerPONumber: '',
     projectName: '',
     description: '',
     startDate: Date.now(),
@@ -63,6 +67,19 @@ export default function CustomerPOsPage() {
     status: 'pending',
     notes: ''
   });
+
+  useEffect(() => {
+    const contractId = searchParams.get('contractId');
+    const customerId = searchParams.get('customerId');
+    if (!contractId && !customerId) return;
+    setNewPO((prev) => ({
+      ...prev,
+      poType: contractId ? 'contract' : (prev.poType || 'contract'),
+      contractId: contractId || prev.contractId || '',
+      customerId: customerId || prev.customerId || '',
+    }));
+    if (contractId) setIsCreateOpen(true);
+  }, [searchParams]);
 
   const poQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
@@ -78,17 +95,66 @@ export default function CustomerPOsPage() {
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !newPO.customerId || !isAuthorized) return null;
-    return query(collection(firestore, 'main_contracts'), where('customerId', '==', newPO.customerId));
-  }, [firestore, newPO.customerId, isAuthorized]);
-  const { data: contracts } = useCollection<MainContract>(contractsQuery as any);
+    if (!firestore || !isAuthorized) return null;
+    return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
+  }, [firestore, isAuthorized]);
+  const { data: activeContracts } = useCollection<MainContract>(contractsQuery as any);
+  const quotationsQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return query(collection(firestore, 'quotations'), where('status', 'in', ['sent', 'accepted']));
+  }, [firestore, isAuthorized]);
+  const { data: eligibleQuotations } = useCollection<Quotation>(quotationsQuery as any);
+
+  useEffect(() => {
+    if (newPO.poType !== 'contract') return;
+    const selectedContract = activeContracts?.find((c) => c.id === newPO.contractId);
+    if (!selectedContract) return;
+    if (newPO.customerId !== selectedContract.customerId) {
+      setNewPO((prev) => ({ ...prev, customerId: selectedContract.customerId }));
+    }
+  }, [newPO.poType, newPO.contractId, activeContracts, newPO.customerId]);
+
+  useEffect(() => {
+    if (newPO.poType !== 'quotation') return;
+    const selectedQuotation = eligibleQuotations?.find((q) => q.id === newPO.quotationId);
+    if (!selectedQuotation) return;
+    const projectedStart = selectedQuotation.issueDate ? new Date(selectedQuotation.issueDate).getTime() : newPO.startDate;
+    const projectedEnd = selectedQuotation.validUntilDate ? new Date(selectedQuotation.validUntilDate).getTime() : newPO.endDate;
+    setNewPO((prev) => ({
+      ...prev,
+      customerId: selectedQuotation.customerId,
+      title: prev.title || selectedQuotation.projectTitle || '',
+      projectName: prev.projectName || selectedQuotation.projectTitle || '',
+      startDate: Number.isFinite(projectedStart) ? projectedStart : prev.startDate,
+      endDate: Number.isFinite(projectedEnd) ? projectedEnd : prev.endDate,
+    }));
+  }, [newPO.poType, newPO.quotationId, eligibleQuotations]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     
-    if (!newPO.title || !newPO.customerId || !newPO.contractId) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อโครงการ ลูกค้า และสัญญาหลัก" });
+    if (!newPO.title || !newPO.customerId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อโครงการ และลูกค้า" });
       return;
+    }
+    if (newPO.poType === 'contract' && !newPO.contractId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "PO แบบตามสัญญาต้องเลือกสัญญาหลักที่ active" });
+      return;
+    }
+    if (newPO.poType === 'quotation' && !newPO.quotationId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "PO แบบอ้างอิงใบเสนอราคาต้องเลือกใบเสนอราคาก่อน" });
+      return;
+    }
+    if (newPO.poType === 'quotation' && newPO.customerId) {
+      const hasActiveContract = (activeContracts || []).some((c) => c.customerId === newPO.customerId);
+      if (hasActiveContract) {
+        toast({
+          variant: "destructive",
+          title: "พบสัญญาที่ Active อยู่แล้ว",
+          description: "กรุณาสร้าง PO จากสัญญาโดยตรง เพื่อให้ข้อมูลคน/ราคาเชื่อมต่อถูกต้อง",
+        });
+        return;
+      }
     }
 
     setIsCreating(true);
@@ -102,6 +168,8 @@ export default function CustomerPOsPage() {
       const colRef = collection(firestore, 'purchase_orders');
       const docRef = await addDocumentNonBlocking(colRef, {
         ...newPO,
+        contractId: newPO.poType === 'contract' ? (newPO.contractId || '') : '',
+        quotationId: newPO.poType === 'quotation' ? (newPO.quotationId || '') : '',
         poCode: finalNo, // Apply final unique code
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -139,9 +207,9 @@ export default function CustomerPOsPage() {
         {/* 2. Operational Notice Box */}
         <Alert className="bg-primary/5 border-primary/20 shadow-sm">
           <Info className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold text-lg">การจองโควต้าพนักงาน (Quota Reservation Policy)</AlertTitle>
+          <AlertTitle className="font-bold text-lg">การสร้าง PO ตามเอกสารต้นทาง (Source-locked Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            ใบสั่งซื้อจากลูกค้าจะทำหน้าที่จองโควต้าพนักงาน (Quota) ตามตำแหน่งงานที่ระบุใน <b>PO Lines</b> โดยราคาทั้งหมดจะถูก Snaphot มาจากสัญญาหลัก ณ วันที่บันทึกข้อมูลเพื่อความถูกต้องทางบัญชี
+            PO จะสร้างได้จาก <b>สัญญา</b> หรือ <b>ใบเสนอราคา</b> เท่านั้น เพื่อให้ข้อมูลเชื่อมต่อถึงบัญชี/ใบแจ้งหนี้ได้ต่อเนื่อง และป้องกัน PO ลอยที่ไม่อ้างอิงเอกสารต้นทาง
           </AlertDescription>
         </Alert>
 
@@ -166,10 +234,17 @@ export default function CustomerPOsPage() {
                 <DialogTitle>ลงทะเบียนใบสั่งซื้อใหม่ (New Customer PO Registration)</DialogTitle>
                 <DialogDescription>เลือกบริษัทคู่ค้าและสัญญาหลักที่เกี่ยวข้องเพื่อทำการจองโควต้าพนักงาน</DialogDescription>
               </DialogHeader>
+              <Alert className="col-span-2">
+                <Info className="h-4 w-4" />
+                <AlertDescription>
+                  PO ออกได้จาก <b>สัญญา</b> หรือ <b>ใบเสนอราคา</b> เท่านั้น ถ้าลูกค้ามีสัญญา Active อยู่แล้ว ให้สร้างจากสัญญาโดยตรง
+                  หากยังไม่มีสัญญา ต้องมีใบเสนอราคาก่อนจึงจะเปิด PO ได้
+                </AlertDescription>
+              </Alert>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2 col-span-2">
                   <Label>หัวข้อใบสั่งซื้อ (PO Subject/Title)</Label>
-                  <Input value={newPO.title} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น โครงการบำรุงรักษา Shutdown ประจำปี 2024" />
+                  <Input value={newPO.title || ''} onChange={e => setNewPO({...newPO, title: e.target.value})} placeholder="เช่น โครงการบำรุงรักษา Shutdown ประจำปี 2024" />
                 </div>
                 <div className="grid gap-2">
                   <Label>เลขที่อ้างอิงภายใน (Internal PO Code)</Label>
@@ -182,29 +257,71 @@ export default function CustomerPOsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>ชื่อโครงการเฉพาะทาง (Project Name)</Label>
-                  <Input value={newPO.projectName} onChange={e => setNewPO({...newPO, projectName: e.target.value})} />
+                  <Input value={newPO.projectName || ''} onChange={e => setNewPO({...newPO, projectName: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>ลูกค้า (Customer)</Label>
-                  <Select onValueChange={v => setNewPO({...newPO, customerId: v, contractId: ''})} value={newPO.customerId}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
+                  <Label>เลขที่เอกสาร PO ของลูกค้า (External PO No.)</Label>
+                  <Input
+                    value={newPO.customerPONumber || ''}
+                    onChange={e => setNewPO({...newPO, customerPONumber: e.target.value})}
+                    placeholder="เช่น PO-CLIENT-2026-00123"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>แหล่งที่มาเอกสาร (PO Source)</Label>
+                  <Select
+                    onValueChange={(v: 'contract' | 'quotation') => setNewPO({
+                      ...newPO,
+                      poType: v,
+                      contractId: '',
+                      quotationId: '',
+                      customerId: '',
+                    })}
+                    value={(newPO.poType as any) || 'contract'}
+                  >
+                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {customers?.map(c => (
-                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                      ))}
+                      <SelectItem value="contract">ตามสัญญาหลัก (Contract-based)</SelectItem>
+                      <SelectItem value="quotation">ตามใบเสนอราคา (Quotation-based)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label>อ้างอิงสัญญาหลัก (Related Main Contract)</Label>
-                  <Select onValueChange={v => setNewPO({...newPO, contractId: v})} value={newPO.contractId} disabled={!newPO.customerId}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกสัญญาหลักที่อ้างอิง..." /></SelectTrigger>
+                  <Label>อ้างอิงสัญญาหลัก</Label>
+                  <Select
+                    onValueChange={v => setNewPO({...newPO, contractId: v})}
+                    value={newPO.contractId || ''}
+                    disabled={newPO.poType !== 'contract'}
+                  >
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกสัญญาหลักที่ Active..." /></SelectTrigger>
                     <SelectContent>
-                      {contracts?.map(c => (
+                      {activeContracts?.map(c => (
                         <SelectItem key={c.id} value={c.id}>{c.contractNumber} - {c.title}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>อ้างอิงใบเสนอราคา</Label>
+                  <Select
+                    onValueChange={v => setNewPO({...newPO, quotationId: v})}
+                    value={newPO.quotationId || ''}
+                    disabled={newPO.poType !== 'quotation'}
+                  >
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกใบเสนอราคาที่ sent/accepted..." /></SelectTrigger>
+                    <SelectContent>
+                      {eligibleQuotations?.map(q => (
+                        <SelectItem key={q.id} value={q.id}>{q.quotationNo} - {q.projectTitle}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2 col-span-2">
+                  <Label>ลูกค้า (Customer)</Label>
+                  <Input
+                    disabled
+                    value={customers?.find((c) => c.id === newPO.customerId)?.name || 'ระบบจะดึงจากเอกสารต้นทางอัตโนมัติ'}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มโครงการ (Start Date)</Label>
@@ -216,12 +333,22 @@ export default function CustomerPOsPage() {
                 </div>
                 <div className="grid gap-2 col-span-2">
                   <Label>รายละเอียดเพิ่มเติม</Label>
-                  <Textarea value={newPO.description} onChange={e => setNewPO({...newPO, description: e.target.value})} />
+                  <Textarea value={newPO.description || ''} onChange={e => setNewPO({...newPO, description: e.target.value})} />
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating || !newPO.title || !newPO.customerId || !newPO.contractId}>
+                <Button
+                  onClick={handleCreate}
+                  className="bg-primary font-bold"
+                  disabled={
+                    isCreating
+                    || !newPO.title
+                    || !newPO.customerId
+                    || (newPO.poType === 'contract' && !newPO.contractId)
+                    || (newPO.poType === 'quotation' && !newPO.quotationId)
+                  }
+                >
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   ยืนยันและไปจัดการรายการโควต้า (Confirm)
                 </Button>
@@ -267,6 +394,9 @@ export default function CustomerPOsPage() {
                           <div className="flex flex-col">
                             <span className="font-medium text-sm text-primary">{po.title}</span>
                             <span className="text-[10px] text-muted-foreground uppercase">{po.projectName || 'General Project'}</span>
+                            {po.customerPONumber && (
+                              <span className="text-[10px] text-slate-500">Customer PO: {po.customerPONumber}</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="text-xs font-medium text-muted-foreground">

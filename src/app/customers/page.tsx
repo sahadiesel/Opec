@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -42,6 +43,8 @@ export default function CustomersPage() {
     name: '',
     customerCode: getPreviewPattern('customer'),
     taxId: '',
+    branchType: 'head_office',
+    branchNo: '',
     registeredAddress: '',
     billingAddress: '',
     phone: '',
@@ -85,6 +88,12 @@ export default function CustomersPage() {
 
     setIsCreating(true);
     try {
+      const normalizedBranchNo = newCustomer.branchType === 'branch' ? (newCustomer.branchNo || '').trim() : '00000';
+      if (newCustomer.branchType === 'branch' && !normalizedBranchNo) {
+        toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขสาขา" });
+        setIsCreating(false);
+        return;
+      }
       // 1. Generate unique customer code atomically
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'customer', { 
         actor: user.displayName 
@@ -94,6 +103,7 @@ export default function CustomersPage() {
       const custRef = collection(firestore, 'customers');
       const docRef = await addDocumentNonBlocking(custRef, {
         ...newCustomer,
+        branchNo: normalizedBranchNo,
         customerCode: finalNo, // Apply the official sequence code
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -193,6 +203,25 @@ export default function CustomersPage() {
                   <Label>เลขประจำตัวผู้เสียภาษี (Tax ID)</Label>
                   <Input value={newCustomer.taxId} onChange={e => setNewCustomer({...newCustomer, taxId: e.target.value})} />
                 </div>
+                <div className="grid gap-2">
+                  <Label>ประเภทสาขา</Label>
+                  <Select
+                    value={(newCustomer.branchType as any) || 'head_office'}
+                    onValueChange={(v: 'head_office' | 'branch') => setNewCustomer({ ...newCustomer, branchType: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="head_office">สำนักงานใหญ่</SelectItem>
+                      <SelectItem value="branch">สาขา</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {newCustomer.branchType === 'branch' && (
+                  <div className="grid gap-2">
+                    <Label>เลขสาขา (Branch No.)</Label>
+                    <Input value={newCustomer.branchNo || ''} onChange={e => setNewCustomer({ ...newCustomer, branchNo: e.target.value })} placeholder="เช่น 00001" />
+                  </div>
+                )}
                 <div className="grid gap-2">
                   <Label>เบอร์โทรศัพท์บริษัท</Label>
                   <Input value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />

@@ -116,10 +116,14 @@ export default function AssignmentsPage() {
 
     // 2. Readiness Compliance Check
     if (worker.readinessStatus !== 'READY') {
+      const policyHint =
+        worker.readinessStatus === 'BLOCKED'
+          ? `เอกสารเข้าเงื่อนไขบล็อกการ Assign (ใกล้หมดอายุใน ${worker.nearestExpiryInDays ?? '-'} วัน)`
+          : `คนงานมีสถานะ ${worker.readinessStatus}`;
       toast({ 
         variant: "destructive", 
         title: "ความพร้อมไม่ผ่านเกณฑ์ (Not Ready)", 
-        description: `คนงานมีสถานะ ${worker.readinessStatus} กรุณาตรวจสอบใบเซอร์และผลตรวจร่างกายก่อนมอบหมายงาน` 
+        description: `${policyHint} กรุณาตรวจสอบเอกสาร/ใบเซอร์ก่อนมอบหมายงาน` 
       });
       return;
     }

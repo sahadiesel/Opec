@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -21,6 +21,7 @@ import {
   Hammer, 
   ArrowLeft,
   Sparkles,
+  Loader2,
   Briefcase,
   Activity,
   Info,
@@ -39,7 +40,7 @@ import {
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { Position, PositionCertificateRequirement, PositionPPERequirement, PositionToolRequirement, User, JobMode } from '@/lib/types';
+import { Position, PositionCertificateRequirement, PositionPPERequirement, PositionToolRequirement, User, JobMode, WorkerDocumentCatalogItem } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
@@ -62,6 +63,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const toolsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions', id, 'tool_requirements') : null), [firestore, id]);
   const { data: tools } = useCollection<PositionToolRequirement>(toolsQuery as any);
+  const workerDocCatalogQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'worker_document_catalog') : null), [firestore]);
+  const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedPos, setEditedPos] = useState<Partial<Position>>({});
@@ -70,11 +73,19 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const [isAddPPEOpen, setIsAddPPEOpen] = useState(false);
   const [isAddToolOpen, setIsAddToolOpen] = useState(false);
 
-  const [newCert, setNewCert] = useState<Partial<PositionCertificateRequirement>>({ required: true });
+  const [newCert, setNewCert] = useState<Partial<PositionCertificateRequirement>>({
+    required: true,
+    requirementType: 'certificate',
+    hasExpiry: true,
+  });
   const [newPPE, setNewPPE] = useState<Partial<PositionPPERequirement>>({ required: true, quantityDefault: 1 });
   const [newTool, setNewTool] = useState<Partial<PositionToolRequirement>>({ allowed: true, quantityDefault: 1, itemType: 'tool' });
 
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
+  const selectedCatalogItem = useMemo(
+    () => (workerDocCatalog || []).find((x) => x.id === (newCert.templateId || '')),
+    [workerDocCatalog, newCert.templateId]
+  );
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -90,15 +101,22 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const handleAddCert = () => {
     if (!certsQuery) return;
+    if (!selectedCatalogItem) {
+      toast({ variant: 'destructive', title: 'ยังไม่ได้เลือกเอกสารกลาง', description: 'กรุณาเลือกรายการจากเมนูรายการเอกสารกลางก่อนบันทึก' });
+      return;
+    }
     addDocumentNonBlocking(certsQuery, {
-      certificateName: newCert.certificateName || '',
-      certificateCode: newCert.certificateCode || '',
+      templateId: selectedCatalogItem.id,
+      requirementType: selectedCatalogItem.requirementType || 'certificate',
+      certificateName: selectedCatalogItem.itemName || '',
+      certificateCode: selectedCatalogItem.itemCode || '',
       required: newCert.required ?? true,
-      validityMonths: newCert.validityMonths || 0,
+      validityMonths: selectedCatalogItem.hasExpiry ? Number(selectedCatalogItem.defaultValidityMonths || 0) : 0,
+      hasExpiry: selectedCatalogItem.hasExpiry ?? true,
       notes: newCert.notes || ''
     });
     setIsAddCertOpen(false);
-    setNewCert({ required: true });
+    setNewCert({ required: true, requirementType: 'certificate', hasExpiry: true });
   };
 
   const handleAddPPE = () => {
@@ -318,17 +336,25 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label className="font-bold">ชื่อใบรับรอง (Certificate Name) *</Label>
-                          <Input value={newCert.certificateName || ''} onChange={e => setNewCert({...newCert, certificateName: e.target.value})} />
+                          <Label className="font-bold">เลือกรายการจากเอกสารกลาง *</Label>
+                          <Select value={newCert.templateId || ''} onValueChange={v => setNewCert({...newCert, templateId: v})}>
+                            <SelectTrigger><SelectValue placeholder="เลือกเอกสารกลาง..." /></SelectTrigger>
+                            <SelectContent>
+                              {(workerDocCatalog || []).filter((x) => x.active !== false).map((x) => (
+                                <SelectItem key={x.id} value={x.id}>
+                                  {x.itemName} - {x.requirementType}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <div className="grid gap-2">
-                          <Label className="font-bold">รหัสมาตรฐาน (System Code)</Label>
-                          <Input value={newCert.certificateCode || ''} onChange={e => setNewCert({...newCert, certificateCode: e.target.value})} />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label className="font-bold">อายุการใช้งานแนะนำ (Validity Months)</Label>
-                          <Input type="number" value={newCert.validityMonths || ''} onChange={e => setNewCert({...newCert, validityMonths: parseInt(e.target.value)})} />
-                        </div>
+                        {selectedCatalogItem && (
+                          <div className="text-xs rounded-lg border p-3 bg-muted/20">
+                            ประเภท: <b>{selectedCatalogItem.requirementType}</b> | มีอายุ:{' '}
+                            <b>{selectedCatalogItem.hasExpiry ? 'มี' : 'ไม่มี'}</b> | อายุแนะนำ:{' '}
+                            <b>{selectedCatalogItem.hasExpiry ? `${selectedCatalogItem.defaultValidityMonths || 0} เดือน` : '-'}</b>
+                          </div>
+                        )}
                         <div className="flex items-center space-x-2 p-3 border rounded-lg bg-muted/20">
                           <Checkbox id="req" checked={newCert.required} onCheckedChange={v => setNewCert({...newCert, required: !!v})} />
                           <Label htmlFor="req" className="font-bold cursor-pointer">บังคับต้องมี (Mandatory - Blocks Readiness)</Label>
@@ -347,8 +373,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   <TableHeader className="bg-muted/50">
                     <TableRow>
                       <TableHead className="pl-6 font-bold">ใบรับรอง (Certificate)</TableHead>
+                      <TableHead className="font-bold">ประเภท</TableHead>
                       <TableHead className="font-bold">ความสำคัญ (Criticality)</TableHead>
-                      <TableHead className="font-bold">อายุมาตรฐาน</TableHead>
+                      <TableHead className="font-bold">อายุ</TableHead>
                       <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -361,6 +388,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                             <span className="text-[10px] font-mono text-muted-foreground">{c.certificateCode || 'N/A'}</span>
                           </div>
                         </TableCell>
+                        <TableCell className="text-xs uppercase">
+                          {c.requirementType || 'certificate'}
+                        </TableCell>
                         <TableCell>
                           {c.required ? (
                             <Badge className="bg-red-600">Mandatory (บังคับ)</Badge>
@@ -368,7 +398,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                             <Badge variant="outline" className="text-slate-500">Optional (เสริม)</Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm">{c.validityMonths ? `${c.validityMonths} เดือน` : 'ไม่ระบุ'}</TableCell>
+                        <TableCell className="text-sm">{c.hasExpiry === false ? 'ไม่มีวันหมดอายุ' : (c.validityMonths ? `${c.validityMonths} เดือน` : 'มีอายุ (ไม่ระบุเดือน)')}</TableCell>
                         <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteReq('certificate_requirements', c.id)}><Trash2 className="h-4 w-4" /></Button>
                         </TableCell>
@@ -376,7 +406,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     ))}
                     {certs?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการใบเซอร์ที่กำหนด</TableCell>
+                        <TableCell colSpan={5} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการใบเซอร์/เอกสารที่กำหนด</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

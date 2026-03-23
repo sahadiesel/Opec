@@ -45,6 +45,10 @@ export default function StoreDashboardPage() {
   const firestore = useFirestore();
 
   const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
+  const isOpsOrHR = useMemo(
+    () => canAccessDomain(currentUser, 'operations') || canAccessDomain(currentUser, 'hr'),
+    [currentUser]
+  );
 
   // 1. Data Fetching — gate by store access (operation + accounting)
   const itemsQuery = useMemoFirebase(() => {
@@ -127,7 +131,32 @@ export default function StoreDashboardPage() {
       </div>
     );
   }
-  if (!currentUser || !canAccess) return null;
+  if (!currentUser) return null;
+
+  if (!canAccess) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-[1100px] mx-auto space-y-6">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <Warehouse className="h-8 w-8" /> คลังอุปกรณ์ (Store / Inventory)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              เมนูนี้ต้องใช้สิทธิ์ Store เพื่อดูข้อมูลสต็อกและธุรกรรมคลัง
+            </p>
+          </div>
+
+          <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
+            <ShieldAlert className="h-5 w-5" />
+            <AlertTitle className="font-bold">ไม่มีสิทธิ์เข้าใช้งานเมนูคลังอุปกรณ์</AlertTitle>
+            <AlertDescription>
+              บัญชีปัจจุบันยังไม่มีสิทธิ์ `store` ในโปรไฟล์สิทธิ์ กรุณาให้ผู้ดูแลระบบเพิ่มสิทธิ์ หรือใช้งานเมนูที่ได้รับอนุญาตแทน
+            </AlertDescription>
+          </Alert>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

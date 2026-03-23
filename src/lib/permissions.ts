@@ -247,6 +247,24 @@ const OPERATION_GROUP_MODULES = new Set<ModuleKey>([
   ...OPERATIONS_MODULES,
 ]);
 
+function getOperationGroupModules(user: User | null): Set<ModuleKey> {
+  const base = new Set<ModuleKey>(OPERATION_GROUP_MODULES);
+  const normalized = normalizeCurrentUserPermissions(user);
+  if (!normalized) return base;
+
+  const primaryRole = getPrimaryLegacyRole(normalized);
+  const isHRManager =
+    primaryRole === 'hr_manager' ||
+    (normalized.department === 'hr' && getEffectiveAccessLevel(normalized) === 'manager');
+
+  // Business override: HR Manager can access Store menu/workflow.
+  if (isHRManager) {
+    STORE_MODULES.forEach((key) => base.add(key));
+  }
+
+  return base;
+}
+
 /** Accounting group: can view operational scheduling for billing accuracy. */
 const ACCOUNTING_GROUP_MODULES = new Set<ModuleKey>([
   ...SALES_MODULES,
@@ -456,7 +474,7 @@ export function getPermissions(
 
   if (group === 'operation') {
     if (ADMIN_ONLY_MODULES.has(moduleKey)) return clonePermission(NO_ACCESS);
-    return hasResolvedModuleAccess(u, moduleKey, OPERATION_GROUP_MODULES);
+    return hasResolvedModuleAccess(u, moduleKey, getOperationGroupModules(u));
   }
 
   if (group === 'accounting') {

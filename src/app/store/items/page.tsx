@@ -21,7 +21,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc } from 'firebase/firestore';
-import { addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { addDocumentNonBlocking, deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
@@ -35,11 +35,11 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
 export default function StoreItemsPage() {
+  type ItemKind = 'ppe' | 'tool' | 'general';
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -54,6 +54,9 @@ export default function StoreItemsPage() {
   const { data: items, isLoading } = useCollection<StoreItem>(itemsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [newItemKind, setNewItemKind] = useState<ItemKind>('ppe');
   const [newItem, setNewItem] = useState<Partial<StoreItem>>({
     itemCode: '',
     itemName: '',
@@ -66,6 +69,17 @@ export default function StoreItemsPage() {
     active: true
   });
 
+  const resolveItemFlags = (kind: ItemKind) => ({
+    isPPE: kind === 'ppe',
+    isTool: kind === 'tool',
+  });
+
+  const resolveItemKind = (item: Partial<StoreItem>): ItemKind => {
+    if (item.isPPE) return 'ppe';
+    if (item.isTool) return 'tool';
+    return 'general';
+  };
+
   const handleCreate = async () => {
     if (!firestore) return;
     const colRef = collection(firestore, 'store_items');
@@ -73,14 +87,76 @@ export default function StoreItemsPage() {
     try {
       await addDocumentNonBlocking(colRef, {
         ...newItem,
+        ...resolveItemFlags(newItemKind),
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
       setIsCreateOpen(false);
+      setNewItem({
+        itemCode: '',
+        itemName: '',
+        category: 'PPE',
+        unit: 'Unit',
+        minimumStock: 5,
+        currentStock: 0,
+        isPPE: true,
+        isTool: false,
+        active: true
+      });
+      setNewItemKind('ppe');
       toast({ title: "เพิ่มอุปกรณ์สำเร็จ" });
     } catch (e) {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
     }
+  };
+
+  const handleUpdate = async () => {
+    if (!firestore || !editingItemId) return;
+    try {
+      updateDocumentNonBlocking(doc(firestore, 'store_items', editingItemId), {
+        ...newItem,
+        ...resolveItemFlags(newItemKind),
+        updatedAt: Date.now()
+      });
+      setIsEditOpen(false);
+      setEditingItemId(null);
+      toast({ title: 'แก้ไขอุปกรณ์สำเร็จ' });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถแก้ไขข้อมูลได้" });
+    }
+  };
+
+  const openCreateDialog = () => {
+    setNewItem({
+      itemCode: '',
+      itemName: '',
+      category: 'PPE',
+      unit: 'Unit',
+      minimumStock: 5,
+      currentStock: 0,
+      isPPE: true,
+      isTool: false,
+      active: true
+    });
+    setNewItemKind('ppe');
+    setIsCreateOpen(true);
+  };
+
+  const openEditDialog = (item: StoreItem) => {
+    setEditingItemId(item.id);
+    setNewItem({
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      category: item.category,
+      unit: item.unit,
+      minimumStock: item.minimumStock,
+      currentStock: item.currentStock,
+      isPPE: item.isPPE,
+      isTool: item.isTool,
+      active: item.active,
+    });
+    setNewItemKind(resolveItemKind(item));
+    setIsEditOpen(true);
   };
 
   const handleDelete = (id: string) => {
@@ -114,7 +190,7 @@ export default function StoreItemsPage() {
           </div>
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold" onClick={openCreateDialog}>
                 <Plus className="h-5 w-5" /> เพิ่มอุปกรณ์ใหม่ (Add Item)
               </Button>
             </DialogTrigger>
@@ -157,24 +233,79 @@ export default function StoreItemsPage() {
                   <Label>สต็อกปัจจุบัน (Initial)</Label>
                   <Input type="number" value={newItem.currentStock} onChange={e => setNewItem({...newItem, currentStock: parseInt(e.target.value)})} />
                 </div>
-                <div className="flex items-center justify-between p-3 border rounded-md">
-                  <div className="space-y-0.5">
-                    <Label>เป็นอุปกรณ์ PPE</Label>
-                    <p className="text-[10px] text-muted-foreground">ใช้ตรวจสอบกับ Position Requirement</p>
-                  </div>
-                  <Switch checked={newItem.isPPE} onCheckedChange={v => setNewItem({...newItem, isPPE: v})} />
-                </div>
-                <div className="flex items-center justify-between p-3 border rounded-md">
-                  <div className="space-y-0.5">
-                    <Label>เป็นเครื่องมือ (Tool)</Label>
-                    <p className="text-[10px] text-muted-foreground">ใช้ตรวจสอบกับ Tool Requirement</p>
-                  </div>
-                  <Switch checked={newItem.isTool} onCheckedChange={v => setNewItem({...newItem, isTool: v})} />
+                <div className="grid gap-2 col-span-2">
+                  <Label>ประเภทอุปกรณ์ (Type)</Label>
+                  <Select value={newItemKind} onValueChange={(v) => setNewItemKind(v as ItemKind)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ppe">อุปกรณ์ PPE</SelectItem>
+                      <SelectItem value="tool">เครื่องมือ (Tool)</SelectItem>
+                      <SelectItem value="general">ทั่วไป (General)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
                 <Button onClick={handleCreate} className="bg-primary font-bold">บันทึกข้อมูล (Save Item)</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+            <DialogContent className="max-w-xl">
+              <DialogHeader>
+                <DialogTitle>แก้ไขอุปกรณ์</DialogTitle>
+                <DialogDescription>ปรับข้อมูลทะเบียนอุปกรณ์ในระบบ</DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-2 gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label>รหัสอุปกรณ์ (Item Code)</Label>
+                  <Input value={newItem.itemCode || ''} onChange={e => setNewItem({...newItem, itemCode: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>ชื่ออุปกรณ์ (Item Name)</Label>
+                  <Input value={newItem.itemName || ''} onChange={e => setNewItem({...newItem, itemName: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>หมวดหมู่ (Category)</Label>
+                  <Select onValueChange={v => setNewItem({...newItem, category: v})} value={newItem.category || ''}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PPE">PPE</SelectItem>
+                      <SelectItem value="Safety">Safety</SelectItem>
+                      <SelectItem value="Mechanical">Mechanical</SelectItem>
+                      <SelectItem value="Electrical">Electrical</SelectItem>
+                      <SelectItem value="General">General</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>หน่วยนับ (Unit)</Label>
+                  <Input value={newItem.unit || ''} onChange={e => setNewItem({...newItem, unit: e.target.value})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>สต็อกขั้นต่ำ (Alert Level)</Label>
+                  <Input type="number" value={newItem.minimumStock || 0} onChange={e => setNewItem({...newItem, minimumStock: parseInt(e.target.value) || 0})} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>สต็อกปัจจุบัน</Label>
+                  <Input type="number" value={newItem.currentStock || 0} onChange={e => setNewItem({...newItem, currentStock: parseInt(e.target.value) || 0})} />
+                </div>
+                <div className="grid gap-2 col-span-2">
+                  <Label>ประเภทอุปกรณ์ (Type)</Label>
+                  <Select value={newItemKind} onValueChange={(v) => setNewItemKind(v as ItemKind)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ppe">อุปกรณ์ PPE</SelectItem>
+                      <SelectItem value="tool">เครื่องมือ (Tool)</SelectItem>
+                      <SelectItem value="general">ทั่วไป (General)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsEditOpen(false)}>ยกเลิก</Button>
+                <Button onClick={handleUpdate} className="bg-primary font-bold">บันทึกการแก้ไข</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -232,7 +363,7 @@ export default function StoreItemsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right pr-6 space-x-2">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-primary"><Edit2 className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => openEditDialog(item)}><Edit2 className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item.id)}><Trash2 className="h-4 w-4" /></Button>
                       </TableCell>
                     </TableRow>

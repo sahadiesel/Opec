@@ -208,8 +208,7 @@ service cloud.firestore {
     }
 
     match /main_contracts/{id} {
-      allow read: if internalRead() || sameCustomerId(resource.data.customerId);
-      allow write: if canAccessSales();
+      allow read, write: if internalRead();
     }
 
     match /sales_contract_terms/{id} {
@@ -264,6 +263,11 @@ service cloud.firestore {
     }
 
     match /office_staff/{id} {
+      allow read: if internalRead();
+      allow write: if canAccessHR();
+    }
+
+    match /worker_document_catalog/{id} {
       allow read: if internalRead();
       allow write: if canAccessHR();
     }
@@ -409,7 +413,9 @@ service cloud.firestore {
     // System collections
     // -------------------------------------------------------------------------
     match /number_sequences/{id} {
-      allow read, write: if canManageSystem();
+      // Admin manages all sequences; internal users can use only main_contract sequence.
+      allow read, write: if canManageSystem()
+        || (internalRead() && id == 'main_contract');
     }
 
     match /permission_profiles/{id} {
@@ -467,11 +473,7 @@ service cloud.firestore {
     }
 
     match /main_contracts/{contractId}/{document=**} {
-      allow read: if internalRead() || (
-        isClientUser()
-        && get(/databases/$(database)/documents/main_contracts/$(contractId)).data.customerId == userCustomerId()
-      );
-      allow write: if canAccessSales();
+      allow read, write: if internalRead();
     }
 
     match /quotations/{quotationId}/{document=**} {
@@ -533,6 +535,7 @@ service cloud.firestore {
 
     match /{path=**}/position_rates/{rateId} {
       allow read: if internalRead();
+      allow write: if internalRead();
     }
 
     match /{document=**} {

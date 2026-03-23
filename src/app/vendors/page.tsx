@@ -52,8 +52,10 @@ export default function VendorsPage() {
   const filteredVendors = useMemo(() => {
     if (!vendors) return [];
     return vendors.filter(v => {
-      const matchesSearch = v.vendorName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           v.vendorCode.toLowerCase().includes(searchTerm.toLowerCase());
+      const keyword = searchTerm.toLowerCase();
+      const vendorName = (v.vendorName || '').toLowerCase();
+      const vendorCode = (v.vendorCode || '').toLowerCase();
+      const matchesSearch = vendorName.includes(keyword) || vendorCode.includes(keyword);
       const matchesType = typeFilter === 'ALL' || v.vendorType === typeFilter;
       const matchesStatus = statusFilter === 'ALL' || v.status === statusFilter;
       return matchesSearch && matchesType && matchesStatus;
@@ -70,7 +72,15 @@ export default function VendorsPage() {
     }
   };
 
-  if (isUserLoading || userLoading || !currentUser) return null;
+  if (isUserLoading || userLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังโหลดข้อมูลผู้ใช้งาน…
+      </div>
+    );
+  }
+
+  if (!currentUser) return null;
 
   return (
     <AppShell user={currentUser as User} onLogout={() => {}}>

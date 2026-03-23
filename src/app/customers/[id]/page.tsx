@@ -66,6 +66,7 @@ import { useRouter } from 'next/navigation';
 import { CustomerProvisioningService } from '@/lib/services/customer-provisioning-service';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -77,6 +78,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedCust, setEditedCust] = useState<Partial<Customer>>({});
+  const [isAddContactOpen, setIsAddContactOpen] = useState(false);
+  const [newContact, setNewContact] = useState<Partial<ContactPerson>>({
+    name: '',
+    role: '',
+    department: '',
+    phone: '',
+    email: '',
+    isPrimary: false,
+    contractId: '',
+  });
 
   // Provisioning State
   const [isProvisioningOpen, setIsProvisioningOpen] = useState(false);
@@ -155,7 +166,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleSaveMaster = () => {
     if (!custRef) return;
-    updateDocumentNonBlocking(custRef, { ...editedCust, updatedAt: Date.now() });
+    const normalizedBranchNo = editedCust.branchType === 'branch' ? (editedCust.branchNo || '').trim() : '00000';
+    if (editedCust.branchType === 'branch' && !normalizedBranchNo) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุเลขสาขา' });
+      return;
+    }
+    updateDocumentNonBlocking(custRef, { ...editedCust, branchNo: normalizedBranchNo, updatedAt: Date.now() });
     setIsEditing(false);
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลลูกค้าถูกอัปเดตเรียบร้อยแล้ว" });
   };
@@ -203,6 +219,28 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  const handleAddContact = () => {
+    if (!firestore || !newContact.name) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อผู้ติดต่อ' });
+      return;
+    }
+    const targetContractId = newContact.contractId || '';
+    const payload: Partial<ContactPerson> = {
+      name: newContact.name || '',
+      role: newContact.role || '',
+      department: newContact.department || '',
+      phone: newContact.phone || '',
+      email: newContact.email || '',
+      isPrimary: !!newContact.isPrimary,
+      contractId: targetContractId || undefined,
+      notes: newContact.notes || '',
+    };
+    addDocumentNonBlocking(collection(firestore, 'customers', id, 'contact_persons'), payload);
+    setIsAddContactOpen(false);
+    setNewContact({ name: '', role: '', department: '', phone: '', email: '', isPrimary: false, contractId: '' });
+    toast({ title: 'เพิ่มผู้ติดต่อสำเร็จ' });
+  };
+
   if (isCustLoading || !customer || !currentUser) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
@@ -232,7 +270,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               )}
             </div>
             <p className="text-muted-foreground flex items-center gap-2 mt-1">
-              <Building2 className="h-4 w-4" /> Tax ID: {customer.taxId || 'N/A'}
+              <Building2 className="h-4 w-4" /> Tax ID: {customer.taxId || 'N/A'} | {customer.branchType === 'branch' ? `สาขา ${customer.branchNo || '-'}` : 'สำนักงานใหญ่'}
             </p>
           </div>
           <div className="flex gap-2">
@@ -293,6 +331,30 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <Label>เลขประจำตัวผู้เสียภาษี</Label>
                     <Input disabled={!isEditing} value={isEditing ? editedCust.taxId : customer.taxId} onChange={e => setEditedCust({...editedCust, taxId: e.target.value})} />
                   </div>
+                  <div className="space-y-2">
+                    <Label>ประเภทสาขา</Label>
+                    <Select
+                      disabled={!isEditing}
+                      value={((isEditing ? editedCust.branchType : customer.branchType) as any) || 'head_office'}
+                      onValueChange={(v: 'head_office' | 'branch') => setEditedCust({ ...editedCust, branchType: v })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="head_office">สำนักงานใหญ่</SelectItem>
+                        <SelectItem value="branch">สาขา</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {(isEditing ? editedCust.branchType : customer.branchType) === 'branch' && (
+                    <div className="space-y-2">
+                      <Label>เลขสาขา (Branch No.)</Label>
+                      <Input
+                        disabled={!isEditing}
+                        value={isEditing ? (editedCust.branchNo || '') : (customer.branchNo || '')}
+                        onChange={e => setEditedCust({ ...editedCust, branchNo: e.target.value })}
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>เบอร์โทรศัพท์บริษัท</Label>
@@ -327,7 +389,73 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   <CardTitle>ผู้ติดต่อหลัก (Contact Persons)</CardTitle>
                   <CardDescription>รายชื่อเจ้าหน้าที่ฝั่งลูกค้าสำหรับการประสานงาน</CardDescription>
                 </div>
-                <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มผู้ติดต่อ</Button>
+                <Dialog open={isAddContactOpen} onOpenChange={setIsAddContactOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มผู้ติดต่อ</Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>เพิ่มผู้ติดต่อ</DialogTitle>
+                      <DialogDescription>เพิ่มผู้ติดต่อระดับลูกค้า หรือผูกเฉพาะสัญญาหลักได้จากหน้าจอนี้</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-3 py-2">
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="text-xs"
+                          onClick={() =>
+                            setNewContact((prev) => ({
+                              ...prev,
+                              name: prev.name || customer.name,
+                              phone: prev.phone || customer.phone || '',
+                              email: prev.email || customer.email || '',
+                              department: prev.department || 'client',
+                            }))
+                          }
+                        >
+                          ดึงข้อมูลจากลูกค้า
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-2">
+                          <Label>ชื่อผู้ติดต่อ</Label>
+                          <Input value={newContact.name || ''} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>ตำแหน่ง</Label>
+                          <Input value={newContact.role || ''} onChange={(e) => setNewContact({ ...newContact, role: e.target.value })} />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-2">
+                          <Label>โทรศัพท์</Label>
+                          <Input value={newContact.phone || ''} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>อีเมล</Label>
+                          <Input value={newContact.email || ''} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} />
+                        </div>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>สัญญาที่ผูก (ถ้าเว้นว่าง = ใช้ได้ทุกสัญญา)</Label>
+                        <Select value={newContact.contractId || 'all'} onValueChange={(v) => setNewContact({ ...newContact, contractId: v === 'all' ? '' : v })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">ทุกสัญญา (Customer-level)</SelectItem>
+                            {customerContracts?.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>{c.contractNumber} - {c.title}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddContactOpen(false)}>ยกเลิก</Button>
+                      <Button onClick={handleAddContact}>บันทึกผู้ติดต่อ</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0 border-t">
                 <Table>
@@ -348,6 +476,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="text-xs">{contact.phone}</TableCell>
                         <TableCell className="text-xs">{contact.email}</TableCell>
                         <TableCell className="text-right pr-6">
+                          {contact.contractId ? (
+                            <Badge variant="outline" className="mr-2 text-[10px]">เฉพาะสัญญา</Badge>
+                          ) : null}
                           {contact.isPrimary && <Badge className="bg-blue-600 text-white border-none">Primary</Badge>}
                         </TableCell>
                       </TableRow>
@@ -434,7 +565,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     {customerContracts?.map(contract => (
                       <TableRow key={contract.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/main-contracts/${contract.id}`)}>
                         <TableCell className="pl-6 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
-                        <TableCell className="font-medium text-sm">{contract.title}</TableCell>
+                        <TableCell className="font-medium text-sm">
+                          <div className="flex flex-col gap-1">
+                            <span>{contract.title}</span>
+                            {(contract.contractType || 'master') === 'supplemental' && (
+                              <Badge variant="outline" className="w-fit text-[10px]">
+                                Supplemental Contract
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-[10px]">
                           {new Date(contract.startDate).toLocaleDateString('th-TH')} - {new Date(contract.endDate).toLocaleDateString('th-TH')}
                         </TableCell>
@@ -496,6 +636,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
           {/* Portal Access Tab */}
           <TabsContent value="portal" className="mt-6 space-y-6">
+            {!isSystemAdmin(currentUser) && (
+              <Alert className="bg-amber-50 border-amber-200">
+                <Info className="h-4 w-4 text-amber-700" />
+                <AlertTitle className="text-amber-800">ต้องใช้สิทธิ์ System Admin</AlertTitle>
+                <AlertDescription className="text-amber-700">
+                  การเพิ่ม/เปิดใช้งานบัญชีลูกค้า ต้องทำโดยผู้ดูแลระบบ เพื่อให้ผู้ใช้ใหม่ได้รับ `customerId`, `accessGroup=client`,
+                  `permissionProfileKey=client_user` ครบถ้วน แล้วจึง login ได้โดยไม่ติด permission.
+                </AlertDescription>
+              </Alert>
+            )}
             <PageGuidance 
               title="การจัดการสิทธิ์ลูกค้า (Customer Portal Guidance)"
               tips={[
@@ -515,7 +665,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 </div>
                 <Dialog open={isProvisioningOpen} onOpenChange={setIsProvisioningOpen}>
                   <DialogTrigger asChild>
-                    <Button className="gap-2 h-10 px-6 bg-primary font-bold shadow-sm">
+                    <Button className="gap-2 h-10 px-6 bg-primary font-bold shadow-sm" disabled={!isSystemAdmin(currentUser)}>
                       <UserPlus className="h-4 w-4" /> สร้างบัญชีลูกค้าใหม่
                     </Button>
                   </DialogTrigger>

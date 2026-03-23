@@ -22,11 +22,64 @@ import {
   User, 
   WorkerPaymentProfile,
   RateCondition,
-  LaborCostContractTerm
+  LaborCostContractTerm,
+  MainContract,
 } from '@/lib/types';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
 import { writeAuditLog } from './audit-service';
+
+type GlobalCostMultiplierPolicy = {
+  otAfterShift?: number;
+  holiday?: number;
+  publicHoliday?: number;
+  sunday?: number;
+  sundayOt?: number;
+  standby?: number;
+  mobilization?: number;
+  demobilization?: number;
+  travel?: number;
+};
+
+function resolvePolicyFallbackCost(
+  ts: DailyTimesheet,
+  baseCost: number,
+  policy?: GlobalCostMultiplierPolicy
+): number {
+  if (!baseCost || !policy) return 0;
+
+  switch (ts.eventType) {
+    case 'standby_day':
+      return baseCost * Number(policy.standby ?? 0.5) * Number(ts.standbyUnits ?? 1);
+    case 'mobilization_day':
+      return baseCost * Number(policy.mobilization ?? 1) * Number(ts.mobUnits ?? 1);
+    case 'demobilization_day':
+      return baseCost * Number(policy.demobilization ?? 1) * Number(ts.demobUnits ?? 1);
+    case 'travel_day':
+      return baseCost * Number(policy.travel ?? 1) * Number(ts.travelUnits ?? 1);
+    case 'public_holiday_worked':
+      return baseCost * Number(policy.publicHoliday ?? 1);
+    case 'off_day_worked':
+      return baseCost * Number(policy.holiday ?? 1);
+    default:
+      return 0;
+  }
+}
+
+function resolveContractCostPolicy(
+  contractId: string,
+  contractMap: Map<string, MainContract>
+): GlobalCostMultiplierPolicy | undefined {
+  const contract = contractMap.get(contractId);
+  if (!contract) return undefined;
+  if ((contract.contractType || 'master') === 'supplemental') {
+    const sourceId = contract.inheritTermsFromContractId || contract.parentContractId;
+    if (sourceId && contractMap.has(sourceId)) {
+      return contractMap.get(sourceId)?.rateMultiplierPolicy?.cost;
+    }
+  }
+  return contract.rateMultiplierPolicy?.cost;
+}
 
 /**
  * Service for managing official Payroll Batches and their workflow transitions.
@@ -79,10 +132,44 @@ export class PayrollService {
     // Load master rules for calculation
     const [rateConditionsSnap, costTermsSnap] = await Promise.all([
       getDocs(collection(this.db, 'rate_conditions')),
-      getDocs(collection(this.db, 'labor_cost_contract_terms'))
+      getDocs(collection(this.db, 'labor_cost_contract_terms')),
     ]);
     const allConditions = rateConditionsSnap.docs.map(d => ({ ...d.data(), id: d.id } as RateCondition));
     const allCostTerms = costTermsSnap.docs.map(d => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
+    const contractMap = new Map<string, MainContract>();
+    const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
+    await Promise.all(
+      contractIds.map(async (contractId) => {
+        const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
+        if (contractSnap.exists()) {
+          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        }
+      })
+    );
+    const inheritIds = Array.from(new Set(
+      Array.from(contractMap.values())
+        .filter((c) => (c.contractType || 'master') === 'supplemental')
+        .map((c) => c.inheritTermsFromContractId || c.parentContractId)
+        .filter(Boolean)
+    )) as string[];
+    await Promise.all(
+      inheritIds.map(async (contractId) => {
+        if (contractMap.has(contractId)) return;
+        const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
+        if (contractSnap.exists()) {
+          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        }
+      })
+    );
+
+    const poLineById = new Map<string, any>();
+    const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
+        linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data()));
+      })
+    );
 
     // Aggregate by Worker
     const workerMap: Record<string, DailyTimesheet[]> = {};
@@ -128,6 +215,17 @@ export class PayrollService {
             workerGross += cost;
             eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
             earningsBreakdown[ts.eventType] = (earningsBreakdown[ts.eventType] || 0) + cost;
+          } else {
+            const poLine = poLineById.get(ts.poLineId) || {};
+            const baseCost = Number(poLine?.costBaselineSnapshot || 0);
+            const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
+            const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, fallbackPolicy);
+            if (fallbackCost > 0) {
+              workerGross += fallbackCost;
+              eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
+              earningsBreakdown[`${ts.eventType}_policy`] =
+                (earningsBreakdown[`${ts.eventType}_policy`] || 0) + fallbackCost;
+            }
           }
         }
       }

@@ -48,7 +48,8 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     vendorName: '',
     vendorType: 'GENERAL_SUPPLIER',
     taxId: '',
-    branchNo: '00000',
+    branchType: 'head_office',
+    branchNo: '',
     contactName: '',
     phone: '',
     email: '',
@@ -72,7 +73,11 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
 
   useEffect(() => {
     if (vendorData) {
-      setFormData(vendorData);
+      setFormData({
+        ...vendorData,
+        branchType: vendorData.branchType || ((vendorData.branchNo || '00000') === '00000' ? 'head_office' : 'branch'),
+        branchNo: (vendorData.branchNo || '00000') === '00000' ? '' : (vendorData.branchNo || ''),
+      });
     }
   }, [vendorData]);
 
@@ -87,6 +92,13 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     const now = Date.now();
     
     try {
+      const normalizedBranchNo = formData.branchType === 'branch'
+        ? (formData.branchNo || '').trim()
+        : '00000';
+      if (formData.branchType === 'branch' && !normalizedBranchNo) {
+        toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขสาขา" });
+        return;
+      }
       if (isNew) {
         // Atomic Code Generation
         const { code: finalCode } = await generateNextDocumentCode(firestore, 'vendor', { actor: currentUser.displayName });
@@ -94,6 +106,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         const newRef = doc(collection(firestore, 'vendors'));
         await setDoc(newRef, {
           ...formData,
+          branchNo: normalizedBranchNo,
           vendorCode: finalCode,
           id: newRef.id,
           createdAt: now,
@@ -104,6 +117,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
       } else {
         await updateDoc(vendorRef!, {
           ...formData,
+          branchNo: normalizedBranchNo,
           updatedAt: now
         });
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
@@ -189,9 +203,21 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                     <Input value={formData.taxId} onChange={e => setFormData({...formData, taxId: e.target.value})} />
                   </div>
                   <div className="space-y-2">
-                    <Label>รหัสสาขา (Branch No.)</Label>
-                    <Input value={formData.branchNo} onChange={e => setFormData({...formData, branchNo: e.target.value})} placeholder="00000" />
+                    <Label>ประเภทสาขา</Label>
+                    <Select onValueChange={(v: 'head_office' | 'branch') => setFormData({...formData, branchType: v})} value={(formData.branchType as any) || 'head_office'}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="head_office">สำนักงานใหญ่</SelectItem>
+                        <SelectItem value="branch">สาขา</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
+                  {formData.branchType === 'branch' && (
+                    <div className="space-y-2">
+                      <Label>เลขสาขา (Branch No.)</Label>
+                      <Input value={formData.branchNo || ''} onChange={e => setFormData({...formData, branchNo: e.target.value})} placeholder="เช่น 00001" />
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label>ชื่อผู้ติดต่อ (Contact Name)</Label>
                     <Input value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />

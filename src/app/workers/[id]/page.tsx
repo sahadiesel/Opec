@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -48,14 +48,18 @@ import {
   WorkerMedicalRecord, 
   WorkerDrugTest, 
   WorkerDocument, 
+  DailyTimesheet,
   User as AppUser, 
   Position, 
   PositionCertificateRequirement,
-  ReadinessStatus
+  ReadinessStatus,
+  WorkerDocumentCatalogItem
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default function WorkerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -81,9 +85,69 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
   const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+  const workerDocCatalogQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'worker_document_catalog') : null), [firestore]);
+  const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
+  const workerTimesheetsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'daily_timesheets') : null), [firestore]);
+  const { data: workerTimesheetsAll } = useCollection<DailyTimesheet>(workerTimesheetsQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedWorker, setEditedWorker] = useState<Partial<Worker>>({});
+  const [isAddCertOpen, setIsAddCertOpen] = useState(false);
+  const [isAddDocOpen, setIsAddDocOpen] = useState(false);
+  const [newCertTemplateId, setNewCertTemplateId] = useState('');
+  const [newDocTemplateId, setNewDocTemplateId] = useState('');
+  const [newCertNo, setNewCertNo] = useState('');
+  const [newCertIssueDate, setNewCertIssueDate] = useState('');
+  const [newCertExpiryDate, setNewCertExpiryDate] = useState('');
+  const [newDocNo, setNewDocNo] = useState('');
+  const [newDocIssueDate, setNewDocIssueDate] = useState('');
+  const [newDocExpiryDate, setNewDocExpiryDate] = useState('');
+  const [editingCertId, setEditingCertId] = useState<string | null>(null);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [isAddMedicalOpen, setIsAddMedicalOpen] = useState(false);
+  const [isAddDrugOpen, setIsAddDrugOpen] = useState(false);
+  const [newMedicalType, setNewMedicalType] = useState('General Health Exam');
+  const [newMedicalExamDate, setNewMedicalExamDate] = useState('');
+  const [newMedicalExpiryDate, setNewMedicalExpiryDate] = useState('');
+  const [newMedicalFitStatus, setNewMedicalFitStatus] = useState<'fit' | 'unfit' | 'conditional'>('fit');
+  const [newMedicalHospital, setNewMedicalHospital] = useState('');
+  const [newDrugTestDate, setNewDrugTestDate] = useState('');
+  const [newDrugResult, setNewDrugResult] = useState<'negative' | 'positive'>('negative');
+  const [newDrugExpiryDate, setNewDrugExpiryDate] = useState('');
+  const [newDrugLaboratory, setNewDrugLaboratory] = useState('');
+
+  const workerTimesheets = useMemo(() => {
+    return (workerTimesheetsAll || []).filter((t) => t.workerId === id);
+  }, [workerTimesheetsAll, id]);
+
+  const workLogRows = useMemo(() => {
+    const grouped = new Map<string, { assignmentId: string; projectName: string; startDate: string; endDate: string; totalHours: number }>();
+    workerTimesheets.forEach((ts) => {
+      const key = ts.assignmentId || ts.id;
+      const hours = Number(ts.normalHours || 0)
+        + Number(ts.ot15Hours || 0)
+        + Number(ts.ot20Hours || 0)
+        + Number(ts.ot30Hours || 0)
+        + Number(ts.holidayHours || 0);
+      const row = grouped.get(key) || {
+        assignmentId: ts.assignmentId || '-',
+        projectName: ts.workerNameSnapshot ? '-' : '-', // placeholder to keep schema consistent
+        startDate: ts.date,
+        endDate: ts.date,
+        totalHours: 0,
+      };
+      row.projectName = ts.remark || row.projectName || '-';
+      row.startDate = row.startDate < ts.date ? row.startDate : ts.date;
+      row.endDate = row.endDate > ts.date ? row.endDate : ts.date;
+      row.totalHours += hours;
+      grouped.set(key, row);
+    });
+    return [...grouped.values()].sort((a, b) => b.totalHours - a.totalHours);
+  }, [workerTimesheets]);
+
+  const totalWorkedHours = useMemo(() => {
+    return workLogRows.reduce((sum, row) => sum + Number(row.totalHours || 0), 0);
+  }, [workLogRows]);
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -103,6 +167,27 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
     let newStatus: ReadinessStatus = 'READY';
     const now = Date.now();
+    let complianceAlertLevel: 'ok' | 'warning' | 'blocked' = 'ok';
+    let nearestExpiryInDays: number | null = null;
+    let nearestExpiryAt: number | null = null;
+    const catalogByCode = new Map((workerDocCatalog || []).map((x) => [(x.itemCode || '').toLowerCase(), x]));
+    const markExpiryByPolicy = (code: string, expiryDate?: number) => {
+      const exp = Number(expiryDate || 0);
+      if (exp <= 0) return;
+      const remainingDays = Math.ceil((exp - now) / DAY_MS);
+      const policy = catalogByCode.get((code || '').toLowerCase());
+      const alertBefore = Number(policy?.alertBeforeExpiryDays || 0);
+      const blockBefore = Number(policy?.blockBeforeExpiryDays || 0);
+      if (nearestExpiryInDays === null || remainingDays < nearestExpiryInDays) {
+        nearestExpiryInDays = remainingDays;
+        nearestExpiryAt = exp;
+      }
+      if (blockBefore > 0 && remainingDays <= blockBefore) {
+        complianceAlertLevel = 'blocked';
+      } else if (complianceAlertLevel !== 'blocked' && alertBefore > 0 && remainingDays <= alertBefore) {
+        complianceAlertLevel = 'warning';
+      }
+    };
 
     if (worker.currentPositionId) {
       const reqsRef = collection(firestore, 'positions', worker.currentPositionId, 'certificate_requirements');
@@ -110,14 +195,28 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       const mandatoryReqs = reqsSnap.docs.map(d => d.data() as PositionCertificateRequirement);
 
       for (const req of mandatoryReqs) {
-        const hasCert = certs?.some(c => 
-          c.certificateCode === req.certificateCode && 
-          c.expiryDate > now && 
-          c.status === 'valid'
-        );
-        if (!hasCert) {
-          newStatus = 'MISSING_CERTIFICATE';
-          break;
+        const reqType = req.requirementType || 'certificate';
+        const requiresExpiry = req.hasExpiry ?? true;
+        if (reqType === 'document') {
+          const matchedDoc = workerDocs?.find((d) => (d.documentType || '').toLowerCase() === (req.certificateCode || '').toLowerCase());
+          const hasDoc = !!matchedDoc && (!requiresExpiry || Number(matchedDoc.expiryDate || 0) > now);
+          if (!hasDoc) {
+            newStatus = 'MISSING_CERTIFICATE';
+            break;
+          }
+          if (matchedDoc && requiresExpiry) {
+            markExpiryByPolicy(req.certificateCode, Number(matchedDoc.expiryDate || 0));
+          }
+        } else {
+          const certRecord = certs?.find((c) => c.certificateCode === req.certificateCode && c.status === 'valid');
+          const hasCert = !!certRecord && (requiresExpiry ? certRecord.expiryDate > now : true);
+          if (!hasCert) {
+            newStatus = 'MISSING_CERTIFICATE';
+            break;
+          }
+          if (certRecord && requiresExpiry) {
+            markExpiryByPolicy(req.certificateCode, certRecord.expiryDate);
+          }
         }
       }
     }
@@ -136,8 +235,30 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       }
     }
 
-    if (worker.readinessStatus !== newStatus) {
-      updateDocumentNonBlocking(workerRef!, { readinessStatus: newStatus });
+    if (newStatus === 'READY') {
+      const hasExpiredIdentityDoc = (workerDocs || []).some((d) =>
+        Number(d.expiryDate || 0) > 0 && Number(d.expiryDate) < now
+      );
+      if (hasExpiredIdentityDoc) {
+        newStatus = 'DOCUMENT_EXPIRED';
+      }
+    }
+
+    if (newStatus === 'READY' && complianceAlertLevel === 'blocked') {
+      newStatus = 'BLOCKED';
+    }
+
+    if (
+      worker.readinessStatus !== newStatus ||
+      (worker.complianceAlertLevel || 'ok') !== complianceAlertLevel ||
+      Number(worker.nearestExpiryInDays ?? -1) !== Number(nearestExpiryInDays ?? -1)
+    ) {
+      updateDocumentNonBlocking(workerRef!, {
+        readinessStatus: newStatus,
+        complianceAlertLevel,
+        nearestExpiryInDays: nearestExpiryInDays ?? null,
+        nearestExpiryAt: nearestExpiryAt ?? null,
+      });
     }
   };
 
@@ -145,7 +266,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     if (worker && certs && medicals && drugTests) {
       calculateAndStoreReadiness();
     }
-  }, [worker?.currentPositionId, certs?.length, medicals?.length, drugTests?.length]);
+  }, [worker?.currentPositionId, certs?.length, medicals?.length, drugTests?.length, workerDocs?.length, workerDocCatalog?.length]);
 
   if (isWorkerLoading || !worker || !currentUser) {
     return (
@@ -176,7 +297,13 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                 ID: {worker.thaiNationalId}
               </Badge>
               {worker.readinessStatus === 'READY' ? (
-                <Badge className="bg-green-600 gap-1 text-white"><CheckCircle2 className="h-3 w-3" /> READY</Badge>
+                worker.complianceAlertLevel === 'warning' ? (
+                  <Badge variant="outline" className="gap-1 border-orange-500 text-orange-700 bg-orange-50">
+                    <AlertTriangle className="h-3 w-3" /> WARNING ({worker.nearestExpiryInDays ?? '-'} วัน)
+                  </Badge>
+                ) : (
+                  <Badge className="bg-green-600 gap-1 text-white"><CheckCircle2 className="h-3 w-3" /> READY</Badge>
+                )
               ) : (
                 <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> {worker.readinessStatus}</Badge>
               )}
@@ -198,12 +325,13 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         </div>
 
         <Tabs defaultValue="info" className="w-full">
-          <TabsList className="grid grid-cols-5 w-full md:w-fit h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-6 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><User className="h-4 w-4" /> ข้อมูลประวัติ (Info)</TabsTrigger>
             <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบเซอร์ (Certs)</TabsTrigger>
             <TabsTrigger value="medical" className="gap-2 py-2 px-6"><Stethoscope className="h-4 w-4" /> ตรวจร่างกาย (Medical)</TabsTrigger>
             <TabsTrigger value="drug" className="gap-2 py-2 px-6"><AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)</TabsTrigger>
             <TabsTrigger value="docs" className="gap-2 py-2 px-6"><FileSearch className="h-4 w-4" /> เอกสาร (Docs)</TabsTrigger>
+            <TabsTrigger value="worklog" className="gap-2 py-2 px-6"><History className="h-4 w-4" /> ประวัติชั่วโมงงาน</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6 space-y-6">
@@ -374,9 +502,115 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   </CardTitle>
                   <CardDescription>จัดเก็บใบเซอร์บังคับ (BOSIET, etc.) และติดตามวันหมดอายุ</CardDescription>
                 </div>
-                <Button className="bg-primary font-bold shadow-md" onClick={() => addDocumentNonBlocking(certsQuery!, { certificateName: 'ระบุชื่อใบเซอร์...', certificateCode: '', certificateNo: '', issueDate: Date.now(), expiryDate: Date.now() + 31536000000, status: 'valid' })}>
-                  <Plus className="h-4 w-4 mr-2" /> เพิ่มใบเซอร์ (Add Cert)
-                </Button>
+                <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="bg-primary font-bold shadow-md"
+                      onClick={() => {
+                        setEditingCertId(null);
+                        setNewCertTemplateId('');
+                        setNewCertNo('');
+                        setNewCertIssueDate('');
+                        setNewCertExpiryDate('');
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" /> เพิ่มใบเซอร์ (Add Cert)
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>เพิ่มใบเซอร์จากรายการกลาง</DialogTitle>
+                      <DialogDescription>เลือกเฉพาะรายการประเภท Certificate จากเมนูรายการเอกสารกลาง</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2 py-2">
+                      <Label>รายการเซอร์</Label>
+                      <Select value={newCertTemplateId} onValueChange={setNewCertTemplateId}>
+                        <SelectTrigger><SelectValue placeholder="เลือกใบเซอร์..." /></SelectTrigger>
+                        <SelectContent>
+                          {(workerDocCatalog || []).filter((x) => x.active !== false && x.requirementType === 'certificate').map((x) => (
+                            <SelectItem key={x.id} value={x.id}>{x.itemName}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Label>เลขที่เอกสารใบเซอร์</Label>
+                      <Input value={newCertNo} onChange={(e) => setNewCertNo(e.target.value)} placeholder="เช่น CERT-00123" />
+                      <Label>วันที่ออกเอกสาร</Label>
+                      <Input type="date" value={newCertIssueDate} onChange={(e) => setNewCertIssueDate(e.target.value)} />
+                      <Label>วันหมดอายุ</Label>
+                      <Input
+                        type="date"
+                        value={newCertExpiryDate}
+                        disabled={!((workerDocCatalog || []).find((x) => x.id === newCertTemplateId)?.hasExpiry)}
+                        onChange={(e) => setNewCertExpiryDate(e.target.value)}
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddCertOpen(false)}>ยกเลิก</Button>
+                      <Button
+                        onClick={() => {
+                          const selected = (workerDocCatalog || []).find((x) => x.id === newCertTemplateId);
+                          if (!selected || !certsQuery) return;
+                          if (!newCertNo.trim()) {
+                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'กรุณากรอกเลขที่เอกสารใบเซอร์' });
+                            return;
+                          }
+                          if (selected.hasExpiry && !newCertExpiryDate) {
+                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'เอกสารนี้ต้องระบุวันหมดอายุ' });
+                            return;
+                          }
+                          const duplicateCert = (certs || []).find(
+                            (c) =>
+                              (c.certificateCode || '').toLowerCase() === (selected.itemCode || '').toLowerCase() &&
+                              c.id !== editingCertId
+                          );
+                          if (duplicateCert) {
+                            const shouldEdit = confirm('มีเอกสาร/ใบเซอร์รายการนี้อยู่แล้ว ต้องการแก้ไขรายการเดิมใช่ไหม?');
+                            if (!shouldEdit) return;
+                            setEditingCertId(duplicateCert.id);
+                            setNewCertTemplateId(selected.id);
+                            setNewCertNo(duplicateCert.certificateNo || '');
+                            setNewCertIssueDate(duplicateCert.issueDate ? new Date(duplicateCert.issueDate).toISOString().slice(0, 10) : '');
+                            setNewCertExpiryDate(duplicateCert.expiryDate ? new Date(duplicateCert.expiryDate).toISOString().slice(0, 10) : '');
+                            toast({ title: 'เข้าสู่โหมดแก้ไข', description: 'ปรับข้อมูลและกดบันทึกอีกครั้งเพื่ออัปเดตรายการเดิม' });
+                            return;
+                          }
+                          const now = Date.now();
+                          const issueDate = newCertIssueDate ? new Date(newCertIssueDate).getTime() : now;
+                          const expiryDate = selected.hasExpiry
+                            ? (newCertExpiryDate ? new Date(newCertExpiryDate).getTime() : 0)
+                            : 0;
+                          if (editingCertId && firestore) {
+                            updateDocumentNonBlocking(doc(firestore, 'workers', id, 'certificates', editingCertId), {
+                              certificateName: selected.itemName,
+                              certificateCode: selected.itemCode,
+                              certificateNo: newCertNo.trim(),
+                              issueDate,
+                              expiryDate,
+                              status: 'valid',
+                            });
+                          } else {
+                            addDocumentNonBlocking(certsQuery, {
+                              certificateName: selected.itemName,
+                              certificateCode: selected.itemCode,
+                              certificateNo: newCertNo.trim(),
+                              issueDate,
+                              expiryDate,
+                              status: 'valid',
+                            });
+                          }
+                          setIsAddCertOpen(false);
+                          setEditingCertId(null);
+                          setNewCertTemplateId('');
+                          setNewCertNo('');
+                          setNewCertIssueDate('');
+                          setNewCertExpiryDate('');
+                        }}
+                      >
+                        {editingCertId ? 'บันทึกการแก้ไข' : 'บันทึก'}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -394,8 +628,8 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       <TableRow key={c.id}>
                         <TableCell className="pl-6 font-medium text-primary">{c.certificateName}</TableCell>
                         <TableCell className="font-mono text-xs">{c.certificateNo || '-'}</TableCell>
-                        <TableCell className={c.expiryDate < Date.now() ? 'text-destructive font-black' : 'font-medium'}>
-                          {new Date(c.expiryDate).toLocaleDateString('th-TH')}
+                        <TableCell className={c.expiryDate > 0 && c.expiryDate < Date.now() ? 'text-destructive font-black' : 'font-medium'}>
+                          {c.expiryDate > 0 ? new Date(c.expiryDate).toLocaleDateString('th-TH') : '-'}
                         </TableCell>
                         <TableCell>
                           <Badge variant={c.status === 'valid' ? 'default' : 'destructive'} className={c.status === 'valid' ? 'bg-green-600' : ''}>
@@ -403,7 +637,19 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => { if(confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore!, c._path)) }}><Trash2 className="h-4 w-4" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-8 w-8"
+                            onClick={() => {
+                              if (!firestore) return;
+                              if (confirm('ลบรายการ?')) {
+                                deleteDocumentNonBlocking(doc(firestore, 'workers', id, 'certificates', c.id));
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -427,9 +673,79 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   </CardTitle>
                   <CardDescription>ข้อมูลความพร้อมทางร่างกายตามเกณฑ์มาตรฐานงาน Offshore</CardDescription>
                 </div>
-                <Button className="bg-primary font-bold shadow-md" onClick={() => addDocumentNonBlocking(medicalsQuery!, { medicalType: 'General Health Exam', examDate: Date.now(), expiryDate: Date.now() + 31536000000, fitStatus: 'fit', hospitalOrClinic: '' })}>
-                  <Plus className="h-4 w-4 mr-2" /> เพิ่มผลตรวจ (Add Medical)
-                </Button>
+                <Dialog open={isAddMedicalOpen} onOpenChange={setIsAddMedicalOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="bg-primary font-bold shadow-md"
+                      onClick={() => {
+                        setNewMedicalType('General Health Exam');
+                        setNewMedicalExamDate('');
+                        setNewMedicalExpiryDate('');
+                        setNewMedicalFitStatus('fit');
+                        setNewMedicalHospital('');
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" /> เพิ่มผลตรวจ (Add Medical)
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>บันทึกผลตรวจร่างกาย</DialogTitle>
+                      <DialogDescription>กรอกข้อมูลผลตรวจให้ครบก่อนบันทึก</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 py-2">
+                      <div className="space-y-2">
+                        <Label>ประเภทการตรวจ</Label>
+                        <Input value={newMedicalType} onChange={(e) => setNewMedicalType(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>วันที่ตรวจ</Label>
+                        <Input type="date" value={newMedicalExamDate} onChange={(e) => setNewMedicalExamDate(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>วันหมดอายุ</Label>
+                        <Input type="date" value={newMedicalExpiryDate} onChange={(e) => setNewMedicalExpiryDate(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ผลการตรวจ</Label>
+                        <Select value={newMedicalFitStatus} onValueChange={(v) => setNewMedicalFitStatus(v as 'fit' | 'unfit' | 'conditional')}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fit">FIT</SelectItem>
+                            <SelectItem value="unfit">UNFIT</SelectItem>
+                            <SelectItem value="conditional">CONDITIONAL</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>สถานพยาบาล</Label>
+                        <Input value={newMedicalHospital} onChange={(e) => setNewMedicalHospital(e.target.value)} />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddMedicalOpen(false)}>ยกเลิก</Button>
+                      <Button
+                        onClick={() => {
+                          if (!medicalsQuery) return;
+                          if (!newMedicalType.trim() || !newMedicalExamDate || !newMedicalExpiryDate) {
+                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'กรุณาระบุประเภท วันที่ตรวจ และวันหมดอายุ' });
+                            return;
+                          }
+                          addDocumentNonBlocking(medicalsQuery, {
+                            medicalType: newMedicalType.trim(),
+                            examDate: new Date(newMedicalExamDate).getTime(),
+                            expiryDate: new Date(newMedicalExpiryDate).getTime(),
+                            fitStatus: newMedicalFitStatus,
+                            hospitalOrClinic: newMedicalHospital || '',
+                          });
+                          setIsAddMedicalOpen(false);
+                        }}
+                      >
+                        บันทึก
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -456,7 +772,19 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => { if(confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore!, m._path)) }}><Trash2 className="h-4 w-4" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-8 w-8"
+                            onClick={() => {
+                              if (!firestore) return;
+                              if (confirm('ลบรายการ?')) {
+                                deleteDocumentNonBlocking(doc(firestore, 'workers', id, 'medical_records', m.id));
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -480,9 +808,72 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   </CardTitle>
                   <CardDescription>ความปลอดภัยและกฎระเบียบวินัยในหน้างาน</CardDescription>
                 </div>
-                <Button className="bg-primary font-bold shadow-md" onClick={() => addDocumentNonBlocking(drugTestsQuery!, { testDate: Date.now(), result: 'negative', expiryDate: Date.now() + 15552000000, laboratory: 'ระบุห้องแล็บ...' })}>
-                  <Plus className="h-4 w-4 mr-2" /> เพิ่มผลตรวจ (Add Test)
-                </Button>
+                <Dialog open={isAddDrugOpen} onOpenChange={setIsAddDrugOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="bg-primary font-bold shadow-md"
+                      onClick={() => {
+                        setNewDrugTestDate('');
+                        setNewDrugExpiryDate('');
+                        setNewDrugResult('negative');
+                        setNewDrugLaboratory('');
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" /> เพิ่มผลตรวจ (Add Test)
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>บันทึกผลตรวจสารเสพติด</DialogTitle>
+                      <DialogDescription>กรอกข้อมูลผลตรวจให้ครบก่อนบันทึก</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 py-2">
+                      <div className="space-y-2">
+                        <Label>วันที่ตรวจ</Label>
+                        <Input type="date" value={newDrugTestDate} onChange={(e) => setNewDrugTestDate(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>สถานตรวจ</Label>
+                        <Input value={newDrugLaboratory} onChange={(e) => setNewDrugLaboratory(e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ผลตรวจ</Label>
+                        <Select value={newDrugResult} onValueChange={(v) => setNewDrugResult(v as 'negative' | 'positive')}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="negative">NEGATIVE</SelectItem>
+                            <SelectItem value="positive">POSITIVE</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>วันหมดอายุ</Label>
+                        <Input type="date" value={newDrugExpiryDate} onChange={(e) => setNewDrugExpiryDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddDrugOpen(false)}>ยกเลิก</Button>
+                      <Button
+                        onClick={() => {
+                          if (!drugTestsQuery) return;
+                          if (!newDrugTestDate || !newDrugExpiryDate) {
+                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'กรุณาระบุวันที่ตรวจและวันหมดอายุ' });
+                            return;
+                          }
+                          addDocumentNonBlocking(drugTestsQuery, {
+                            testDate: new Date(newDrugTestDate).getTime(),
+                            result: newDrugResult,
+                            expiryDate: new Date(newDrugExpiryDate).getTime(),
+                            laboratory: newDrugLaboratory || '',
+                          });
+                          setIsAddDrugOpen(false);
+                        }}
+                      >
+                        บันทึก
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -509,7 +900,19 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                           {new Date(d.expiryDate).toLocaleDateString('th-TH')}
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => { if(confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore!, d._path)) }}><Trash2 className="h-4 w-4" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-8 w-8"
+                            onClick={() => {
+                              if (!firestore) return;
+                              if (confirm('ลบรายการ?')) {
+                                deleteDocumentNonBlocking(doc(firestore, 'workers', id, 'drug_tests', d.id));
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -533,9 +936,111 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   </CardTitle>
                   <CardDescription>จัดเก็บสำเนาบัตรประชาชน พาสปอร์ต ทะเบียนบ้าน หรือสัญญาจ้างงาน</CardDescription>
                 </div>
-                <Button className="bg-primary font-bold shadow-md" onClick={() => addDocumentNonBlocking(docsQuery!, { documentType: 'other', documentNo: '-', issueDate: Date.now(), expiryDate: Date.now() + 31536000000 })}>
-                  <Plus className="h-4 w-4 mr-2" /> เพิ่มเอกสาร (Add Doc)
-                </Button>
+                <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="bg-primary font-bold shadow-md"
+                      onClick={() => {
+                        setEditingDocId(null);
+                        setNewDocTemplateId('');
+                        setNewDocNo('');
+                        setNewDocIssueDate('');
+                        setNewDocExpiryDate('');
+                      }}
+                    >
+                      <Plus className="h-4 w-4 mr-2" /> เพิ่มเอกสาร (Add Doc)
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>เพิ่มเอกสารจากรายการกลาง</DialogTitle>
+                      <DialogDescription>เลือกเฉพาะรายการประเภท Document จากเมนูรายการเอกสารกลาง</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2 py-2">
+                      <Label>รายการเอกสาร</Label>
+                      <Select value={newDocTemplateId} onValueChange={setNewDocTemplateId}>
+                        <SelectTrigger><SelectValue placeholder="เลือกเอกสาร..." /></SelectTrigger>
+                        <SelectContent>
+                          {(workerDocCatalog || []).filter((x) => x.active !== false && x.requirementType === 'document').map((x) => (
+                            <SelectItem key={x.id} value={x.id}>{x.itemName}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Label>เลขที่เอกสาร</Label>
+                      <Input value={newDocNo} onChange={(e) => setNewDocNo(e.target.value)} placeholder="เช่น P1234567 / SB77889" />
+                      <Label>วันที่ออกเอกสาร</Label>
+                      <Input type="date" value={newDocIssueDate} onChange={(e) => setNewDocIssueDate(e.target.value)} />
+                      <Label>วันหมดอายุ</Label>
+                      <Input
+                        type="date"
+                        value={newDocExpiryDate}
+                        disabled={!((workerDocCatalog || []).find((x) => x.id === newDocTemplateId)?.hasExpiry)}
+                        onChange={(e) => setNewDocExpiryDate(e.target.value)}
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddDocOpen(false)}>ยกเลิก</Button>
+                      <Button
+                        onClick={() => {
+                          const selected = (workerDocCatalog || []).find((x) => x.id === newDocTemplateId);
+                          if (!selected || !docsQuery) return;
+                          if (!newDocNo.trim()) {
+                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'กรุณากรอกเลขที่เอกสาร' });
+                            return;
+                          }
+                          if (selected.hasExpiry && !newDocExpiryDate) {
+                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'เอกสารนี้ต้องระบุวันหมดอายุ' });
+                            return;
+                          }
+                          const duplicateDoc = (workerDocs || []).find(
+                            (d) =>
+                              (d.documentType || '').toLowerCase() === (selected.itemCode || '').toLowerCase() &&
+                              d.id !== editingDocId
+                          );
+                          if (duplicateDoc) {
+                            const shouldEdit = confirm('มีเอกสารรายการนี้อยู่แล้ว ต้องการแก้ไขรายการเดิมใช่ไหม?');
+                            if (!shouldEdit) return;
+                            setEditingDocId(duplicateDoc.id);
+                            setNewDocTemplateId(selected.id);
+                            setNewDocNo(duplicateDoc.documentNo || '');
+                            setNewDocIssueDate(duplicateDoc.issueDate ? new Date(duplicateDoc.issueDate).toISOString().slice(0, 10) : '');
+                            setNewDocExpiryDate(duplicateDoc.expiryDate ? new Date(duplicateDoc.expiryDate).toISOString().slice(0, 10) : '');
+                            toast({ title: 'เข้าสู่โหมดแก้ไข', description: 'ปรับข้อมูลและกดบันทึกอีกครั้งเพื่ออัปเดตรายการเดิม' });
+                            return;
+                          }
+                          const now = Date.now();
+                          const issueDate = newDocIssueDate ? new Date(newDocIssueDate).getTime() : now;
+                          const expiryDate = selected.hasExpiry
+                            ? (newDocExpiryDate ? new Date(newDocExpiryDate).getTime() : 0)
+                            : 0;
+                          if (editingDocId && firestore) {
+                            updateDocumentNonBlocking(doc(firestore, 'workers', id, 'documents', editingDocId), {
+                              documentType: selected.itemCode,
+                              documentNo: newDocNo.trim(),
+                              issueDate,
+                              expiryDate,
+                            });
+                          } else {
+                            addDocumentNonBlocking(docsQuery, {
+                              documentType: selected.itemCode,
+                              documentNo: newDocNo.trim(),
+                              issueDate,
+                              expiryDate,
+                            });
+                          }
+                          setIsAddDocOpen(false);
+                          setEditingDocId(null);
+                          setNewDocTemplateId('');
+                          setNewDocNo('');
+                          setNewDocIssueDate('');
+                          setNewDocExpiryDate('');
+                        }}
+                      >
+                        {editingDocId ? 'บันทึกการแก้ไข' : 'บันทึก'}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -552,15 +1057,68 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       <TableRow key={d.id}>
                         <TableCell className="pl-6 font-bold text-primary capitalize">{d.documentType.replace('_', ' ')}</TableCell>
                         <TableCell className="font-mono text-xs">{d.documentNo}</TableCell>
-                        <TableCell className="text-xs">{new Date(d.expiryDate).toLocaleDateString('th-TH')}</TableCell>
+                        <TableCell className="text-xs">{d.expiryDate > 0 ? new Date(d.expiryDate).toLocaleDateString('th-TH') : '-'}</TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => { if(confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore!, d._path)) }}><Trash2 className="h-4 w-4" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-8 w-8"
+                            onClick={() => {
+                              if (!firestore) return;
+                              if (confirm('ลบรายการ?')) {
+                                deleteDocumentNonBlocking(doc(firestore, 'workers', id, 'documents', d.id));
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
                     {workerDocs?.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ไม่พบเอกสารในระบบ</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="worklog" className="mt-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between border-b bg-primary/5 pb-4">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                    <History className="h-5 w-5" /> ประวัติการลงงานและชั่วโมงสะสม
+                  </CardTitle>
+                  <CardDescription>คำนวณจาก Timesheet ที่บันทึกไว้ทั้งหมด</CardDescription>
+                </div>
+                <Badge className="bg-primary text-white">รวม {totalWorkedHours.toLocaleString()} ชั่วโมง</Badge>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead className="pl-6 font-bold">Assignment</TableHead>
+                      <TableHead className="font-bold">วันที่เริ่ม</TableHead>
+                      <TableHead className="font-bold">วันที่สิ้นสุด</TableHead>
+                      <TableHead className="text-right pr-6 font-bold">ชั่วโมงรวม</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {workLogRows.map((row) => (
+                      <TableRow key={`${row.assignmentId}-${row.startDate}-${row.endDate}`}>
+                        <TableCell className="pl-6 font-mono text-xs">{row.assignmentId || '-'}</TableCell>
+                        <TableCell className="text-xs">{row.startDate || '-'}</TableCell>
+                        <TableCell className="text-xs">{row.endDate || '-'}</TableCell>
+                        <TableCell className="text-right pr-6 font-bold text-primary">{Number(row.totalHours || 0).toLocaleString()} ชม.</TableCell>
+                      </TableRow>
+                    ))}
+                    {workLogRows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ยังไม่มีประวัติการลงเวลา</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

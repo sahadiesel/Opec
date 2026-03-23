@@ -23,7 +23,7 @@ import {
   Users
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Worker, ReadinessStatus, User, Position } from '@/lib/types';
+import { Worker, ReadinessStatus, User, Position, DailyTimesheet } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -39,7 +39,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
-import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { deleteDocumentNonBlocking, addDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
@@ -76,9 +76,69 @@ export default function WorkersPage() {
     return collection(firestore, 'positions');
   }, [firestore, firebaseUser, can('positions').view]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
+  const timesheetsQuery = useMemoFirebase(() => {
+    if (!firestore || !firebaseUser || !can('workers').view) return null;
+    return collection(firestore, 'daily_timesheets');
+  }, [firestore, firebaseUser, can('workers').view]);
+  const { data: allTimesheets } = useCollection<DailyTimesheet>(timesheetsQuery as any);
+
+  const workerHoursById = useMemo(() => {
+    const bucket = new Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>();
+    (allTimesheets || []).forEach((ts) => {
+      const workerId = ts.workerId;
+      if (!workerId) return;
+      const tsTime = ts.date ? new Date(ts.date).getTime() : NaN;
+      const normalHours = Number(ts.normalHours || 0);
+      const ot15Hours = Number(ts.ot15Hours || 0);
+      const ot20Hours = Number(ts.ot20Hours || 0);
+      const ot30Hours = Number(ts.ot30Hours || 0);
+      const holidayHours = Number(ts.holidayHours || 0);
+      const totalHours = normalHours + ot15Hours + ot20Hours + ot30Hours + holidayHours;
+      const current = bucket.get(workerId) || { totalHours: 0, firstWorkedAt: null, lastWorkedAt: null };
+      current.totalHours += totalHours;
+      if (!Number.isNaN(tsTime)) {
+        current.firstWorkedAt = current.firstWorkedAt === null ? tsTime : Math.min(current.firstWorkedAt, tsTime);
+        current.lastWorkedAt = current.lastWorkedAt === null ? tsTime : Math.max(current.lastWorkedAt, tsTime);
+      }
+      bucket.set(workerId, current);
+    });
+    return bucket;
+  }, [allTimesheets]);
+
+  const sortedWorkers = useMemo(() => {
+    return [...(workers || [])].sort((a, b) => {
+      const aHours = Number(workerHoursById.get(a.id)?.totalHours || a.totalWorkedHours || 0);
+      const bHours = Number(workerHoursById.get(b.id)?.totalHours || b.totalWorkedHours || 0);
+      if (bHours !== aHours) return bHours - aHours;
+      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+    });
+  }, [workers, workerHoursById]);
+
+  useEffect(() => {
+    if (!firestore || !workers || workers.length === 0) return;
+    workers.forEach((w) => {
+      const agg = workerHoursById.get(w.id);
+      const totalWorkedHours = Number(agg?.totalHours || 0);
+      const firstWorkedAt = agg?.firstWorkedAt ?? null;
+      const lastWorkedAt = agg?.lastWorkedAt ?? null;
+      const changed =
+        Number(w.totalWorkedHours || 0) !== totalWorkedHours ||
+        Number(w.firstWorkedAt ?? -1) !== Number(firstWorkedAt ?? -1) ||
+        Number(w.lastWorkedAt ?? -1) !== Number(lastWorkedAt ?? -1);
+      if (changed) {
+        updateDocumentNonBlocking(doc(firestore, 'workers', w.id), {
+          totalWorkedHours,
+          firstWorkedAt,
+          lastWorkedAt,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+  }, [firestore, workers, workerHoursById]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [positionFilter, setPositionFilter] = useState('all');
   const [newWorker, setNewWorker] = useState<Partial<Worker>>({
     workerCode: getPreviewPattern('worker'),
     firstName: '',
@@ -88,6 +148,11 @@ export default function WorkersPage() {
     nationality: 'Thai',
     gender: 'MALE'
   });
+
+  const filteredWorkers = useMemo(() => {
+    if (positionFilter === 'all') return sortedWorkers;
+    return sortedWorkers.filter((w) => w.currentPositionId === positionFilter);
+  }, [sortedWorkers, positionFilter]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -130,6 +195,8 @@ export default function WorkersPage() {
       case 'MISSING_CERTIFICATE': return <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50"><ShieldAlert className="h-3 w-3 mr-1" /> NO CERT</Badge>;
       case 'MEDICAL_EXPIRED': return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" /> MED EXPIRED</Badge>;
       case 'DRUG_TEST_EXPIRED': return <Badge variant="outline" className="border-orange-500 text-orange-700 bg-orange-50"><AlertCircle className="h-3 w-3 mr-1" /> DRUG EXPIRED</Badge>;
+      case 'DOCUMENT_EXPIRED': return <Badge variant="outline" className="border-rose-500 text-rose-700 bg-rose-50"><FileQuestion className="h-3 w-3 mr-1" /> DOC EXPIRED</Badge>;
+      case 'BLOCKED': return <Badge variant="destructive"><ShieldAlert className="h-3 w-3 mr-1" /> BLOCKED</Badge>;
       default: return <Badge variant="secondary"><FileQuestion className="h-3 w-3 mr-1" /> PENDING</Badge>;
     }
   };
@@ -177,6 +244,17 @@ export default function WorkersPage() {
             <Button variant="outline" className="gap-2 h-11">
               <Filter className="h-4 w-4" /> ตัวกรอง (Filter)
             </Button>
+            <Select value={positionFilter} onValueChange={setPositionFilter}>
+              <SelectTrigger className="h-11 min-w-[220px]">
+                <SelectValue placeholder="กรองตามตำแหน่ง" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">ทุกตำแหน่ง</SelectItem>
+                {(positions || []).map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex items-center gap-2">
             {can('workers').create && (
@@ -241,6 +319,7 @@ export default function WorkersPage() {
                 <TableHeader className="bg-muted/50">
                   <TableRow>
                     <TableHead className="font-bold py-4 pl-6">รหัส / ชื่อคนงาน (Field Worker)</TableHead>
+                    <TableHead className="font-bold">ชั่วโมงสะสม (Total Hours)</TableHead>
                     <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
                     <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
@@ -248,8 +327,9 @@ export default function WorkersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {workers?.map((worker) => {
+                  {filteredWorkers?.map((worker) => {
                     const position = positions?.find(p => p.id === worker.currentPositionId);
+                    const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
                     return (
                       <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group transition-colors" onClick={() => router.push(`/workers/${worker.id}`)}>
                         <TableCell className="py-4 pl-6">
@@ -258,6 +338,9 @@ export default function WorkersPage() {
                             <span className="font-bold text-base text-primary">{worker.firstName} {worker.lastName}</span>
                             <span className="text-[10px] text-muted-foreground font-mono">{worker.thaiNationalId}</span>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-black text-primary">{workedHours.toLocaleString()} ชม.</div>
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
@@ -278,9 +361,9 @@ export default function WorkersPage() {
                       </TableRow>
                     );
                   })}
-                  {(!workers || workers.length === 0) && !isCollectionLoading && (
+                  {(!filteredWorkers || filteredWorkers.length === 0) && !isCollectionLoading && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานในระบบ</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

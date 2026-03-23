@@ -69,6 +69,11 @@ export default function MainContractsPage() {
   }, [firestore, isUserLoading, firebaseUser, currentUser, isStaff]);
 
   const { data: contracts, isLoading } = useCollection<MainContract>(contractsQuery as any);
+  const contractNumberById = useMemo(() => {
+    const map = new Map<string, string>();
+    (contracts || []).forEach((c) => map.set(c.id, c.contractNumber));
+    return map;
+  }, [contracts]);
 
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !isStaff) return null;
@@ -95,7 +100,11 @@ export default function MainContractsPage() {
       const colRef = collection(firestore, 'main_contracts');
       const docRef = await addDoc(colRef, {
         ...newContract,
+        status: 'pending',
         contractNumber: finalNo, // Use official sequential number
+        costingStatus: 'INCOMPLETE',
+        // Initial warning flag; exact gap count is recalculated in contract detail after rates are managed.
+        costingMissingPositionsCount: 1,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -229,13 +238,7 @@ export default function MainContractsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>สถานะการลงนาม</Label>
-                  <Select onValueChange={v => setNewContract({...newContract, status: v as any})} value={newContract.status}>
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending (รอดำเนินการ)</SelectItem>
-                      <SelectItem value="active">Active (ลงนามแล้ว/ใช้งาน)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Input value="Pending (ระบบกำหนดอัตโนมัติ)" disabled className="h-11 bg-muted/50" />
                 </div>
               </div>
               <DialogFooter>
@@ -260,6 +263,8 @@ export default function MainContractsPage() {
                   <TableRow>
                     <TableHead className="font-bold py-4 pl-6">รหัสสัญญา (Contract Code)</TableHead>
                     <TableHead className="font-bold">ชื่อสัญญา (Contract Title)</TableHead>
+                    <TableHead className="font-bold">ประเภท</TableHead>
+                    <TableHead className="font-bold">ความสัมพันธ์เอกสาร</TableHead>
                     <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
                     <TableHead className="font-bold">ระยะเวลา (Contract Period)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
@@ -277,6 +282,22 @@ export default function MainContractsPage() {
                       >
                         <TableCell className="py-4 pl-6 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
                         <TableCell className="font-bold text-base text-primary">{contract.title}</TableCell>
+                        <TableCell>
+                          {(contract.contractType || 'master') === 'supplemental' ? (
+                            <Badge variant="outline" className="text-[10px]">Supplemental</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-[10px]">Master</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {contract.parentContractId ? (
+                            <Badge variant="outline" className="text-[10px] border-violet-200 text-violet-700">
+                              Revision of {contractNumberById.get(contract.parentContractId) || contract.parentContractId}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">ต้นฉบับ</span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground font-medium">
                             <Building2 className="h-3.5 w-3.5" />
@@ -299,7 +320,7 @@ export default function MainContractsPage() {
                   })}
                   {!isLoading && (!contracts || contracts.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลสัญญาหลักในระบบ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลสัญญาหลักในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

@@ -62,6 +62,8 @@ export default function QuotationsPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | QuotationStatus>('all');
   const [newQuotation, setNewQuotation] = useState<Partial<Quotation>>({
     quotationNo: getPreviewPattern('quotation'),
     issueDate: new Date().toISOString().split('T')[0],
@@ -123,9 +125,24 @@ export default function QuotationsPage() {
       case 'rejected': return <Badge variant="destructive">REJECTED</Badge>;
       case 'cancelled': return <Badge variant="secondary">CANCELLED</Badge>;
       case 'expired': return <Badge variant="outline" className="text-orange-600 border-orange-200">EXPIRED</Badge>;
+      case 'revised': return <Badge variant="secondary" className="bg-violet-100 text-violet-700">REVISED</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
+
+  const filteredQuotations = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return (quotations || []).filter((q) => {
+      const statusMatched = statusFilter === 'all' || q.status === statusFilter;
+      if (!statusMatched) return false;
+      if (!term) return true;
+      const no = (q.quotationNo || '').toLowerCase();
+      const customer = (q.customerNameSnapshot || '').toLowerCase();
+      const title = (q.projectTitle || '').toLowerCase();
+      const status = (q.status || '').toLowerCase();
+      return no.includes(term) || customer.includes(term) || title.includes(term) || status.includes(term);
+    });
+  }, [quotations, searchTerm, statusFilter]);
 
   if (isUserLoading || !currentUser) return null;
 
@@ -153,9 +170,33 @@ export default function QuotationsPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่ หรือ ชื่อใบเสนอราคา..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหาเลขที่ หรือ ชื่อใบเสนอราคา..."
+                className="pl-9 h-11"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <div className="w-[210px]">
+              <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as 'all' | QuotationStatus)}>
+                <SelectTrigger className="h-11 gap-2">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4" />
+                    <SelectValue placeholder="ตัวกรองสถานะ" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">ทุกสถานะ</SelectItem>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="sent">Sent</SelectItem>
+                  <SelectItem value="accepted">Accepted</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                  <SelectItem value="revised">Revised</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           
           <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -227,7 +268,7 @@ export default function QuotationsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {quotations?.map((q) => {
+                  {filteredQuotations.map((q) => {
                     return (
                       <TableRow 
                         key={q.id} 
@@ -252,7 +293,7 @@ export default function QuotationsPage() {
                       </TableRow>
                     );
                   })}
-                  {(!quotations || quotations.length === 0) && !isLoading && (
+                  {filteredQuotations.length === 0 && !isLoading && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการใบเสนอราคาในระบบ</TableCell>
                     </TableRow>

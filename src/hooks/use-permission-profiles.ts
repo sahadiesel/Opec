@@ -9,6 +9,7 @@ import {
   DocumentData,
 } from 'firebase/firestore';
 import { useFirestore } from '@/firebase';
+import { useUser } from '@/firebase';
 import { User, PermissionProfile } from '@/lib/types';
 import type { WithId } from '@/firebase/firestore/use-collection';
 import { FirestorePermissionError } from '@/firebase/errors';
@@ -28,6 +29,7 @@ export function getEffectivePermissionProfileKey(user: User | null): string | nu
  */
 export function usePermissionProfiles(user: User | null) {
   const firestore = useFirestore();
+  const { user: firebaseUser, isUserLoading } = useUser();
 
   const profileKey = useMemo(() => getEffectivePermissionProfileKey(user), [user]);
 
@@ -36,7 +38,9 @@ export function usePermissionProfiles(user: User | null) {
   const [error, setError] = useState<FirestoreError | Error | null>(null);
 
   useEffect(() => {
-    if (!firestore || !profileKey) {
+    // Guard against logout race: local app user may still exist briefly,
+    // but firebase auth can already be null. Never query profiles when unauthenticated.
+    if (!firestore || !profileKey || isUserLoading || !firebaseUser) {
       setProfile(null);
       setIsLoading(false);
       setError(null);
@@ -72,7 +76,7 @@ export function usePermissionProfiles(user: User | null) {
     );
 
     return () => unsub();
-  }, [firestore, profileKey]);
+  }, [firestore, profileKey, firebaseUser, isUserLoading]);
 
   const profiles = useMemo(() => (profile ? [profile] : null), [profile]);
 
