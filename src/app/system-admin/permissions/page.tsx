@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -24,10 +25,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { 
   User, 
-  DeptType, 
   AccessLevel, 
   PermissionProfile, 
-  ModulePermission 
+  ModulePermission,
+  DepartmentGroup,
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, setDoc, query, orderBy } from 'firebase/firestore';
@@ -46,25 +47,29 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { isAdminUser, inferDeptAndLevel } from '@/lib/auth-mapping';
-import { SYSTEM_MODULES, INITIAL_PERMISSIONS_TEMPLATE } from '@/lib/permissions';
+import { isAdminUser } from '@/lib/auth-mapping';
+import {
+  SYSTEM_MODULES,
+  INITIAL_PERMISSIONS_TEMPLATE,
+  ACCESS_LEVELS_BY_DEPARTMENT_GROUP,
+  deriveLegacyDepartmentForGroup,
+  getProfileDepartmentGroup,
+  isAccessLevelAllowedForGroup,
+} from '@/lib/permissions';
 
-const DEPARTMENTS: { id: DeptType; label: string }[] = [
-  { id: 'admin', label: 'Admin (บริหาร)' },
-  { id: 'hr', label: 'HR (บุคคล)' },
-  { id: 'operations', label: 'Operations (ปฏิบัติการ)' },
-  { id: 'sales', label: 'Sales (การขาย)' },
-  { id: 'accounting', label: 'Accounting (บัญชี)' },
-  { id: 'store', label: 'Store (คลัง)' },
+const DEPARTMENT_GROUPS: { id: DepartmentGroup; label: string }[] = [
+  { id: 'admin', label: 'Admin (บริหารระบบ)' },
+  { id: 'operation', label: 'Operation (ปฏิบัติการ / การค้า / บุคคล)' },
+  { id: 'accounting', label: 'Accounting (บัญชี / คลัง)' },
   { id: 'client', label: 'Client (ลูกค้า)' },
 ];
 
-const LEVELS: { id: AccessLevel; label: string }[] = [
-  { id: 'viewer', label: 'Viewer' },
-  { id: 'officer', label: 'Officer' },
-  { id: 'manager', label: 'Manager' },
-  { id: 'admin', label: 'Admin' },
-];
+function levelOptionsForGroup(group: DepartmentGroup): { id: AccessLevel; label: string }[] {
+  return ACCESS_LEVELS_BY_DEPARTMENT_GROUP[group].map((id) => ({
+    id,
+    label: id.charAt(0).toUpperCase() + id.slice(1),
+  }));
+}
 
 export default function PermissionProfilesPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -81,7 +86,7 @@ export default function PermissionProfilesPage() {
     profileKey: '',
     profileNameTh: '',
     profileNameEn: '',
-    department: 'hr',
+    departmentGroup: 'operation',
     level: 'viewer',
     isActive: true,
     notes: '',
@@ -120,7 +125,7 @@ export default function PermissionProfilesPage() {
       profileKey: '',
       profileNameTh: '',
       profileNameEn: '',
-      department: 'hr',
+      departmentGroup: 'operation',
       level: 'viewer',
       isActive: true,
       notes: '',
@@ -130,7 +135,15 @@ export default function PermissionProfilesPage() {
   };
 
   const handleEditProfile = (profile: PermissionProfile) => {
-    setFormData(JSON.parse(JSON.stringify(profile)));
+    const copy = JSON.parse(JSON.stringify(profile)) as PermissionProfile;
+    if (!copy.departmentGroup) {
+      copy.departmentGroup = getProfileDepartmentGroup(copy);
+    }
+    if (!isAccessLevelAllowedForGroup(copy.departmentGroup!, copy.level)) {
+      const allowed = ACCESS_LEVELS_BY_DEPARTMENT_GROUP[copy.departmentGroup!];
+      copy.level = allowed[0];
+    }
+    setFormData(copy);
     setIsEditorOpen(true);
   };
 
@@ -150,13 +163,27 @@ export default function PermissionProfilesPage() {
       return;
     }
 
+    const group = formData.departmentGroup ?? getProfileDepartmentGroup(formData as PermissionProfile);
+    const level = formData.level ?? 'viewer';
+    if (!isAccessLevelAllowedForGroup(group, level)) {
+      toast({
+        variant: 'destructive',
+        title: 'ระดับสิทธิ์ไม่สอดคล้อง',
+        description: `กลุ่ม ${group} ไม่รองรับระดับ ${level}`,
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       const profileKey = formData.profileKey!;
       const profileRef = doc(firestore, 'permission_profiles', profileKey);
-      
+      const legacyDept = deriveLegacyDepartmentForGroup(group, level);
+
       const saveData = {
         ...formData,
+        departmentGroup: group,
+        department: legacyDept,
         id: profileKey,
         updatedAt: Date.now(),
         updatedBy: currentUser.displayName
@@ -200,7 +227,7 @@ export default function PermissionProfilesPage() {
               <LockKeyhole className="h-8 w-8 text-primary" /> จัดการสิทธิ์การใช้งาน (Permission Profiles)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดโปรไฟล์การเข้าถึงโมดูลต่าง ๆ ตามแผนกและระดับความสำคัญ
+              กำหนดโปรไฟล์การเข้าถึงโมดูลต่าง ๆ ตามกลุ่มองค์กร (departmentGroup) และระดับสิทธิ์ (accessLevel)
             </p>
           </div>
           <div className="flex gap-2">
@@ -227,7 +254,7 @@ export default function PermissionProfilesPage() {
                       <TableRow>
                         <TableHead className="pl-6 py-4">Profile Key</TableHead>
                         <TableHead>ชื่อโปรไฟล์ (TH/EN)</TableHead>
-                        <TableHead>แผนก / ระดับ</TableHead>
+                        <TableHead>กลุ่ม / ระดับ</TableHead>
                         <TableHead>สถานะ</TableHead>
                         <TableHead>อัปเดตล่าสุด</TableHead>
                         <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -245,7 +272,7 @@ export default function PermissionProfilesPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-1.5">
-                              <Badge variant="outline" className="text-[9px] uppercase">{p.department}</Badge>
+                              <Badge variant="outline" className="text-[9px] uppercase">{getProfileDepartmentGroup(p)}</Badge>
                               <Badge variant="secondary" className="text-[9px] uppercase">{p.level}</Badge>
                             </div>
                           </TableCell>
@@ -276,9 +303,17 @@ export default function PermissionProfilesPage() {
 
           <TabsContent value="audit" className="mt-6">
             <Card>
-              <CardHeader><CardTitle>Access Audit Overview</CardTitle></CardHeader>
-              <CardContent className="py-20 text-center text-muted-foreground italic">
-                Please use the dedicated "Permission Audit" tool for detailed security analysis.
+              <CardHeader>
+                <CardTitle>ตรวจสอบความสอดคล้อง (Audit)</CardTitle>
+                <CardDescription>
+                  ใช้หน้า Permission Audit เพื่อดูผู้ใช้ที่ไม่มีโปรไฟล์ โปรไฟล์ข้ามกลุ่ม หรือฟิลด์ role ขัดกัน
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="py-10 text-center text-muted-foreground">
+                <p className="mb-4">รายละเอียดเต็มอยู่ที่เมนู System Admin → Permission Audit</p>
+                <Button variant="outline" className="border-primary text-primary" asChild>
+                  <Link href="/system-admin/permission-audit">เปิด Permission Audit</Link>
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
@@ -309,24 +344,42 @@ export default function PermissionProfilesPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-2">
-                        <Label className="text-[10px] font-bold">Dept (แผนก)</Label>
-                        <Select value={formData.department} onValueChange={(v: any) => setFormData({ ...formData, department: v })}>
+                        <Label className="text-[10px] font-bold">กลุ่มสิทธิ์ (departmentGroup)</Label>
+                        <Select
+                          value={formData.departmentGroup ?? 'operation'}
+                          onValueChange={(v: DepartmentGroup) => {
+                            const allowed = ACCESS_LEVELS_BY_DEPARTMENT_GROUP[v];
+                            let nextLevel = formData.level ?? 'viewer';
+                            if (!allowed.includes(nextLevel)) nextLevel = allowed[0];
+                            setFormData({ ...formData, departmentGroup: v, level: nextLevel });
+                          }}
+                        >
                           <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {DEPARTMENTS.map(d => <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>)}
+                            {DEPARTMENT_GROUPS.map((d) => (
+                              <SelectItem key={d.id} value={d.id}>{d.label}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label className="text-[10px] font-bold">Level (ระดับ)</Label>
-                        <Select value={formData.level} onValueChange={(v: any) => setFormData({ ...formData, level: v })}>
+                        <Label className="text-[10px] font-bold">ระดับสิทธิ์ (accessLevel)</Label>
+                        <Select
+                          value={formData.level}
+                          onValueChange={(v: AccessLevel) => setFormData({ ...formData, level: v })}
+                        >
                           <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {LEVELS.map(l => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}
+                            {levelOptionsForGroup(formData.departmentGroup ?? 'operation').map((l) => (
+                              <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
                     </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      ค่า legacy <code className="font-mono">department</code> จะถูกเติมอัตโนมัติเมื่อบันทึก (รองรับข้อมูลเก่า)
+                    </p>
                   </div>
 
                   <div className="space-y-2">

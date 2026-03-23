@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useMemo } from 'react';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain, hasMinimumLevel, isSystemAdmin } from '@/lib/permission-core';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -37,14 +39,9 @@ import { ExceptionRequestService } from '@/lib/services/exception-request-servic
 export default function TimesheetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const tsRef = useMemoFirebase(() => (firestore ? doc(firestore, 'daily_timesheets', id) : null), [firestore, id]);
   const { data: ts, isLoading: isTsLoading } = useDoc<DailyTimesheet>(tsRef as any);
@@ -70,7 +67,11 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
   const [isProcessing, setIsProcessing] = useState(false);
 
   const isHRManager = useMemo(() => {
-    return currentUser?.assignedRoleKey === 'hr_manager' || currentUser?.roleIds.includes('system_admin');
+    if (!currentUser) return false;
+    return (
+      isSystemAdmin(currentUser) ||
+      (canAccessDomain(currentUser, 'hr') && hasMinimumLevel(currentUser, 'manager'))
+    );
   }, [currentUser]);
 
   const handleProcessRequest = async (requestId: string, status: 'APPROVED' | 'REJECTED') => {
@@ -94,7 +95,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
     }
   };
 
-  if (isTsLoading || !ts || !currentUser) {
+  if (isTsLoading || userLoading || !ts || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 

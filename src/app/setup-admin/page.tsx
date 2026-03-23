@@ -15,7 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getLegacyRoles } from '@/lib/auth-mapping';
+import { buildAuthorizationForRepairRole } from '@/lib/auth-mapping';
 
 export default function SetupAdminPage() {
   const [isChecking, setIsChecking] = useState(true);
@@ -94,18 +94,13 @@ export default function SetupAdminPage() {
       }
 
       const now = Date.now();
+      const auth = buildAuthorizationForRepairRole('system_admin');
       const adminData = {
+        ...auth,
         id: uid,
         email: formData.email,
         displayName: formData.displayName,
-        roleIds: ['system_admin'],
-        department: 'admin',
-        level: 'admin',
-        permissionProfileKey: 'admin_admin',
-        assignedRoleKey: 'system_admin',
-        userType: 'internal' as const,
-        dataAccess: 'admin' as const,
-        approvalStatus: 'ACTIVE',
+        approvalStatus: 'ACTIVE' as const,
         isActive: true,
         createdAt: now,
         updatedAt: now,
@@ -133,59 +128,16 @@ export default function SetupAdminPage() {
     setIsSubmitting(true);
     try {
       const now = Date.now();
-      
-      let dept: any = 'hr';
-      let level: any = 'officer';
-      
-      // Extensive mapping for all OPEC roles
-      if (repairRole === 'system_admin') {
-        dept = 'admin';
-        level = 'admin';
-      } else if (repairRole === 'accounting_manager') {
-        dept = 'accounting';
-        level = 'manager';
-      } else if (repairRole === 'accounting_officer') {
-        dept = 'accounting';
-        level = 'officer';
-      } else if (repairRole === 'hr_manager') {
-        dept = 'hr';
-        level = 'manager';
-      } else if (repairRole === 'hr_officer' || repairRole === 'payroll_officer') {
-        dept = 'hr';
-        level = 'officer';
-      } else if (repairRole === 'operations_manager') {
-        dept = 'operations';
-        level = 'manager';
-      } else if (repairRole === 'operations_officer') {
-        dept = 'operations';
-        level = 'officer';
-      } else if (repairRole === 'sales_manager') {
-        dept = 'sales';
-        level = 'manager';
-      } else if (repairRole === 'sales_officer') {
-        dept = 'sales';
-        level = 'officer';
-      } else if (repairRole === 'store_officer') {
-        dept = 'store';
-        level = 'officer';
-      }
+      const auth = buildAuthorizationForRepairRole(repairRole);
 
-      const legacyRoles = getLegacyRoles(dept, level);
-      const profileKey = `${dept}_${level}`;
-
-      const repairData: any = {
+      const repairData: Record<string, unknown> = {
+        ...auth,
         id: repairUid,
-        department: dept,
-        level: level,
-        roleIds: legacyRoles,
-        permissionProfileKey: profileKey,
-        assignedRoleKey: repairRole,
         isActive: true,
         approvalStatus: 'ACTIVE',
-        updatedAt: now
+        updatedAt: now,
       };
 
-      // Set directly to firestore to fix rules access immediately
       await setDoc(doc(firestore, 'users', repairUid), repairData, { merge: true });
       
       // Also sync to legacy role collection if system_admin to ensure rules catch it
@@ -303,7 +255,9 @@ export default function SetupAdminPage() {
                     <SelectItem value="operations_officer">Operations Officer</SelectItem>
                     <SelectItem value="sales_manager">Sales Manager</SelectItem>
                     <SelectItem value="sales_officer">Sales Officer</SelectItem>
-                    <SelectItem value="store_officer">Store Officer</SelectItem>
+                    <SelectItem value="store_officer">Store Officer (→ operation)</SelectItem>
+                    <SelectItem value="operation_officer">Operations Officer (รวม)</SelectItem>
+                    <SelectItem value="operation_manager">Operations Manager (รวม)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

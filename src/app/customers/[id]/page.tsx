@@ -44,6 +44,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { doc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
@@ -111,10 +112,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }, [firestore, id]);
   const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
+  // users list: Firestore rules allow list only for canManageSystem (admin)
   const portalUsersQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !currentUser || !isSystemAdmin(currentUser)) return null;
     return query(collection(firestore, 'users'), where('customerId', '==', id), where('userType', '==', 'customer_portal'));
-  }, [firestore, id]);
+  }, [firestore, id, currentUser]);
   const { data: portalUsers } = useCollection<User>(portalUsersQuery as any);
 
   const quosQuery = useMemoFirebase(() => {

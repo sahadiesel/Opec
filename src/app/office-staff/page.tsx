@@ -29,27 +29,22 @@ import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 
 export default function OfficeStaffPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const isStaff = useMemo(() => {
-    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
-  }, [currentUser]);
+  const isAuthorized = useMemo(() => canView(currentUser, 'office_staff'), [currentUser]);
 
   const staffQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
+    if (!firestore || isUserLoading || userLoading || !firebaseUser || !isAuthorized) return null;
     return collection(firestore, 'office_staff');
-  }, [firestore, isUserLoading, firebaseUser, isStaff]);
+  }, [firestore, isUserLoading, userLoading, firebaseUser, isAuthorized]);
 
   const { data: staffList, isLoading } = useCollection<OfficeStaff>(staffQuery as any);
 
@@ -91,7 +86,7 @@ export default function OfficeStaffPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

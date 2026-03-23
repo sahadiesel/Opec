@@ -40,6 +40,7 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
+import { isClient } from '@/lib/permissions';
 import { differenceInDays, parseISO, startOfDay } from 'date-fns';
 import { Separator } from '@/components/ui/separator';
 
@@ -53,9 +54,7 @@ export default function ClientDashboardPage() {
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
-  const isClient = useMemo(() => {
-    return currentUser?.userType === 'customer_portal' || currentUser?.department === 'client';
-  }, [currentUser]);
+  const isClientUser = useMemo(() => isClient(currentUser), [currentUser]);
 
   // --- Scoped Queries ---
   const queryService = useMemo(() => firestore ? new CustomerQueryService(firestore) : null, [firestore]);
@@ -127,7 +126,7 @@ export default function ClientDashboardPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  if (!isClient) {
+  if (!isClientUser) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">

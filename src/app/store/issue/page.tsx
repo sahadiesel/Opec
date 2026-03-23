@@ -21,7 +21,9 @@ import {
   PackageOpen,
   ShieldAlert
 } from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useDoc, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, query, where, getDocs, updateDoc, increment, writeBatch } from 'firebase/firestore';
 import { StoreItem, Worker, Assignment, Wave, Position, User as AppUser, PositionPPERequirement, PositionToolRequirement } from '@/lib/types';
 import { Label } from '@/components/ui/label';
@@ -37,9 +39,12 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 
 export default function IssueItemsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const canAccess = canAccessDomain(currentUser, 'store');
 
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedAsgnId, setSelectedAsgnId] = useState('');
@@ -48,19 +53,17 @@ export default function IssueItemsPage() {
   const [issueList, setIssueList] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
   // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess) return null;
+    return collection(firestore, 'workers');
+  }, [firestore, canAccess]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const asgnQuery = useMemoFirebase(() => {
-    if (!firestore || !selectedWorkerId) return null;
+    if (!firestore || !canAccess || !selectedWorkerId) return null;
     return query(collection(firestore, 'mobilizations'), where('workerId', '==', selectedWorkerId), where('deploymentStatus', '!=', 'CLOSED'));
-  }, [firestore, selectedWorkerId]);
+  }, [firestore, canAccess, selectedWorkerId]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
   const activeAsgn = assignments?.find(a => a.id === selectedAsgnId);
@@ -71,7 +74,7 @@ export default function IssueItemsPage() {
   const posRef = useMemoFirebase(() => (firestore && activeAsgn ? doc(firestore, 'positions', activeAsgn.positionId) : null), [firestore, activeAsgn?.positionId]);
   const { data: position } = useDoc<Position>(posRef as any);
 
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const itemsQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'store_items') : null), [firestore, canAccess]);
   const { data: storeItems } = useCollection<StoreItem>(itemsQuery as any);
 
   // Position Requirements State
@@ -201,7 +204,14 @@ export default function IssueItemsPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

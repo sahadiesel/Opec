@@ -10,6 +10,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import { User } from '@/lib/types';
+import { isClient } from '@/lib/permissions';
 
 /**
  * Service providing reusable Firestore query scoping for the Customer Portal.
@@ -29,8 +30,7 @@ export class CustomerQueryService {
     if (!user) return null;
     const colRef = collection(this.db, collectionName);
 
-    // Identify if the user is a customer portal user
-    const isCustomer = user.userType === 'customer_portal' || user.department === 'client';
+    const isCustomer = isClient(user);
 
     if (isCustomer) {
       if (!user.customerId) {

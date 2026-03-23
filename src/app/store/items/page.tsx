@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -17,7 +17,9 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { StoreItem, User } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc } from 'firebase/firestore';
 import { addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
@@ -38,16 +40,17 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
 export default function StoreItemsPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const canAccess = canAccessDomain(currentUser, 'store');
 
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const itemsQuery = useMemoFirebase(() => {
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
+    return collection(firestore, 'store_items');
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: items, isLoading } = useCollection<StoreItem>(itemsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -87,7 +90,14 @@ export default function StoreItemsPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

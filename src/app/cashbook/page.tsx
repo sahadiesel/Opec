@@ -42,25 +42,17 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { isInternalUser } from '@/lib/permissions';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate } from '@/lib/permissions';
 
 export default function CashbookPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const canViewPage = useMemo(() => isInternalUser(currentUser), [currentUser]);
-
-  const canWriteCashbook = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer', 'accounting_officer', 'accounting_manager'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r as string)) || false;
-  }, [currentUser]);
+  const canViewPage = useMemo(() => canView(currentUser, 'cashbook'), [currentUser]);
+  const canWriteCashbook = useMemo(() => canCreate(currentUser, 'cashbook'), [currentUser]);
 
   const entriesQuery = useMemoFirebase(() => {
     if (!firestore || !canViewPage) return null;
@@ -122,7 +114,7 @@ export default function CashbookPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

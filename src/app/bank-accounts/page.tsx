@@ -26,6 +26,7 @@ import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { canView } from '@/lib/permissions';
 
 export default function BankAccountsPage() {
   const router = useRouter();
@@ -40,8 +41,8 @@ export default function BankAccountsPage() {
   }, []);
 
   const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'accounting_officer', 'accounting_manager'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
+    if (!currentUser) return false;
+    return canView(currentUser, 'bank_accounts');
   }, [currentUser]);
 
   const accountsQuery = useMemoFirebase(() => {

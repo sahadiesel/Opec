@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { User, BusinessRoleKey } from '@/lib/types';
+import { User } from '@/lib/types';
 import { 
   ShieldCheck, 
   Users, 
@@ -33,7 +33,7 @@ import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/fireb
 import { signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { BUSINESS_ROLES } from '@/lib/auth-mapping';
+import { BUSINESS_ROLES, deriveBusinessRoleKey } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HELP_TEXTS } from '@/lib/constants/help-texts';
@@ -252,10 +252,11 @@ export default function Home() {
     );
   }
 
-  // Home / Dashboard Content
-  const primaryRoleKey = user.assignedRoleKey || 'hr_officer';
-  const roleInfo = BUSINESS_ROLES[primaryRoleKey as BusinessRoleKey];
-  const allDepts = Array.from(new Set(user.assignedRoleKeys?.map(rk => BUSINESS_ROLES[rk]?.dept).filter(Boolean) || []));
+  // Home / Dashboard Content (use central helper for primary role)
+  const primaryRoleKey = deriveBusinessRoleKey(user);
+  const roleInfo = BUSINESS_ROLES[primaryRoleKey];
+  const primaryDept = roleInfo?.dept;
+  const allDepts = primaryDept ? [primaryDept] : (user.department ? [user.department] : []);
 
   return (
     <AppShell user={user} onLogout={handleLogout}>

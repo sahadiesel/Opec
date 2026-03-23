@@ -71,7 +71,8 @@ export default function ClientManpowerPage() {
   const asgnQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(asgnQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  // Only query workers when user is ready (client scope; rules allow client read)
+  const workersQuery = useMemoFirebase(() => (firestore && currentUser ? collection(firestore, 'workers') : null), [firestore, currentUser]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const activePersonnel = useMemo(() => {

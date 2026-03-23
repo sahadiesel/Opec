@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -31,43 +31,43 @@ import {
   TransactionType
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
 import Link from 'next/link';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 
 export default function InventoryLedgerPage() {
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+
+  const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  // 1. Data Fetching
+  // 1. Data Fetching — gate by store access
   const txQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
     return query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(500));
-  }, [firestore]);
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: transactions, isLoading: isTxLoading } = useCollection<StoreTransaction>(txQuery as any);
 
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const itemsQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'store_items') : null), [firestore, canAccess]);
   const { data: items } = useCollection<StoreItem>(itemsQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const workersQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'workers') : null), [firestore, canAccess]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  const mobQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'mobilizations') : null), [firestore]);
+  const mobQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'mobilizations') : null), [firestore, canAccess]);
   const { data: assignments } = useCollection<Assignment>(mobQuery as any);
 
-  const wavesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'waves') : null), [firestore]);
+  const wavesQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'waves') : null), [firestore, canAccess]);
   const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
   // 2. Logic: Filtering & Mapping
@@ -102,7 +102,14 @@ export default function InventoryLedgerPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

@@ -28,13 +28,17 @@ import { collection, query, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 
 export default function CustomerPOsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const isAuthorized = useMemo(() => canView(currentUser, 'customer_pos'), [currentUser]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -51,26 +55,6 @@ export default function CustomerPOsPage() {
     notes: ''
   });
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
-
-  // Guard list queries
-  const isAuthorized = useMemo(() => {
-    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
-  }, [currentUser]);
-
-  const isStaff = useMemo(() => {
-    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
-  }, [currentUser]);
-
   const poQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !currentUser || !isAuthorized) return null;
     return collection(firestore, 'purchase_orders');
@@ -79,9 +63,9 @@ export default function CustomerPOsPage() {
   const { data: pos, isLoading: isPOLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
+    if (!firestore || !isAuthorized) return null;
     return collection(firestore, 'customers');
-  }, [firestore, isUserLoading, firebaseUser, isStaff]);
+  }, [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
@@ -128,7 +112,7 @@ export default function CustomerPOsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

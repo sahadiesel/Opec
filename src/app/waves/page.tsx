@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,8 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 import { collection, doc, collectionGroup } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -44,31 +46,20 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 
 export default function WavesPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
-
-  // Guard list queries
-  const isStaff = useMemo(() => {
-    return currentUser?.roleIds?.some(r => !['client', 'client_user'].includes(r as any)) || false;
-  }, [currentUser]);
+  const isStaff = useMemo(
+    () => !!currentUser && canView(currentUser, 'waves'),
+    [currentUser]
+  );
 
   const wavesQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
+    if (!firestore || isUserLoading || userLoading || !firebaseUser || !isStaff) return null;
     return collection(firestore, 'waves');
-  }, [firestore, isUserLoading, firebaseUser, isStaff]);
+  }, [firestore, isUserLoading, userLoading, firebaseUser, isStaff]);
 
   const { data: waves, isLoading: isWavesLoading } = useCollection<Wave>(wavesQuery as any);
 
@@ -151,7 +142,7 @@ export default function WavesPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

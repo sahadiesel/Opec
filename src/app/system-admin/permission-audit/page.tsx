@@ -31,8 +31,6 @@ import {
   User, 
   PermissionProfile, 
   ModulePermission,
-  DeptType,
-  AccessLevel
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy } from 'firebase/firestore';
@@ -42,7 +40,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isAdminUser, inferDeptAndLevel } from '@/lib/auth-mapping';
-import { getPermissions, SYSTEM_MODULES, NO_ACCESS } from '@/lib/permissions';
+import {
+  getPermissions,
+  SYSTEM_MODULES,
+  NO_ACCESS,
+  analyzeUserProfileBinding,
+  getProfileDepartmentGroup,
+  getEffectiveAccessGroup,
+} from '@/lib/permissions';
 import { getEffectivePermissionProfileKey } from '@/hooks/use-permission-profiles';
 import { useRouter } from 'next/navigation';
 
@@ -57,7 +62,7 @@ export default function PermissionAuditPage() {
 
   // Filters state
   const [searchTerm, setSearchTerm] = useState('');
-  const [deptFilter, setDeptFilter] = useState('ALL');
+  const [groupFilter, setGroupFilter] = useState('ALL');
   const [levelFilter, setLevelFilter] = useState('ALL');
   const [problemOnly, setProblemOnly] = useState(false);
 
@@ -85,6 +90,12 @@ export default function PermissionAuditPage() {
   }, [firestore, isUserAdmin]);
   const { data: profiles, isLoading: isProfilesLoading } = useCollection<PermissionProfile>(profilesQuery as any);
 
+  const profileByKey = useMemo(() => {
+    const m = new Map<string, PermissionProfile>();
+    profiles?.forEach((p) => m.set(p.profileKey, p));
+    return m;
+  }, [profiles]);
+
   // Computed data
   const auditData = useMemo(() => {
     if (!users || !profiles) return [];
@@ -95,45 +106,79 @@ export default function PermissionAuditPage() {
       const matchedProfiles = effectiveKey
         ? profiles.filter((p) => p.profileKey === effectiveKey)
         : [];
-      
-      let effectiveSummary = 'Missing Profile';
-      let status: 'ok' | 'warning' | 'error' = 'warning';
-      let badges: string[] = [];
+      const accessGroup = getEffectiveAccessGroup(user);
 
       if (isAdminUser(user)) {
-        effectiveSummary = 'Admin (Bypass)';
-        status = 'ok';
-        badges.push('Admin Bypass');
-      } else if (effectiveKey) {
-        if (matchedProfiles.length > 0) {
-          effectiveSummary = 'Profile bound';
-          status = 'ok';
-          if (matchedProfiles.some((p) => !p.isActive)) {
-            badges.push('Inactive profile');
-            status = 'warning';
-          }
-        } else {
-          effectiveSummary = 'Profile Not Found';
-          status = 'error';
-        }
-      } else {
+        return {
+          ...user,
+          derivedDept: dept,
+          derivedLevel: level,
+          accessGroup,
+          effectiveSummary: 'Admin (Bypass)',
+          status: 'ok' as const,
+          badges: ['Admin Bypass'],
+          profileCount: matchedProfiles.length,
+          bindingIssues: [] as string[],
+          hasProblems: false,
+        };
+      }
+
+      const binding = analyzeUserProfileBinding(user, profileByKey);
+      const badges: string[] = binding.issues.map((issue) => issue.replace(/_/g, ' '));
+
+      let status: 'ok' | 'warning' | 'error' = 'ok';
+      let effectiveSummary = 'Profile bound';
+
+      const criticalBinding = binding.issues.some((i) =>
+        ['no_profile_key', 'profile_not_found', 'group_mismatch', 'role_field_conflict'].includes(i)
+      );
+      if (criticalBinding) {
+        status = 'error';
+        effectiveSummary = binding.summary;
+      } else if (binding.issues.length > 0) {
+        status = 'warning';
+        effectiveSummary = binding.summary;
+      }
+
+      if (effectiveKey && matchedProfiles.length === 0) {
+        status = 'error';
+        effectiveSummary = 'Profile Not Found';
+        badges.push('doc missing');
+      }
+
+      if (!effectiveKey && binding.issues.length === 0) {
         effectiveSummary = 'Legacy Fallback';
         status = 'warning';
-        badges.push('Legacy Fallback');
+        badges.push('legacy');
       }
+
+      if (effectiveKey && matchedProfiles.length > 0) {
+        if (matchedProfiles.some((p) => !p.isActive)) {
+          badges.push('inactive profile');
+          if (status === 'ok') status = 'warning';
+        }
+        if (!criticalBinding && !matchedProfiles.some((p) => !p.isActive) && binding.issues.length === 0) {
+          effectiveSummary = 'Profile bound';
+          status = 'ok';
+        }
+      }
+
+      const hasProblems = status !== 'ok' || binding.issues.length > 0;
 
       return {
         ...user,
         derivedDept: dept,
         derivedLevel: level,
+        accessGroup,
         effectiveSummary,
         status,
         badges,
         profileCount: matchedProfiles.length,
-        hasProblems: status !== 'ok'
+        bindingIssues: binding.issues,
+        hasProblems,
       };
     });
-  }, [users, profiles]);
+  }, [users, profiles, profileByKey]);
 
   const filteredUsers = useMemo(() => {
     return auditData.filter(u => {
@@ -141,13 +186,13 @@ export default function PermissionAuditPage() {
       const email = u.email || '';
       const matchesSearch = name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                            email.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesDept = deptFilter === 'ALL' || u.derivedDept === deptFilter;
+      const matchesGroup = groupFilter === 'ALL' || u.accessGroup === groupFilter;
       const matchesLevel = levelFilter === 'ALL' || u.derivedLevel === levelFilter;
       const matchesProblem = !problemOnly || u.hasProblems;
       
-      return matchesSearch && matchesDept && matchesLevel && matchesProblem;
+      return matchesSearch && matchesGroup && matchesLevel && matchesProblem;
     });
-  }, [auditData, searchTerm, deptFilter, levelFilter, problemOnly]);
+  }, [auditData, searchTerm, groupFilter, levelFilter, problemOnly]);
 
   const profileStats = useMemo(() => {
     if (!profiles || !users) return [];
@@ -229,17 +274,14 @@ export default function PermissionAuditPage() {
                     onChange={e => setSearchTerm(e.target.value)}
                   />
                 </div>
-                <Select value={deptFilter} onValueChange={setDeptFilter}>
-                  <SelectTrigger className="w-[160px]"><SelectValue placeholder="Department" /></SelectTrigger>
+                <Select value={groupFilter} onValueChange={setGroupFilter}>
+                  <SelectTrigger className="w-[180px]"><SelectValue placeholder="Access group" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ALL">ทุกแผนก</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="hr">HR</SelectItem>
-                    <SelectItem value="operations">Operations</SelectItem>
-                    <SelectItem value="sales">Sales</SelectItem>
-                    <SelectItem value="accounting">Accounting</SelectItem>
-                    <SelectItem value="store">Store</SelectItem>
-                    <SelectItem value="client">Client</SelectItem>
+                    <SelectItem value="ALL">ทุกกลุ่มสิทธิ์</SelectItem>
+                    <SelectItem value="admin">admin</SelectItem>
+                    <SelectItem value="operation">operation</SelectItem>
+                    <SelectItem value="accounting">accounting</SelectItem>
+                    <SelectItem value="client">client</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={levelFilter} onValueChange={setLevelFilter}>
@@ -271,7 +313,7 @@ export default function PermissionAuditPage() {
                     <TableHeader className="bg-muted/50">
                       <TableRow>
                         <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
-                        <TableHead>แผนก / ระดับ</TableHead>
+                        <TableHead>กลุ่ม / ระดับ</TableHead>
                         <TableHead>Profile</TableHead>
                         <TableHead>สิทธิ์การเข้าถึงจริง (Effective Access)</TableHead>
                         <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -287,14 +329,28 @@ export default function PermissionAuditPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <div className="flex gap-1">
-                              <Badge variant="outline" className="text-[9px] capitalize">{u.derivedDept}</Badge>
-                              <Badge variant="secondary" className="text-[9px] capitalize">{u.derivedLevel}</Badge>
+                            <div className="flex flex-col gap-1 items-start">
+                              <Badge variant="outline" className="text-[9px] capitalize">
+                                {u.accessGroup ?? '—'}
+                              </Badge>
+                              <div className="flex gap-1">
+                                <Badge variant="secondary" className="text-[9px] capitalize">{u.derivedDept}</Badge>
+                                <Badge variant="secondary" className="text-[9px] capitalize">{u.derivedLevel}</Badge>
+                              </div>
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="font-mono text-[10px]">{u.profileCount > 0 ? 'bound' : '—'}</Badge>
-                          </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <Badge variant="secondary" className="font-mono text-[10px] w-fit">
+                              {u.profileCount > 0 ? 'bound' : '—'}
+                            </Badge>
+                            {u.bindingIssues?.length > 0 && (
+                              <span className="text-[9px] text-amber-800 max-w-[200px] leading-tight">
+                                {u.bindingIssues.join(', ')}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <span className={`text-xs font-black ${u.status === 'error' ? 'text-red-600' : u.status === 'warning' ? 'text-amber-600' : 'text-green-700'}`}>
@@ -399,7 +455,7 @@ export default function PermissionAuditPage() {
                         <TableCell className="font-mono text-xs text-primary font-bold">{p.profileKey}</TableCell>
                         <TableCell>
                           <div className="flex gap-1">
-                            <Badge variant="outline" className="text-[9px] uppercase">{p.department}</Badge>
+                            <Badge variant="outline" className="text-[9px] uppercase">{getProfileDepartmentGroup(p)}</Badge>
                             <Badge variant="secondary" className="text-[9px] uppercase">{p.level}</Badge>
                           </div>
                         </TableCell>

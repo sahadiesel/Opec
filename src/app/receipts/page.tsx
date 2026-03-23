@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,8 @@ import { Input } from '@/components/ui/input';
 import { Receipt as ReceiptType, ReceiptStatus, User, Customer, BankAccount, PaymentMethod } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -39,20 +41,15 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 
 export default function ReceiptsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'finance_officer'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
-  }, [currentUser]);
+  const isAuthorized = useMemo(
+    () => !!currentUser && canView(currentUser, 'receipts'),
+    [currentUser]
+  );
 
   const receiptsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -118,7 +115,7 @@ export default function ReceiptsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

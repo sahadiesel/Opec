@@ -1,10 +1,9 @@
 /**
  * @fileOverview OPEC OpsFlow - Permission Module Mapping
- * 
+ *
  * Maps Firestore collections/domains to UI Module Keys defined in SYSTEM_MODULES.
+ * Does not import from permissions.ts — avoids circular dependency (permissions imports this file).
  */
-
-import { ModuleKey } from './permissions';
 
 /**
  * Registry of Domain-to-Module aliases.
@@ -26,7 +25,7 @@ export const DOMAIN_TO_MODULE_MAP: Record<string, string> = {
   'number_sequences': 'document_numbering',
 };
 
-export function resolvePermissionModuleKey(key: string): ModuleKey {
+export function resolvePermissionModuleKey(key: string): string {
   const mapped = DOMAIN_TO_MODULE_MAP[key];
-  return (mapped || key) as ModuleKey;
+  return mapped || key;
 }

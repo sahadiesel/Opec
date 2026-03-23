@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -23,30 +23,19 @@ import {
 import { Input } from '@/components/ui/input';
 import { Assignment, Worker, User, Position, Wave } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function MobilizationPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
-
-  const isAuthorized = useMemo(() => {
-    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
-  }, [currentUser]);
+  const isAuthorized = useMemo(() => canView(currentUser, 'mobilization'), [currentUser]);
 
   // Standardized to 'mobilizations' collection
   const mobilizationQuery = useMemoFirebase(() => {
@@ -76,7 +65,7 @@ export default function MobilizationPage() {
     );
   }, [assignments]);
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   const getReadinessBadge = (asgn: Assignment) => {
     const status = asgn.readinessStatus;

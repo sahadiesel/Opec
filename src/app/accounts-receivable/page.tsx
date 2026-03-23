@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -21,24 +21,21 @@ import { Input } from '@/components/ui/input';
 import { AccountsReceivable, ARStatus, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 export default function AccountsReceivablePage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const isAuthorized = useMemo(() => {
-    const authRoles = ['system_admin', 'accounting_officer', 'accounting_manager'];
-    return currentUser?.roleIds?.some(r => authRoles.includes(r)) || false;
-  }, [currentUser]);
+  const isAuthorized = useMemo(
+    () => !!currentUser && canView(currentUser, 'accounts_receivable'),
+    [currentUser]
+  );
 
   const arQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -69,7 +66,7 @@ export default function AccountsReceivablePage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

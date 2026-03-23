@@ -28,12 +28,15 @@ export type RoleType =
 
 export type BusinessRoleKey = 
   | 'system_admin'
+  | 'admin_admin'
   | 'sales_manager'
   | 'sales_officer'
   | 'hr_manager'
   | 'hr_officer'
   | 'operations_manager'
   | 'operations_officer'
+  | 'operation_manager'
+  | 'operation_officer'
   | 'accounting_manager'
   | 'accounting_officer'
   | 'store_manager'
@@ -123,6 +126,9 @@ export type DataAccessClass = 'staff' | 'client' | 'admin';
 
 export type PortalRole = 'approver' | 'viewer';
 
+/** Primary org partition for permission profiles (aligns with User.accessGroup). */
+export type DepartmentGroup = 'admin' | 'operation' | 'accounting' | 'client';
+
 export interface User {
   id: string;
   email: string;
@@ -131,6 +137,8 @@ export interface User {
   // FUTURE PRIMARY ACCESS MODEL (internal: accessGroup + accessLevel + allowedModules; portal separate)
   userType?: 'internal' | 'customer_portal';
   accessGroup?: 'admin' | 'operation' | 'accounting' | 'client';
+  /** Same partition as {@link accessGroup} (new naming); keep both in sync when writing. */
+  departmentGroup?: DepartmentGroup;
   accessLevel?: 'admin' | 'manager' | 'officer' | 'viewer';
   allowedModules?: string[];
   portalRole?: 'approver' | 'viewer';
@@ -168,6 +176,9 @@ export interface User {
   allowedPurchaseOrderIds?: string[];
   deactivatedAt?: number | null;
   deactivatedReason?: string | null;
+
+  /** Migration flag: user needs manual review (do not remove until verified). */
+  migrationNeedsReview?: boolean;
 }
 
 export interface PermissionProfile {
@@ -175,8 +186,16 @@ export interface PermissionProfile {
   profileKey: string;
   profileNameTh: string;
   profileNameEn: string;
-  department: DeptType;
+  /** Primary partition for new UI & assignment rules (admin / operation / accounting / client). */
+  departmentGroup?: DepartmentGroup;
+  /**
+   * @deprecated Legacy single-department label; keep for reads / migration. Prefer {@link departmentGroup}.
+   */
+  department?: DeptType;
+  /** Access tier within {@link departmentGroup} (viewer → admin). */
   level: AccessLevel;
+  /** Optional canonical template id (e.g. admin_admin, operation_manager). */
+  primaryRoleTemplateKey?: string;
   isActive: boolean;
   permissions: Record<string, ModulePermission>;
   updatedAt: number;

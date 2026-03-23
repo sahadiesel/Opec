@@ -17,7 +17,9 @@ import {
   Trash,
   AlertCircle
 } from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, writeBatch, increment } from 'firebase/firestore';
 import { StoreItem, User as AppUser } from '@/lib/types';
 import { Label } from '@/components/ui/label';
@@ -54,9 +56,12 @@ interface WriteOffLine {
 
 export default function StoreWriteOffPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const canAccess = canAccessDomain(currentUser, 'store');
 
   // Header State
   const [writeoffNo, setWriteoffNo] = useState(getPreviewPattern('store_writeoff'));
@@ -70,15 +75,13 @@ export default function StoreWriteOffPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      setCurrentUser(parsed);
-      setPerformedBy(parsed.displayName || 'Staff');
-    }
-  }, []);
+    if (currentUser) setPerformedBy(currentUser.displayName || 'Staff');
+  }, [currentUser]);
 
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const itemsQuery = useMemoFirebase(() => {
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
+    return collection(firestore, 'store_items');
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: allStoreItems } = useCollection<StoreItem>(itemsQuery as any);
 
   const handleAddItem = (itemId: string) => {
@@ -183,7 +186,14 @@ export default function StoreWriteOffPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

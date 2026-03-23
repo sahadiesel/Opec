@@ -1,10 +1,6 @@
 /**
- * OPEC OpsFlow - Authorization & Menu Mapping Configuration
- * Transitional stabilization pass:
- * - single-role primary mapping
- * - future model = accessGroup/accessLevel
- * - legacy business-role helpers retained for compatibility only
- * - migration helpers now populate accessGroup/accessLevel/allowedModules/portalRole
+ * OPEC OpsFlow - Role-to-fields mapping for users UI, setup-admin repair, migration.
+ * Uses permission-core for group resolution. See docs/permissions-architecture.md.
  */
 
 import {
@@ -13,6 +9,7 @@ import {
   RoleType,
   User,
   BusinessRoleKey,
+  DepartmentGroup,
   DataAccessClass,
   UserType,
   PortalRole,
@@ -138,6 +135,34 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     canonicalRole: 'client_user',
     descriptionTh: 'เข้าดูข้อมูลลูกค้าของตนเองและทำรายการใน client portal',
   },
+  // Canonical aggregate roles (migration targets)
+  operation_officer: {
+    key: 'operation_officer',
+    labelTh: 'เจ้าหน้าที่ปฏิบัติการ',
+    labelEn: 'Operations Officer',
+    dept: 'operations',
+    level: 'officer',
+    canonicalRole: 'operations_officer',
+    descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
+  },
+  operation_manager: {
+    key: 'operation_manager',
+    labelTh: 'ผู้จัดการปฏิบัติการ',
+    labelEn: 'Operations Manager',
+    dept: 'operations',
+    level: 'manager',
+    canonicalRole: 'operations_manager',
+    descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
+  },
+  admin_admin: {
+    key: 'admin_admin',
+    labelTh: 'ผู้ดูแลระบบ',
+    labelEn: 'System Administrator',
+    dept: 'admin',
+    level: 'admin',
+    canonicalRole: 'system_admin',
+    descriptionTh: 'สิทธิ์สูงสุด',
+  },
 };
 
 export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
@@ -149,6 +174,8 @@ export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
   customer_viewer: 'client_user',
   customer_approver: 'client_user',
   safety_officer: 'operations_officer',
+  super_admin: 'system_admin',
+  admin: 'system_admin',
 };
 
 export const OPERATION_DEFAULT_MODULES = [
@@ -276,22 +303,20 @@ function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'oper
   if (roleKey === 'system_admin') return 'admin';
   if (roleKey === 'client_user') return 'client';
 
-  if (
-    roleKey === 'accounting_manager' ||
-    roleKey === 'accounting_officer' ||
-    roleKey === 'store_manager' ||
-    roleKey === 'store_officer'
-  ) {
+  // Store moved to operation group per spec
+  if (roleKey === 'accounting_manager' || roleKey === 'accounting_officer') {
     return 'accounting';
   }
 
+  // hr, operations, sales, store, operation_* -> operation
   return 'operation';
 }
 
 function mapBusinessRoleToAccessLevel(roleKey: BusinessRoleKey): 'admin' | 'manager' | 'officer' | 'viewer' {
-  if (roleKey === 'system_admin') return 'admin';
+  if (roleKey === 'system_admin' || roleKey === 'admin_admin') return 'admin';
   if (roleKey === 'client_user') return 'viewer';
-  return BUSINESS_ROLES[roleKey].level;
+  const br = BUSINESS_ROLES[roleKey];
+  return br?.level ?? (roleKey.endsWith('_manager') ? 'manager' : 'officer');
 }
 
 function getDefaultAllowedModules(
@@ -366,14 +391,16 @@ export function deriveDataAccess(roleKeys: BusinessRoleKey[]): DataAccessClass {
   const primary = roleKeys[0];
   if (!primary) return 'staff';
   if (primary === 'client_user') return 'client';
-  if (primary === 'system_admin') return 'admin';
+  if (primary === 'system_admin' || primary === 'admin_admin') return 'admin';
   return 'staff';
 }
 
 function getProfileKeyForRole(roleKey: BusinessRoleKey): string {
   if (roleKey === 'client_user') return 'client_user';
+  if (roleKey === 'admin_admin') return 'admin_admin';
+  if (roleKey === 'operation_officer' || roleKey === 'operation_manager') return roleKey;
   const role = BUSINESS_ROLES[roleKey];
-  return `${role.dept}_${role.level}`;
+  return role ? `${role.dept}_${role.level}` : roleKey;
 }
 
 /**
@@ -418,21 +445,113 @@ export function getFieldsForBusinessRoles(roleKeys: BusinessRoleKey[]): Partial<
   return getFieldsForBusinessRole(primary);
 }
 
+// --- Central authorization normalization (users page + repair; keep legacy role mapping here only) ---
+
+/** Map repair UI / legacy strings to a canonical BusinessRoleKey. */
+export function resolveRepairRoleKey(raw: string): BusinessRoleKey {
+  const mapped = LEGACY_TO_CANONICAL_MAP[raw] ?? raw;
+  if (mapped in BUSINESS_ROLES) return mapped as BusinessRoleKey;
+  return 'hr_officer';
+}
+
+/**
+ * Align accessGroup, departmentGroup, roleIds, permissionProfileKey(s), assignedRoleKey(s), department/level.
+ * Call after composing role/profile merges and before Firestore writes.
+ */
+export function normalizeUserAuthorizationFields(draft: Partial<User>): Partial<User> {
+  const roleKey: BusinessRoleKey =
+    draft.assignedRoleKey && draft.assignedRoleKey in BUSINESS_ROLES
+      ? draft.assignedRoleKey
+      : deriveBusinessRoleKey(draft as User);
+
+  const canonical = getFieldsForBusinessRole(roleKey);
+  const merged: Partial<User> = { ...canonical, ...draft };
+
+  merged.assignedRoleKey = roleKey;
+  merged.assignedRoleKeys = [roleKey];
+
+  const br = BUSINESS_ROLES[roleKey];
+  merged.roleId = br.canonicalRole;
+  merged.roleIds = [br.canonicalRole];
+
+  const g = (merged.accessGroup ?? canonical.accessGroup) as DepartmentGroup;
+  merged.accessGroup = g;
+  merged.departmentGroup = g;
+
+  if (merged.permissionProfileKey) {
+    merged.permissionProfileKeys = [merged.permissionProfileKey];
+  } else {
+    merged.permissionProfileKey = canonical.permissionProfileKey;
+    merged.permissionProfileKeys = canonical.permissionProfileKeys;
+  }
+
+  if (!merged.accessLevel) merged.accessLevel = canonical.accessLevel;
+  if (!merged.department) merged.department = canonical.department;
+  if (!merged.level) merged.level = canonical.level;
+
+  merged.updatedAt = Date.now();
+  return merged;
+}
+
+/** Full auth payload for setup-admin / emergency repair (role-based only). */
+export function buildAuthorizationForRepairRole(rawRoleKey: string): Partial<User> {
+  const rk = resolveRepairRoleKey(rawRoleKey);
+  return normalizeUserAuthorizationFields(getFieldsForBusinessRole(rk));
+}
+
+export function isOperationalSystemAdmin(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if (user.approvalStatus !== 'ACTIVE') return false;
+  if (user.isActive === false) return false;
+  return isSystemAdmin(user);
+}
+
+export function countOperationalSystemAdmins(users: User[]): number {
+  return users.filter((u) => isOperationalSystemAdmin(u)).length;
+}
+
+/**
+ * Blocks demoting/deactivating the last usable system admin (users UI only).
+ */
+export function assertAtLeastOneOperationalAdminAfterChange(
+  allUsers: User[],
+  targetId: string,
+  patch: Partial<User>
+): { ok: true } | { ok: false; message: string } {
+  const target = allUsers.find((u) => u.id === targetId);
+  if (!target) return { ok: true };
+
+  const next = { ...target, ...patch } as User;
+  const others = allUsers.filter((u) => u.id !== targetId);
+  const otherAdminCount = others.filter((u) => isOperationalSystemAdmin(u)).length;
+  const nextIsOpAdmin = isOperationalSystemAdmin(next);
+  const wasOpAdmin = isOperationalSystemAdmin(target);
+
+  if (!nextIsOpAdmin && wasOpAdmin && otherAdminCount === 0) {
+    return {
+      ok: false,
+      message:
+        'ไม่สามารถเปลี่ยนสิทธิ์นี้ได้ — ต้องมีผู้ดูแลระบบ (System Admin) ที่ใช้งานได้อย่างน้อย 1 บัญชีเสมอ',
+    };
+  }
+  return { ok: true };
+}
+
 export function getMigratedUserFields(user: Partial<User>): Partial<User> {
   const primary = deriveBusinessRoleKey(user);
   const base = getFieldsForBusinessRole(primary);
 
   if (primary === 'client_user') {
-    return {
+    return normalizeUserAuthorizationFields({
       ...base,
       portalRole: inferPortalRole(user),
       accessLevel: 'viewer',
       allowedModules: undefined,
       customerId: user.customerId ?? null,
-    };
+    });
   }
 
-  return base;
+  return normalizeUserAuthorizationFields(base);
 }
 
 export function getLegacyRoles(dept: DeptType, level: AccessLevel): RoleType[] {

@@ -20,7 +20,9 @@ import {
   Search,
   CheckCircle
 } from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, query, where, writeBatch, increment } from 'firebase/firestore';
 import { StoreItem, Worker, Assignment, Wave, StoreTransaction, User as AppUser, Position } from '@/lib/types';
 import { Label } from '@/components/ui/label';
@@ -36,9 +38,12 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 
 export default function StoreReturnPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const canAccess = canAccessDomain(currentUser, 'store');
 
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedAsgnId, setSelectedAsgnId] = useState('');
@@ -47,31 +52,29 @@ export default function StoreReturnPage() {
   const [returnList, setReturnList] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  // Data Queries
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  // Data Queries — gate by store access
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
+    return collection(firestore, 'workers');
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const asgnQuery = useMemoFirebase(() => {
-    if (!firestore || !selectedWorkerId) return null;
+    if (!firestore || !canAccess || !selectedWorkerId) return null;
     return query(collection(firestore, 'mobilizations'), where('workerId', '==', selectedWorkerId));
-  }, [firestore, selectedWorkerId]);
+  }, [firestore, canAccess, selectedWorkerId]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
   const activeAsgn = assignments?.find(a => a.id === selectedAsgnId);
 
   // Fetch all transactions for this assignment to calculate net outstanding
   const txQuery = useMemoFirebase(() => {
-    if (!firestore || !selectedAsgnId) return null;
+    if (!firestore || !canAccess || !selectedAsgnId) return null;
     return query(collection(firestore, 'store_transactions'), where('assignmentId', '==', selectedAsgnId));
-  }, [firestore, selectedAsgnId]);
+  }, [firestore, canAccess, selectedAsgnId]);
   const { data: transactions } = useCollection<StoreTransaction>(txQuery as any);
 
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const itemsQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'store_items') : null), [firestore, canAccess]);
   const { data: allStoreItems } = useCollection<StoreItem>(itemsQuery as any);
 
   // Calculate Net Outstanding per Item
@@ -193,7 +196,14 @@ export default function StoreReturnPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

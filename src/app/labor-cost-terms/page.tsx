@@ -64,10 +64,17 @@ export default function LaborCostTermsPage() {
 
   const { data: terms, isLoading } = useCollection<LaborCostContractTerm>(termsQuery as any);
 
-  const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
+  const canViewTerms = can('labor_cost_contract_terms').view;
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewTerms) return null;
+    return collection(firestore, 'customers');
+  }, [firestore, canViewTerms]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const poQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders') : null), [firestore]);
+  const poQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewTerms) return null;
+    return collection(firestore, 'purchase_orders');
+  }, [firestore, canViewTerms]);
   const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);

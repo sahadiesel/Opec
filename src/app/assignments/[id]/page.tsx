@@ -2,6 +2,8 @@
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessOpsSchedulingModules, hasMinimumLevel } from '@/lib/permission-core';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -60,14 +62,9 @@ import { ExceptionRequestService } from '@/lib/services/exception-request-servic
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -111,7 +108,10 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const { data: pendingRequests } = useCollection<ExceptionRequest>(requestsQuery as any);
 
   const isOpsOrSalesManager = useMemo(() => {
-    return ['operations_manager', 'sales_manager'].includes(currentUser?.assignedRoleKey || '') || currentUser?.roleIds.includes('system_admin');
+    if (!currentUser) return false;
+    return (
+      canAccessOpsSchedulingModules(currentUser) && hasMinimumLevel(currentUser, 'manager')
+    );
   }, [currentUser]);
 
   const [reviewNote, setReviewNote] = useState('');
@@ -141,7 +141,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  if (isLoading || !currentUser) {
+  if (isLoading || userLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 

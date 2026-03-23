@@ -39,6 +39,7 @@ import {
   Grid3X3,
   Lock,
   FileBarChart,
+  Database,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -52,8 +53,8 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView } from '@/lib/permissions';
-import { isAdminUser } from '@/lib/auth-mapping';
+import { ModuleKey, canView, isClient } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { UI_LABELS } from '@/lib/constants/labels';
 
 type NavAudience = 'internal' | 'client' | 'admin';
@@ -139,6 +140,7 @@ const navGroups: NavGroup[] = [
       { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'audit_logs', title: 'ประวัติกิจกรรม (Audit Logs)', href: '/system-admin/audit-logs', icon: History },
+      { key: 'system_admin', title: 'Migration สิทธิ์ (User Auth)', href: '/system-admin/user-migration', icon: Database },
     ],
   },
   {
@@ -153,14 +155,10 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-function isClientPortalUser(user: User): boolean {
-  return user.userType === 'customer_portal' || user.accessGroup === 'client';
-}
+function canSeeGroup(group: NavGroup, user: User, admin: boolean): boolean {
+  const clientUser = isClient(user);
 
-function canSeeGroup(group: NavGroup, user: User, isAdmin: boolean): boolean {
-  const clientUser = isClientPortalUser(user);
-
-  if (group.audience === 'admin') return isAdmin;
+  if (group.audience === 'admin') return admin;
   if (group.audience === 'client') return clientUser;
   if (group.audience === 'internal') return !clientUser;
 
@@ -175,7 +173,7 @@ export function SidebarNav({
   profiles?: PermissionProfile[] | null;
 }) {
   const pathname = usePathname();
-  const isAdmin = isAdminUser(user);
+  const admin = isSystemAdmin(user);
   const profile = profiles?.[0] ?? null;
 
   return (
@@ -194,9 +192,9 @@ export function SidebarNav({
 
       <SidebarContent className="py-4">
         {navGroups.map((group) => {
-          if (!canSeeGroup(group, user, isAdmin)) return null;
+          if (!canSeeGroup(group, user, admin)) return null;
 
-          const visibleItems = group.items.filter((item) => isAdmin || canView(user, item.key, profile));
+          const visibleItems = group.items.filter((item) => admin || canView(user, item.key, profile));
 
           if (visibleItems.length === 0) return null;
 

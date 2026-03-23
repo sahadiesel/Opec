@@ -12,7 +12,8 @@ import { useFirestore, useDoc, useMemoFirebase, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { usePermissionProfiles } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
-import { getEffectiveDepartment, getEffectiveLevel, isAdminUser } from '@/lib/auth-mapping';
+import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -76,7 +77,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   const dept = getEffectiveDepartment(user);
   const level = getEffectiveLevel(user);
-  const isAdmin = isAdminUser(user);
+  const isAdmin = isSystemAdmin(user);
   
   const isLegacy = !user.permissionProfileKeys || user.permissionProfileKeys.length === 0;
   const isProfileMissing = profileKeys.length > 0 && !isProfilesLoading && (!profiles || profiles.length === 0);

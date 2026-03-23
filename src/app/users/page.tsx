@@ -19,7 +19,8 @@ import {
   Mail,
   AlertTriangle,
   RefreshCw,
-  Building2
+  Building2,
+  ShieldAlert,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
@@ -61,9 +62,20 @@ import {
   isAdminUser, 
   getFieldsForBusinessRole,
   deriveBusinessRoleKey,
-  getMigratedUserFields
+  getMigratedUserFields,
+  normalizeUserAuthorizationFields,
+  assertAtLeastOneOperationalAdminAfterChange,
+  countOperationalSystemAdmins,
+  isOperationalSystemAdmin,
 } from '@/lib/auth-mapping';
-import { getBaselineProfiles, SECURITY_SENSITIVE_FIELDS } from '@/lib/permissions';
+import {
+  getBaselineProfiles,
+  SECURITY_SENSITIVE_FIELDS,
+  profileAllowedForTargetUser,
+  validateProfileAssignment,
+  getUserFieldsFromPermissionProfile,
+  deriveBusinessRoleKeyFromPermissionProfile,
+} from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 
 export default function UsersPage() {
@@ -77,6 +89,8 @@ export default function UsersPage() {
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
   
   const [editedRole, setEditedRole] = useState<BusinessRoleKey | ''>('');
+  /** Single primary profile key; filtered to same access group as target user. */
+  const [editedProfileKey, setEditedProfileKey] = useState<string>('');
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -103,6 +117,11 @@ export default function UsersPage() {
   }, [firestore, isUserAdmin]);
   const { data: profiles } = useCollection<PermissionProfile>(profilesQuery as any);
 
+  const eligibleProfilesForSelected = useMemo(() => {
+    if (!profiles || !selectedUser) return [];
+    return profiles.filter((p) => profileAllowedForTargetUser(p, selectedUser));
+  }, [profiles, selectedUser]);
+
   const filteredUsers = useMemo(() => {
     if (!users) return [];
     return users.filter(u => {
@@ -121,17 +140,21 @@ export default function UsersPage() {
     const initialRole = deriveBusinessRoleKey(selectedUser);
     const initialStatus = selectedUser.approvalStatus || (selectedUser.isActive ? 'ACTIVE' : 'PENDING');
     const initialNotes = selectedUser.notes || '';
+    const initialProfileKey =
+      selectedUser.permissionProfileKey ?? selectedUser.permissionProfileKeys?.[0] ?? '';
 
     const rolesChanged = editedRole !== initialRole;
     const statusChanged = editedStatus !== initialStatus;
     const notesChanged = notes !== initialNotes;
+    const profileChanged = editedProfileKey !== initialProfileKey;
 
-    return rolesChanged || statusChanged || notesChanged;
-  }, [selectedUser, editedRole, editedStatus, notes]);
+    return rolesChanged || statusChanged || notesChanged || profileChanged;
+  }, [selectedUser, editedRole, editedStatus, notes, editedProfileKey]);
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
     setEditedRole(deriveBusinessRoleKey(user));
+    setEditedProfileKey(user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? '');
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
@@ -159,7 +182,11 @@ export default function UsersPage() {
    * Construct update object and strictly filter sensitive fields if not a system_admin.
    */
   const handleSaveUser = async () => {
-    if (!firestore || !selectedUser || !editedRole || !currentUser) return;
+    if (!firestore || !selectedUser || !currentUser) return;
+    if (!editedRole && !editedProfileKey) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกบทบาทหรือโปรไฟล์สิทธิ์อย่างน้อยหนึ่งรายการ' });
+      return;
+    }
     setIsSaving(true);
 
     try {
@@ -174,12 +201,47 @@ export default function UsersPage() {
       // ONLY system_admin can modify roles and statuses.
       // This is a client-side safeguard mirrored in Firestore Rules.
       if (isUserAdmin) {
-        const mappedFields = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
-        updateData = {
-          ...updateData,
-          ...mappedFields,
+        let authPartial: Partial<User> = {};
+
+        if (editedProfileKey && profiles) {
+          const profile = profiles.find((p) => p.profileKey === editedProfileKey);
+          if (!profile) {
+            toast({ variant: 'destructive', title: 'ไม่พบโปรไฟล์', description: editedProfileKey });
+            setIsSaving(false);
+            return;
+          }
+          const check = validateProfileAssignment(profile, selectedUser);
+          if (!check.ok) {
+            toast({ variant: 'destructive', title: 'ไม่สามารถผูกโปรไฟล์นี้', description: check.message });
+            setIsSaving(false);
+            return;
+          }
+          const derivedRole = deriveBusinessRoleKeyFromPermissionProfile(profile);
+          const roleFields = getFieldsForBusinessRole(derivedRole);
+          const profileFields = getUserFieldsFromPermissionProfile(profile);
+          authPartial = { ...roleFields, ...profileFields };
+        } else if (editedRole) {
+          authPartial = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
+        }
+
+        authPartial = normalizeUserAuthorizationFields({
+          ...authPartial,
           approvalStatus: editedStatus,
           isActive: editedStatus === 'ACTIVE',
+        });
+
+        const guard = users
+          ? assertAtLeastOneOperationalAdminAfterChange(users, selectedUser.id, authPartial)
+          : { ok: true as const };
+        if (!guard.ok) {
+          toast({ variant: 'destructive', title: 'ไม่สามารถบันทึก', description: guard.message });
+          setIsSaving(false);
+          return;
+        }
+
+        updateData = {
+          ...updateData,
+          ...authPartial,
         };
       } else {
         // If somehow a non-admin gets here (e.g. self-editing from user list)
@@ -251,7 +313,16 @@ export default function UsersPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (!firestore || !isUserAdmin) return;
+    if (!firestore || !isUserAdmin || !users) return;
+    const victim = users.find((u) => u.id === id);
+    if (victim && isOperationalSystemAdmin(victim) && countOperationalSystemAdmins(users) <= 1) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่ได้',
+        description: 'ไม่สามารถลบผู้ดูแลระบบคนสุดท้าย — ต้องมีบัญชี System Admin ที่ใช้งานได้อย่างน้อย 1 บัญชี',
+      });
+      return;
+    }
     if (confirm('ยืนยันการลบผู้ใช้งาน?')) {
       deleteDocumentNonBlocking(doc(firestore, 'users', id));
       toast({ title: "ลบผู้ใช้เรียบร้อยแล้ว" });
@@ -259,6 +330,20 @@ export default function UsersPage() {
   };
 
   if (isUserLoading || !currentUser) return null;
+
+  if (!isUserAdmin) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4 max-w-lg mx-auto">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">ไม่มีสิทธิ์เข้าถึง</h2>
+          <p className="text-muted-foreground">
+            หน้าจัดการผู้ใช้และสิทธิ์สำหรับผู้ดูแลระบบ (System Admin) เท่านั้น
+          </p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -269,7 +354,7 @@ export default function UsersPage() {
               <ShieldCheck className="h-8 w-8 text-primary" /> จัดการผู้ใช้งาน (User Access Management)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดบทบาทหน้าที่และสิทธิ์การใช้งานระบบ (เลือกได้ครั้งละหนึ่งบทบาท — ชั่วคราวจนกว่าจะย้ายเป็น accessGroup)
+              กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — โปรไฟล์ต้องอยู่ในกลุ่มเดียวกับผู้ใช้ (accessGroup) เพื่อลดการมอบสิทธิ์ผิดกลุ่ม
             </p>
           </div>
           <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
@@ -302,7 +387,7 @@ export default function UsersPage() {
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
                     <TableHead>บทบาทหน้าที่ (Role)</TableHead>
-                    <TableHead>สิทธิ์เชิงแผนก (Departments)</TableHead>
+                    <TableHead>โปรไฟล์ / แผนก</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -310,6 +395,7 @@ export default function UsersPage() {
                   {filteredUsers.map((u) => {
                     const rk = deriveBusinessRoleKey(u);
                     const dept = BUSINESS_ROLES[rk]?.dept;
+                    const pk = u.permissionProfileKey ?? u.permissionProfileKeys?.[0];
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -332,11 +418,18 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {dept && (
-                            <Badge variant="secondary" className="text-[9px] capitalize font-bold flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100 w-fit">
-                              <Building2 className="h-2 w-2" /> {dept}
-                            </Badge>
-                          )}
+                          <div className="flex flex-col gap-1 items-start">
+                            {pk && (
+                              <Badge variant="outline" className="text-[9px] font-mono max-w-[220px] truncate">
+                                {pk}
+                              </Badge>
+                            )}
+                            {dept && (
+                              <Badge variant="secondary" className="text-[9px] capitalize font-bold flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100 w-fit">
+                                <Building2 className="h-2 w-2" /> {dept}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>
@@ -368,14 +461,14 @@ export default function UsersPage() {
                 <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
               </DialogTitle>
               <DialogDescription className="italic">
-                เลือกบทบาทเดียวต่อผู้ใช้ (ชั่วคราว — รอโมเดล accessGroup/accessLevel)
+                เลือกโปรไฟล์สิทธิ์ (แนะนำ) หรือบทบาทเดิม — โปรไฟล์จะถูกกรองให้เหลือเฉพาะกลุ่มเดียวกับผู้ใช้
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-4">
               <div className="space-y-6">
                 <div className="space-y-3">
-                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">1. สถานะบัญชี (Account Status)</Label>
+                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">1. สถานะบัญชี (Account status)</Label>
                   <Select 
                     disabled={!isUserAdmin}
                     value={editedStatus} 
@@ -394,11 +487,55 @@ export default function UsersPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">2. บทบาทหน้าที่ (Role)</Label>
+                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">
+                    2. โปรไฟล์สิทธิ์ (Permission profile)
+                  </Label>
                   <Select
                     disabled={!isUserAdmin}
+                    value={editedProfileKey || '__none__'}
+                    onValueChange={(v) => {
+                      if (v === '__none__') {
+                        setEditedProfileKey('');
+                        return;
+                      }
+                      setEditedProfileKey(v);
+                      const prof = profiles?.find((p) => p.profileKey === v);
+                      if (prof) {
+                        setEditedRole(deriveBusinessRoleKeyFromPermissionProfile(prof));
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-12 font-bold border-2">
+                      <SelectValue placeholder="เลือกโปรไฟล์ (กลุ่มเดียวกับผู้ใช้)" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[280px]">
+                      <SelectItem value="__none__">— ไม่ใช้โปรไฟล์ (ใช้บทบาทด้านล่างแทน) —</SelectItem>
+                      {eligibleProfilesForSelected.map((p) => (
+                        <SelectItem key={p.profileKey} value={p.profileKey}>
+                          <span className="font-mono text-xs">{p.profileKey}</span>
+                          <span className="text-muted-foreground text-xs ml-2">{p.profileNameEn}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedUser && eligibleProfilesForSelected.length === 0 && (
+                    <p className="text-[10px] text-amber-700">
+                      ไม่มีโปรไฟล์ในกลุ่มของผู้ใช้ — สร้างโปรไฟล์ในเมนู Permission Profiles หรือใช้บทบาทด้านล่าง
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">
+                    3. บทบาทหน้าที่ (Role — เมื่อไม่ใช้โปรไฟล์)
+                  </Label>
+                  <Select
+                    disabled={!isUserAdmin || !!editedProfileKey}
                     value={editedRole || undefined}
-                    onValueChange={(v) => setEditedRole(v as BusinessRoleKey)}
+                    onValueChange={(v) => {
+                      setEditedRole(v as BusinessRoleKey);
+                      setEditedProfileKey('');
+                    }}
                   >
                     <SelectTrigger className="h-12 font-bold border-2">
                       <SelectValue placeholder="เลือกบทบาทหนึ่งรายการ" />
@@ -421,8 +558,14 @@ export default function UsersPage() {
                 </Label>
                 <Separator className="bg-primary/10" />
                 <div className="space-y-4 flex-1">
-                  {editedRole ? (
+                  {(editedRole || editedProfileKey) ? (
                     <div className="space-y-4">
+                      {editedProfileKey && (
+                        <div className="space-y-2">
+                          <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">โปรไฟล์ที่เลือก</p>
+                          <Badge variant="outline" className="font-mono text-[10px]">{editedProfileKey}</Badge>
+                        </div>
+                      )}
                       <div className="space-y-2">
                         <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">แผนก / ระดับ (จากบทบาทที่เลือก)</p>
                         <div className="flex flex-wrap gap-1">
@@ -445,7 +588,7 @@ export default function UsersPage() {
                   ) : (
                     <div className="py-20 text-center space-y-3">
                       <Clock className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกบทบาทหนึ่งรายการ</p>
+                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกโปรไฟล์หรือบทบาทหนึ่งรายการ</p>
                     </div>
                   )}
                 </div>
@@ -473,7 +616,7 @@ export default function UsersPage() {
               </Button>
               <Button 
                 onClick={handleSaveUser} 
-                disabled={isSaving || !editedRole || !isDirty} 
+                disabled={isSaving || (!editedRole && !editedProfileKey) || !isDirty} 
                 className="bg-primary font-black h-12 px-10 shadow-lg text-lg"
               >
                 {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}

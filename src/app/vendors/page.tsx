@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -12,15 +12,13 @@ import {
   Store, 
   Trash2, 
   ChevronRight, 
-  Filter, 
   Info, 
-  ArrowRight,
   Phone,
   Tag,
   Building2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Vendor, VendorType, User } from '@/lib/types';
+import { Vendor, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
@@ -28,10 +26,12 @@ import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 
 export default function VendorsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -40,25 +40,12 @@ export default function VendorsPage() {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
-
-  const isAuthorized = useMemo(() => {
-    return !!(user?.roleIds && user.roleIds.length > 0);
-  }, [user]);
+  const canAccessVendors = canView(currentUser, 'vendors');
 
   const vendorsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
+    if (!firestore || isUserLoading || userLoading || !firebaseUser || !canAccessVendors) return null;
     return collection(firestore, 'vendors');
-  }, [firestore, isUserLoading, firebaseUser, isAuthorized]);
+  }, [firestore, isUserLoading, userLoading, firebaseUser, canAccessVendors]);
 
   const { data: vendors, isLoading } = useCollection<Vendor>(vendorsQuery as any);
 
@@ -83,10 +70,10 @@ export default function VendorsPage() {
     }
   };
 
-  if (isUserLoading || !user) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
-    <AppShell user={user} onLogout={() => {}}>
+    <AppShell user={currentUser as User} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">

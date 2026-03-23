@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,8 @@ import { Input } from '@/components/ui/input';
 import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView } from '@/lib/permissions';
 import { collection, doc, increment, updateDoc, collectionGroup } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
@@ -45,25 +47,21 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 
 export default function AssignmentsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const isAuthorized = useMemo(() => {
-    return !!(currentUser?.roleIds && currentUser.roleIds.length > 0);
-  }, [currentUser]);
+  const isAuthorized = useMemo(
+    () => !!currentUser && canView(currentUser, 'assignments'),
+    [currentUser]
+  );
 
   // Standardized to 'mobilizations' top-level collection
   const mobilizationQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
+    if (!firestore || isUserLoading || userLoading || !firebaseUser || !isAuthorized) return null;
     return collection(firestore, 'mobilizations');
-  }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
+  }, [firestore, firebaseUser, isUserLoading, userLoading, isAuthorized]);
 
   const { data: assignments, isLoading: isAssignmentsLoading } = useCollection<Assignment>(mobilizationQuery as any);
 
@@ -216,7 +214,7 @@ export default function AssignmentsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

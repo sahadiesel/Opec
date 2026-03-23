@@ -24,7 +24,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { isAdminUser } from '@/lib/auth-mapping';
-import { getBaselineProfiles } from '@/lib/permissions';
+import { getBaselineProfiles, getProfileDepartmentGroup } from '@/lib/permissions';
 
 export default function PermissionMatrixPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -43,7 +43,7 @@ export default function PermissionMatrixPage() {
 
   const profilesQuery = useMemoFirebase(() => {
     if (!firestore || !isUserAdmin) return null;
-    return query(collection(firestore, 'permission_profiles'), orderBy('department', 'asc'));
+    return query(collection(firestore, 'permission_profiles'), orderBy('profileKey', 'asc'));
   }, [firestore, isUserAdmin]);
 
   const { data: profiles, isLoading: isProfilesLoading } = useCollection<PermissionProfile>(profilesQuery as any);
@@ -53,13 +53,14 @@ export default function PermissionMatrixPage() {
     const map = new Map<string, number>();
 
     for (const profile of profiles) {
-      const key = `${profile.department}:${profile.level}`;
+      const group = getProfileDepartmentGroup(profile);
+      const key = `${group}:${profile.level}`;
       map.set(key, (map.get(key) || 0) + 1);
     }
 
     return Array.from(map.entries()).map(([key, count]) => {
-      const [department, level] = key.split(':');
-      return { department, level, count };
+      const [departmentGroup, level] = key.split(':');
+      return { departmentGroup, level, count };
     });
   }, [profiles]);
 
@@ -184,8 +185,8 @@ export default function PermissionMatrixPage() {
 
           <Card className="shadow-sm lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-lg">สรุปตามแผนก / ระดับ</CardTitle>
-              <CardDescription>จำนวน permission profiles ที่มีอยู่ในระบบปัจจุบัน</CardDescription>
+              <CardTitle className="text-lg">สรุปตามกลุ่มสิทธิ์ / ระดับ</CardTitle>
+              <CardDescription>จำนวน permission profiles ที่มีอยู่ในระบบปัจจุบัน (อิง departmentGroup)</CardDescription>
             </CardHeader>
             <CardContent>
               {groupedSummary.length === 0 ? (
@@ -193,8 +194,8 @@ export default function PermissionMatrixPage() {
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {groupedSummary.map((item) => (
-                    <Badge key={`${item.department}-${item.level}`} variant="outline" className="px-3 py-1">
-                      {item.department} / {item.level}: {item.count}
+                    <Badge key={`${item.departmentGroup}-${item.level}`} variant="outline" className="px-3 py-1">
+                      {item.departmentGroup} / {item.level}: {item.count}
                     </Badge>
                   ))}
                 </div>
@@ -220,7 +221,7 @@ export default function PermissionMatrixPage() {
                   <TableRow>
                     <TableHead className="pl-6 py-4">โปรไฟล์ (Profile Key)</TableHead>
                     <TableHead>ชื่อโปรไฟล์</TableHead>
-                    <TableHead>แผนก / ระดับ</TableHead>
+                    <TableHead>กลุ่ม / ระดับ</TableHead>
                     <TableHead>สถานะ</TableHead>
                     <TableHead>อัปเดตล่าสุด</TableHead>
                   </TableRow>
@@ -240,7 +241,7 @@ export default function PermissionMatrixPage() {
                       <TableCell>
                         <div className="flex gap-1.5">
                           <Badge variant="outline" className="capitalize bg-blue-50 text-blue-700 font-bold">
-                            {p.department}
+                            {getProfileDepartmentGroup(p)}
                           </Badge>
                           <Badge variant="secondary" className="capitalize font-bold">
                             {p.level}

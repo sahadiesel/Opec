@@ -1,9 +1,7 @@
 /**
- * @fileOverview OPEC OpsFlow - Centralized Permissions & Authorization Source of Truth.
- * Transitional stabilization pass:
- * - no multi-profile additive merge
- * - internal runtime prefers accessGroup/accessLevel fallback model
- * - legacy roles are mapped into the new simplified groups
+ * OPEC OpsFlow - Module-level permissions & authorization.
+ * Permission core: src/lib/permission-core.ts (access groups, domains).
+ * See docs/permissions-architecture.md for source of truth.
  */
 
 import {
@@ -16,6 +14,56 @@ import {
   BusinessRoleKey,
 } from './types';
 import { resolvePermissionModuleKey } from './permission-module-map';
+import {
+  isSystemAdmin,
+  getEffectiveAccessGroup,
+  getEffectiveAccessLevel,
+  getPrimaryLegacyRole,
+  isOperationGroupMember,
+  isAccountingGroupMember,
+} from './permission-core';
+
+export {
+  isSystemAdmin,
+  getEffectiveAccessGroup,
+  getEffectiveAccessLevel,
+  getPrimaryLegacyRole,
+  getUserAccessContext,
+  mapLegacyBusinessRoleToCore,
+  isDepartmentGroup,
+  hasMinimumLevel,
+  canAccessDomain,
+  canManageSystem,
+  isAccountingGroupMember,
+  isOperationGroupMember,
+  canAccessOpsSchedulingModules,
+  canAccessAccountingFinanceModules,
+  DOMAINS_BY_ACCESS_GROUP,
+  ALL_ACCESS_DOMAINS,
+  LEGACY_BUSINESS_ROLE_TO_CORE,
+  CORE_PRIMARY_ROLE_KEYS,
+  type AccessGroup,
+  type CoreAccessLevel,
+  type AccessDomain,
+  type CorePrimaryRoleKey,
+  type UserAccessContext,
+} from './permission-core';
+import { legacyDeptToDepartmentGroup } from './permission-profile-helpers';
+
+export {
+  legacyDeptToDepartmentGroup,
+  getProfileDepartmentGroup,
+  deriveLegacyDepartmentForGroup,
+  ACCESS_LEVELS_BY_DEPARTMENT_GROUP,
+  isAccessLevelAllowedForGroup,
+  profileAllowedForTargetUser,
+  validateProfileAssignment,
+  getUserFieldsFromPermissionProfile,
+  analyzeUserProfileBinding,
+  deriveBusinessRoleKeyFromPermissionProfile,
+  accessGroupFromAssignedRoleKey,
+  type ProfileAuditIssue,
+} from './permission-profile-helpers';
 
 /**
  * List of fields that govern system access.
@@ -188,44 +236,15 @@ const OPERATION_GROUP_MODULES = new Set<ModuleKey>([
   ...OPERATIONS_MODULES,
 ]);
 
+/** Accounting group: sales / hr (no timesheet) / store / finance — not ops scheduling (waves/assignments/mobilization). */
+const HR_MODULES_FOR_ACCOUNTING: readonly ModuleKey[] = HR_MODULES.filter((k) => k !== 'timesheets');
+
 const ACCOUNTING_GROUP_MODULES = new Set<ModuleKey>([
   ...SALES_MODULES,
-  ...HR_MODULES,
+  ...HR_MODULES_FOR_ACCOUNTING,
   ...STORE_MODULES,
   ...ACCOUNTING_MODULES,
 ]);
-
-const HR_MODULE_SET = new Set<ModuleKey>(HR_MODULES);
-const SALES_MODULE_SET = new Set<ModuleKey>(SALES_MODULES);
-const OPERATIONS_MODULE_SET = new Set<ModuleKey>(OPERATIONS_MODULES);
-const STORE_MODULE_SET = new Set<ModuleKey>(STORE_MODULES);
-const ACCOUNTING_MODULE_SET = new Set<ModuleKey>(ACCOUNTING_MODULES);
-
-type EffectiveAccessGroup = 'admin' | 'operation' | 'accounting' | 'client' | null;
-
-const LEGACY_ROLE_ALIASES: Record<string, string> = {
-  finance_officer: 'accounting_officer',
-  payroll_officer: 'hr_officer',
-  safety_officer: 'operations_officer',
-  client: 'client_user',
-  client_viewer: 'client_user',
-  client_approver: 'client_user',
-  customer_viewer: 'client_user',
-  customer_approver: 'client_user',
-};
-
-function aliasLegacyRole(roleKey?: string | null): string | null {
-  if (!roleKey) return null;
-  return LEGACY_ROLE_ALIASES[roleKey] || roleKey;
-}
-
-function isFutureAccessGroup(value: unknown): value is 'admin' | 'operation' | 'accounting' | 'client' {
-  return value === 'admin' || value === 'operation' || value === 'accounting' || value === 'client';
-}
-
-function isFutureAccessLevel(value: unknown): value is 'admin' | 'manager' | 'officer' | 'viewer' {
-  return value === 'admin' || value === 'manager' || value === 'officer' || value === 'viewer';
-}
 
 function buildPermissionMap(
   allowedKeys: readonly ModuleKey[],
@@ -294,160 +313,6 @@ export function normalizeCurrentUserPermissions(user: Partial<User> | null | und
   } as User;
 }
 
-/** Checks if user has a specific role (compatibility helper only). */
-export function hasRole(user: User | null, roleKey: string): boolean {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return false;
-
-  return (
-    u.roleId === roleKey ||
-    u.assignedRoleKey === roleKey ||
-    u.roleIds.includes(roleKey as RoleType) ||
-    (u.assignedRoleKeys || []).includes(roleKey as BusinessRoleKey)
-  );
-}
-
-/** Checks if user has any of the provided roles (compatibility helper only). */
-export function hasAnyRole(user: User | null, roleKeys: string[]): boolean {
-  return roleKeys.some((roleKey) => hasRole(user, roleKey));
-}
-
-function getPrimaryLegacyRole(user: User | null): string | null {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return null;
-
-  if (u.roleId === 'system_admin' || u.assignedRoleKey === 'system_admin') {
-    return 'system_admin';
-  }
-
-  if (u.roleIds.includes('system_admin') || (u.assignedRoleKeys || []).includes('system_admin')) {
-    return 'system_admin';
-  }
-
-  const directAssigned = aliasLegacyRole(u.assignedRoleKey);
-  if (directAssigned) return directAssigned;
-
-  const directRoleId = aliasLegacyRole(u.roleId);
-  if (directRoleId) return directRoleId;
-
-  const firstAssigned = aliasLegacyRole(u.assignedRoleKeys?.[0]);
-  if (firstAssigned) return firstAssigned;
-
-  const firstRoleId = aliasLegacyRole(u.roleIds?.[0]);
-  if (firstRoleId) return firstRoleId;
-
-  if (u.userType === 'customer_portal' || u.department === 'client') {
-    return 'client_user';
-  }
-
-  if (u.department === 'admin') {
-    return 'system_admin';
-  }
-
-  if (u.department === 'accounting') {
-    return u.level === 'manager' ? 'accounting_manager' : 'accounting_officer';
-  }
-
-  if (u.department === 'store') {
-    return u.level === 'manager' ? 'store_manager' : 'store_officer';
-  }
-
-  if (u.department === 'operations') {
-    return u.level === 'manager' ? 'operations_manager' : 'operations_officer';
-  }
-
-  if (u.department === 'sales') {
-    return u.level === 'manager' ? 'sales_manager' : 'sales_officer';
-  }
-
-  if (u.department === 'hr') {
-    return u.level === 'manager' ? 'hr_manager' : 'hr_officer';
-  }
-
-  return null;
-}
-
-function getEffectiveAccessGroup(user: User | null): EffectiveAccessGroup {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return null;
-
-  if (isFutureAccessGroup(u.accessGroup)) {
-    return u.accessGroup;
-  }
-
-  const legacyRole = getPrimaryLegacyRole(u);
-
-  if (legacyRole === 'system_admin') return 'admin';
-  if (legacyRole === 'client_user') return 'client';
-
-  if (
-    legacyRole === 'accounting_manager' ||
-    legacyRole === 'accounting_officer' ||
-    legacyRole === 'store_manager' ||
-    legacyRole === 'store_officer' ||
-    legacyRole === 'finance_officer'
-  ) {
-    return 'accounting';
-  }
-
-  if (
-    legacyRole === 'hr_manager' ||
-    legacyRole === 'hr_officer' ||
-    legacyRole === 'sales_manager' ||
-    legacyRole === 'sales_officer' ||
-    legacyRole === 'operations_manager' ||
-    legacyRole === 'operations_officer'
-  ) {
-    return 'operation';
-  }
-
-  if (u.userType === 'customer_portal') return 'client';
-  if (u.department === 'admin') return 'admin';
-  if (u.department === 'accounting' || u.department === 'store') return 'accounting';
-  if (u.department === 'client') return 'client';
-  if (u.department === 'hr' || u.department === 'sales' || u.department === 'operations') return 'operation';
-
-  return null;
-}
-
-function getEffectiveAccessLevel(user: User | null): 'admin' | 'manager' | 'officer' | 'viewer' {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return 'viewer';
-
-  if (isFutureAccessLevel(u.accessLevel)) {
-    return u.accessLevel;
-  }
-
-  const group = getEffectiveAccessGroup(u);
-  if (group === 'admin') return 'admin';
-  if (group === 'client') return u.portalRole === 'approver' ? 'manager' : 'viewer';
-
-  const legacyRole = getPrimaryLegacyRole(u);
-  if (
-    legacyRole === 'hr_manager' ||
-    legacyRole === 'sales_manager' ||
-    legacyRole === 'operations_manager' ||
-    legacyRole === 'accounting_manager' ||
-    legacyRole === 'store_manager'
-  ) {
-    return 'manager';
-  }
-
-  if (
-    legacyRole === 'hr_officer' ||
-    legacyRole === 'sales_officer' ||
-    legacyRole === 'operations_officer' ||
-    legacyRole === 'accounting_officer' ||
-    legacyRole === 'store_officer' ||
-    legacyRole === 'finance_officer'
-  ) {
-    return 'officer';
-  }
-
-  if (u.level) return u.level;
-  return 'officer';
-}
-
 function getAllowedModules(user: User | null): ModuleKey[] {
   const u = normalizeCurrentUserPermissions(user);
   if (!u || !Array.isArray(u.allowedModules)) return [];
@@ -501,41 +366,26 @@ function getClientPermission(user: User | null, moduleKey: ModuleKey): ModulePer
   return clonePermission(READ_ONLY);
 }
 
-export const isSystemAdmin = (user: User | null) => {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return false;
-  return u.accessGroup === 'admin' || hasRole(u, 'system_admin');
-};
+/** HR accessible by operation + accounting. */
+export const isHRStaff = (user: User | null) =>
+  isOperationGroupMember(user) || isAccountingGroupMember(user);
 
-export const isHRStaff = (user: User | null) => {
-  const group = getEffectiveAccessGroup(user);
-  return group === 'admin' || group === 'operation' || group === 'accounting';
-};
+/** Operations: admin + operation (sales, hr, ops, store). */
+export const isOperationsStaff = (user: User | null) => isOperationGroupMember(user);
 
-export const isOperationsStaff = (user: User | null) => {
-  const group = getEffectiveAccessGroup(user);
-  return group === 'admin' || group === 'operation';
-};
+/** Sales accessible by operation + accounting. */
+export const isSalesStaff = (user: User | null) =>
+  isOperationGroupMember(user) || isAccountingGroupMember(user);
 
-export const isSalesStaff = (user: User | null) => {
-  const group = getEffectiveAccessGroup(user);
-  return group === 'admin' || group === 'operation' || group === 'accounting';
-};
+/** Accounting: admin + accounting. */
+export const isAccountingStaff = (user: User | null) => isAccountingGroupMember(user);
 
-export const isAccountingStaff = (user: User | null) => {
-  const group = getEffectiveAccessGroup(user);
-  return group === 'admin' || group === 'accounting';
-};
+/** Store: admin + operation (store moved to operation group). */
+export const isStoreStaff = (user: User | null) => isOperationGroupMember(user);
 
-export const isStoreStaff = (user: User | null) => {
-  const group = getEffectiveAccessGroup(user);
-  return group === 'admin' || group === 'accounting';
-};
-
-export const isInternalStaff = (user: User | null) => {
-  const group = getEffectiveAccessGroup(user);
-  return group === 'admin' || group === 'operation' || group === 'accounting';
-};
+/** Any internal staff (admin, operation, accounting). */
+export const isInternalStaff = (user: User | null) =>
+  isOperationGroupMember(user) || isAccountingGroupMember(user);
 
 export const isClient = (user: User | null) => getEffectiveAccessGroup(user) === 'client';
 
@@ -617,6 +467,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'admin_admin',
       profileNameEn: 'System Administrator',
       profileNameTh: 'ผู้ดูแลระบบสูงสุด',
+      departmentGroup: 'admin',
+      primaryRoleTemplateKey: 'admin_admin',
       department: 'admin',
       level: 'admin',
       isActive: true,
@@ -630,6 +482,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'client_user',
       profileNameEn: 'Client Portal User',
       profileNameTh: 'ลูกค้า / ผู้ใช้งานภายนอก',
+      departmentGroup: 'client',
+      primaryRoleTemplateKey: 'client_user',
       department: 'client',
       level: 'viewer',
       isActive: true,
@@ -643,6 +497,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'sales_manager',
       profileNameEn: 'Sales Manager',
       profileNameTh: 'ผู้จัดการฝ่ายขาย',
+      departmentGroup: legacyDeptToDepartmentGroup('sales'),
+      primaryRoleTemplateKey: 'sales_manager',
       department: 'sales',
       level: 'manager',
       isActive: true,
@@ -652,6 +508,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'sales_officer',
       profileNameEn: 'Sales Officer',
       profileNameTh: 'เจ้าหน้าที่ฝ่ายขาย',
+      departmentGroup: legacyDeptToDepartmentGroup('sales'),
+      primaryRoleTemplateKey: 'sales_officer',
       department: 'sales',
       level: 'officer',
       isActive: true,
@@ -662,6 +520,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'hr_manager',
       profileNameEn: 'HR Manager',
       profileNameTh: 'ผู้จัดการฝ่ายบุคคล',
+      departmentGroup: legacyDeptToDepartmentGroup('hr'),
+      primaryRoleTemplateKey: 'hr_manager',
       department: 'hr',
       level: 'manager',
       isActive: true,
@@ -671,6 +531,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'hr_officer',
       profileNameEn: 'HR Officer',
       profileNameTh: 'เจ้าหน้าที่ฝ่ายบุคคล',
+      departmentGroup: legacyDeptToDepartmentGroup('hr'),
+      primaryRoleTemplateKey: 'hr_officer',
       department: 'hr',
       level: 'officer',
       isActive: true,
@@ -681,6 +543,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'operations_manager',
       profileNameEn: 'Operations Manager',
       profileNameTh: 'ผู้จัดการฝ่ายปฏิบัติการ',
+      departmentGroup: 'operation',
+      primaryRoleTemplateKey: 'operation_manager',
       department: 'operations',
       level: 'manager',
       isActive: true,
@@ -690,6 +554,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'operations_officer',
       profileNameEn: 'Operations Officer',
       profileNameTh: 'เจ้าหน้าที่ฝ่ายปฏิบัติการ',
+      departmentGroup: 'operation',
+      primaryRoleTemplateKey: 'operation_officer',
       department: 'operations',
       level: 'officer',
       isActive: true,
@@ -700,6 +566,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'accounting_manager',
       profileNameEn: 'Accounting Manager',
       profileNameTh: 'ผู้จัดการฝ่ายบัญชี',
+      departmentGroup: 'accounting',
+      primaryRoleTemplateKey: 'accounting_manager',
       department: 'accounting',
       level: 'manager',
       isActive: true,
@@ -709,6 +577,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'accounting_officer',
       profileNameEn: 'Accounting Officer',
       profileNameTh: 'เจ้าหน้าที่ฝ่ายบัญชี',
+      departmentGroup: 'accounting',
+      primaryRoleTemplateKey: 'accounting_officer',
       department: 'accounting',
       level: 'officer',
       isActive: true,
@@ -719,6 +589,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'store_manager',
       profileNameEn: 'Store Manager',
       profileNameTh: 'ผู้จัดการคลังสินค้า',
+      departmentGroup: legacyDeptToDepartmentGroup('store'),
+      primaryRoleTemplateKey: 'store_manager',
       department: 'store',
       level: 'manager',
       isActive: true,
@@ -728,6 +600,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'store_officer',
       profileNameEn: 'Store Officer',
       profileNameTh: 'เจ้าหน้าที่คลังสินค้า',
+      departmentGroup: legacyDeptToDepartmentGroup('store'),
+      primaryRoleTemplateKey: 'store_officer',
       department: 'store',
       level: 'officer',
       isActive: true,
@@ -736,44 +610,3 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   ];
 }
 
-// Compatibility helpers for legacy screens that still test department-specific access
-export function canAccessHRModule(user: User | null, moduleKey: string, profile?: PermissionProfile | null): boolean {
-  const resolved = resolvePermissionModuleKey(moduleKey);
-  return HR_MODULE_SET.has(resolved) && canView(user, resolved, profile);
-}
-
-export function canAccessSalesModule(
-  user: User | null,
-  moduleKey: string,
-  profile?: PermissionProfile | null
-): boolean {
-  const resolved = resolvePermissionModuleKey(moduleKey);
-  return SALES_MODULE_SET.has(resolved) && canView(user, resolved, profile);
-}
-
-export function canAccessOperationsModule(
-  user: User | null,
-  moduleKey: string,
-  profile?: PermissionProfile | null
-): boolean {
-  const resolved = resolvePermissionModuleKey(moduleKey);
-  return OPERATIONS_MODULE_SET.has(resolved) && canView(user, resolved, profile);
-}
-
-export function canAccessStoreModule(
-  user: User | null,
-  moduleKey: string,
-  profile?: PermissionProfile | null
-): boolean {
-  const resolved = resolvePermissionModuleKey(moduleKey);
-  return STORE_MODULE_SET.has(resolved) && canView(user, resolved, profile);
-}
-
-export function canAccessAccountingModule(
-  user: User | null,
-  moduleKey: string,
-  profile?: PermissionProfile | null
-): boolean {
-  const resolved = resolvePermissionModuleKey(moduleKey);
-  return ACCOUNTING_MODULE_SET.has(resolved) && canView(user, resolved, profile);
-}

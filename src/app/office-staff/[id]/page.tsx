@@ -21,6 +21,7 @@ import {
   UserCircle
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
 import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
@@ -41,7 +42,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const staffRef = useMemoFirebase(() => (firestore && !isNew ? doc(firestore, 'office_staff', id) : null), [firestore, id, isNew]);
   const { data: staffData, isLoading: isStaffLoading } = useDoc<OfficeStaff>(staffRef as any);
 
-  const usersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'users') : null), [firestore]);
+  // users list: Firestore rules allow list only for canManageSystem (admin)
+  const usersQuery = useMemoFirebase(() => {
+    if (!firestore || !currentUser || !isSystemAdmin(currentUser)) return null;
+    return collection(firestore, 'users');
+  }, [firestore, currentUser]);
   const { data: allUsers } = useCollection<User>(usersQuery as any);
 
   const staffQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'office_staff') : null), [firestore]);

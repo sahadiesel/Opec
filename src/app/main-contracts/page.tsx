@@ -26,13 +26,18 @@ import { collection, query, orderBy, addDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, isClient } from '@/lib/permissions';
 
 export default function MainContractsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const isStaff = useMemo(() => canView(currentUser, 'main_contracts'), [currentUser]);
+  const isClientUser = useMemo(() => isClient(currentUser), [currentUser]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -50,33 +55,12 @@ export default function MainContractsPage() {
     notes: ''
   });
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
-
-  // Determine user category
-  const isStaff = useMemo(() => {
-    const staffRoles = ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'safety_officer', 'sales_officer', 'finance_officer', 'payroll_officer', 'store_officer'];
-    return currentUser?.roleIds?.some(r => staffRoles.includes(r as any)) || false;
-  }, [currentUser]);
-
-  const isClient = useMemo(() => {
-    return currentUser?.roleIds?.some(r => ['client', 'client_user'].includes(r as any)) || false;
-  }, [currentUser]);
-
   // Guard: If client tries to access the master list, redirect to portal
   useEffect(() => {
-    if (!isUserLoading && isClient && !isStaff) {
+    if (!isUserLoading && !userLoading && isClientUser && !isStaff) {
       router.push('/client-portal');
     }
-  }, [isClient, isStaff, isUserLoading, router]);
+  }, [isClientUser, isStaff, isUserLoading, userLoading, router]);
 
   // Firestore Queries - Only initiate if staff to prevent permission errors on collection list
   const contractsQuery = useMemoFirebase(() => {

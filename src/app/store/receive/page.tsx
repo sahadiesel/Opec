@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -21,7 +21,9 @@ import {
   FileText,
   TrendingUp
 } from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, writeBatch, increment, query, orderBy } from 'firebase/firestore';
 import { StoreItem, Vendor, Purchase, User as AppUser } from '@/lib/types';
 import { Label } from '@/components/ui/label';
@@ -49,9 +51,12 @@ interface ReceiveLine {
 
 export default function StoreReceivePage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
 
   // Header State
   const [receiveNo, setReceiveNo] = useState(getPreviewPattern('store_receive'));
@@ -64,19 +69,23 @@ export default function StoreReceivePage() {
   const [receiveLines, setReceiveLines] = useState<ReceiveLine[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  // Data Queries
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  // Data Queries — gate by store access (operation + accounting read; operation write)
+  const itemsQuery = useMemoFirebase(() => {
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
+    return collection(firestore, 'store_items');
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: allStoreItems } = useCollection<StoreItem>(itemsQuery as any);
 
-  const vendorsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'vendors') : null), [firestore]);
+  const vendorsQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess) return null;
+    return collection(firestore, 'vendors');
+  }, [firestore, canAccess]);
   const { data: allVendors } = useCollection<Vendor>(vendorsQuery as any);
 
-  const purchasesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchases') : null), [firestore]);
+  const purchasesQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess) return null;
+    return collection(firestore, 'purchases');
+  }, [firestore, canAccess]);
   const { data: allPurchases } = useCollection<Purchase>(purchasesQuery as any);
 
   const handleAddItem = (itemId: string) => {
@@ -180,7 +189,14 @@ export default function StoreReceivePage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

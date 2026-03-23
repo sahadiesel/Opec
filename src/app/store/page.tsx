@@ -29,6 +29,8 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { StoreItem, StoreTransaction, User, Assignment, Worker } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -38,37 +40,36 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function StoreDashboardPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
 
-  const isOpsOrHR = useMemo(() => {
-    if (!currentUser) return false;
-    return ['operations', 'hr', 'admin'].includes(currentUser.department);
-  }, [currentUser]);
-
-  // 1. Data Fetching - Always safe for store staff
-  const itemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  // 1. Data Fetching — gate by store access (operation + accounting)
+  const itemsQuery = useMemoFirebase(() => {
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
+    return collection(firestore, 'store_items');
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: items, isLoading: isItemsLoading } = useCollection<StoreItem>(itemsQuery as any);
 
-  const txQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(50)) : null), [firestore]);
+  const txQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess) return null;
+    return query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(50));
+  }, [firestore, canAccess]);
   const { data: transactions } = useCollection<StoreTransaction>(txQuery as any);
 
-  // 2. Restricted Data Fetching - Guarded by permission/department
+  // 2. Mobilizations / workers — same store access (internal)
   const mobQuery = useMemoFirebase(() => {
-    if (!firestore || !isOpsOrHR) return null;
+    if (!firestore || !canAccess) return null;
     return collection(firestore, 'mobilizations');
-  }, [firestore, isOpsOrHR]);
+  }, [firestore, canAccess]);
   const { data: mobilizations } = useCollection<Assignment>(mobQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !isOpsOrHR) return null;
+    if (!firestore || !canAccess) return null;
     return collection(firestore, 'workers');
-  }, [firestore, isOpsOrHR]);
+  }, [firestore, canAccess]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
   // 3. Calculated Stats
@@ -119,7 +120,14 @@ export default function StoreDashboardPage() {
       });
   }, [transactions, mobilizations, workers, isOpsOrHR]);
 
-  if (!currentUser) return null;
+  if (userLoading || isUserLoading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+        กำลังตรวจสอบสิทธิ์…
+      </div>
+    );
+  }
+  if (!currentUser || !canAccess) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
