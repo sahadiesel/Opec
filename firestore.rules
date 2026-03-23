@@ -524,6 +524,17 @@ service cloud.firestore {
       allow write: if canAccessHR();
     }
 
+    // -------------------------------------------------------------------------
+    // Collection Groups
+    // -------------------------------------------------------------------------
+    match /{path=**}/po_lines/{lineId} {
+      allow read: if internalRead();
+    }
+
+    match /{path=**}/position_rates/{rateId} {
+      allow read: if internalRead();
+    }
+
     match /{document=**} {
       allow read, write: if canManageSystem();
     }

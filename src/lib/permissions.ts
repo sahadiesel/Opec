@@ -236,14 +236,13 @@ const OPERATION_GROUP_MODULES = new Set<ModuleKey>([
   ...OPERATIONS_MODULES,
 ]);
 
-/** Accounting group: sales / hr (no timesheet) / store / finance — not ops scheduling (waves/assignments/mobilization). */
-const HR_MODULES_FOR_ACCOUNTING: readonly ModuleKey[] = HR_MODULES.filter((k) => k !== 'timesheets');
-
+/** Accounting group: can view operational scheduling for billing accuracy. */
 const ACCOUNTING_GROUP_MODULES = new Set<ModuleKey>([
   ...SALES_MODULES,
-  ...HR_MODULES_FOR_ACCOUNTING,
+  ...HR_MODULES.filter((k) => k !== 'timesheets'),
   ...STORE_MODULES,
   ...ACCOUNTING_MODULES,
+  ...OPERATIONS_MODULES, // Added waves, assignments, mobilization for Accounting visibility
 ]);
 
 function buildPermissionMap(
@@ -609,4 +608,3 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
     },
   ];
 }
-
