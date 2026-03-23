@@ -22,7 +22,8 @@ import {
   Calculator,
   Plus,
   CheckCircle2,
-  XCircle
+  XCircle,
+  ShieldAlert
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, query, where } from 'firebase/firestore';
@@ -57,13 +58,16 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
 
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
 
-  const termRef = useMemoFirebase(() => (firestore ? doc(firestore, 'sales_contract_terms', id) : null), [firestore, id]);
+  const isAuthorized = useMemo(() => !!currentUser && can('sales_contract_terms').view, [can, currentUser]);
+  const canModify = useMemo(() => !!currentUser && can('sales_contract_terms').edit, [can, currentUser]);
+
+  const termRef = useMemoFirebase(() => (firestore && isAuthorized ? doc(firestore, 'sales_contract_terms', id) : null), [firestore, id, isAuthorized]);
   const { data: term, isLoading: isTermLoading } = useDoc<SalesContractTerm>(termRef as any);
 
-  const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
+  const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
 
-  const poQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders') : null), [firestore]);
+  const poQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null), [firestore, isAuthorized]);
   const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -77,7 +81,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
   const po = allPOs?.find(p => p.id === term?.purchaseOrderId);
 
   const handleSave = () => {
-    if (!termRef || !currentUser || !can('sales_contract_terms').edit) return;
+    if (!termRef || !currentUser || !canModify) return;
     const updateData = { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName };
     updateDocumentNonBlocking(termRef, updateData);
     setIsEditing(false);
@@ -98,7 +102,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleUpdateStatus = (newStatus: SalesContractStatus) => {
-    if (!termRef || !currentUser) return;
+    if (!termRef || !currentUser || !canModify) return;
     updateDocumentNonBlocking(termRef, { status: newStatus, updatedAt: Date.now() });
 
     // Add Audit Log
@@ -115,7 +119,23 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 
-  if (isTermLoading || isPermLoading || !term || !currentUser) {
+  if (isUserLoading || isPermLoading || !currentUser) {
+    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
+  }
+
+  if (!isAuthorized) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Denied (จำกัดสิทธิ์เฉพาะผู้จัดการ)</h2>
+          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเงื่อนไขการขายเชิงพาณิชย์ กรุณาติดต่อหัวหน้าแผนก</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (isTermLoading || !term) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 
@@ -159,7 +179,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
                       <CardTitle className="text-lg flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> รายละเอียดเงื่อนไขหลัก</CardTitle>
                       <CardDescription>ระบุโครงการและข้อมูลอ้างอิงทางกฎหมาย</CardDescription>
                     </div>
-                    {can('sales_contract_terms').edit && (
+                    {canModify && (
                       <Button variant="outline" onClick={() => setIsEditing(!isEditing)}>
                         {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
                       </Button>
@@ -239,19 +259,21 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
                     <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ (Workflow)</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-3">
-                    {term.status === 'DRAFT' && (
+                    {term.status === 'DRAFT' && canModify && (
                       <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('ACTIVE')}>
                         <CheckCircle2 className="h-4 w-4 mr-2" /> เปิดใช้งานเงื่อนไข (Activate)
                       </Button>
                     )}
-                    {term.status === 'ACTIVE' && (
+                    {term.status === 'ACTIVE' && canModify && (
                       <Button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold" onClick={() => handleUpdateStatus('CLOSED')}>
                         <CheckCircle2 className="h-4 w-4 mr-2" /> ปิดการใช้งาน (Close)
                       </Button>
                     )}
-                    <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CANCELLED')}>
-                      <XCircle className="h-4 w-4 mr-2" /> ยกเลิกรายการนี้
-                    </Button>
+                    {canModify && (
+                      <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CANCELLED')}>
+                        <XCircle className="h-4 w-4 mr-2" /> ยกเลิกรายการนี้
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
 

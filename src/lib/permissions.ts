@@ -169,6 +169,16 @@ export const NO_ACCESS: ModulePermission = {
   approve: false,
 };
 
+/**
+ * Modules restricted to Managers and Admins only.
+ * Officers and Viewers will be denied access regardless of group allowedModules.
+ */
+const MANAGEMENT_ONLY_MODULES = new Set<ModuleKey>([
+  'main_contracts',
+  'sales_contract_terms',
+  'labor_cost_contract_terms'
+]);
+
 function clonePermission(permission: ModulePermission): ModulePermission {
   return { ...permission };
 }
@@ -332,6 +342,12 @@ function hasResolvedModuleAccess(
 
   const level = getEffectiveAccessLevel(user);
   if (level === 'admin' || level === 'manager') return clonePermission(FULL_ACCESS);
+  
+  // BUSINESS RULE: Certain modules are strictly Manager/Admin only
+  if (MANAGEMENT_ONLY_MODULES.has(moduleKey)) {
+    return clonePermission(NO_ACCESS);
+  }
+
   if (level === 'viewer') return clonePermission(READ_ONLY);
 
   const allowedModules = getAllowedModules(user);

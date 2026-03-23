@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,8 @@ import {
   Briefcase,
   Building2,
   ExternalLink,
-  Loader2
+  Loader2,
+  ShieldAlert
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -40,6 +41,7 @@ import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User } f
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import { canView, canEdit } from '@/lib/permissions';
 
 export default function MainContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -49,22 +51,30 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const mcRef = useMemoFirebase(() => (firestore ? doc(firestore, 'main_contracts', id) : null), [firestore, id]);
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
+  const isAuthorized = useMemo(() => !!currentUser && canView(currentUser, 'main_contracts'), [currentUser]);
+  const canModify = useMemo(() => !!currentUser && canEdit(currentUser, 'main_contracts'), [currentUser]);
+
+  const mcRef = useMemoFirebase(() => (firestore && isAuthorized ? doc(firestore, 'main_contracts', id) : null), [firestore, id, isAuthorized]);
   const { data: contract, isLoading: isMCLoading } = useDoc<MainContract>(mcRef as any);
 
-  const ratesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'main_contracts', id, 'position_rates') : null), [firestore, id]);
+  const ratesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'main_contracts', id, 'position_rates') : null), [firestore, id, isAuthorized]);
   const { data: rates } = useCollection<PositionRate>(ratesQuery as any);
 
   const poQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !isAuthorized) return null;
     return query(collection(firestore, 'purchase_orders'), where('contractId', '==', id));
-  }, [firestore, id]);
+  }, [firestore, id, isAuthorized]);
   const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
-  const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
+  const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
+  const positionsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'positions') : null), [firestore, isAuthorized]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -80,19 +90,18 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   });
 
   useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+    if (contract) setEditedMC(contract);
+  }, [contract]);
 
   const handleSaveMaster = () => {
-    if (!mcRef) return;
+    if (!mcRef || !canModify) return;
     updateDocumentNonBlocking(mcRef, { ...editedMC, updatedAt: Date.now() });
     setIsEditing(false);
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลสัญญาหลักถูกอัปเดตแล้ว" });
   };
 
   const handleAddRate = () => {
-    if (!ratesQuery) return;
+    if (!ratesQuery || !canModify) return;
     addDocumentNonBlocking(ratesQuery, {
       ...newRate,
       positionId: newRate.positionId || '',
@@ -108,14 +117,28 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   };
 
   const deleteRate = (rateId: string) => {
-    if (!firestore) return;
+    if (!firestore || !canModify) return;
     if (confirm('ยืนยันการลบอัตราราคานี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rateId));
       toast({ title: "ลบข้อมูลสำเร็จ" });
     }
   };
 
-  if (isMCLoading || !contract || !currentUser) {
+  if (isUserLoading || !currentUser) return null;
+
+  if (!isAuthorized) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+          <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
+          <h2 className="text-xl font-bold">Access Denied (จำกัดสิทธิ์เฉพาะผู้จัดการ)</h2>
+          <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงรายละเอียดสัญญาหลัก กรุณาติดต่อหัวหน้าแผนก</p>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (isMCLoading || !contract) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -143,7 +166,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => { setEditedMC(contract); setIsEditing(!isEditing); }}>
+            <Button variant="outline" disabled={!canModify} onClick={() => { setEditedMC(contract); setIsEditing(!isEditing); }}>
               {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
             </Button>
             {isEditing && (
@@ -251,65 +274,67 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <CardTitle>อัตราราคาตามตำแหน่ง (Position Rates Management)</CardTitle>
                   <CardDescription>กำหนดราคาขายและฐานต้นทุนสำหรับตำแหน่งงานภายใต้สัญญานี้</CardDescription>
                 </div>
-                <Dialog open={isAddRateOpen} onOpenChange={setIsAddRateOpen}>
-                  <DialogTrigger asChild>
-                    <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มอัตราราคา</Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>กำหนดอัตราราคาใหม่</DialogTitle>
-                      <DialogDescription>เลือกตำแหน่งและระบุราคาตามเงื่อนไขสัญญา</DialogDescription>
-                    </DialogHeader>
-                    <div className="grid gap-4 py-4">
-                      <div className="grid gap-2">
-                        <Label>ตำแหน่งงาน (Position)</Label>
-                        <Select onValueChange={v => setNewRate({...newRate, positionId: v})} value={newRate.positionId}>
-                          <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
-                          <SelectContent>
-                            {allPositions?.map(p => (
-                              <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
+                {canModify && (
+                  <Dialog open={isAddRateOpen} onOpenChange={setIsAddRateOpen}>
+                    <DialogTrigger asChild>
+                      <Button className="gap-2"><Plus className="h-4 w-4" /> เพิ่มอัตราราคา</Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>กำหนดอัตราราคาใหม่</DialogTitle>
+                        <DialogDescription>เลือกตำแหน่งและระบุราคาตามเงื่อนไขสัญญา</DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label>ราคาขาย (Sell Rate)</Label>
-                          <Input type="number" value={newRate.sellRate} onChange={e => setNewRate({...newRate, sellRate: parseFloat(e.target.value)})} />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>ต้นทุนอ้างอิง (Cost Baseline)</Label>
-                          <Input type="number" value={newRate.costBaseline} onChange={e => setNewRate({...newRate, costBaseline: parseFloat(e.target.value)})} />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="grid gap-2">
-                          <Label>หน่วยการคิดเงิน</Label>
-                          <Select onValueChange={v => setNewRate({...newRate, billingUnit: v as any})} value={newRate.billingUnit}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
+                          <Label>ตำแหน่งงาน (Position)</Label>
+                          <Select onValueChange={v => setNewRate({...newRate, positionId: v})} value={newRate.positionId}>
+                            <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="daily">Daily (รายวัน)</SelectItem>
-                              <SelectItem value="monthly">Monthly (รายเดือน)</SelectItem>
-                              <SelectItem value="hourly">Hourly (รายชั่วโมง)</SelectItem>
+                              {allPositions?.map(p => (
+                                <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label>ราคาขาย (Sell Rate)</Label>
+                            <Input type="number" value={newRate.sellRate} onChange={e => setNewRate({...newRate, sellRate: parseFloat(e.target.value)})} />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>ต้นทุนอ้างอิง (Cost Baseline)</Label>
+                            <Input type="number" value={newRate.costBaseline} onChange={e => setNewRate({...newRate, costBaseline: parseFloat(e.target.value)})} />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label>หน่วยการคิดเงิน</Label>
+                            <Select onValueChange={v => setNewRate({...newRate, billingUnit: v as any})} value={newRate.billingUnit}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="daily">Daily (รายวัน)</SelectItem>
+                                <SelectItem value="monthly">Monthly (รายเดือน)</SelectItem>
+                                <SelectItem value="hourly">Hourly (รายชั่วโมง)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>กฎการคิดโอที (OT Rule)</Label>
+                            <Input value={newRate.overtimeRule} onChange={e => setNewRate({...newRate, overtimeRule: e.target.value})} />
+                          </div>
+                        </div>
                         <div className="grid gap-2">
-                          <Label>กฎการคิดโอที (OT Rule)</Label>
-                          <Input value={newRate.overtimeRule} onChange={e => setNewRate({...newRate, overtimeRule: e.target.value})} />
+                          <Label>หมายเหตุ</Label>
+                          <Input value={newRate.notes || ''} onChange={e => setNewRate({...newRate, notes: e.target.value})} />
                         </div>
                       </div>
-                      <div className="grid gap-2">
-                        <Label>หมายเหตุ</Label>
-                        <Input value={newRate.notes || ''} onChange={e => setNewRate({...newRate, notes: e.target.value})} />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsAddRateOpen(false)}>ยกเลิก</Button>
-                      <Button onClick={handleAddRate} disabled={!newRate.positionId || !newRate.sellRate}>บันทึกอัตราราคา</Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsAddRateOpen(false)}>ยกเลิก</Button>
+                        <Button onClick={handleAddRate} disabled={!newRate.positionId || !newRate.sellRate}>บันทึกอัตราราคา</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                )}
               </CardHeader>
               <CardContent>
                 <Table>
@@ -320,7 +345,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       <TableHead>ต้นทุน (Cost)</TableHead>
                       <TableHead>หน่วย</TableHead>
                       <TableHead>สถานะ</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
+                      {canModify && <TableHead className="text-right">จัดการ</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -337,17 +362,19 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                               {r.active ? 'Active' : 'Inactive'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteRate(r.id)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
+                          {canModify && (
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteRate(r.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
                     {!rates?.length && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ยังไม่มีการกำหนดอัตราราคาในสัญญานี้</TableCell>
+                        <TableCell colSpan={canModify ? 6 : 5} className="text-center py-10 text-muted-foreground italic">ยังไม่มีการกำหนดอัตราราคาในสัญญานี้</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -363,11 +390,13 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <CardTitle>Customer POs ที่อ้างอิงสัญญานี้</CardTitle>
                   <CardDescription>รายการใบสั่งซื้อบริการกำลังคนภายใต้สัญญาฉบับนี้</CardDescription>
                 </div>
-                <Button variant="outline" className="gap-2" asChild>
-                  <Link href={`/purchase-orders?contractId=${id}&customerId=${contract.customerId}`}>
-                    <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
-                  </Link>
-                </Button>
+                {canModify && (
+                  <Button variant="outline" className="gap-2" asChild>
+                    <Link href={`/purchase-orders?contractId=${id}&customerId=${contract.customerId}`}>
+                      <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
+                    </Link>
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
                 <Table>
