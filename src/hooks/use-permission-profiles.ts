@@ -2,12 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  collection,
-  query,
-  where,
+  doc,
   onSnapshot,
   FirestoreError,
-  QuerySnapshot,
+  DocumentSnapshot,
   DocumentData,
 } from 'firebase/firestore';
 import { useFirestore } from '@/firebase';
@@ -26,6 +24,7 @@ export function getEffectivePermissionProfileKey(user: User | null): string | nu
 
 /**
  * Loads at most one permission_profiles row for the user (no multi-profile merge).
+ * Reads the document directly by ID to comply with security rules that deny listing.
  */
 export function usePermissionProfiles(user: User | null) {
   const firestore = useFirestore();
@@ -47,17 +46,14 @@ export function usePermissionProfiles(user: User | null) {
     setIsLoading(true);
     setError(null);
 
-    const q = query(
-      collection(firestore, 'permission_profiles'),
-      where('profileKey', '==', profileKey)
-    );
+    // Read direct by ID since 'list' is restricted in rules
+    const docRef = doc(firestore, 'permission_profiles', profileKey);
 
     const unsub = onSnapshot(
-      q,
-      (snapshot: QuerySnapshot<DocumentData>) => {
-        const first = snapshot.docs[0];
-        if (first) {
-          setProfile({ ...(first.data() as PermissionProfile), id: first.id });
+      docRef,
+      (snapshot: DocumentSnapshot<DocumentData>) => {
+        if (snapshot.exists()) {
+          setProfile({ ...(snapshot.data() as PermissionProfile), id: snapshot.id });
         } else {
           setProfile(null);
         }
@@ -65,8 +61,8 @@ export function usePermissionProfiles(user: User | null) {
       },
       (_err: FirestoreError) => {
         const contextualError = new FirestorePermissionError({
-          operation: 'list',
-          path: 'permission_profiles',
+          operation: 'get',
+          path: `permission_profiles/${profileKey}`,
         });
         setError(contextualError);
         setProfile(null);
