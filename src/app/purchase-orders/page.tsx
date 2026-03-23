@@ -29,7 +29,7 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canView, canCreate } from '@/lib/permissions';
 
 export default function CustomerPOsPage() {
   const router = useRouter();
@@ -38,7 +38,16 @@ export default function CustomerPOsPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const isAuthorized = useMemo(() => canView(currentUser, 'customer_pos'), [currentUser]);
+  const isAuthorized = useMemo(
+    () => !!currentUser && canView(currentUser, 'customer_pos'),
+    [currentUser]
+  );
+
+  const isStaff = isAuthorized;
+  const canCreatePO = useMemo(
+    () => !!currentUser && canCreate(currentUser, 'customer_pos'),
+    [currentUser]
+  );
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -146,9 +155,9 @@ export default function CustomerPOsPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={canCreatePO && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!isStaff}>
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canCreatePO}>
                 <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
               </Button>
             </DialogTrigger>
