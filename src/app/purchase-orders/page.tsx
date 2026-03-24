@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -31,7 +31,7 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
 
-export default function CustomerPOsPage() {
+function CustomerPOsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -460,5 +460,19 @@ export default function CustomerPOsPage() {
         </Card>
       </div>
     </AppShell>
+  );
+}
+
+export default function CustomerPOsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
+          กำลังโหลดหน้าใบสั่งซื้อ…
+        </div>
+      }
+    >
+      <CustomerPOsPageContent />
+    </Suspense>
   );
 }
