@@ -90,7 +90,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <SidebarNav user={user} profiles={profiles} />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
             <div className="flex items-center gap-2">
               <SidebarTrigger />
@@ -186,7 +186,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
               </AlertDialog>
             </div>
           </header>
-          <main className="flex-1 p-6">
+          <main className="min-w-0 flex-1 p-6">
             {children}
           </main>
         </SidebarInset>

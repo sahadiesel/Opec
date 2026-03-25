@@ -16,6 +16,7 @@ import {
   XCircle, 
   Calendar, 
   MapPin, 
+  Building2,
   Briefcase,
   CheckCircle2,
   ClipboardCheck,

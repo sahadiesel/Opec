@@ -23,8 +23,10 @@ import {
   Send,
   Lock
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
@@ -52,7 +54,7 @@ export default function WaveTimesheetBoardPage() {
 
   const [selectedPoId, setSelectedPoId] = useState('');
   const [selectedWaveId, setSelectedWaveId] = useState('');
-  const [targetDate, setTargetDate] = useState(new Date().toISOString().split('T')[0]);
+  const [targetDate, setTargetDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [isSaving, setIsSaving] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
 
@@ -204,15 +206,18 @@ export default function WaveTimesheetBoardPage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Waves className="h-8 w-8 text-primary" /> ลงเวลารายวันตามกลุ่มเวฟ (Wave Daily Board)
+      <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6">
+        <section className="grid w-full gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+          <div className="w-full min-w-0 space-y-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary">
+              <Waves className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
+              ลงเวลารายวันตามกลุ่มเวฟ (Wave Daily Board)
             </h1>
-            <p className="text-muted-foreground text-lg">จัดการลงเวลาสำหรับคนงานจำนวนมาก โดยอ้างอิงรายชื่อตาม Wave และโครงการ</p>
+            <p className="text-muted-foreground text-lg">
+              จัดการลงเวลาสำหรับคนงานจำนวนมาก โดยอ้างอิงรายชื่อตาม Wave และโครงการ
+            </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
             <Button variant="outline" className="gap-2 h-11" onClick={handleClonePrevious} disabled={!selectedWaveId || isCloning}>
               <Copy className="h-4 w-4" /> ดึงข้อมูลจากเมื่อวาน (Clone Prev)
             </Button>
@@ -225,7 +230,7 @@ export default function WaveTimesheetBoardPage() {
               ยืนยันและส่งตรวจ (Finalize & Submit)
             </Button>
           </div>
-        </div>
+        </section>
 
         <PageGuidance 
           title="คู่มือการบันทึกแบบกลุ่ม (Bulk Entry Guide)"
@@ -258,7 +263,11 @@ export default function WaveTimesheetBoardPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-[10px] font-black uppercase text-muted-foreground">3. วันที่ปฏิบัติงาน (Target Date)</Label>
-              <Input type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} className="h-11" />
+              <DatePickerThaiBE
+                className="h-11"
+                value={htmlDateValueToTimestampMs(targetDate)}
+                onChange={(ms) => setTargetDate(timestampToHtmlDateValue(ms))}
+              />
             </div>
           </CardContent>
         </Card>
@@ -279,8 +288,9 @@ export default function WaveTimesheetBoardPage() {
               <CardHeader className="bg-primary text-primary-foreground">
                 <div className="flex justify-between items-center">
                   <div>
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Users className="h-5 w-5" /> ตารางรายชื่อประจำเวฟ (Wave Roster)
+                    <CardTitle className="text-lg">
+                      <Users className="mr-2 inline-block h-5 w-5 align-middle" />
+                      ตารางรายชื่อประจำเวฟ (Wave Roster)
                     </CardTitle>
                     <CardDescription className="text-primary-foreground/60 italic">แก้ไขเฉพาะรายการที่เป็นข้อยกเว้นจากปกติ</CardDescription>
                   </div>

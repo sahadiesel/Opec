@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { 
   ArrowLeft, 
@@ -61,7 +63,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     employmentType: 'FULL_TIME',
     salaryType: 'MONTHLY',
     monthlySalary: 0,
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: timestampToHtmlDateValue(Date.now()),
     bankAccountName: '',
     bankAccountNumber: '',
     bankName: '',
@@ -214,7 +216,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>
-                    <Input type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} />
+                    <DatePickerThaiBE
+                      className="h-10"
+                      value={htmlDateValueToTimestampMs(formData.startDate)}
+                      onChange={(ms) => setFormData({ ...formData, startDate: timestampToHtmlDateValue(ms) })}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">สถานะ (Status)</Label>

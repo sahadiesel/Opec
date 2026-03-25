@@ -19,7 +19,9 @@ import {
   Info,
   Loader2
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { APBill, APBillStatus, User, Vendor, Purchase } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -71,9 +73,9 @@ export default function APBillsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newBill, setNewBill] = useState<Partial<APBill>>({
     apBillNo: getPreviewPattern('ap_bill'),
-    billReceivedDate: new Date().toISOString().split('T')[0],
-    invoiceDate: new Date().toISOString().split('T')[0],
-    dueDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // 30 days
+    billReceivedDate: timestampToHtmlDateValue(Date.now()),
+    invoiceDate: timestampToHtmlDateValue(Date.now()),
+    dueDate: timestampToHtmlDateValue(Date.now() + 2592000000), // +30 days
     status: 'RECEIVED',
     paymentTerms: 'Credit 30 Days',
     notes: ''
@@ -198,15 +200,27 @@ export default function APBillsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ได้รับเอกสาร</Label>
-                  <Input type="date" value={newBill.billReceivedDate} onChange={e => setNewBill({...newBill, billReceivedDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newBill.billReceivedDate)}
+                    onChange={(ms) => setNewBill({ ...newBill, billReceivedDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ในใบแจ้งหนี้</Label>
-                  <Input type="date" value={newBill.invoiceDate} onChange={e => setNewBill({...newBill, invoiceDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newBill.invoiceDate)}
+                    onChange={(ms) => setNewBill({ ...newBill, invoiceDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>วันครบกำหนด (Due Date)</Label>
-                  <Input type="date" value={newBill.dueDate} onChange={e => setNewBill({...newBill, dueDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newBill.dueDate)}
+                    onChange={(ms) => setNewBill({ ...newBill, dueDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>อ้างอิงรายการซื้อ (Optional Purchase Ref)</Label>

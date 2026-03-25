@@ -40,6 +40,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 
 export default function QuotationsPage() {
   const router = useRouter();
@@ -233,11 +235,21 @@ export default function QuotationsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ออกเอกสาร</Label>
-                  <Input type="date" value={newQuotation.issueDate} onChange={e => setNewQuotation({...newQuotation, issueDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    value={htmlDateValueToTimestampMs(newQuotation.issueDate)}
+                    onChange={(ms) =>
+                      setNewQuotation({ ...newQuotation, issueDate: timestampToHtmlDateValue(ms) })
+                    }
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>วันหมดอายุข้อเสนอ</Label>
-                  <Input type="date" value={newQuotation.validUntilDate} onChange={e => setNewQuotation({...newQuotation, validUntilDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    value={htmlDateValueToTimestampMs(newQuotation.validUntilDate)}
+                    onChange={(ms) =>
+                      setNewQuotation({ ...newQuotation, validUntilDate: timestampToHtmlDateValue(ms) })
+                    }
+                  />
                 </div>
               </div>
               <DialogFooter>

@@ -23,7 +23,7 @@ import {
   Users
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Worker, ReadinessStatus, User, Position, DailyTimesheet } from '@/lib/types';
+import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -34,6 +34,17 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -43,6 +54,22 @@ import { deleteDocumentNonBlocking, addDocumentNonBlocking, updateDocumentNonBlo
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { hasMinimumLevel, isSystemAdmin } from '@/lib/permissions';
+import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/services/worker-delete-service';
+
+function getInitialNewWorker(): Partial<Worker> {
+  return {
+    workerCode: getPreviewPattern('worker') ?? '',
+    firstName: '',
+    lastName: '',
+    thaiNationalId: '',
+    currentPositionId: '',
+    workerStatus: 'AVAILABLE',
+    readinessStatus: 'INCOMPLETE',
+    nationality: 'Thai',
+    gender: 'MALE',
+  };
+}
 
 export default function WorkersPage() {
   const router = useRouter();
@@ -62,7 +89,7 @@ export default function WorkersPage() {
     }
   }, []);
 
-  const { can, isLoading: isPermLoading } = usePermissions(currentUser);
+  const { can, check, isLoading: isPermLoading } = usePermissions(currentUser);
 
   const workersQuery = useMemoFirebase(() => {
     if (isUserLoading || !firebaseUser || !firestore || !currentUser || !can('workers').view) return null;
@@ -81,6 +108,18 @@ export default function WorkersPage() {
     return collection(firestore, 'daily_timesheets');
   }, [firestore, firebaseUser, can('workers').view]);
   const { data: allTimesheets } = useCollection<DailyTimesheet>(timesheetsQuery as any);
+
+  const canDeleteWorkerRecord = useMemo(() => {
+    if (!currentUser) return false;
+    if (isSystemAdmin(currentUser)) return true;
+    return hasMinimumLevel(currentUser, 'manager') && check('workers', 'delete');
+  }, [currentUser, check]);
+
+  const assignmentsQuery = useMemoFirebase(() => {
+    if (!firestore || !firebaseUser || !canDeleteWorkerRecord) return null;
+    return collection(firestore, 'mobilizations');
+  }, [firestore, firebaseUser, canDeleteWorkerRecord]);
+  const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
 
   const workerHoursById = useMemo(() => {
     const bucket = new Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>();
@@ -136,18 +175,14 @@ export default function WorkersPage() {
     });
   }, [firestore, workers, workerHoursById]);
 
+  const [deleteTarget, setDeleteTarget] = useState<Worker | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [isDeletingWorker, setIsDeletingWorker] = useState(false);
+
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [positionFilter, setPositionFilter] = useState('all');
-  const [newWorker, setNewWorker] = useState<Partial<Worker>>({
-    workerCode: getPreviewPattern('worker'),
-    firstName: '',
-    lastName: '',
-    workerStatus: 'AVAILABLE',
-    readinessStatus: 'INCOMPLETE',
-    nationality: 'Thai',
-    gender: 'MALE'
-  });
+  const [newWorker, setNewWorker] = useState<Partial<Worker>>(getInitialNewWorker);
 
   const filteredWorkers = useMemo(() => {
     if (positionFilter === 'all') return sortedWorkers;
@@ -187,6 +222,54 @@ export default function WorkersPage() {
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const handleConfirmDeleteWorker = async () => {
+    if (!firestore || !currentUser || !deleteTarget) return;
+    setIsDeletingWorker(true);
+    try {
+      const check = await assertWorkerCanBeDeleted(firestore, deleteTarget, allAssignments ?? null);
+      if (!check.ok) {
+        toast({ variant: 'destructive', title: 'ลบไม่ได้', description: check.message });
+        setIsDeletingWorker(false);
+        return;
+      }
+      await deleteWorkerWithAuditLog(firestore, currentUser, deleteTarget, deleteReason);
+      toast({ title: 'ลบทะเบียนคนงานแล้ว', description: `รหัส ${deleteTarget.workerCode || deleteTarget.id}` });
+      setDeleteTarget(null);
+      setDeleteReason('');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'ลบไม่สำเร็จ';
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: msg });
+    } finally {
+      setIsDeletingWorker(false);
+    }
+  };
+
+  const getDrugPanelCell = (worker: Worker) => {
+    const kind = worker.drugPanelSummaryKind ?? 'none_panel';
+    const text = worker.drugPanelSummaryText ?? '—';
+    if (kind === 'none_panel') {
+      return (
+        <Badge variant="outline" className="text-muted-foreground font-mono text-[10px]">
+          {text}
+        </Badge>
+      );
+    }
+    if (kind === 'pass') {
+      return <Badge className="bg-green-600 hover:bg-green-600 text-white font-bold border-0">{text}</Badge>;
+    }
+    if (kind === 'partial') {
+      return (
+        <Badge className="bg-orange-500 hover:bg-orange-500 text-white font-bold border-0 whitespace-nowrap">
+          {text}
+        </Badge>
+      );
+    }
+    if (kind === 'positive') {
+      return <Badge variant="destructive" className="font-bold">{text}</Badge>;
+    }
+    return <Badge variant="destructive" className="font-bold bg-red-600 hover:bg-red-600 border-0">{text}</Badge>;
   };
 
   const getReadinessBadge = (status: ReadinessStatus) => {
@@ -258,7 +341,13 @@ export default function WorkersPage() {
           </div>
           <div className="flex items-center gap-2">
             {can('workers').create && (
-              <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+              <Dialog
+                open={isCreateOpen}
+                onOpenChange={(open) => {
+                  setIsCreateOpen(open);
+                  if (open) setNewWorker(getInitialNewWorker());
+                }}
+              >
                 <DialogTrigger asChild>
                   <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 font-bold">
                     <Plus className="h-5 w-5" /> ลงทะเบียนลูกจ้างหน้างานใหม่
@@ -272,27 +361,37 @@ export default function WorkersPage() {
                   <div className="grid grid-cols-2 gap-4 py-4">
                     <div className="grid gap-2 col-span-2">
                       <Label>รหัสคนงาน (Worker Code)</Label>
-                      <Input value={newWorker.workerCode} disabled className="bg-muted font-mono font-bold text-primary" />
+                      <Input value={newWorker.workerCode ?? ''} disabled className="bg-muted font-mono font-bold text-primary" />
                       <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
                     </div>
                     <div className="grid gap-2">
                       <Label>ชื่อ (First Name)</Label>
-                      <Input value={newWorker.firstName} onChange={e => setNewWorker({...newWorker, firstName: e.target.value})} />
+                      <Input value={newWorker.firstName ?? ''} onChange={(e) => setNewWorker({ ...newWorker, firstName: e.target.value })} />
                     </div>
                     <div className="grid gap-2">
                       <Label>นามสกุล (Last Name)</Label>
-                      <Input value={newWorker.lastName} onChange={e => setNewWorker({...newWorker, lastName: e.target.value})} />
+                      <Input value={newWorker.lastName ?? ''} onChange={(e) => setNewWorker({ ...newWorker, lastName: e.target.value })} />
                     </div>
                     <div className="grid gap-2">
                       <Label>เลขบัตรประชาชน (National ID)</Label>
-                      <Input value={newWorker.thaiNationalId} onChange={e => setNewWorker({...newWorker, thaiNationalId: e.target.value})} />
+                      <Input value={newWorker.thaiNationalId ?? ''} onChange={(e) => setNewWorker({ ...newWorker, thaiNationalId: e.target.value })} />
                     </div>
                     <div className="grid gap-2">
                       <Label>ตำแหน่งหลัก (Primary Position)</Label>
-                      <Select onValueChange={v => setNewWorker({...newWorker, currentPositionId: v})}>
+                      <Select
+                        value={newWorker.currentPositionId || '__none__'}
+                        onValueChange={(v) =>
+                          setNewWorker({ ...newWorker, currentPositionId: v === '__none__' ? '' : v })
+                        }
+                      >
                         <SelectTrigger><SelectValue placeholder="เลือกตำแหน่งงาน..." /></SelectTrigger>
                         <SelectContent>
-                          {positions?.map(p => <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>)}
+                          <SelectItem value="__none__">— เลือกตำแหน่งงาน —</SelectItem>
+                          {positions?.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.positionName}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -322,6 +421,7 @@ export default function WorkersPage() {
                     <TableHead className="font-bold">ชั่วโมงสะสม (Total Hours)</TableHead>
                     <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
                     <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
+                    <TableHead className="font-bold">สารเสพติด (แผง)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
                     <TableHead className="text-right font-bold pr-6">การจัดการ</TableHead>
                   </TableRow>
@@ -348,22 +448,40 @@ export default function WorkersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>{getReadinessBadge(worker.readinessStatus)}</TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>{getDrugPanelCell(worker)}</TableCell>
                         <TableCell>
                           <Badge variant={worker.workerStatus === 'AVAILABLE' ? 'outline' : 'secondary'} className={worker.workerStatus === 'AVAILABLE' ? 'text-green-600 border-green-200' : ''}>
                             {worker.workerStatus.toUpperCase()}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="group-hover:text-primary transition-colors">
-                            <ChevronRight className="h-5 w-5" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            {canDeleteWorkerRecord && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                title="ลบทะเบียนคนงาน (เฉพาะผู้จัดการ/แอดมิน)"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteReason('');
+                                  setDeleteTarget(worker);
+                                }}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="group-hover:text-primary transition-colors" onClick={(e) => { e.stopPropagation(); router.push(`/workers/${worker.id}`); }}>
+                              <ChevronRight className="h-5 w-5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
                   })}
                   {(!filteredWorkers || filteredWorkers.length === 0) && !isCollectionLoading && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก</TableCell>
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -371,6 +489,49 @@ export default function WorkersPage() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={deleteTarget != null} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteReason(''); } }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบทะเบียนคนงาน</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-left">
+                  <p>
+                    ลบได้เฉพาะเมื่อสถานะงานเป็น <strong>AVAILABLE</strong> และไม่มีการมอบหมายงานที่ยังไม่ปิด
+                    (สถานะการส่งตัวต้องเป็น CLOSED หรือ DEMOBILIZED เท่านั้น)
+                  </p>
+                  {deleteTarget && (
+                    <p className="font-mono text-sm">
+                      {deleteTarget.workerCode} — {deleteTarget.firstName} {deleteTarget.lastName}
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="delete-reason">เหตุผลการลบ (บันทึกใน audit log)</Label>
+                    <Textarea
+                      id="delete-reason"
+                      value={deleteReason}
+                      onChange={(e) => setDeleteReason(e.target.value)}
+                      placeholder="ระบุเหตุผลเพื่อตรวจสอบย้อนหลัง..."
+                      className="min-h-[100px]"
+                    />
+                  </div>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingWorker}>ยกเลิก</AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isDeletingWorker || !deleteReason.trim()}
+                onClick={() => void handleConfirmDeleteWorker()}
+              >
+                {isDeletingWorker ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                ยืนยันลบ
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

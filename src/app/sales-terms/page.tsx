@@ -19,7 +19,9 @@ import {
   Loader2,
   Trash2
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { SalesContractTerm, User, Customer, PurchaseOrder, SalesContractStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -79,8 +81,8 @@ export default function SalesTermsPage() {
     paymentTermsDays: 30,
     vatPercent: 7,
     withholdingTaxPercent: 3,
-    effectiveDate: new Date().toISOString().split('T')[0],
-    endDate: new Date(Date.now() + 31536000000).toISOString().split('T')[0] // 1 year
+    effectiveDate: timestampToHtmlDateValue(Date.now()),
+    endDate: timestampToHtmlDateValue(Date.now() + 31536000000) // +1 year
   });
 
   const handleCreate = async () => {
@@ -220,11 +222,19 @@ export default function SalesTermsPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>วันที่เริ่มมีผล (Effective)</Label>
-                    <Input type="date" value={newTerm.effectiveDate} onChange={e => setNewTerm({...newTerm, effectiveDate: e.target.value})} />
+                    <DatePickerThaiBE
+                      className="h-11"
+                      value={htmlDateValueToTimestampMs(newTerm.effectiveDate)}
+                      onChange={(ms) => setNewTerm({ ...newTerm, effectiveDate: timestampToHtmlDateValue(ms) })}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>วันที่สิ้นสุด (Expiry)</Label>
-                    <Input type="date" value={newTerm.endDate} onChange={e => setNewTerm({...newTerm, endDate: e.target.value})} />
+                    <DatePickerThaiBE
+                      className="h-11"
+                      value={htmlDateValueToTimestampMs(newTerm.endDate)}
+                      onChange={(ms) => setNewTerm({ ...newTerm, endDate: timestampToHtmlDateValue(ms) })}
+                    />
                   </div>
                 </div>
                 <DialogFooter>

@@ -103,6 +103,7 @@ export const SYSTEM_MODULES = [
   { group: 'Commercial (การค้า)', key: 'rate_conditions', label: 'กฎการคำนวณราคา (Rate Conditions)' },
   { group: 'Commercial (การค้า)', key: 'profit_estimates', label: 'ประมาณการกำไร (Profit Estimates)' },
 
+  { group: 'HR & Payroll (บุคคล)', key: 'hr_hub', label: 'ศูนย์กลาง HR (แดชบอร์ด / ตั้งค่า)' },
   { group: 'HR & Payroll (บุคคล)', key: 'timesheets', label: 'ลงเวลาทำงาน (Timesheets)' },
   { group: 'HR & Payroll (บุคคล)', key: 'worker_payroll', label: 'จ่ายเงินคนงาน (Worker Payroll)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_payroll', label: 'เงินเดือนออฟฟิศ (Office Payroll)' },
@@ -205,6 +206,7 @@ const SALES_MODULES: readonly ModuleKey[] = [
 ];
 
 const HR_MODULES: readonly ModuleKey[] = [
+  'hr_hub',
   'timesheets',
   'worker_payroll',
   'office_payroll',
@@ -247,19 +249,55 @@ const OPERATION_GROUP_MODULES = new Set<ModuleKey>([
   ...OPERATIONS_MODULES,
 ]);
 
+/**
+ * Managers across Commercial / HR & Payroll / Operations (and store, under Ops nav)
+ * share the same module envelope: all operation-side pillars + store, never accounting or admin-only keys.
+ */
+const CROSS_PILLAR_OPERATION_MANAGER_ROLES = new Set<string>([
+  'sales_manager',
+  'hr_manager',
+  'operations_manager',
+  'operation_manager',
+  'store_manager',
+]);
+
+function isCrossPillarOperationManager(user: User | null): boolean {
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return false;
+  if (getEffectiveAccessGroup(u) !== 'operation') return false;
+  if (getEffectiveAccessLevel(u) !== 'manager') return false;
+
+  const pr = getPrimaryLegacyRole(u);
+  if (pr && CROSS_PILLAR_OPERATION_MANAGER_ROLES.has(pr)) return true;
+
+  const d = u.department;
+  return d === 'sales' || d === 'hr' || d === 'operations' || d === 'store';
+}
+
+/** Store officer: เฉพาะคลัง/จัดซื้อ (vendors, purchases, store_inventory) — ไม่รวมขาย/HR/ปฏิบัติการอื่น */
+export function isStoreOfficer(user: User | null): boolean {
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return false;
+  if (getEffectiveAccessGroup(u) !== 'operation') return false;
+  if (getEffectiveAccessLevel(u) !== 'officer') return false;
+  const pr = getPrimaryLegacyRole(u);
+  if (pr === 'store_officer') return true;
+  return u.department === 'store' && getEffectiveAccessLevel(u) === 'officer';
+}
+
 function getOperationGroupModules(user: User | null): Set<ModuleKey> {
   const base = new Set<ModuleKey>(OPERATION_GROUP_MODULES);
   const normalized = normalizeCurrentUserPermissions(user);
   if (!normalized) return base;
 
-  const primaryRole = getPrimaryLegacyRole(normalized);
-  const isHRManager =
-    primaryRole === 'hr_manager' ||
-    (normalized.department === 'hr' && getEffectiveAccessLevel(normalized) === 'manager');
+  if (isStoreOfficer(normalized)) {
+    return new Set<ModuleKey>(STORE_MODULES);
+  }
 
-  // Business override: HR Manager can access Store menu/workflow.
-  if (isHRManager) {
-    STORE_MODULES.forEach((key) => base.add(key));
+  if (isCrossPillarOperationManager(normalized)) {
+    const expanded = new Set<ModuleKey>(base);
+    STORE_MODULES.forEach((key) => expanded.add(key));
+    return expanded;
   }
 
   return base;
@@ -363,10 +401,10 @@ function hasResolvedModuleAccess(
   const u = normalizeCurrentUserPermissions(user);
   
   if (level === 'admin' || level === 'manager') {
-    // SPECIAL RULE: office_payroll is strictly hr_manager or accounting_manager only
+    // Office payroll: sensitive; shared across Commercial/HR/Ops pillar managers, plus accounting managers.
     if (moduleKey === 'office_payroll' && level === 'manager') {
       const primaryRole = getPrimaryLegacyRole(u);
-      if (primaryRole !== 'hr_manager' && primaryRole !== 'accounting_manager') {
+      if (!isCrossPillarOperationManager(u) && primaryRole !== 'accounting_manager') {
         return clonePermission(NO_ACCESS);
       }
     }

@@ -1,13 +1,15 @@
-import { 
-  Worker, 
-  WorkerCertificate, 
-  WorkerMedicalRecord, 
-  WorkerDrugTest, 
-  PositionCertificateRequirement, 
+import {
+  Worker,
+  WorkerCertificate,
+  WorkerMedicalRecord,
+  WorkerDrugTest,
+  PositionCertificateRequirement,
   ReadinessStatus,
-  JobMode
+  JobMode,
+  DrugTestPanelSubstance,
 } from './types';
 import { getPolicy } from './policy/engine';
+import { computeDrugPanelWorkerFields } from './drug-test-panel';
 
 /**
  * Calculates a worker's readiness status based on their records and position-level policy.
@@ -18,7 +20,9 @@ export async function calculateWorkerReadiness(
   medicalRecords: WorkerMedicalRecord[],
   drugTests: WorkerDrugTest[],
   mandatoryReqs: PositionCertificateRequirement[],
-  mode: JobMode
+  mode: JobMode,
+  /** ถ้ามีรายการสารจาก settings และยังไม่ครบผล negative จะไม่ READY */
+  drugPanelSubstances: DrugTestPanelSubstance[] = []
 ): Promise<ReadinessStatus> {
   const now = Date.now();
   const policy = getPolicy(mode);
@@ -47,17 +51,11 @@ export async function calculateWorkerReadiness(
   const medExpiry = new Date(latestMedical.expiryDate).getTime();
   if (medExpiry < now) return 'MEDICAL_EXPIRED';
 
-  // 3. Check Drug Test (valid 6 months per offshore policy usually)
-  const latestDrug = drugTests
-    .filter(d => d.result === 'pass')
-    .sort((a, b) => new Date(b.testDate).getTime() - new Date(a.testDate).getTime())[0];
-
-  if (!latestDrug) return 'DRUG_TEST_EXPIRED';
-  
-  const drugTestDate = new Date(latestDrug.testDate).getTime();
-  const drugExpiryLimit = drugTestDate + (policy.readinessRules.drugTestValidityMonths * 30 * 24 * 60 * 60 * 1000);
-  
-  if (drugExpiryLimit < now) return 'DRUG_TEST_EXPIRED';
+  // 3. Drug panel (ไม่ใช้วันหมดอายุ — ตาม settings ที่ system/drug_test_panel)
+  if (drugPanelSubstances.length > 0) {
+    const { readinessDrugOk } = computeDrugPanelWorkerFields(drugPanelSubstances, drugTests);
+    if (!readinessDrugOk) return 'DRUG_TEST_EXPIRED';
+  }
 
   return 'READY';
 }

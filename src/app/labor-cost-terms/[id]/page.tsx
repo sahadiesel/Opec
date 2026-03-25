@@ -40,7 +40,9 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePermissions } from '@/hooks/use-permissions';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
@@ -140,11 +142,11 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Labor Cost Term Detail (รายละเอียดเงื่อนไขต้นทุน)</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{term.id}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>ลูกค้า: {customer?.name || '...'}</span>
-              </p>
+              </div>
             </div>
           </div>
           <div className="flex gap-2">
@@ -204,11 +206,23 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">วันที่เริ่มใช้ (Effective)</Label>
-                        <Input type="date" disabled={!isEditing} value={formData.effectiveDate} onChange={e => setFormData({...formData, effectiveDate: e.target.value})} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          disabled={!isEditing}
+                          value={htmlDateValueToTimestampMs(formData.effectiveDate)}
+                          onChange={(ms) => setFormData({ ...formData, effectiveDate: timestampToHtmlDateValue(ms) })}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">วันที่สิ้นสุด (Expiry)</Label>
-                        <Input type="date" disabled={!isEditing} value={formData.endDate} onChange={e => setFormData({...formData, endDate: e.target.value})} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          disabled={!isEditing}
+                          value={htmlDateValueToTimestampMs(formData.endDate)}
+                          onChange={(ms) => setFormData({ ...formData, endDate: timestampToHtmlDateValue(ms) })}
+                          allowClear={isEditing}
+                          onClear={() => setFormData({ ...formData, endDate: '' })}
+                        />
                       </div>
                     </div>
                     {isEditing && (

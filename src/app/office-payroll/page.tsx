@@ -21,7 +21,9 @@ import {
   Loader2,
   ShieldAlert
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -195,11 +197,19 @@ export default function OfficePayrollPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่เริ่ม (Period Start)</Label>
-                  <Input type="date" value={newRun.payrollPeriodStart} onChange={e => setNewRun({...newRun, payrollPeriodStart: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-10"
+                    value={htmlDateValueToTimestampMs(newRun.payrollPeriodStart)}
+                    onChange={(ms) => setNewRun({ ...newRun, payrollPeriodStart: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่สิ้นสุด (Period End)</Label>
-                  <Input type="date" value={newRun.payrollPeriodEnd} onChange={e => setNewRun({...newRun, payrollPeriodEnd: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-10"
+                    value={htmlDateValueToTimestampMs(newRun.payrollPeriodEnd)}
+                    onChange={(ms) => setNewRun({ ...newRun, payrollPeriodEnd: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>หมายเหตุ</Label>

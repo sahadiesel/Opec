@@ -44,6 +44,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
+import { formatDateThaiBE, formatDateRangeThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 
 type ContractChangeLog = {
   id: string;
@@ -655,7 +657,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         const label = labels[key] || key;
         const formattedValue =
           (key === 'startDate' || key === 'endDate') && typeof value === 'number'
-            ? new Date(value).toLocaleDateString('th-TH')
+            ? formatDateThaiBE(value)
             : String(value ?? '-');
         return `${label}: ${formattedValue}`;
       });
@@ -668,7 +670,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const formatValueByKey = (key: string, value: any) => {
     if (value === undefined || value === null || value === '') return '-';
     if ((key === 'startDate' || key === 'endDate') && typeof value === 'number') {
-      return new Date(value).toLocaleDateString('th-TH');
+      return formatDateThaiBE(value);
     }
     if ((key === 'sellRate' || key === 'costBaseline') && typeof value === 'number') {
       return value.toLocaleString();
@@ -799,11 +801,19 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>วันที่เริ่มสัญญา</Label>
-                      <Input type="date" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={isEditing ? new Date(editedMC.startDate || 0).toISOString().split('T')[0] : new Date(contract.startDate).toISOString().split('T')[0]} onChange={e => setEditedMC({...editedMC, startDate: new Date(e.target.value).getTime()})} />
+                      <DatePickerThaiBE
+                        disabled={!isEditing || !isPendingContract || isSupplementalContract}
+                        value={isEditing ? editedMC.startDate ?? contract.startDate : contract.startDate}
+                        onChange={(ts) => setEditedMC({ ...editedMC, startDate: ts })}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>วันที่สิ้นสุดสัญญา</Label>
-                      <Input type="date" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={isEditing ? new Date(editedMC.endDate || 0).toISOString().split('T')[0] : new Date(contract.endDate).toISOString().split('T')[0]} onChange={e => setEditedMC({...editedMC, endDate: new Date(e.target.value).getTime()})} />
+                      <DatePickerThaiBE
+                        disabled={!isEditing || !isPendingContract || isSupplementalContract}
+                        value={isEditing ? editedMC.endDate ?? contract.endDate : contract.endDate}
+                        onChange={(ts) => setEditedMC({ ...editedMC, endDate: ts })}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -1185,7 +1195,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           </div>
                         </TableCell>
                         <TableCell className="text-xs">
-                          {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
+                          {formatDateRangeThaiBE(po.startDate, po.endDate)}
                         </TableCell>
                         <TableCell>
                           <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
@@ -1229,7 +1239,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <TableBody>
                     {changeLogs?.map((log) => (
                       <TableRow key={log.id}>
-                        <TableCell className="text-xs whitespace-nowrap">{new Date(log.eventAt).toLocaleString('th-TH')}</TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">{formatDateTimeThaiBE(log.eventAt)}</TableCell>
                         <TableCell className="text-sm font-medium">{log.actorName || '-'}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="text-[10px]">{log.actionType}</Badge>

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -45,7 +46,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where, updateDoc } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, addDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   PurchaseOrder, 
@@ -59,7 +60,8 @@ import {
   Worker,
   SalesContractTerm,
   LaborCostContractTerm,
-  RateCondition
+  RateCondition,
+  Quotation
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -119,6 +121,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const [editedPO, setEditedPO] = useState<Partial<PurchaseOrder>>({});
 
   const [isAddLineOpen, setIsAddLineOpen] = useState(false);
+  const [isAddingLine, setIsAddingLine] = useState(false);
   const [newLine, setNewLine] = useState<Partial<POLine>>({ 
     quantity: 1,
     status: 'active',
@@ -143,7 +146,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   }, [po]);
 
   const isContractBasedPO = (po?.poType || 'contract') === 'contract';
-  const isLinkedContractActive = !isContractBasedPO || contract?.status === 'active';
+  const isLinkedContractActive = isContractBasedPO && contract?.status === 'active';
+  const isQuotationAccepted =
+    !isContractBasedPO &&
+    !!po?.quotationId &&
+    !!quotation &&
+    (quotation.status === 'sent' || quotation.status === 'accepted');
+  /** พร้อมเพิ่ม PO Line / Wave: สายสัญญา = สัญญา active | สายใบเสนอราคา = sent/accepted */
+  const isLinkedSourceReady = isContractBasedPO ? isLinkedContractActive : isQuotationAccepted;
 
   const handleSaveMaster = () => {
     if (!poRef || !currentUser) return;
@@ -165,8 +175,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูล Customer PO ถูกอัปเดตแล้ว" });
   };
 
-  const handleAddLine = () => {
-    if (!poLinesQuery || !newLine.positionId || !currentUser) return;
+  const handleAddLine = async () => {
+    if (!poLinesQuery || !newLine.positionId || !currentUser || !firestore) return;
+
+    if (!isLinkedSourceReady) {
+      toast({
+        variant: 'destructive',
+        title: 'เอกสารต้นทางยังไม่พร้อม',
+        description: isContractBasedPO
+          ? 'ต้องเปิดสัญญาหลักเป็น Active ก่อนเพิ่ม PO Line'
+          : 'ใบเสนอราคาต้องเป็นสถานะส่งแล้วหรือยอมรับแล้ว (sent/accepted) ก่อนเพิ่ม PO Line',
+      });
+      return;
+    }
 
     let sellRateSnapshot = Number(newLine.sellRateSnapshot) || 0;
     let costBaselineSnapshot = Number(newLine.costBaselineSnapshot) || 0;
@@ -174,10 +195,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     let overtimeRuleSnapshot = newLine.overtimeRuleSnapshot || '1.5x of Hourly Rate';
 
     if (isContractBasedPO) {
-      if (!isLinkedContractActive) {
-        toast({ variant: "destructive", title: "สัญญายังไม่ Active", description: "ต้องเปิดสัญญาเป็น Active ก่อนเปิด/แก้ PO ตามสัญญา" });
-        return;
-      }
       const rate = rates?.find(r => r.positionId === newLine.positionId);
       if (!rate) {
         toast({ variant: "destructive", title: "ไม่พบราคาในสัญญา", description: "ตำแหน่งนี้ยังไม่มีในสัญญาหลัก กรุณาเพิ่มในสัญญาก่อน" });
@@ -189,44 +206,113 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       overtimeRuleSnapshot = rate.overtimeRule || '1.5x of Hourly Rate';
     }
 
-    addDocumentNonBlocking(poLinesQuery, {
-      poId: id,
-      positionId: newLine.positionId,
-      quantity: Number(newLine.quantity) || 1,
-      startDate: newLine.startDate || po?.startDate || Date.now(),
-      endDate: newLine.endDate || po?.endDate || Date.now(),
-      sellRateSnapshot,
-      costBaselineSnapshot,
-      billingUnitSnapshot,
-      overtimeRuleSnapshot,
-      status: 'active'
-    });
+    setIsAddingLine(true);
+    try {
+      const lineRef = await addDoc(poLinesQuery, {
+        poId: id,
+        positionId: newLine.positionId,
+        quantity: Number(newLine.quantity) || 1,
+        startDate: newLine.startDate || po?.startDate || Date.now(),
+        endDate: newLine.endDate || po?.endDate || Date.now(),
+        sellRateSnapshot,
+        costBaselineSnapshot,
+        billingUnitSnapshot,
+        overtimeRuleSnapshot,
+        status: 'active'
+      });
+      const lineId = lineRef.id;
 
-    // Audit Log
-    writeAuditLog(firestore, currentUser, {
-      actionType: 'CREATE',
-      entityType: 'POLine',
-      entityId: 'new_line',
-      entityLabel: newLine.positionId,
-      sourceModule: 'commercial',
-      purchaseOrderId: id,
-      afterSummary: `Added PO line for ${newLine.positionId} x ${newLine.quantity}`
-    });
-    
-    setIsAddLineOpen(false);
-    setNewLine({
-      quantity: 1,
-      status: 'active',
-      sellRateSnapshot: 0,
-      costBaselineSnapshot: 0,
-      billingUnitSnapshot: 'daily',
-      overtimeRuleSnapshot: '1.5x of Hourly Rate',
-    });
-    toast({ title: "เพิ่ม PO Line สำเร็จ" });
+      if (isContractBasedPO) {
+        const { code: waveNo } = await generateNextDocumentCode(firestore, 'wave', { actor: currentUser.displayName });
+        const tsStart = newLine.startDate || po?.startDate || Date.now();
+        const tsEnd = newLine.endDate || po?.endDate || Date.now();
+        try {
+          await addDoc(collection(firestore, 'waves'), {
+            waveCode: waveNo,
+            poId: id,
+            poLineId: lineId,
+            customerId: po?.customerId || '',
+            projectName: po?.projectName || po?.title || '',
+            siteLocation: '',
+            rotationPattern: '28/28',
+            startDate: new Date(tsStart).toISOString().split('T')[0],
+            endDate: new Date(tsEnd).toISOString().split('T')[0],
+            status: 'PLANNING',
+            plannedWorkers: Number(newLine.quantity) || 1,
+            assignedWorkers: 0,
+            notes: 'Auto-created with PO Line',
+            createdAt: Date.now(),
+            createdBy: currentUser.id,
+            updatedAt: Date.now(),
+            updatedBy: currentUser.id,
+          });
+          toast({
+            title: 'เพิ่ม PO Line สำเร็จ',
+            description: 'สร้าง Wave แรกสำหรับบรรทัดนี้แล้ว (เพิ่มเวฟถัดไปได้จากเมนู Waves)',
+          });
+        } catch (waveErr) {
+          console.error(waveErr);
+          toast({
+            variant: 'destructive',
+            title: 'สร้าง Wave อัตโนมัติไม่สำเร็จ',
+            description: 'บันทึก PO Line แล้ว แต่สร้าง Wave แรกไม่สำเร็จ กรุณาสร้าง Wave จากเมนู Waves',
+          });
+        }
+      } else {
+        toast({
+          title: 'เพิ่ม PO Line สำเร็จ',
+          description:
+            'สายใบเสนอราคา (ขายสินค้า/บริการครั้งเดียว) ไม่ใช้ Wave หรือมอบหมายคนงาน — หลังส่งของ/ปิดงานให้ไปออกใบวางบิลจาก PO',
+        });
+      }
+
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'CREATE',
+        entityType: 'POLine',
+        entityId: lineId,
+        entityLabel: newLine.positionId,
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: `Added PO line for ${newLine.positionId} x ${newLine.quantity}`
+      });
+
+      setIsAddLineOpen(false);
+      setNewLine({
+        quantity: 1,
+        status: 'active',
+        sellRateSnapshot: 0,
+        costBaselineSnapshot: 0,
+        billingUnitSnapshot: 'daily',
+        overtimeRuleSnapshot: '1.5x of Hourly Rate',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึก PO Line ได้' });
+    } finally {
+      setIsAddingLine(false);
+    }
   };
 
   const handleCreateSalesTerm = async () => {
     if (!firestore || !currentUser || !po) return;
+    if (!isLinkedSourceReady) {
+      toast({
+        variant: 'destructive',
+        title: 'เอกสารต้นทางยังไม่พร้อม',
+        description: isContractBasedPO
+          ? 'ต้องเปิดสัญญาหลักเป็น Active ก่อนสร้าง Sales Term'
+          : 'ใบเสนอราคาต้องเป็นสถานะ sent/accepted ก่อนสร้าง Sales Term',
+      });
+      return;
+    }
+    if (isContractBasedPO && !po.contractId) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'PO ไม่ได้ผูกสัญญาหลัก' });
+      return;
+    }
+    if (!isContractBasedPO && !po.quotationId) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'PO ไม่ได้ผูกใบเสนอราคา' });
+      return;
+    }
     setIsCreatingSalesTerm(true);
     try {
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'sales_term', { actor: currentUser.displayName });
@@ -236,8 +322,13 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         contractNo: finalNo,
         title: `Sales Terms for ${po.poCode}`,
         customerId: po.customerId,
-        mainContractId: po.contractId,
+        mainContractId: isContractBasedPO ? (po.contractId || '') : '',
+        quotationId: !isContractBasedPO ? (po.quotationId || '') : undefined,
         purchaseOrderId: po.id,
+        vatPercent:
+          !isContractBasedPO && quotation != null
+            ? quotation.taxPercent
+            : Number(newSalesTerm.vatPercent ?? 7),
         effectiveDate: new Date(po.startDate).toISOString().split('T')[0],
         endDate: new Date(po.endDate).toISOString().split('T')[0],
         createdBy: currentUser.displayName,
@@ -313,7 +404,16 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               </div>
               <p className="text-muted-foreground flex items-center gap-4 mt-1 text-sm">
                 <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
-                <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '...'}</span>
+                {isContractBasedPO ? (
+                  <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '—'}</span>
+                ) : (
+                  <span className="flex items-center gap-1 text-xs">
+                    <FileText className="h-3.5 w-3.5" /> ใบเสนอราคา: {quotation?.quotationNo || po.quotationId || '—'}
+                    {quotation && (
+                      <Badge variant="outline" className="text-[10px] ml-1">{quotation.status}</Badge>
+                    )}
+                  </span>
+                )}
                 {po.customerPONumber && (
                   <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> Customer PO: {po.customerPONumber}</span>
                 )}
@@ -370,11 +470,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่เริ่มงานตาม PO</Label>
-                      <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.startDate || 0).toISOString().split('T')[0] : new Date(po.startDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, startDate: new Date(e.target.value).getTime()})} />
+                      <DatePickerThaiBE
+                        disabled={!isEditing}
+                        value={isEditing ? (editedPO.startDate ?? po.startDate) : po.startDate}
+                        onChange={(ms) => setEditedPO({ ...editedPO, startDate: ms })}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่สิ้นสุดงานตาม PO</Label>
-                      <Input type="date" disabled={!isEditing} value={isEditing ? new Date(editedPO.endDate || 0).toISOString().split('T')[0] : new Date(po.endDate).toISOString().split('T')[0]} onChange={e => setEditedPO({...editedPO, endDate: new Date(e.target.value).getTime()})} />
+                      <DatePickerThaiBE
+                        disabled={!isEditing}
+                        value={isEditing ? (editedPO.endDate ?? po.endDate) : po.endDate}
+                        onChange={(ms) => setEditedPO({ ...editedPO, endDate: ms })}
+                      />
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -403,8 +511,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <div>
                   <CardTitle>รายการจองโควต้ากำลังคน (PO Lines)</CardTitle>
                   <CardDescription>กำหนดจำนวนคนงานรายตำแหน่งและบันทึกอัตราราคา Snapshot</CardDescription>
-                  {!isLinkedContractActive && (
-                    <Badge variant="destructive" className="mt-2">สัญญาหลักยัง Pending - ยังไม่ควรเปิดงานต่อ</Badge>
+                  {!isLinkedSourceReady && (
+                    <Badge variant="destructive" className="mt-2">
+                      {isContractBasedPO
+                        ? 'สัญญาหลักยังไม่ Active — ยังไม่ควรเพิ่ม PO Line / Wave'
+                        : 'ใบเสนอราคายังไม่พร้อม — ต้องเป็นสถานะ sent หรือ accepted ก่อนเพิ่ม PO Line / Wave'}
+                    </Badge>
                   )}
                 </div>
                 <Dialog open={isAddLineOpen} onOpenChange={setIsAddLineOpen}>
@@ -414,7 +526,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <DialogContent className="max-w-md">
                     <DialogHeader>
                       <DialogTitle>เพิ่มรายการจองกำลังคน</DialogTitle>
-                      <DialogDescription>เลือกตำแหน่งงานจากสัญญาที่เกี่ยวข้องและระบุจำนวน</DialogDescription>
+                      <DialogDescription>
+                        {isContractBasedPO
+                          ? 'เลือกตำแหน่งจากสัญญาหลักและระบุจำนวน (ราคาดึงจากสัญญา)'
+                          : 'เลือกตำแหน่งและระบุจำนวน — ราคาขาย/ต้นทุนระบุตามที่ตกลงจากใบเสนอราคา'}
+                      </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
@@ -454,11 +570,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
                           <Label className="font-bold text-xs">วันที่เริ่ม (รายบรรทัด)</Label>
-                          <Input type="date" value={newLine.startDate ? new Date(newLine.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewLine({...newLine, startDate: new Date(e.target.value).getTime()})} />
+                          <DatePickerThaiBE
+                            value={newLine.startDate}
+                            onChange={(ms) => setNewLine({ ...newLine, startDate: ms })}
+                          />
                         </div>
                         <div className="grid gap-2">
                           <Label className="font-bold text-xs">วันที่สิ้นสุด (รายบรรทัด)</Label>
-                          <Input type="date" value={newLine.endDate ? new Date(newLine.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewLine({...newLine, endDate: new Date(e.target.value).getTime()})} />
+                          <DatePickerThaiBE
+                            value={newLine.endDate}
+                            onChange={(ms) => setNewLine({ ...newLine, endDate: ms })}
+                          />
                         </div>
                       </div>
                     </div>
@@ -467,13 +589,21 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       <Button
                         onClick={handleAddLine}
                         disabled={
-                          !newLine.positionId
+                          isAddingLine
+                          || !newLine.positionId
                           || !newLine.quantity
-                          || (isContractBasedPO && !isLinkedContractActive)
+                          || !isLinkedSourceReady
                         }
                         className="bg-primary font-bold px-8"
                       >
-                        เพิ่มรายการจอง
+                        {isAddingLine ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2 inline" />
+                            กำลังบันทึก...
+                          </>
+                        ) : (
+                          'เพิ่มรายการจอง'
+                        )}
                       </Button>
                     </DialogFooter>
                   </DialogContent>
@@ -557,10 +687,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <CardHeader className="flex flex-row items-center justify-between border-b pb-4 bg-blue-50/20">
                   <div>
                     <CardTitle className="text-lg flex items-center gap-2 text-blue-800"><TrendingUp className="h-5 w-5" /> เงื่อนไขการขาย (Revenue Terms)</CardTitle>
-                    <CardDescription>นโยบายการวางบิลและรายรับ สำหรับใบสั่งซื้อนี้</CardDescription>
+                    <CardDescription>
+                      {isContractBasedPO
+                        ? 'นโยบายการวางบิลและรายรับ สำหรับใบสั่งซื้อนี้ (สายสัญญา)'
+                        : 'นโยบายการวางบิลและรายรับ สำหรับใบสั่งซื้อนี้ (สายใบเสนอราคา — ผูกกับ QT ที่อ้างอิง)'}
+                    </CardDescription>
                   </div>
                   {salesTerms?.length === 0 && (
-                    <Button variant="outline" className="gap-2 border-blue-600 text-blue-700 hover:bg-blue-50 font-bold" onClick={handleCreateSalesTerm} disabled={isCreatingSalesTerm}>
+                    <Button
+                      variant="outline"
+                      className="gap-2 border-blue-600 text-blue-700 hover:bg-blue-50 font-bold"
+                      onClick={handleCreateSalesTerm}
+                      disabled={isCreatingSalesTerm || !isLinkedSourceReady}
+                    >
                       {isCreatingSalesTerm ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                       เปิดใช้ Sales Term
                     </Button>
@@ -571,7 +710,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <div key={term.id} className="space-y-6">
                       <div className="grid grid-cols-2 gap-6">
                         <div className="space-y-1">
-                          <Label className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">เลขที่สัญญาย่อย:</Label>
+                          <Label className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                            {term.mainContractId ? 'เลขที่สัญญาย่อย:' : 'เลขที่เอกสาร (Sales Term):'}
+                          </Label>
                           <p className="font-mono text-sm font-bold text-primary flex items-center gap-2">
                             <Scale className="h-3 w-3 text-blue-600" /> {term.contractNo}
                           </p>
@@ -677,6 +818,25 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
           </TabsContent>
 
           <TabsContent value="assignments" className="mt-6">
+            {!isContractBasedPO ? (
+              <Card className="border-dashed border-2 border-muted">
+                <CardHeader>
+                  <CardTitle>ไม่ใช้มอบหมายคนงาน / Wave</CardTitle>
+                  <CardDescription>
+                    PO จากใบเสนอราคาในที่นี้หมายถึงขายสินค้าหรือบริการครั้งเดียวจบ (ไม่ผูก payroll / ไม่เปิด Wave)
+                    หลังส่งมอบตาม PO ให้ไปที่ใบวางบิล → ใบกำกับภาษี → รับเงิน
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2">
+                  <Button variant="outline" asChild>
+                    <Link href="/billing-notes">ใบวางบิล (Billing Notes)</Link>
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/tax-invoices">ใบกำกับภาษี</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
             <Card>
               <CardHeader className="border-b bg-muted/5">
                 <CardTitle>รายชื่อคนงานที่ได้รับมอบหมาย (Project Assignments)</CardTitle>
@@ -730,8 +890,24 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       })
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">
-                          ยังไม่มีการมอบหมายคนงานใน PO นี้ (กรุณาไปที่เมนู 'การมอบหมาย' เพื่อเพิ่มคนงานเข้า PO Lines)
+                        <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
+                          <div className="max-w-xl mx-auto space-y-3 text-sm not-italic">
+                            <p>
+                              ยังไม่มีการมอบหมายคนงานใน PO นี้ การมอบหมายในระบบอ้างอิง <span className="font-semibold text-foreground">Wave</span> ที่ผูกกับ PO Line ของ PO นี้
+                              ไม่ได้เพิ่มคนเข้า PO Line โดยตรงจากแท็บนี้
+                            </p>
+                            <p className="text-xs">
+                              (1) สร้างหรือเลือก Wave โดยระบุ PO และ PO Line ที่ตรงกัน (2) ไปที่การมอบหมาย เลือก Wave แล้วมอบหมายคนงาน
+                            </p>
+                            <div className="flex flex-wrap justify-center gap-2 pt-1">
+                              <Button variant="outline" size="sm" asChild>
+                                <Link href="/waves">Waves (เวฟ)</Link>
+                              </Button>
+                              <Button variant="outline" size="sm" asChild>
+                                <Link href="/assignments">Assignments (การมอบหมาย)</Link>
+                              </Button>
+                            </div>
+                          </div>
                         </TableCell>
                       </TableRow>
                     )}
@@ -739,6 +915,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </Table>
               </CardContent>
             </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

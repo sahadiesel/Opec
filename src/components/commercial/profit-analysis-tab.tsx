@@ -82,7 +82,11 @@ export function ProfitAnalysisTab({ po, poLines, salesTerms, costTerms, allCondi
           <h3 className="text-xl font-bold text-primary flex items-center gap-2">
             <Calculator className="h-6 w-6" /> ประมาณการกำไรและต้นทุน (Profit Estimation)
           </h3>
-          <p className="text-sm text-muted-foreground italic">คำนวณจากโควต้าใน PO Lines และเงื่อนไขสัญญาเชิงพาณิชย์ ณ ปัจจุบัน</p>
+          <p className="text-sm text-muted-foreground italic">
+            {po.poType === 'quotation'
+              ? 'คำนวณจากโควต้าใน PO Lines และเงื่อนไขการขายที่ผูก PO (สายใบเสนอราคา) ณ ปัจจุบัน'
+              : 'คำนวณจากโควต้าใน PO Lines และเงื่อนไขสัญญาเชิงพาณิชย์ ณ ปัจจุบัน'}
+          </p>
         </div>
         <Button onClick={handleRunAnalysis} disabled={isCalculating} className="gap-2 bg-primary font-bold shadow-md h-11 px-6">
           {isCalculating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}

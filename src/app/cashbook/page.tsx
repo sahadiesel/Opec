@@ -22,7 +22,9 @@ import {
   Info,
   Loader2
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { CashbookEntry, User, BankAccount } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -68,7 +70,7 @@ export default function CashbookPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newEntry, setNewEntry] = useState<Partial<CashbookEntry>>({
     entryNo: getPreviewPattern('cashbook_entry'),
-    entryDate: new Date().toISOString().split('T')[0],
+    entryDate: timestampToHtmlDateValue(Date.now()),
     direction: 'OUT',
     paymentMethod: 'TRANSFER',
     amount: 0,
@@ -199,7 +201,11 @@ export default function CashbookPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ทำรายการ</Label>
-                  <Input type="date" value={newEntry.entryDate} onChange={e => setNewEntry({...newEntry, entryDate: e.target.value})} className="h-11" />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newEntry.entryDate)}
+                    onChange={(ms) => setNewEntry({ ...newEntry, entryDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>บัญชีธนาคาร (Bank Account)</Label>

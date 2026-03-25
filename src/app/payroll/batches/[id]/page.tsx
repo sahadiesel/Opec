@@ -65,11 +65,11 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Payroll Settlement Detail</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{batch.id}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>Period: {period?.label || '...'}</span>
-              </p>
+              </div>
             </div>
           </div>
           <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4' : 'py-1.5 px-4'}>

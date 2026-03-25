@@ -42,7 +42,9 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
@@ -123,23 +125,39 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
     toast({ title: "ลบรายการสำเร็จ" });
   };
 
-  const recalculateTotals = (currentLines: BillingNoteLine[]) => {
-    if (!noteRef) return;
+  const recalculateTotals = (currentLines: BillingNoteLine[], withholdingOverride?: number) => {
+    if (!noteRef || !note) return;
     const amountBeforeTax = currentLines.reduce((sum, l) => sum + Number(l.amount), 0);
     const vatAmount = amountBeforeTax * 0.07;
-    const netAmount = amountBeforeTax + vatAmount;
-    
+    const wht =
+      withholdingOverride !== undefined
+        ? withholdingOverride
+        : Number(note.withholdingTaxAmount) || 0;
+    const netAmount = Math.max(0, amountBeforeTax + vatAmount - wht);
+
     updateDoc(noteRef, {
       amountBeforeTax,
       vatAmount,
+      withholdingTaxAmount: wht,
       netAmount,
       updatedAt: Date.now()
     });
   };
 
   const handleSaveHeader = () => {
-    if (!noteRef) return;
-    updateDocumentNonBlocking(noteRef, { ...editedNote, updatedAt: Date.now() });
+    if (!noteRef || !lines) return;
+    const amountBeforeTax = lines.reduce((sum, l) => sum + Number(l.amount), 0);
+    const vatAmount = amountBeforeTax * 0.07;
+    const wht = Number(editedNote.withholdingTaxAmount) || 0;
+    const netAmount = Math.max(0, amountBeforeTax + vatAmount - wht);
+    updateDocumentNonBlocking(noteRef, {
+      ...editedNote,
+      amountBeforeTax,
+      vatAmount,
+      withholdingTaxAmount: wht,
+      netAmount,
+      updatedAt: Date.now(),
+    });
     setIsEditingEditingHeader(false);
     toast({ title: "บันทึกข้อมูลสำเร็จ" });
   };
@@ -286,11 +304,40 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                       </div>
                       <div className="space-y-2">
                         <Label>วันที่วางบิล</Label>
-                        <Input type="date" disabled={!isEditingHeader} value={editedNote.billingDate} onChange={e => setEditedNote({...editedNote, billingDate: e.target.value})} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          disabled={!isEditingHeader}
+                          value={htmlDateValueToTimestampMs(editedNote.billingDate)}
+                          onChange={(ms) => setEditedNote({ ...editedNote, billingDate: timestampToHtmlDateValue(ms) })}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>วันที่ครบกำหนด</Label>
-                        <Input type="date" disabled={!isEditingHeader} value={editedNote.dueDate} onChange={e => setEditedNote({...editedNote, dueDate: e.target.value})} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          disabled={!isEditingHeader}
+                          value={htmlDateValueToTimestampMs(editedNote.dueDate)}
+                          onChange={(ms) => setEditedNote({ ...editedNote, dueDate: timestampToHtmlDateValue(ms) })}
+                        />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <Label>ภาษีหัก ณ ที่จ่าย (บาท) — หักจากยอดรวมหลัง VAT</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          disabled={!isEditingHeader}
+                          value={editedNote.withholdingTaxAmount ?? note.withholdingTaxAmount ?? 0}
+                          onChange={(e) =>
+                            setEditedNote({
+                              ...editedNote,
+                              withholdingTaxAmount: parseFloat(e.target.value) || 0,
+                            })
+                          }
+                        />
+                        <p className="text-[10px] text-muted-foreground">
+                          ใช้สอดคล้องกับใบเสนอราคา/สัญญาและการตัดลูกหนี้เมื่อรับเงิน + หนังสือหัก ณ
+                        </p>
                       </div>
                     </div>
                     {isEditingHeader && (
@@ -316,6 +363,15 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                       <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม (7%)</span>
                       <span className="font-bold">{note.currency} {note.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
+                    {(Number(note.withholdingTaxAmount) || 0) > 0 && (
+                      <div className="flex justify-between items-center text-sm border-b pb-2 text-amber-800">
+                        <span>หัก ณ ที่จ่าย</span>
+                        <span className="font-bold">
+                          − {note.currency}{' '}
+                          {Number(note.withholdingTaxAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center text-lg pt-2">
                       <span className="font-black text-primary uppercase">ยอดสุทธิ</span>
                       <span className="font-black text-2xl text-primary">{note.currency} {note.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>

@@ -56,7 +56,9 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -385,11 +387,21 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="font-bold text-xs">วันที่มีผล (Start)</Label>
-                  <Input type="date" value={formData.effectiveDate} onChange={e => setFormData({ ...formData, effectiveDate: e.target.value })} />
+                  <DatePickerThaiBE
+                    className="h-10"
+                    value={htmlDateValueToTimestampMs(formData.effectiveDate)}
+                    onChange={(ms) => setFormData({ ...formData, effectiveDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold text-xs">วันสิ้นสุด (End)</Label>
-                  <Input type="date" value={formData.endDate || ''} onChange={e => setFormData({ ...formData, endDate: e.target.value })} />
+                  <DatePickerThaiBE
+                    className="h-10"
+                    value={htmlDateValueToTimestampMs(formData.endDate)}
+                    onChange={(ms) => setFormData({ ...formData, endDate: timestampToHtmlDateValue(ms) })}
+                    allowClear
+                    onClear={() => setFormData({ ...formData, endDate: '' })}
+                  />
                 </div>
               </div>
             </div>

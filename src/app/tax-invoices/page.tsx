@@ -18,7 +18,9 @@ import {
   Info,
   Loader2
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -70,7 +72,7 @@ export default function TaxInvoicesPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newInvoice, setNewInvoice] = useState<Partial<TaxInvoice>>({
     taxInvoiceNo: getPreviewPattern('tax_invoice'),
-    issueDate: new Date().toISOString().split('T')[0],
+    issueDate: timestampToHtmlDateValue(Date.now()),
     currency: 'THB',
     status: 'DRAFT',
     notes: ''
@@ -100,6 +102,7 @@ export default function TaxInvoicesPage() {
         customerId: sourceNote.customerId,
         taxableAmount: sourceNote.amountBeforeTax,
         vatAmount: sourceNote.vatAmount,
+        withholdingTaxAmount: sourceNote.withholdingTaxAmount || 0,
         currency: sourceNote.currency || 'THB',
         totalAmount: sourceNote.netAmount,
         createdAt: Date.now(),
@@ -207,7 +210,11 @@ export default function TaxInvoicesPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ออกเอกสาร (Issue Date)</Label>
-                  <Input type="date" value={newInvoice.issueDate} onChange={e => setNewInvoice({...newInvoice, issueDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newInvoice.issueDate)}
+                    onChange={(ms) => setNewInvoice({ ...newInvoice, issueDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
               </div>
               <DialogFooter>

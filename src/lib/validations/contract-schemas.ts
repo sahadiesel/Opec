@@ -4,27 +4,35 @@ import { z } from 'zod';
 /**
  * Zod validation schema for SalesContractTerm
  */
-export const SalesContractTermSchema = z.object({
-  id: z.string().optional(),
-  customerId: z.string().min(1, 'Customer ID is required'),
-  mainContractId: z.string().min(1, 'Main Contract ID is required'),
-  purchaseOrderId: z.string().min(1, 'Purchase Order ID is required'),
-  title: z.string().min(1, 'Title is required'),
-  contractNo: z.string().min(1, 'Contract Number is required'),
-  status: z.enum(['DRAFT', 'ACTIVE', 'EXPIRED', 'CLOSED', 'CANCELLED']),
-  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
-  currency: z.string().default('THB'),
-  billingCycle: z.string().min(1, 'Billing Cycle is required'),
-  paymentTermsDays: z.number().min(0),
-  vatPercent: z.number().min(0),
-  withholdingTaxPercent: z.number().min(0),
-  notes: z.string().optional(),
-  createdBy: z.string().optional(),
-  updatedBy: z.string().optional(),
-  createdAt: z.number().optional(),
-  updatedAt: z.number().optional(),
-});
+export const SalesContractTermSchema = z
+  .object({
+    id: z.string().optional(),
+    customerId: z.string().min(1, 'Customer ID is required'),
+    mainContractId: z.string().optional().default(''),
+    quotationId: z.string().optional(),
+    purchaseOrderId: z.string().min(1, 'Purchase Order ID is required'),
+    title: z.string().min(1, 'Title is required'),
+    contractNo: z.string().min(1, 'Contract Number is required'),
+    status: z.enum(['DRAFT', 'ACTIVE', 'EXPIRED', 'CLOSED', 'CANCELLED']),
+    effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+    currency: z.string().default('THB'),
+    billingCycle: z.string().min(1, 'Billing Cycle is required'),
+    paymentTermsDays: z.number().min(0),
+    vatPercent: z.number().min(0),
+    withholdingTaxPercent: z.number().min(0),
+    notes: z.string().optional(),
+    createdBy: z.string().optional(),
+    updatedBy: z.string().optional(),
+    createdAt: z.number().optional(),
+    updatedAt: z.number().optional(),
+  })
+  .refine(
+    (d) =>
+      (d.mainContractId != null && d.mainContractId.length > 0) ||
+      (d.quotationId != null && d.quotationId.length > 0),
+    { message: 'ต้องผูกกับสัญญาหลักหรือใบเสนอราคาอย่างใดอย่างหนึ่ง', path: ['quotationId'] }
+  );
 
 /**
  * Zod validation schema for LaborCostContractTerm

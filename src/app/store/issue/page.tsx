@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -25,15 +25,38 @@ import { useFirestore, useCollection, useMemoFirebase, useDoc, useUser } from '@
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, query, where, getDocs, updateDoc, increment, writeBatch } from 'firebase/firestore';
-import { StoreItem, Worker, Assignment, Wave, Position, User as AppUser, PositionPPERequirement, PositionToolRequirement } from '@/lib/types';
+import {
+  StoreItem,
+  Worker,
+  Assignment,
+  Wave,
+  Position,
+  User as AppUser,
+  PositionPPERequirement,
+  PositionToolRequirement,
+  OfficeStaff,
+} from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
@@ -48,10 +71,15 @@ export default function IssueItemsPage() {
 
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedAsgnId, setSelectedAsgnId] = useState('');
-  const [issueDate, setIssueDate] = useState(new Date().toISOString().split('T')[0]);
+  const [issueDate, setIssueDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [notes, setNotes] = useState('');
   const [issueList, setIssueList] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [issueMode, setIssueMode] = useState<'field' | 'office'>('field');
+  const [selectedOfficeStaffId, setSelectedOfficeStaffId] = useState('');
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [positionEditDialogOpen, setPositionEditDialogOpen] = useState(false);
+  const [positionEditReason, setPositionEditReason] = useState<'not_listed' | 'over_qty'>('not_listed');
 
   // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
   const workersQuery = useMemoFirebase(() => {
@@ -77,6 +105,12 @@ export default function IssueItemsPage() {
   const itemsQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'store_items') : null), [firestore, canAccess]);
   const { data: storeItems } = useCollection<StoreItem>(itemsQuery as any);
 
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess) return null;
+    return collection(firestore, 'office_staff');
+  }, [firestore, canAccess]);
+  const { data: officeStaffList } = useCollection<OfficeStaff>(officeStaffQuery as any);
+
   // Position Requirements State
   const [posPPE, setPosPPE] = useState<PositionPPERequirement[]>([]);
   const [posTools, setPosTools] = useState<PositionToolRequirement[]>([]);
@@ -97,70 +131,194 @@ export default function IssueItemsPage() {
     fetchPosReqs();
   }, [firestore, activeAsgn?.positionId]);
 
-  const handleAddToList = (item: StoreItem) => {
-    // RULE: Check Position Requirement
-    const isAllowedPPE = posPPE.some(p => p.itemCode === item.itemCode || p.itemName === item.itemName);
-    const isAllowedTool = posTools.some(t => t.itemCode === item.itemCode || t.itemName === item.itemName);
+  const onIssueModeChange = (v: string) => {
+    const next = v as 'field' | 'office';
+    setIssueMode(next);
+    setIssueList([]);
+    setCatalogSearch('');
+    if (next === 'office') {
+      setSelectedWorkerId('');
+      setSelectedAsgnId('');
+    } else {
+      setSelectedOfficeStaffId('');
+    }
+  };
 
-    if (!isAllowedPPE && !isAllowedTool) {
-      toast({ 
-        variant: "destructive", 
-        title: "ไม่อนุญาตให้เบิก (Unauthorized Item)", 
-        description: `อุปกรณ์รายการนี้ไม่ได้กำหนดไว้ในมาตรฐานของตำแหน่ง ${position?.positionName || 'N/A'}` 
+  const filteredCatalogForField = useMemo(() => {
+    const q = catalogSearch.trim().toLowerCase();
+    if (!storeItems) return [];
+    return storeItems.filter((i) => {
+      if (!q) return true;
+      return (
+        (i.itemName || '').toLowerCase().includes(q) ||
+        (i.itemCode || '').toLowerCase().includes(q)
+      );
+    });
+  }, [storeItems, catalogSearch]);
+
+  const handleAddToList = (item: StoreItem) => {
+    if (issueMode === 'office') {
+      if (item.currentStock <= 0) {
+        toast({
+          variant: 'destructive',
+          title: 'สินค้าหมด (Out of Stock)',
+          description: 'ไม่สามารถเบิกได้เนื่องจากสต็อกคงเหลือเป็นศูนย์',
+        });
+        return;
+      }
+      const existing = issueList.find((i) => i.itemId === item.id);
+      if (existing) {
+        setIssueList(
+          issueList.map((i) =>
+            i.itemId === item.id ? { ...i, quantity: Math.min(i.quantity + 1, item.currentStock) } : i
+          )
+        );
+        return;
+      }
+      setIssueList([
+        ...issueList,
+        {
+          itemId: item.id,
+          itemCode: item.itemCode,
+          itemName: item.itemName,
+          quantity: 1,
+          unit: item.unit,
+          remarks: '',
+        },
+      ]);
+      return;
+    }
+
+    if (!activeAsgn?.positionId) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาเลือกลูกจ้างและงานมอบหมายก่อนเบิกเครื่องมือ',
       });
       return;
     }
 
-    if (item.currentStock <= 0) {
-      toast({ variant: "destructive", title: "สินค้าหมด (Out of Stock)", description: "ไม่สามารถเบิกได้เนื่องจากสต็อกคงเหลือเป็นศูนย์" });
+    const matchPPE = posPPE.find((p) => p.itemCode === item.itemCode || p.itemName === item.itemName);
+    const matchTool = posTools.find((t) => t.itemCode === item.itemCode || t.itemName === item.itemName);
+    const allowed = !!(matchPPE || matchTool);
+
+    if (!allowed) {
+      setPositionEditReason('not_listed');
+      setPositionEditDialogOpen(true);
       return;
     }
 
-    if (issueList.some(i => i.itemId === item.id)) return;
+    const maxQty = matchPPE?.quantityDefault ?? matchTool?.quantityDefault ?? 1;
+    const existing = issueList.find((i) => i.itemId === item.id);
+    const nextTotal = (existing?.quantity ?? 0) + 1;
+    if (nextTotal > maxQty) {
+      setPositionEditReason('over_qty');
+      setPositionEditDialogOpen(true);
+      return;
+    }
 
-    setIssueList([...issueList, {
-      itemId: item.id,
-      itemCode: item.itemCode,
-      itemName: item.itemName,
-      quantity: 1,
-      unit: item.unit,
-      remarks: ''
-    }]);
+    if (item.currentStock <= 0) {
+      toast({
+        variant: 'destructive',
+        title: 'สินค้าหมด (Out of Stock)',
+        description: 'ไม่สามารถเบิกได้เนื่องจากสต็อกคงเหลือเป็นศูนย์',
+      });
+      return;
+    }
+
+    if (existing) {
+      setIssueList(
+        issueList.map((i) =>
+          i.itemId === item.id ? { ...i, quantity: Math.min(i.quantity + 1, item.currentStock, maxQty) } : i
+        )
+      );
+      return;
+    }
+
+    setIssueList([
+      ...issueList,
+      {
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        quantity: 1,
+        unit: item.unit,
+        remarks: '',
+      },
+    ]);
   };
 
   const handleConfirmIssue = async () => {
-    if (!firestore || !activeAsgn || !currentUser || issueList.length === 0) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุคนงาน งาน และรายการที่ต้องการเบิกให้ครบถ้วน" });
+    if (!firestore || !currentUser || issueList.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาเลือกผู้รับและรายการที่ต้องการเบิก',
+      });
+      return;
+    }
+
+    if (issueMode === 'office') {
+      if (!selectedOfficeStaffId) {
+        toast({
+          variant: 'destructive',
+          title: 'ข้อมูลไม่ครบ',
+          description: 'กรุณาเลือกพนักงานออฟฟิศผู้รับเครื่องมือ',
+        });
+        return;
+      }
+    } else if (!activeAsgn) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาระบุคนงาน งาน และรายการที่ต้องการเบิกให้ครบถ้วน',
+      });
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      // Atomic Sequence Generation
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'store_issue', { actor: currentUser.displayName });
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'store_issue', {
+        actor: currentUser.displayName,
+      });
 
       const batch = writeBatch(firestore);
       const issueSlipsRef = collection(firestore, 'store_issue_slips');
       const newIssueRef = doc(issueSlipsRef);
 
-      // 1. Create Header
-      const headerData = {
+      const staff =
+        issueMode === 'office'
+          ? officeStaffList?.find((s) => s.id === selectedOfficeStaffId)
+          : undefined;
+
+      const headerData: Record<string, unknown> = {
         id: newIssueRef.id,
         issueNo: finalNo,
-        workerId: selectedWorkerId,
-        assignmentId: activeAsgn.id,
-        waveId: activeAsgn.waveId,
-        positionId: activeAsgn.positionId,
         issueDate,
         status: 'completed',
         notes,
         createdAt: Date.now(),
-        createdBy: currentUser.displayName
+        createdBy: currentUser.displayName,
+        issueType: issueMode,
       };
+
+      if (issueMode === 'office') {
+        headerData.officeStaffId = selectedOfficeStaffId;
+        headerData.officeStaffName = staff?.fullName || '';
+        headerData.workerId = '';
+        headerData.assignmentId = '';
+        headerData.waveId = '';
+        headerData.positionId = '';
+      } else {
+        headerData.workerId = selectedWorkerId;
+        headerData.assignmentId = activeAsgn!.id;
+        headerData.waveId = activeAsgn!.waveId;
+        headerData.positionId = activeAsgn!.positionId;
+      }
+
       batch.set(newIssueRef, headerData);
 
-      // 2. Process Items
       const itemsSubRef = collection(newIssueRef, 'items');
       for (const item of issueList) {
         const itemDocRef = doc(itemsSubRef);
@@ -169,36 +327,45 @@ export default function IssueItemsPage() {
           itemName: item.itemName,
           quantity: item.quantity,
           unit: item.unit,
-          remarks: item.remarks
+          remarks: item.remarks,
         });
 
-        // Update Master Stock
         const masterItemRef = doc(firestore, 'store_items', item.itemId);
         batch.update(masterItemRef, { currentStock: increment(-item.quantity) });
 
-        // Log Transaction
         const txRef = doc(collection(firestore, 'store_transactions'));
-        batch.set(txRef, {
+        const txPayload: Record<string, unknown> = {
           itemId: item.itemId,
           transactionType: 'ISSUE',
           quantity: item.quantity,
-          workerId: selectedWorkerId,
-          assignmentId: activeAsgn.id,
-          waveId: activeAsgn.waveId,
           transactionDate: issueDate,
-          notes: `Ref Slip: ${finalNo}. ${item.remarks}`,
+          notes: `Ref Slip: ${finalNo}. ${item.remarks || ''}`,
           createdAt: Date.now(),
-          createdBy: currentUser.displayName
-        });
+          createdBy: currentUser.displayName,
+          issueType: issueMode,
+        };
+
+        if (issueMode === 'office') {
+          txPayload.officeStaffId = selectedOfficeStaffId;
+          txPayload.workerId = '';
+          txPayload.assignmentId = '';
+          txPayload.waveId = '';
+        } else {
+          txPayload.workerId = selectedWorkerId;
+          txPayload.assignmentId = activeAsgn!.id;
+          txPayload.waveId = activeAsgn!.waveId;
+        }
+
+        batch.set(txRef, txPayload);
       }
 
       await batch.commit();
 
-      toast({ title: "บันทึกการเบิกสำเร็จ", description: `เลขที่ใบเบิก: ${finalNo}` });
+      toast({ title: 'บันทึกการเบิกสำเร็จ', description: `เลขที่ใบเบิก: ${finalNo}` });
       router.push('/store');
     } catch (e) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกรายการได้" });
+      toast({ variant: 'destructive', title: 'Error', description: 'ไม่สามารถบันทึกรายการได้' });
     } finally {
       setIsSubmitting(false);
     }
@@ -220,23 +387,42 @@ export default function IssueItemsPage() {
           <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
           <div className="flex-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <PackageMinus className="h-8 w-8 text-orange-600" /> เบิกอุปกรณ์ให้ลูกจ้างหน้างาน (Issue to Field Worker)
+              <PackageMinus className="h-8 w-8 text-orange-600" /> เบิกอุปกรณ์ / เครื่องมือ (Issue from Store)
             </h1>
-            <p className="text-muted-foreground text-lg">ใช้สำหรับเบิก PPE หรือเครื่องมือให้ <b>ลูกจ้างหน้างาน (Field Workforce)</b> โดยต้องผูกกับ Assignment และ Wave</p>
+            <p className="text-muted-foreground text-lg">
+              โหมดลูกจ้างหน้างาน: ผูกกับ Assignment และรายการ PPE/เครื่องมือตามตำแหน่ง — โหมดพนักงานออฟฟิศ: เบิกยืมได้โดยไม่ผูกลิสต์ตำแหน่ง
+            </p>
           </div>
         </div>
 
+        <Tabs value={issueMode} onValueChange={onIssueModeChange} className="w-full">
+          <TabsList className="grid w-full max-w-lg grid-cols-2 h-auto p-1">
+            <TabsTrigger value="field" className="py-3">ลูกจ้างหน้างาน (Field)</TabsTrigger>
+            <TabsTrigger value="office" className="py-3">พนักงานออฟฟิศ (Office)</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
         <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
           <ShieldAlert className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold uppercase tracking-wider">นโยบายการเบิกจ่ายพัสดุ (Field Issue Policy)</AlertTitle>
+          <AlertTitle className="font-bold uppercase tracking-wider">นโยบายการเบิกจ่ายพัสดุ</AlertTitle>
           <AlertDescription className="text-sm">
-            ระบบอนุญาตให้เบิกพัสดุให้เฉพาะผู้ที่มีรายชื่อในฐานข้อมูล <b>ลูกจ้างหน้างาน (Field Workers)</b> เท่านั้น พนักงานบริษัท (Office Staff) ไม่ได้รับอนุญาตให้ใช้ใบเบิกในหมวดนี้
+            {issueMode === 'field' ? (
+              <>
+                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินจำนวนที่กำหนด หากต้องการเพิ่มรายการหรือจำนวน ให้ไปแก้ไขที่เมนูตำแหน่งงาน → แท็บอุปกรณ์ (Tools)
+              </>
+            ) : (
+              <>
+                พนักงานออฟฟิศสามารถเบิกยืมเครื่องมือ/อุปกรณ์ได้จากแคตตาล็อกทั้งหมด โดยไม่ต้องอ้างอิงลิสต์ตามตำแหน่งงาน
+              </>
+            )}
           </AlertDescription>
         </Alert>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* LEFT: Context & Catalog */}
           <div className="lg:col-span-2 space-y-6">
+            {issueMode === 'field' && (
+            <>
             <Card className="shadow-md">
               <CardHeader className="border-b bg-muted/20">
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -361,6 +547,130 @@ export default function IssueItemsPage() {
                 </CardContent>
               </Card>
             )}
+
+            {issueMode === 'field' && activeAsgn && (
+              <Card className="shadow-md overflow-hidden border-dashed border-blue-200">
+                <CardHeader className="border-b bg-blue-50/50">
+                  <CardTitle className="text-lg">แคตตาล็อกทั้งหมด (กรณีต้องการเพิ่มรายการ)</CardTitle>
+                  <CardDescription>
+                    หากรายการไม่อยู่ในลิสต์ตำแหน่งหรือต้องการเกินจำนวนที่กำหนด ระบบจะถามให้ไปแก้ไขที่เมนูตำแหน่ง → แท็บ <b>อุปกรณ์ (Tools)</b>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="p-4 border-b">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="ค้นหารหัสหรือชื่ออุปกรณ์..."
+                        className="pl-9 h-11"
+                        value={catalogSearch}
+                        onChange={(e) => setCatalogSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="max-h-[320px] overflow-y-auto">
+                    <Table>
+                      <TableHeader className="bg-muted/50 sticky top-0 z-10">
+                        <TableRow>
+                          <TableHead className="font-bold">รหัส</TableHead>
+                          <TableHead className="font-bold">ชื่ออุปกรณ์</TableHead>
+                          <TableHead className="text-center font-bold">สต็อก</TableHead>
+                          <TableHead className="text-right pr-6">จัดการ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredCatalogForField.map((item) => (
+                          <TableRow key={`cat-${item.id}`}>
+                            <TableCell className="font-mono text-xs">{item.itemCode}</TableCell>
+                            <TableCell className="text-sm font-medium">{item.itemName}</TableCell>
+                            <TableCell className="text-center">{item.currentStock}</TableCell>
+                            <TableCell className="text-right pr-6">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={item.currentStock <= 0}
+                                onClick={() => handleAddToList(item)}
+                              >
+                                <Plus className="h-3 w-3 mr-1" /> เพิ่ม
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            </>
+            )}
+
+            {issueMode === 'office' && (
+              <Card className="shadow-md">
+                <CardHeader className="border-b bg-muted/20">
+                  <CardTitle className="text-lg">พนักงานออฟฟิศผู้รับ (Office Staff)</CardTitle>
+                  <CardDescription>เลือกพนักงานแล้วเพิ่มรายการจากแคตตาล็อกทั้งหมวดด้านล่าง</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-6 space-y-4">
+                  <div className="space-y-2">
+                    <Label className="font-bold">เลือกพนักงาน</Label>
+                    <Select value={selectedOfficeStaffId} onValueChange={setSelectedOfficeStaffId}>
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="เลือกพนักงานออฟฟิศ..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {officeStaffList
+                          ?.filter((s) => s.status === 'ACTIVE')
+                          .map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.fullName} ({s.staffCode})
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="ค้นหาอุปกรณ์..."
+                      className="pl-9 h-11"
+                      value={catalogSearch}
+                      onChange={(e) => setCatalogSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="max-h-[400px] overflow-y-auto border rounded-md">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="font-bold">รหัส</TableHead>
+                          <TableHead className="font-bold">ชื่อ</TableHead>
+                          <TableHead className="text-center">คงเหลือ</TableHead>
+                          <TableHead className="text-right pr-4">จัดการ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredCatalogForField.map((item) => (
+                          <TableRow key={item.id}>
+                            <TableCell className="font-mono text-xs">{item.itemCode}</TableCell>
+                            <TableCell>{item.itemName}</TableCell>
+                            <TableCell className="text-center">{item.currentStock}</TableCell>
+                            <TableCell className="text-right pr-4">
+                              <Button
+                                size="sm"
+                                disabled={item.currentStock <= 0}
+                                onClick={() => handleAddToList(item)}
+                              >
+                                <Plus className="h-3 w-3 mr-1" /> เพิ่ม
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* RIGHT: Confirmation & Issue List */}
@@ -433,7 +743,11 @@ export default function IssueItemsPage() {
                 <div className="pt-4 space-y-4 border-t">
                   <div className="space-y-2">
                     <Label className="font-bold text-xs uppercase text-muted-foreground">วันที่เบิก (Issue Date)</Label>
-                    <Input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} className="h-11" />
+                    <DatePickerThaiBE
+                      className="h-11"
+                      value={htmlDateValueToTimestampMs(issueDate)}
+                      onChange={(ms) => setIssueDate(timestampToHtmlDateValue(ms))}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold text-xs uppercase text-muted-foreground">หมายเหตุใบเบิก (Notes)</Label>
@@ -449,7 +763,12 @@ export default function IssueItemsPage() {
               <CardFooter className="bg-muted/30 border-t pt-6 flex flex-col gap-3">
                 <Button 
                   className="w-full h-14 font-black text-lg bg-primary shadow-lg" 
-                  disabled={issueList.length === 0 || !activeAsgn || isSubmitting}
+                  disabled={
+                    issueList.length === 0 ||
+                    isSubmitting ||
+                    (issueMode === 'field' && !activeAsgn) ||
+                    (issueMode === 'office' && !selectedOfficeStaffId)
+                  }
                   onClick={handleConfirmIssue}
                 >
                   {isSubmitting ? <Loader2 className="h-6 w-6 animate-spin mr-2" /> : <CheckCircle2 className="h-6 w-6 mr-2" />}
@@ -463,6 +782,31 @@ export default function IssueItemsPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={positionEditDialogOpen} onOpenChange={setPositionEditDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>จะไปแก้ไขรายการเครื่องมือ/อุปกรณ์ในตำแหน่งนี้หรือไม่?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {positionEditReason === 'not_listed'
+                ? 'รายการนี้ไม่อยู่ในเกณฑ์ PPE/เครื่องมือที่กำหนดไว้ในตำแหน่ง — กรุณาเพิ่มรายการที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) ก่อนเบิก'
+                : 'จำนวนที่ต้องการเบิกเกินกว่าที่กำหนดในรายการตำแหน่ง — กรุณาปรับเกณฑ์ที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) หรือลดจำนวนในใบเบิก'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (activeAsgn?.positionId) {
+                  router.push(`/positions/${activeAsgn.positionId}?tab=tools`);
+                }
+              }}
+            >
+              ไปแก้ไขตำแหน่ง (แท็บอุปกรณ์)
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

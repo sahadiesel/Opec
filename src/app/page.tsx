@@ -27,11 +27,20 @@ import {
   TrendingUp,
   Building2,
   KeyRound,
-  Lock
+  Lock,
+  UserPlus,
+  MailQuestion,
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
-import { signInWithEmailAndPassword, signOut, updatePassword } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import {
+  signInWithEmailAndPassword,
+  signOut,
+  updatePassword,
+  sendPasswordResetEmail,
+  createUserWithEmailAndPassword,
+} from 'firebase/auth';
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { BUSINESS_ROLES, deriveBusinessRoleKey } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -51,7 +60,16 @@ import {
   DialogTitle 
 } from '@/components/ui/dialog';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
-import { normalizeCurrentUserPermissions, isSystemAdmin, isHRStaff, isOperationsStaff, isSalesStaff, isAccountingStaff, isStoreStaff } from '@/lib/permissions';
+import {
+  normalizeCurrentUserPermissions,
+  isSystemAdmin,
+  isHRStaff,
+  isOperationsStaff,
+  isSalesStaff,
+  isAccountingStaff,
+  isStoreStaff,
+  isStoreOfficer,
+} from '@/lib/permissions';
 
 export default function Home() {
   const router = useRouter();
@@ -66,6 +84,18 @@ export default function Home() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+
+  const [showForgotPasswordDialog, setShowForgotPasswordDialog] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
+
+  const [showRegisterDialog, setShowRegisterDialog] = useState(false);
+  const [regDisplayName, setRegDisplayName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const firestore = useFirestore();
   const auth = useAuth();
@@ -101,6 +131,14 @@ export default function Home() {
 
   useEffect(() => {
     if (latestUserDoc) {
+      if (latestUserDoc.userType !== 'customer_portal' && latestUserDoc.approvalStatus === 'PENDING') {
+        toast({
+          title: 'รอการอนุมัติจากผู้ดูแลระบบ',
+          description: 'บัญชีของคุณยังไม่ได้รับการอนุมัติหรือกำหนดสิทธิ์ — โปรดรอแอดมินดำเนินการที่เมนูจัดการผู้ใช้',
+        });
+        handleLogout();
+        return;
+      }
       // Security Guard: Check inactivity
       if (!latestUserDoc.isActive || latestUserDoc.approvalStatus === 'SUSPENDED') {
         toast({ variant: "destructive", title: "Access Blocked", description: "บัญชีของคุณถูกระงับการใช้งาน" });
@@ -143,7 +181,17 @@ export default function Home() {
         const userData = normalizeCurrentUserPermissions(snap.data());
         if (!userData) throw new Error("Invalid user data");
         
-        // 1. Check Activity Status
+        // 1. Pending approval (internal)
+        if (userData.userType !== 'customer_portal' && userData.approvalStatus === 'PENDING') {
+          toast({
+            title: 'รอการอนุมัติ',
+            description: 'บัญชียังไม่ได้รับการอนุมัติหรือกำหนดสิทธิ์จากผู้ดูแลระบบ — ใช้งานได้หลังแอดมินอนุมัติแล้ว',
+          });
+          await signOut(auth);
+          setIsLoggingIn(false);
+          return;
+        }
+        // 2. Check Activity Status
         if (!userData.isActive || userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
           toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณถูกระงับการใช้งาน (Account Inactive)" });
           await signOut(auth);
@@ -151,10 +199,10 @@ export default function Home() {
           return;
         }
 
-        // 2. Log login time
+        // 3. Log login time
         await updateDoc(docRef, { lastLoginAt: Date.now() });
 
-        // 3. Handle First-time reset detection
+        // 4. Handle First-time reset detection
         if (userData.mustResetPassword) {
           setUser(userData);
           setShowResetDialog(true);
@@ -168,10 +216,98 @@ export default function Home() {
             router.push('/client-portal/dashboard');
           }
         }
+      } else {
+        await signOut(auth);
+        toast({
+          variant: 'destructive',
+          title: 'ไม่พบข้อมูลผู้ใช้ในระบบ',
+          description: 'บัญชีนี้ยังไม่มีโปรไฟล์ใน Firestore — ติดต่อผู้ดูแลระบบหรือลงทะเบียนผู้ใช้ใหม่',
+        });
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
     } finally { setIsLoggingIn(false); }
+  };
+
+  const handleSendPasswordResetEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const addr = forgotEmail.trim();
+    if (!addr) {
+      toast({ variant: 'destructive', title: 'กรอกอีเมล', description: 'ระบุอีเมลที่ใช้ลงทะเบียน' });
+      return;
+    }
+    setIsSendingResetEmail(true);
+    try {
+      await sendPasswordResetEmail(auth, addr);
+      toast({
+        title: 'ส่งลิงก์รีเซ็ตรหัสผ่านแล้ว',
+        description: 'ตรวจสอบกล่องจดหมาย (และโฟลเดอร์สแปม) แล้วคลิกลิงก์จาก Firebase เพื่อตั้งรหัสผ่านใหม่',
+      });
+      setShowForgotPasswordDialog(false);
+      setForgotEmail('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'ส่งไม่สำเร็จ';
+      toast({ variant: 'destructive', title: 'ส่งอีเมลไม่สำเร็จ', description: msg });
+    } finally {
+      setIsSendingResetEmail(false);
+    }
+  };
+
+  const handleSelfRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!firestore) return;
+    const name = regDisplayName.trim();
+    const phone = regPhone.trim();
+    const em = regEmail.trim();
+    if (!name || !phone || !em) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรอกชื่อ เบอร์โทร และอีเมล' });
+      return;
+    }
+    if (regPassword.length < 8) {
+      toast({ variant: 'destructive', title: 'รหัสผ่านสั้นเกินไป', description: 'อย่างน้อย 8 ตัวอักษร' });
+      return;
+    }
+    if (regPassword !== regPasswordConfirm) {
+      toast({ variant: 'destructive', title: 'รหัสผ่านไม่ตรงกัน', description: 'กรอกยืนยันรหัสผ่านให้ตรงกัน' });
+      return;
+    }
+    setIsRegistering(true);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, em, regPassword);
+      const uid = cred.user.uid;
+      const now = Date.now();
+      const newUser: User = {
+        id: uid,
+        email: em,
+        displayName: name,
+        phone,
+        userType: 'internal',
+        department: 'operations',
+        level: 'viewer',
+        roleIds: [],
+        isActive: false,
+        approvalStatus: 'PENDING',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await setDoc(doc(firestore, 'users', uid), sanitizeFirestorePayload(newUser));
+      await signOut(auth);
+      toast({
+        title: 'ลงทะเบียนแล้ว',
+        description: 'รอผู้ดูแลระบบอนุมัติและกำหนดสิทธิ์ที่เมนูจัดการผู้ใช้ — จากนั้นจึงเข้าสู่ระบบได้',
+      });
+      setShowRegisterDialog(false);
+      setRegDisplayName('');
+      setRegPhone('');
+      setRegEmail('');
+      setRegPassword('');
+      setRegPasswordConfirm('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'ลงทะเบียนไม่สำเร็จ';
+      toast({ variant: 'destructive', title: 'ลงทะเบียนไม่สำเร็จ', description: msg });
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handlePasswordReset = async () => {
@@ -240,14 +376,153 @@ export default function Home() {
                 <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="h-11" />
               </div>
             </CardContent>
-            <CardFooter>
+            <CardFooter className="flex flex-col gap-1">
               <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg bg-primary" disabled={isLoggingIn}>
                 {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
                 เข้าสู่ระบบ
               </Button>
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-center text-sm pt-2 w-full">
+                <button
+                  type="button"
+                  className="text-primary font-semibold hover:underline inline-flex items-center justify-center gap-1"
+                  onClick={() => {
+                    setForgotEmail(email);
+                    setShowForgotPasswordDialog(true);
+                  }}
+                >
+                  <MailQuestion className="h-3.5 w-3.5" />
+                  ลืมรหัสผ่าน
+                </button>
+                <span className="hidden sm:inline text-muted-foreground">|</span>
+                <button
+                  type="button"
+                  className="text-primary font-semibold hover:underline inline-flex items-center justify-center gap-1"
+                  onClick={() => setShowRegisterDialog(true)}
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  ลงทะเบียนผู้ใช้ใหม่
+                </button>
+              </div>
             </CardFooter>
           </form>
         </Card>
+
+        <Dialog open={showForgotPasswordDialog} onOpenChange={setShowForgotPasswordDialog}>
+          <DialogContent className="sm:max-w-md border-t-8 border-t-primary">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">ลืมรหัสผ่าน</DialogTitle>
+              <DialogDescription>
+                ระบุอีเมลที่ใช้ลงทะเบียน — Firebase จะส่งลิงก์รีเซ็ตรหัสผ่านไปที่อีเมลนี้ (ตรวจสอบโฟลเดอร์สแปมด้วย)
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSendPasswordResetEmail} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="forgot-email">อีเมล</Label>
+                <Input
+                  id="forgot-email"
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="name@company.com"
+                  required
+                  className="h-11"
+                />
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button type="button" variant="outline" onClick={() => setShowForgotPasswordDialog(false)}>
+                  ยกเลิก
+                </Button>
+                <Button type="submit" disabled={isSendingResetEmail}>
+                  {isSendingResetEmail ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  ส่งลิงก์รีเซ็ต
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={showRegisterDialog} onOpenChange={setShowRegisterDialog}>
+          <DialogContent className="sm:max-w-lg border-t-8 border-t-primary max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">ลงทะเบียนผู้ใช้ใหม่</DialogTitle>
+              <DialogDescription>
+                กรอกข้อมูลให้ครบ — หลังลงทะเบียน ผู้ดูแลระบบจะอนุมัติและกำหนดบทบาทที่เมนูจัดการผู้ใช้ ก่อนจึงจะเข้าสู่ระบบได้
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSelfRegister} className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="reg-name">ชื่อ-นามสกุล</Label>
+                <Input
+                  id="reg-name"
+                  value={regDisplayName}
+                  onChange={(e) => setRegDisplayName(e.target.value)}
+                  required
+                  className="h-11"
+                  autoComplete="name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-phone">เบอร์โทร</Label>
+                <Input
+                  id="reg-phone"
+                  type="tel"
+                  value={regPhone}
+                  onChange={(e) => setRegPhone(e.target.value)}
+                  required
+                  className="h-11"
+                  autoComplete="tel"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-email">อีเมล (ใช้ login)</Label>
+                <Input
+                  id="reg-email"
+                  type="email"
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  required
+                  className="h-11"
+                  autoComplete="email"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-pw">รหัสผ่าน (อย่างน้อย 8 ตัว)</Label>
+                <Input
+                  id="reg-pw"
+                  type="password"
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className="h-11"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reg-pw2">ยืนยันรหัสผ่าน</Label>
+                <Input
+                  id="reg-pw2"
+                  type="password"
+                  value={regPasswordConfirm}
+                  onChange={(e) => setRegPasswordConfirm(e.target.value)}
+                  required
+                  minLength={8}
+                  className="h-11"
+                  autoComplete="new-password"
+                />
+              </div>
+              <DialogFooter className="gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => setShowRegisterDialog(false)}>
+                  ยกเลิก
+                </Button>
+                <Button type="submit" disabled={isRegistering}>
+                  {isRegistering ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  ส่งคำขอลงทะเบียน
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -368,7 +643,7 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {isHRStaff(user) && (
+            {isHRStaff(user) && !isStoreOfficer(user) && (
               <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
                 <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวมบุคคล" />
                 <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />
@@ -377,7 +652,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {isSalesStaff(user) && (
+            {isSalesStaff(user) && !isStoreOfficer(user) && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
                 <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
                 <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
@@ -386,7 +661,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {isOperationsStaff(user) && (
+            {isOperationsStaff(user) && !isStoreOfficer(user) && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
                 <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
                 <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />

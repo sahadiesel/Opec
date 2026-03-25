@@ -139,11 +139,11 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Purchase Detail (รายละเอียดการซื้อ)</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{purchase.purchaseNo}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>คู่ค้า: {vendor?.vendorName || '...'}</span>
-              </p>
+              </div>
             </div>
           </div>
           <div className="flex gap-2">

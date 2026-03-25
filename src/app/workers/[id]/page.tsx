@@ -6,7 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
@@ -40,21 +42,32 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { 
-  Worker, 
-  WorkerCertificate, 
-  WorkerMedicalRecord, 
-  WorkerDrugTest, 
-  WorkerDocument, 
+import { sanitizeFirestorePayload } from '@/lib/utils';
+import {
+  Worker,
+  WorkerCertificate,
+  WorkerMedicalRecord,
+  WorkerDrugTest,
+  WorkerDocument,
   DailyTimesheet,
-  User as AppUser, 
-  Position, 
+  User as AppUser,
+  Position,
   PositionCertificateRequirement,
   ReadinessStatus,
-  WorkerDocumentCatalogItem
+  WorkerDocumentCatalogItem,
+  DrugTestPanelConfig,
+  DrugTestPanelSubstance,
+  DrugTestLocationType,
+  DrugTestResult,
 } from '@/lib/types';
+import {
+  computeDrugPanelWorkerFields,
+  getLatestDrugTestBySubstance,
+  DRUG_TEST_PANEL_DOC_PATH,
+  displayLocation,
+} from '@/lib/drug-test-panel';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
@@ -87,6 +100,12 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
   const workerDocCatalogQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'worker_document_catalog') : null), [firestore]);
   const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
+
+  const drugPanelRef = useMemoFirebase(
+    () => (firestore ? doc(firestore, DRUG_TEST_PANEL_DOC_PATH[0], DRUG_TEST_PANEL_DOC_PATH[1]) : null),
+    [firestore]
+  );
+  const { data: drugPanelConfig } = useDoc<DrugTestPanelConfig>(drugPanelRef as any);
   const workerTimesheetsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'daily_timesheets') : null), [firestore]);
   const { data: workerTimesheetsAll } = useCollection<DailyTimesheet>(workerTimesheetsQuery as any);
 
@@ -105,16 +124,42 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   const [editingCertId, setEditingCertId] = useState<string | null>(null);
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [isAddMedicalOpen, setIsAddMedicalOpen] = useState(false);
-  const [isAddDrugOpen, setIsAddDrugOpen] = useState(false);
   const [newMedicalType, setNewMedicalType] = useState('General Health Exam');
   const [newMedicalExamDate, setNewMedicalExamDate] = useState('');
   const [newMedicalExpiryDate, setNewMedicalExpiryDate] = useState('');
   const [newMedicalFitStatus, setNewMedicalFitStatus] = useState<'fit' | 'unfit' | 'conditional'>('fit');
   const [newMedicalHospital, setNewMedicalHospital] = useState('');
-  const [newDrugTestDate, setNewDrugTestDate] = useState('');
-  const [newDrugResult, setNewDrugResult] = useState<'negative' | 'positive'>('negative');
-  const [newDrugExpiryDate, setNewDrugExpiryDate] = useState('');
-  const [newDrugLaboratory, setNewDrugLaboratory] = useState('');
+  const [drugEditSubstance, setDrugEditSubstance] = useState<DrugTestPanelSubstance | null>(null);
+  const [drugFormDate, setDrugFormDate] = useState('');
+  const [drugFormLocType, setDrugFormLocType] = useState<DrugTestLocationType>('OPEC');
+  const [drugFormLocOther, setDrugFormLocOther] = useState('');
+  const [drugFormResult, setDrugFormResult] = useState<DrugTestResult>('none');
+
+  const panelSubstances = drugPanelConfig?.substances ?? [];
+  const latestBySubstance = useMemo(() => getLatestDrugTestBySubstance(drugTests || []), [drugTests]);
+
+  const openDrugDialog = (s: DrugTestPanelSubstance) => {
+    setDrugEditSubstance(s);
+    const latest = latestBySubstance.get(s.id);
+    if (latest) {
+      setDrugFormDate(
+        latest.testDate != null && latest.testDate > 0
+          ? timestampToHtmlDateValue(latest.testDate)
+          : ''
+      );
+      setDrugFormLocType(latest.testLocationType || (latest.laboratory ? 'OTHER' : 'OPEC'));
+      setDrugFormLocOther(
+        latest.testLocationOther || (latest.testLocationType !== 'OPEC' && latest.laboratory ? latest.laboratory : '') || ''
+      );
+      const r = latest.result;
+      setDrugFormResult(r === 'positive' || r === 'negative' ? r : 'none');
+    } else {
+      setDrugFormDate('');
+      setDrugFormLocType('OPEC');
+      setDrugFormLocOther('');
+      setDrugFormResult('none');
+    }
+  };
 
   const workerTimesheets = useMemo(() => {
     return (workerTimesheetsAll || []).filter((t) => t.workerId === id);
@@ -156,10 +201,23 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
   const handleSaveMaster = () => {
     if (!workerRef) return;
-    updateDocumentNonBlocking(workerRef, { ...editedWorker, updatedAt: Date.now() });
-    setIsEditing(false);
-    calculateAndStoreReadiness();
-    toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลประวัติคนงานถูกอัปเดตแล้ว" });
+    const payload = sanitizeFirestorePayload({ ...editedWorker, updatedAt: Date.now() });
+    updateDoc(workerRef, payload)
+      .then(() => {
+        setIsEditing(false);
+        calculateAndStoreReadiness();
+        toast({ title: 'บันทึกสำเร็จ', description: 'ข้อมูลประวัติคนงานถูกอัปเดตแล้ว' });
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: msg.includes('permission') || msg.includes('Permission')
+            ? 'สิทธิ์ไม่เพียงพอ (Firestore) — ต้องใช้บัญชี HR/Operations ที่อนุญาตแก้ไขทะเบียนคนงาน'
+            : msg,
+        });
+      });
   };
 
   const calculateAndStoreReadiness = async () => {
@@ -228,11 +286,10 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       }
     }
 
-    if (newStatus === 'READY') {
-      const latestDrug = drugTests?.sort((a, b) => b.testDate - a.testDate)[0];
-      if (!latestDrug || latestDrug.expiryDate < now || latestDrug.result === 'positive') {
-        newStatus = 'DRUG_TEST_EXPIRED';
-      }
+    const drugFields = computeDrugPanelWorkerFields(panelSubstances, drugTests || []);
+
+    if (newStatus === 'READY' && panelSubstances.length > 0 && !drugFields.readinessDrugOk) {
+      newStatus = 'DRUG_TEST_EXPIRED';
     }
 
     if (newStatus === 'READY') {
@@ -251,13 +308,21 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     if (
       worker.readinessStatus !== newStatus ||
       (worker.complianceAlertLevel || 'ok') !== complianceAlertLevel ||
-      Number(worker.nearestExpiryInDays ?? -1) !== Number(nearestExpiryInDays ?? -1)
+      Number(worker.nearestExpiryInDays ?? -1) !== Number(nearestExpiryInDays ?? -1) ||
+      worker.drugPanelSummaryKind !== drugFields.drugPanelSummaryKind ||
+      worker.drugPanelSummaryText !== drugFields.drugPanelSummaryText ||
+      Number(worker.drugPanelPassedCount ?? -1) !== drugFields.drugPanelPassedCount ||
+      Number(worker.drugPanelTotalCount ?? -1) !== drugFields.drugPanelTotalCount
     ) {
       updateDocumentNonBlocking(workerRef!, {
         readinessStatus: newStatus,
         complianceAlertLevel,
         nearestExpiryInDays: nearestExpiryInDays ?? null,
         nearestExpiryAt: nearestExpiryAt ?? null,
+        drugPanelSummaryKind: drugFields.drugPanelSummaryKind,
+        drugPanelSummaryText: drugFields.drugPanelSummaryText,
+        drugPanelPassedCount: drugFields.drugPanelPassedCount,
+        drugPanelTotalCount: drugFields.drugPanelTotalCount,
       });
     }
   };
@@ -266,7 +331,15 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     if (worker && certs && medicals && drugTests) {
       calculateAndStoreReadiness();
     }
-  }, [worker?.currentPositionId, certs?.length, medicals?.length, drugTests?.length, workerDocs?.length, workerDocCatalog?.length]);
+  }, [
+    worker?.currentPositionId,
+    certs?.length,
+    medicals?.length,
+    drugTests?.length,
+    workerDocs?.length,
+    workerDocCatalog?.length,
+    panelSubstances.length,
+  ]);
 
   if (isWorkerLoading || !worker || !currentUser) {
     return (
@@ -351,39 +424,53 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">ชื่อจริง (First Name) *</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.firstName : worker.firstName} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.firstName : worker.firstName) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">นามสกุล (Last Name) *</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.lastName : worker.lastName} onChange={e => setEditedWorker({...editedWorker, lastName: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.lastName : worker.lastName) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastName: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">ชื่อเล่น (Nickname)</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.nickname : worker.nickname} onChange={e => setEditedWorker({...editedWorker, nickname: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.nickname : worker.nickname) ?? ''} onChange={e => setEditedWorker({...editedWorker, nickname: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">เลขบัตรประชาชน (ID Card No.) *</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.thaiNationalId : worker.thaiNationalId} onChange={e => setEditedWorker({...editedWorker, thaiNationalId: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.thaiNationalId : worker.thaiNationalId) ?? ''} onChange={e => setEditedWorker({...editedWorker, thaiNationalId: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">เลขพาสปอร์ต (Passport No.)</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.passportNo : worker.passportNo} onChange={e => setEditedWorker({...editedWorker, passportNo: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.passportNo : worker.passportNo) ?? ''} onChange={e => setEditedWorker({...editedWorker, passportNo: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">สัญชาติ (Nationality)</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.nationality : worker.nationality} onChange={e => setEditedWorker({...editedWorker, nationality: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.nationality : worker.nationality) ?? ''} onChange={e => setEditedWorker({...editedWorker, nationality: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">เบอร์โทรศัพท์ (Contact Phone) *</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.contactPhone : worker.contactPhone} onChange={e => setEditedWorker({...editedWorker, contactPhone: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.contactPhone : worker.contactPhone) ?? ''} onChange={e => setEditedWorker({...editedWorker, contactPhone: e.target.value})} />
                       </div>
                       <div className="space-y-2 md:col-span-2">
                         <Label className="font-bold">ตำแหน่งงานหลัก (Primary Position) *</Label>
-                        <Select disabled={!isEditing} onValueChange={v => setEditedWorker({...editedWorker, currentPositionId: v})} value={isEditing ? editedWorker.currentPositionId : worker.currentPositionId}>
-                          <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                        <Select
+                          disabled={!isEditing}
+                          onValueChange={(v) =>
+                            setEditedWorker({
+                              ...editedWorker,
+                              currentPositionId: v === '__none__' ? '' : v,
+                            })
+                          }
+                          value={
+                            (isEditing ? editedWorker.currentPositionId : worker.currentPositionId) || '__none__'
+                          }
+                        >
+                          <SelectTrigger className="h-10"><SelectValue placeholder="เลือกตำแหน่ง" /></SelectTrigger>
                           <SelectContent>
-                            {allPositions?.map(p => (
-                              <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                            <SelectItem value="__none__">— เลือกตำแหน่ง —</SelectItem>
+                            {allPositions?.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.positionName}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -395,14 +482,14 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       <Input 
                         disabled={!isEditing} 
                         placeholder="เช่น Welder 6G, Rigger, Scaffolder..."
-                        value={isEditing ? editedWorker.skills?.join(', ') : worker.skills?.join(', ')} 
+                        value={(isEditing ? (editedWorker.skills ?? []) : (worker.skills ?? [])).join(', ')} 
                         onChange={e => setEditedWorker({...editedWorker, skills: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})} 
                       />
                     </div>
 
                     <div className="space-y-2">
                       <Label className="font-bold">ที่อยู่ (Residential Address)</Label>
-                      <Textarea disabled={!isEditing} value={isEditing ? editedWorker.address : worker.address} onChange={e => setEditedWorker({...editedWorker, address: e.target.value})} />
+                      <Textarea disabled={!isEditing} value={(isEditing ? editedWorker.address : worker.address) ?? ''} onChange={e => setEditedWorker({...editedWorker, address: e.target.value})} />
                     </div>
                   </CardContent>
                 </Card>
@@ -417,11 +504,11 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-2">
                         <Label className="font-bold">ชื่อผู้ติดต่อ (Contact Name)</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.emergencyContactName : worker.emergencyContactName} onChange={e => setEditedWorker({...editedWorker, emergencyContactName: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.emergencyContactName : worker.emergencyContactName) ?? ''} onChange={e => setEditedWorker({...editedWorker, emergencyContactName: e.target.value})} />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">เบอร์โทรฉุกเฉิน (Emergency Phone)</Label>
-                        <Input disabled={!isEditing} value={isEditing ? editedWorker.emergencyContactPhone : worker.emergencyContactPhone} onChange={e => setEditedWorker({...editedWorker, emergencyContactPhone: e.target.value})} />
+                        <Input disabled={!isEditing} value={(isEditing ? editedWorker.emergencyContactPhone : worker.emergencyContactPhone) ?? ''} onChange={e => setEditedWorker({...editedWorker, emergencyContactPhone: e.target.value})} />
                       </div>
                     </div>
                   </CardContent>
@@ -438,15 +525,15 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                   <CardContent className="pt-6 space-y-4">
                     <div className="space-y-2">
                       <Label className="font-bold">ชื่อธนาคาร (Bank Name)</Label>
-                      <Input disabled={!isEditing} value={isEditing ? editedWorker.bankName : worker.bankName} onChange={e => setEditedWorker({...editedWorker, bankName: e.target.value})} />
+                      <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankName : worker.bankName) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankName: e.target.value})} />
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">ชื่อบัญชี (Account Holder Name)</Label>
-                      <Input disabled={!isEditing} value={isEditing ? editedWorker.bankAccountName : worker.bankAccountName} onChange={e => setEditedWorker({...editedWorker, bankAccountName: e.target.value})} />
+                      <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankAccountName : worker.bankAccountName) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankAccountName: e.target.value})} />
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">เลขที่บัญชี (Bank Account No.)</Label>
-                      <Input disabled={!isEditing} value={isEditing ? editedWorker.bankAccountNumber : worker.bankAccountNumber} onChange={e => setEditedWorker({...editedWorker, bankAccountNumber: e.target.value})} />
+                      <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankAccountNumber : worker.bankAccountNumber) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankAccountNumber: e.target.value})} />
                     </div>
                   </CardContent>
                 </Card>
@@ -462,7 +549,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       disabled={!isEditing} 
                       className="min-h-[120px] text-destructive border-destructive/20 focus:border-destructive"
                       placeholder="ระบุความผิดปกติ หรือเหตุการณ์สำคัญ..."
-                      value={isEditing ? editedWorker.disciplinaryNotes : worker.disciplinaryNotes} 
+                      value={(isEditing ? editedWorker.disciplinaryNotes : worker.disciplinaryNotes) ?? ''} 
                       onChange={e => setEditedWorker({...editedWorker, disciplinaryNotes: e.target.value})} 
                     />
                   </CardContent>
@@ -535,13 +622,17 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       <Label>เลขที่เอกสารใบเซอร์</Label>
                       <Input value={newCertNo} onChange={(e) => setNewCertNo(e.target.value)} placeholder="เช่น CERT-00123" />
                       <Label>วันที่ออกเอกสาร</Label>
-                      <Input type="date" value={newCertIssueDate} onChange={(e) => setNewCertIssueDate(e.target.value)} />
+                      <DatePickerThaiBE
+                        className="h-10"
+                        value={htmlDateValueToTimestampMs(newCertIssueDate)}
+                        onChange={(ms) => setNewCertIssueDate(timestampToHtmlDateValue(ms))}
+                      />
                       <Label>วันหมดอายุ</Label>
-                      <Input
-                        type="date"
-                        value={newCertExpiryDate}
+                      <DatePickerThaiBE
+                        className="h-10"
+                        value={htmlDateValueToTimestampMs(newCertExpiryDate)}
                         disabled={!((workerDocCatalog || []).find((x) => x.id === newCertTemplateId)?.hasExpiry)}
-                        onChange={(e) => setNewCertExpiryDate(e.target.value)}
+                        onChange={(ms) => setNewCertExpiryDate(timestampToHtmlDateValue(ms))}
                       />
                     </div>
                     <DialogFooter>
@@ -569,8 +660,8 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                             setEditingCertId(duplicateCert.id);
                             setNewCertTemplateId(selected.id);
                             setNewCertNo(duplicateCert.certificateNo || '');
-                            setNewCertIssueDate(duplicateCert.issueDate ? new Date(duplicateCert.issueDate).toISOString().slice(0, 10) : '');
-                            setNewCertExpiryDate(duplicateCert.expiryDate ? new Date(duplicateCert.expiryDate).toISOString().slice(0, 10) : '');
+                            setNewCertIssueDate(duplicateCert.issueDate ? timestampToHtmlDateValue(duplicateCert.issueDate) : '');
+                            setNewCertExpiryDate(duplicateCert.expiryDate ? timestampToHtmlDateValue(duplicateCert.expiryDate) : '');
                             toast({ title: 'เข้าสู่โหมดแก้ไข', description: 'ปรับข้อมูลและกดบันทึกอีกครั้งเพื่ออัปเดตรายการเดิม' });
                             return;
                           }
@@ -700,11 +791,19 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       </div>
                       <div className="space-y-2">
                         <Label>วันที่ตรวจ</Label>
-                        <Input type="date" value={newMedicalExamDate} onChange={(e) => setNewMedicalExamDate(e.target.value)} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          value={htmlDateValueToTimestampMs(newMedicalExamDate)}
+                          onChange={(ms) => setNewMedicalExamDate(timestampToHtmlDateValue(ms))}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>วันหมดอายุ</Label>
-                        <Input type="date" value={newMedicalExpiryDate} onChange={(e) => setNewMedicalExpiryDate(e.target.value)} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          value={htmlDateValueToTimestampMs(newMedicalExpiryDate)}
+                          onChange={(ms) => setNewMedicalExpiryDate(timestampToHtmlDateValue(ms))}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>ผลการตรวจ</Label>
@@ -800,73 +899,211 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
           </TabsContent>
 
           <TabsContent value="drug" className="mt-6">
-             <Card>
-              <CardHeader className="flex flex-row items-center justify-between border-b bg-primary/5 pb-4">
-                <div>
-                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <AlertCircle className="h-5 w-5" /> ผลตรวจสารเสพติด (Drug Tests)
-                  </CardTitle>
-                  <CardDescription>ความปลอดภัยและกฎระเบียบวินัยในหน้างาน</CardDescription>
-                </div>
-                <Dialog open={isAddDrugOpen} onOpenChange={setIsAddDrugOpen}>
-                  <DialogTrigger asChild>
-                    <Button
-                      className="bg-primary font-bold shadow-md"
-                      onClick={() => {
-                        setNewDrugTestDate('');
-                        setNewDrugExpiryDate('');
-                        setNewDrugResult('negative');
-                        setNewDrugLaboratory('');
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-2" /> เพิ่มผลตรวจ (Add Test)
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
+            <Card>
+              <CardHeader className="border-b bg-primary/5 pb-4">
+                <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                  <AlertCircle className="h-5 w-5" /> ผลตรวจสารเสพติด
+                </CardTitle>
+                <CardDescription>
+                  รายการสารตรวจมาจากการตั้งค่าในเมนูจัดการระบบ — ไม่มีวันหมดอายุในระบบ
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0 pt-4 space-y-6">
+                {panelSubstances.length === 0 ? (
+                  <p className="px-6 text-sm text-muted-foreground">
+                    ยังไม่มีรายการสาร — ผู้ดูแลระบบสามารถตั้งค่าได้ที่{' '}
+                    <Link href="/system-admin/drug-test-panel" className="text-primary font-bold underline">
+                      ตั้งค่าแผงตรวจสารเสพติด
+                    </Link>
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader className="bg-muted/50">
+                      <TableRow>
+                        <TableHead className="pl-6 font-bold">ชื่อสารที่ตรวจ</TableHead>
+                        <TableHead className="font-bold">วันที่ตรวจ</TableHead>
+                        <TableHead className="font-bold">สถานที่ตรวจ</TableHead>
+                        <TableHead className="font-bold">ผลตรวจ</TableHead>
+                        <TableHead className="text-right pr-6">บันทึก</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {panelSubstances.map((s) => {
+                        const latest = latestBySubstance.get(s.id);
+                        const res = latest?.result;
+                        const resLabel =
+                          res === 'negative' ? 'NEGATIVE' : res === 'positive' ? 'POSITIVE' : 'NONE';
+                        return (
+                          <TableRow key={s.id}>
+                            <TableCell className="pl-6 font-bold text-primary">{s.label}</TableCell>
+                            <TableCell className="text-sm">
+                              {latest?.testDate != null && latest.testDate > 0
+                                ? new Date(latest.testDate).toLocaleDateString('th-TH')
+                                : '—'}
+                            </TableCell>
+                            <TableCell className="text-sm">{latest ? displayLocation(latest) : '—'}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  res === 'negative'
+                                    ? 'bg-green-600 text-white border-green-600'
+                                    : res === 'positive'
+                                      ? 'bg-destructive text-destructive-foreground'
+                                      : 'bg-slate-100 text-slate-600'
+                                }
+                              >
+                                {resLabel}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right pr-6">
+                              <Button size="sm" variant="outline" className="font-bold" onClick={() => openDrugDialog(s)}>
+                                <Plus className="h-3 w-3 mr-1" /> บันทึกผล
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+
+                {(drugTests || []).some((d) => !d.substanceKey) && (
+                  <div className="px-6 pb-4">
+                    <p className="text-xs font-bold text-muted-foreground mb-2">ประวัติแบบเก่า (ก่อนปรับระบบ)</p>
+                    <Table>
+                      <TableHeader className="bg-muted/50">
+                        <TableRow>
+                          <TableHead className="pl-6 font-bold">วันที่ตรวจ</TableHead>
+                          <TableHead className="font-bold">สถานที่</TableHead>
+                          <TableHead className="font-bold">ผล</TableHead>
+                          <TableHead className="text-right pr-6">จัดการ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(drugTests || [])
+                          .filter((d) => !d.substanceKey)
+                          .map((d) => (
+                            <TableRow key={d.id}>
+                              <TableCell className="pl-6">
+                                {d.testDate != null && d.testDate > 0
+                                  ? new Date(d.testDate).toLocaleDateString('th-TH')
+                                  : '—'}
+                              </TableCell>
+                              <TableCell className="text-xs">{d.laboratory || '—'}</TableCell>
+                              <TableCell>
+                                <Badge variant={d.result === 'negative' ? 'default' : 'destructive'}>
+                                  {(d.result || '').toUpperCase()}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right pr-6">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive h-8 w-8"
+                                  onClick={() => {
+                                    if (!firestore) return;
+                                    if (confirm('ลบรายการ?')) {
+                                      deleteDocumentNonBlocking(doc(firestore, 'workers', id, 'drug_tests', d.id));
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                <Dialog open={drugEditSubstance != null} onOpenChange={(o) => !o && setDrugEditSubstance(null)}>
+                  <DialogContent className="max-w-md">
                     <DialogHeader>
-                      <DialogTitle>บันทึกผลตรวจสารเสพติด</DialogTitle>
-                      <DialogDescription>กรอกข้อมูลผลตรวจให้ครบก่อนบันทึก</DialogDescription>
+                      <DialogTitle>บันทึกผลตรวจ: {drugEditSubstance?.label}</DialogTitle>
+                      <DialogDescription>ผลเริ่มต้น NONE = ยังไม่ได้ตรวจ — สถานที่เริ่มต้น OPEC</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3 py-2">
                       <div className="space-y-2">
                         <Label>วันที่ตรวจ</Label>
-                        <Input type="date" value={newDrugTestDate} onChange={(e) => setNewDrugTestDate(e.target.value)} />
+                        <DatePickerThaiBE
+                          className="h-10"
+                          value={htmlDateValueToTimestampMs(drugFormDate)}
+                          onChange={(ms) => setDrugFormDate(timestampToHtmlDateValue(ms))}
+                          disabled={drugFormResult === 'none'}
+                        />
+                        <p className="text-[10px] text-muted-foreground">ถ้าเลือกผลเป็น NONE ไม่บังคับวันที่</p>
                       </div>
                       <div className="space-y-2">
-                        <Label>สถานตรวจ</Label>
-                        <Input value={newDrugLaboratory} onChange={(e) => setNewDrugLaboratory(e.target.value)} />
+                        <Label>สถานที่ตรวจ</Label>
+                        <Select value={drugFormLocType} onValueChange={(v) => setDrugFormLocType(v as DrugTestLocationType)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="OPEC">OPEC</SelectItem>
+                            <SelectItem value="OTHER">อื่นๆ</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {drugFormLocType === 'OTHER' && (
+                          <Input
+                            placeholder="ระบุสถานที่"
+                            value={drugFormLocOther}
+                            onChange={(e) => setDrugFormLocOther(e.target.value)}
+                          />
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label>ผลตรวจ</Label>
-                        <Select value={newDrugResult} onValueChange={(v) => setNewDrugResult(v as 'negative' | 'positive')}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
+                        <Select value={drugFormResult} onValueChange={(v) => setDrugFormResult(v as DrugTestResult)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="none">NONE (ไม่ได้ตรวจ)</SelectItem>
                             <SelectItem value="negative">NEGATIVE</SelectItem>
                             <SelectItem value="positive">POSITIVE</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-2">
-                        <Label>วันหมดอายุ</Label>
-                        <Input type="date" value={newDrugExpiryDate} onChange={(e) => setNewDrugExpiryDate(e.target.value)} />
-                      </div>
                     </div>
                     <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsAddDrugOpen(false)}>ยกเลิก</Button>
+                      <Button variant="outline" onClick={() => setDrugEditSubstance(null)}>
+                        ยกเลิก
+                      </Button>
                       <Button
                         onClick={() => {
-                          if (!drugTestsQuery) return;
-                          if (!newDrugTestDate || !newDrugExpiryDate) {
-                            toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'กรุณาระบุวันที่ตรวจและวันหมดอายุ' });
+                          if (!drugTestsQuery || !drugEditSubstance) return;
+                          if (drugFormResult !== 'none' && !drugFormDate.trim()) {
+                            toast({
+                              variant: 'destructive',
+                              title: 'กรอกข้อมูลไม่ครบ',
+                              description: 'ถ้ามีผลตรวจแล้ว ต้องระบุวันที่ตรวจ',
+                            });
+                            return;
+                          }
+                          if (drugFormLocType === 'OTHER' && !drugFormLocOther.trim()) {
+                            toast({
+                              variant: 'destructive',
+                              title: 'กรอกข้อมูลไม่ครบ',
+                              description: 'เลือกอื่นๆ ต้องระบุสถานที่',
+                            });
                             return;
                           }
                           addDocumentNonBlocking(drugTestsQuery, {
-                            testDate: new Date(newDrugTestDate).getTime(),
-                            result: newDrugResult,
-                            expiryDate: new Date(newDrugExpiryDate).getTime(),
-                            laboratory: newDrugLaboratory || '',
+                            substanceKey: drugEditSubstance.id,
+                            substanceLabelSnapshot: drugEditSubstance.label,
+                            testDate:
+                              drugFormResult === 'none' || !drugFormDate.trim()
+                                ? null
+                                : new Date(drugFormDate).getTime(),
+                            testLocationType: drugFormLocType,
+                            testLocationOther: drugFormLocType === 'OTHER' ? drugFormLocOther.trim() : '',
+                            result: drugFormResult,
                           });
-                          setIsAddDrugOpen(false);
+                          setDrugEditSubstance(null);
+                          toast({ title: 'บันทึกแล้ว' });
                         }}
                       >
                         บันทึก
@@ -874,55 +1111,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead className="pl-6 font-bold">วันที่ตรวจ (Test Date)</TableHead>
-                      <TableHead className="font-bold">สถานตรวจ (Laboratory)</TableHead>
-                      <TableHead className="font-bold">ผลตรวจ (Result)</TableHead>
-                      <TableHead className="font-bold">วันหมดอายุ (Expiry)</TableHead>
-                      <TableHead className="text-right pr-6">จัดการ</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {drugTests?.map(d => (
-                      <TableRow key={d.id}>
-                        <TableCell className="pl-6 font-medium text-primary">{new Date(d.testDate).toLocaleDateString('th-TH')}</TableCell>
-                        <TableCell className="text-xs">{d.laboratory}</TableCell>
-                        <TableCell>
-                          <Badge variant={d.result === 'negative' ? 'default' : 'destructive'} className={d.result === 'negative' ? 'bg-green-600' : ''}>
-                            {d.result.toUpperCase()}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className={d.expiryDate < Date.now() ? 'text-destructive font-black text-xs' : 'text-xs'}>
-                          {new Date(d.expiryDate).toLocaleDateString('th-TH')}
-                        </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive h-8 w-8"
-                            onClick={() => {
-                              if (!firestore) return;
-                              if (confirm('ลบรายการ?')) {
-                                deleteDocumentNonBlocking(doc(firestore, 'workers', id, 'drug_tests', d.id));
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {drugTests?.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="py-20 text-center text-muted-foreground italic">ไม่พบประวัติการตรวจสารเสพติด</TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
               </CardContent>
             </Card>
           </TabsContent>
@@ -969,13 +1157,17 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                       <Label>เลขที่เอกสาร</Label>
                       <Input value={newDocNo} onChange={(e) => setNewDocNo(e.target.value)} placeholder="เช่น P1234567 / SB77889" />
                       <Label>วันที่ออกเอกสาร</Label>
-                      <Input type="date" value={newDocIssueDate} onChange={(e) => setNewDocIssueDate(e.target.value)} />
+                      <DatePickerThaiBE
+                        className="h-10"
+                        value={htmlDateValueToTimestampMs(newDocIssueDate)}
+                        onChange={(ms) => setNewDocIssueDate(timestampToHtmlDateValue(ms))}
+                      />
                       <Label>วันหมดอายุ</Label>
-                      <Input
-                        type="date"
-                        value={newDocExpiryDate}
+                      <DatePickerThaiBE
+                        className="h-10"
+                        value={htmlDateValueToTimestampMs(newDocExpiryDate)}
                         disabled={!((workerDocCatalog || []).find((x) => x.id === newDocTemplateId)?.hasExpiry)}
-                        onChange={(e) => setNewDocExpiryDate(e.target.value)}
+                        onChange={(ms) => setNewDocExpiryDate(timestampToHtmlDateValue(ms))}
                       />
                     </div>
                     <DialogFooter>
@@ -1003,8 +1195,8 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                             setEditingDocId(duplicateDoc.id);
                             setNewDocTemplateId(selected.id);
                             setNewDocNo(duplicateDoc.documentNo || '');
-                            setNewDocIssueDate(duplicateDoc.issueDate ? new Date(duplicateDoc.issueDate).toISOString().slice(0, 10) : '');
-                            setNewDocExpiryDate(duplicateDoc.expiryDate ? new Date(duplicateDoc.expiryDate).toISOString().slice(0, 10) : '');
+                            setNewDocIssueDate(duplicateDoc.issueDate ? timestampToHtmlDateValue(duplicateDoc.issueDate) : '');
+                            setNewDocExpiryDate(duplicateDoc.expiryDate ? timestampToHtmlDateValue(duplicateDoc.expiryDate) : '');
                             toast({ title: 'เข้าสู่โหมดแก้ไข', description: 'ปรับข้อมูลและกดบันทึกอีกครั้งเพื่ออัปเดตรายการเดิม' });
                             return;
                           }

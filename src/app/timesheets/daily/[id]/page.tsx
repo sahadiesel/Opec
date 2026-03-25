@@ -111,11 +111,11 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Timesheet Audit Detail (รายละเอียดการลงเวลา)</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{ts.date}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>พนักงาน: {ts.workerNameSnapshot}</span>
-              </p>
+              </div>
             </div>
           </div>
           <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4 font-bold' : 'py-1.5 px-4 font-bold uppercase'}>

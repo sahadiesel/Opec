@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Position, User } from '@/lib/types';
+import { Position, User, MainContract, PurchaseOrder } from '@/lib/types';
 import { 
   Dialog, 
   DialogContent, 
@@ -22,7 +22,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, collectionGroup, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -97,12 +97,59 @@ export default function PositionsPage() {
     }
   };
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!firestore) return;
-    if (confirm('ยืนยันการลบตำแหน่งงานนี้?')) {
+    if (!confirm('ยืนยันการลบตำแหน่งงานนี้?')) return;
+
+    try {
+      const blockingLabels = new Set<string>();
+
+      const ratesSnap = await getDocs(
+        query(collectionGroup(firestore, 'position_rates'), where('positionId', '==', id))
+      );
+      for (const d of ratesSnap.docs) {
+        const contractRef = d.ref.parent.parent;
+        if (!contractRef) continue;
+        const cSnap = await getDoc(contractRef);
+        const c = cSnap.data() as MainContract | undefined;
+        if (c && (c.status === 'active' || c.status === 'pending')) {
+          blockingLabels.add(c.contractNumber || contractRef.id);
+        }
+      }
+
+      const poLinesSnap = await getDocs(
+        query(collectionGroup(firestore, 'po_lines'), where('positionId', '==', id))
+      );
+      for (const d of poLinesSnap.docs) {
+        const poRef = d.ref.parent.parent;
+        if (!poRef) continue;
+        const pSnap = await getDoc(poRef);
+        const po = pSnap.data() as PurchaseOrder | undefined;
+        if (po && (po.status === 'active' || po.status === 'pending')) {
+          blockingLabels.add(po.poCode || poRef.id);
+        }
+      }
+
+      if (blockingLabels.size > 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่ได้: ตำแหน่งนี้ยังมีอยู่ในสัญญาที่ยังไม่จบ',
+          description: `พบการอ้างอิงในเอกสารที่ยังใช้งานอยู่ เช่น ${Array.from(blockingLabels).slice(0, 5).join(', ')}${blockingLabels.size > 5 ? ' …' : ''}`,
+        });
+        return;
+      }
+
       deleteDocumentNonBlocking(doc(firestore, 'positions', id));
+      toast({ title: 'ลบตำแหน่งงานแล้ว' });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: 'destructive',
+        title: 'ตรวจสอบไม่สำเร็จ',
+        description: 'ไม่สามารถตรวจสอบการอ้างอิงก่อนลบได้ กรุณาลองใหม่',
+      });
     }
   };
 

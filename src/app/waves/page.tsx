@@ -21,7 +21,9 @@ import {
   ArrowRight,
   Loader2
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Wave, User, Customer, PurchaseOrder, POLine, WaveStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -221,11 +223,19 @@ export default function WavesPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มงาน (Start Date)</Label>
-                  <Input type="date" value={newWave.startDate} onChange={e => setNewWave({...newWave, startDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-10"
+                    value={htmlDateValueToTimestampMs(newWave.startDate)}
+                    onChange={(ms) => setNewWave({ ...newWave, startDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่สิ้นสุด (End Date)</Label>
-                  <Input type="date" value={newWave.endDate} onChange={e => setNewWave({...newWave, endDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-10"
+                    value={htmlDateValueToTimestampMs(newWave.endDate)}
+                    onChange={(ms) => setNewWave({ ...newWave, endDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>จำนวนคนงานที่วางแผน (Planned)</Label>

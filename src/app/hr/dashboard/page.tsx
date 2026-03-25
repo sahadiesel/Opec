@@ -19,7 +19,8 @@ import {
   Calendar,
   Search,
   HardHat,
-  RotateCcw
+  RotateCcw,
+  Settings,
 } from 'lucide-react';
 import { 
   User, 
@@ -238,6 +239,43 @@ export default function HRDashboardPage() {
             ติดตามความพร้อมของลูกจ้าง งานรออนุมัติ และคำขอแก้ไขข้อมูลหลังปิดงวด (Worker compliance & HR action queues).
           </p>
         </div>
+
+        <Card className="border-primary/20 bg-primary/[0.03]">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" /> เส้นทางการทำงาน (ใช้งานจริง)
+            </CardTitle>
+            <CardDescription>
+              ลงทะเบียนแยก <strong>ลูกจ้าง</strong> กับ <strong>พนักงานสำนักงาน</strong> — ลงเวลาและงวดเงินเดือนใช้กับคนงานสนาม — จ่ายเงินเดือนแยก Office กับ Worker — สลิปต้องตรวจได้ก่อน
+              แล้ว HR Manager อนุมัติรอบจ่ายก่อนส่งบัญชี
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2 pt-0">
+            <Button variant="outline" size="sm" asChild className="font-semibold">
+              <Link href="/workers">ทะเบียนลูกจ้าง</Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild className="font-semibold">
+              <Link href="/office-staff">ทะเบียนพนักงาน</Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild className="font-semibold">
+              <Link href="/timesheets/wave-board">ลงเวลา (Wave)</Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild className="font-semibold">
+              <Link href="/payroll/periods">งวด/รอบ (คนงาน)</Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild className="font-semibold">
+              <Link href="/office-payroll">จ่ายเงินเดือนพนักงาน</Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild className="font-semibold">
+              <Link href="/payroll/batches">จ่ายเงินเดือนลูกจ้าง</Link>
+            </Button>
+            <Button size="sm" asChild className="font-semibold gap-1">
+              <Link href="/hr/settings">
+                <Settings className="h-3.5 w-3.5" /> ตั้งค่า HR (ภาษี ประกันสังคม)
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           <StatCard title="ลูกจ้างทั้งหมด" value={stats.total} sub="Total Workers" icon={Users} colorClass="border-l-blue-600" />

@@ -19,7 +19,9 @@ import {
   Clock,
   Settings2
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { PayrollPeriod, PayrollPeriodStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -60,8 +62,8 @@ export default function PayrollPeriodsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState<Partial<PayrollPeriod>>({
     label: '',
-    startDate: new Date().toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0],
+    startDate: timestampToHtmlDateValue(Date.now()),
+    endDate: timestampToHtmlDateValue(Date.now()),
     cycleType: 'MONTHLY',
     status: 'DRAFT'
   });
@@ -124,11 +126,19 @@ export default function PayrollPeriodsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="font-bold text-xs">วันเริ่มรอบ (Start)</Label>
-                    <Input type="date" value={newPeriod.startDate} onChange={e => setNewPeriod({...newPeriod, startDate: e.target.value})} />
+                    <DatePickerThaiBE
+                      className="h-10"
+                      value={htmlDateValueToTimestampMs(newPeriod.startDate)}
+                      onChange={(ms) => setNewPeriod({ ...newPeriod, startDate: timestampToHtmlDateValue(ms) })}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold text-xs">วันสิ้นรอบ (End)</Label>
-                    <Input type="date" value={newPeriod.endDate} onChange={e => setNewPeriod({...newPeriod, endDate: e.target.value})} />
+                    <DatePickerThaiBE
+                      className="h-10"
+                      value={htmlDateValueToTimestampMs(newPeriod.endDate)}
+                      onChange={(ms) => setNewPeriod({ ...newPeriod, endDate: timestampToHtmlDateValue(ms) })}
+                    />
                   </div>
                 </div>
                 <div className="space-y-2">

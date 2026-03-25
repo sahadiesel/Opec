@@ -22,8 +22,11 @@ import {
   ShieldAlert,
   UserX
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position, SalesContractTerm } from '@/lib/types';
+import { resolveActiveSalesContractTerm } from '@/lib/services/contract-resolver';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -84,6 +87,12 @@ export default function AssignmentsPage() {
   }, [firestore, isAuthorized]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
+  const salesTermsQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'sales_contract_terms') : null),
+    [firestore, isAuthorized]
+  );
+  const { data: allSalesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
@@ -130,6 +139,15 @@ export default function AssignmentsPage() {
 
     // Resolve Context from PO, PO Line and Position Matrix
     const po = allPOs?.find(p => p.id === wave.poId);
+    if (po && (po.poType || 'contract') === 'quotation') {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สามารถมอบหมายจาก PO สายใบเสนอราคา',
+        description:
+          'PO แบบใบเสนอราคาใช้สำหรับขายสินค้า/บริการครั้งเดียวจบ ไม่ผูก Wave/มอบหมายคนงาน — ใช้สายใบวางบิลหลังส่งมอบแทน',
+      });
+      return;
+    }
     const poLine = allPOLines?.find(l => l.id === wave.poLineId);
     const targetPositionId = poLine?.positionId || wave.poLineId;
     const position = allPositions?.find(p => p.id === targetPositionId);
@@ -146,6 +164,22 @@ export default function AssignmentsPage() {
       });
       return;
     }
+
+    const termRes = resolveActiveSalesContractTerm(allSalesTerms || [], {
+      poId: wave.poId,
+      customerId: wave.customerId,
+      date: startDate,
+    });
+    if (!termRes.isMatch || !termRes.data || termRes.data.purchaseOrderId !== wave.poId) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่มีเงื่อนไขการขายสำหรับ PO นี้',
+        description:
+          'ต้องมี Sales Contract Term สถานะ ACTIVE ที่ผูกกับ PO นี้และคลุมวันเริ่มงาน ก่อนมอบหมาย (สร้างจากหน้า PO หรือเมนูเงื่อนไขการขาย)',
+      });
+      return;
+    }
+    const salesContractTermId = termRes.data.id;
 
     setIsCreating(true);
     try {
@@ -164,7 +198,8 @@ export default function AssignmentsPage() {
         workerId: selectedWorkerId,
         poLineId: wave.poLineId,
         poId: wave.poId,
-        contractId: po?.contractId || '', // Capture Contract ID from PO for downstream logic
+        salesContractTermId,
+        contractId: po?.contractId || '',
         waveId: selectedWaveId,
         positionId: position?.id || poLine?.positionId || '', 
         customerId: wave.customerId,
@@ -293,11 +328,19 @@ export default function AssignmentsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>
-                      <Input type="date" className="h-11" value={startDate} onChange={e => setStartDate(e.target.value)} />
+                      <DatePickerThaiBE
+                        className="h-11"
+                        value={htmlDateValueToTimestampMs(startDate)}
+                        onChange={(ms) => setStartDate(timestampToHtmlDateValue(ms))}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่สิ้นสุดงาน (End Date)</Label>
-                      <Input type="date" className="h-11" value={endDate} onChange={e => setEndDate(e.target.value)} />
+                      <DatePickerThaiBE
+                        className="h-11"
+                        value={htmlDateValueToTimestampMs(endDate)}
+                        onChange={(ms) => setEndDate(timestampToHtmlDateValue(ms))}
+                      />
                     </div>
                   </div>
                   <DialogFooter>

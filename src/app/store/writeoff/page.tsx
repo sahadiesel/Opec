@@ -24,7 +24,9 @@ import { collection, doc, writeBatch, increment } from 'firebase/firestore';
 import { StoreItem, User as AppUser } from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -65,7 +67,7 @@ export default function StoreWriteOffPage() {
 
   // Header State
   const [writeoffNo, setWriteoffNo] = useState(getPreviewPattern('store_writeoff'));
-  const [writeoffDate, setWriteoffDate] = useState(new Date().toISOString().split('T')[0]);
+  const [writeoffDate, setWriteoffDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [reason, setReason] = useState('DAMAGED');
   const [reasonNote, setReasonNote] = useState('');
   const [performedBy, setPerformedBy] = useState('');
@@ -232,7 +234,11 @@ export default function StoreWriteOffPage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">วันที่ทำรายการ (Date)</Label>
-                  <Input type="date" value={writeoffDate} onChange={e => setWriteoffDate(e.target.value)} className="h-11" />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(writeoffDate)}
+                    onChange={(ms) => setWriteoffDate(timestampToHtmlDateValue(ms))}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">เหตุผลการตัดจ่าย (Reason)</Label>

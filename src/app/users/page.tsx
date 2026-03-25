@@ -404,6 +404,9 @@ export default function UsersPage() {
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
                               <Mail className="h-2.5 w-2.5" /> {u.email}
                             </span>
+                            {u.phone && (
+                              <span className="text-[10px] text-muted-foreground">{u.phone}</span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -412,9 +415,15 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary max-w-[280px] truncate">
-                            {BUSINESS_ROLES[rk]?.labelTh || rk}
-                          </Badge>
+                          {u.approvalStatus === 'PENDING' && !u.assignedRoleKey && !u.permissionProfileKey ? (
+                            <Badge variant="secondary" className="text-[9px] font-bold bg-amber-50 text-amber-900 border-amber-200">
+                              รอแอดมินกำหนดบทบาท
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary max-w-[280px] truncate">
+                              {BUSINESS_ROLES[rk]?.labelTh || rk}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1 items-start">

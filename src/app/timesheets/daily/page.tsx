@@ -36,7 +36,9 @@ import {
   RotateCcw,
   Lock
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -97,7 +99,7 @@ export default function DailyTimesheetsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newTs, setNewTs] = useState<Partial<DailyTimesheet>>({
-    date: new Date().toISOString().split('T')[0],
+    date: timestampToHtmlDateValue(Date.now()),
     eventType: 'work_day' as RateConditionEventType,
     shiftType: 'DAY',
     normalHours: 8,
@@ -144,7 +146,7 @@ export default function DailyTimesheetsPage() {
 
       setIsCreateOpen(false);
       setNewTs({
-        date: new Date().toISOString().split('T')[0],
+        date: timestampToHtmlDateValue(Date.now()),
         eventType: 'work_day',
         shiftType: 'DAY',
         normalHours: 8,
@@ -251,7 +253,11 @@ export default function DailyTimesheetsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                   <div className="space-y-2">
                     <Label className="font-bold">วันที่ปฏิบัติงาน (Date) *</Label>
-                    <Input type="date" value={newTs.date} onChange={e => setNewTs({...newTs, date: e.target.value})} />
+                    <DatePickerThaiBE
+                      className="h-10"
+                      value={htmlDateValueToTimestampMs(newTs.date)}
+                      onChange={(ms) => setNewTs({ ...newTs, date: timestampToHtmlDateValue(ms) })}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ประเภทกะ (Shift)</Label>

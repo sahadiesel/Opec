@@ -206,11 +206,11 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Office Payroll Details (การจ่ายเงินพนักงานบริษัท)</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>งวดเดือน: {new Date(run.payrollMonth + '-01').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}</span>
-              </p>
+              </div>
             </div>
           </div>
           <div className="flex gap-2">

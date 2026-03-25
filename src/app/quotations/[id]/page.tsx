@@ -46,6 +46,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 
 type CompanyDocumentProfile = {
   companyNameTh?: string;
@@ -369,11 +371,23 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">วันที่ออกเอกสาร (Issue Date)</Label>
-                        <Input type="date" disabled={!isEditMode} value={editedHeader.issueDate || ''} onChange={e => setEditedHeader({...editedHeader, issueDate: e.target.value})} />
+                        <DatePickerThaiBE
+                          disabled={!isEditMode}
+                          value={htmlDateValueToTimestampMs(editedHeader.issueDate)}
+                          onChange={(ms) =>
+                            setEditedHeader({ ...editedHeader, issueDate: timestampToHtmlDateValue(ms) })
+                          }
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label className="font-bold">วันหมดอายุข้อเสนอ (Valid Until)</Label>
-                        <Input type="date" disabled={!isEditMode} value={editedHeader.validUntilDate || ''} onChange={e => setEditedHeader({...editedHeader, validUntilDate: e.target.value})} />
+                        <DatePickerThaiBE
+                          disabled={!isEditMode}
+                          value={htmlDateValueToTimestampMs(editedHeader.validUntilDate)}
+                          onChange={(ms) =>
+                            setEditedHeader({ ...editedHeader, validUntilDate: timestampToHtmlDateValue(ms) })
+                          }
+                        />
                       </div>
                     </div>
                   </CardContent>

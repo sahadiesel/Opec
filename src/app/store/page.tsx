@@ -32,7 +32,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
-import { StoreItem, StoreTransaction, User, Assignment, Worker } from '@/lib/types';
+import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -59,9 +59,15 @@ export default function StoreDashboardPage() {
 
   const txQuery = useMemoFirebase(() => {
     if (!firestore || !canAccess) return null;
-    return query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(50));
+    return query(collection(firestore, 'store_transactions'), orderBy('createdAt', 'desc'), limit(8000));
   }, [firestore, canAccess]);
   const { data: transactions } = useCollection<StoreTransaction>(txQuery as any);
+
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess) return null;
+    return collection(firestore, 'office_staff');
+  }, [firestore, canAccess]);
+  const { data: officeStaff } = useCollection<OfficeStaff>(officeStaffQuery as any);
 
   // 2. Mobilizations / workers — same store access (internal)
   const mobQuery = useMemoFirebase(() => {
@@ -91,6 +97,49 @@ export default function StoreDashboardPage() {
     if (!items) return [];
     return items.filter(i => i.currentStock <= i.minimumStock && i.active);
   }, [items]);
+
+  /** Net quantity still held off-site per item + person (ISSUE − RETURN). */
+  const custodyByHolder = useMemo(() => {
+    if (!transactions || !items) return [];
+    type Acc = { qty: number; itemId: string; holderId: string; isOffice: boolean };
+    const map = new Map<string, Acc>();
+
+    for (const tx of transactions) {
+      const isOffice = Boolean(tx.officeStaffId);
+      const holderId = tx.officeStaffId || tx.workerId || '';
+      if (!holderId) continue;
+      const key = `${tx.itemId}|${holderId}`;
+      let delta = 0;
+      if (tx.transactionType === 'ISSUE') delta = tx.quantity;
+      else if (tx.transactionType === 'RETURN') delta = -tx.quantity;
+      else continue;
+
+      const prevQty = map.get(key)?.qty ?? 0;
+      const nextQty = prevQty + delta;
+
+      if (nextQty <= 0) {
+        map.delete(key);
+      } else {
+        map.set(key, { qty: nextQty, itemId: tx.itemId, holderId, isOffice });
+      }
+    }
+
+    return Array.from(map.entries())
+      .map(([key, v]) => {
+        const itemMeta = items.find((i) => i.id === v.itemId);
+        const itemName = itemMeta?.itemName || v.itemId;
+        const wk = workers?.find((w) => w.id === v.holderId);
+        const holderLabel = v.isOffice
+          ? `พนักงานออฟฟิศ: ${officeStaff?.find((o) => o.id === v.holderId)?.fullName || v.holderId}`
+          : `ลูกจ้างหน้างาน: ${wk ? `${wk.firstName} ${wk.lastName}` : v.holderId}`;
+        return { key, itemId: v.itemId, itemName, qty: v.qty, holderLabel };
+      })
+      .sort((a, b) => {
+        const byItem = a.itemName.localeCompare(b.itemName, 'th');
+        if (byItem !== 0) return byItem;
+        return a.holderLabel.localeCompare(b.holderLabel, 'th');
+      });
+  }, [transactions, items, workers, officeStaff]);
 
   const pendingReturns = useMemo(() => {
     // If user cannot read workers or mobilizations, we cannot resolve the names
@@ -226,6 +275,43 @@ export default function StoreDashboardPage() {
           <StatCard title="รายการค้างคืน" value={pendingReturns.length} sub="Pending Returns" icon={Users} colorClass="border-l-amber-600" />
           <StatCard title="ยอดค้างรวม" value={pendingReturns.reduce((sum, r) => sum + r.totalQty, 0)} sub="Items in Field" icon={TrendingDown} colorClass="border-l-indigo-600" />
         </div>
+
+        <Card className="border-primary/20 shadow-md overflow-hidden">
+          <CardHeader className="bg-primary/5 border-b">
+            <CardTitle className="text-lg flex items-center gap-2 text-primary">
+              <Package className="h-5 w-5" /> อุปกรณ์ที่เบิกออกไป — คงอยู่กับผู้ถือครอง (Custody)
+            </CardTitle>
+            <CardDescription>
+              สรุปจากประวัติ ISSUE/RETURN: เห็นชัดว่ารายการใดคงเหลืออยู่กับลูกจ้างหน้างานหรือพนักงานออฟฟิศ
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            {custodyByHolder.length === 0 ? (
+              <div className="py-12 text-center text-muted-foreground text-sm">ไม่มียอดค้างนอกคลัง (หรือยังไม่มีข้อมูลการเบิก)</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="font-bold pl-6">อุปกรณ์</TableHead>
+                    <TableHead className="font-bold">ผู้ถือครอง</TableHead>
+                    <TableHead className="text-right font-bold pr-6">จำนวนคงค้าง</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {custodyByHolder.map((row) => (
+                    <TableRow key={row.key}>
+                      <TableCell className="pl-6">
+                        <span className="font-semibold text-primary">{row.itemName}</span>
+                      </TableCell>
+                      <TableCell className="text-sm">{row.holderLabel}</TableCell>
+                      <TableCell className="text-right pr-6 font-bold">{row.qty}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
         <Tabs defaultValue="alerts" className="w-full">
           <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">

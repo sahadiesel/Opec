@@ -28,6 +28,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, isClient } from '@/lib/permissions';
+import { formatDateRangeThaiBE } from '@/lib/date-thai';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 
 export default function MainContractsPage() {
   const router = useRouter();
@@ -220,11 +222,17 @@ export default function MainContractsPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มสัญญา</Label>
-                  <Input type="date" value={newContract.startDate ? new Date(newContract.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewContract({...newContract, startDate: new Date(e.target.value).getTime()})} />
+                  <DatePickerThaiBE
+                    value={newContract.startDate}
+                    onChange={(ts) => setNewContract({ ...newContract, startDate: ts })}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่สิ้นสุดสัญญา</Label>
-                  <Input type="date" value={newContract.endDate ? new Date(newContract.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewContract({...newContract, endDate: new Date(e.target.value).getTime()})} />
+                  <DatePickerThaiBE
+                    value={newContract.endDate}
+                    onChange={(ts) => setNewContract({ ...newContract, endDate: ts })}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>สกุลเงิน (Currency)</Label>
@@ -305,7 +313,7 @@ export default function MainContractsPage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-xs font-medium text-muted-foreground">
-                          {new Date(contract.startDate).toLocaleDateString('th-TH')} - {new Date(contract.endDate).toLocaleDateString('th-TH')}
+                          {formatDateRangeThaiBE(contract.startDate, contract.endDate)}
                         </TableCell>
                         <TableCell>
                           <Badge variant={contract.status === 'active' ? 'default' : 'secondary'} className={contract.status === 'active' ? 'bg-green-600' : ''}>

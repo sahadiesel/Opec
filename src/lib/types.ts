@@ -133,6 +133,8 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
+  /** เบอร์โทร (เช่น ลงทะเบียนผ่านหน้าแรก) */
+  phone?: string;
 
   // FUTURE PRIMARY ACCESS MODEL (internal: accessGroup + accessLevel + allowedModules; portal separate)
   userType?: 'internal' | 'customer_portal';
@@ -227,6 +229,21 @@ export interface Position {
   updatedAt: number;
 }
 
+/** รายการสารในแผงตรวจ — ตั้งค่าที่ system/drug_test_panel */
+export interface DrugTestPanelSubstance {
+  id: string;
+  label: string;
+}
+
+export interface DrugTestPanelConfig {
+  substances: DrugTestPanelSubstance[];
+  updatedAt: number;
+  updatedBy?: string;
+}
+
+export type DrugTestLocationType = 'OPEC' | 'OTHER';
+export type DrugTestResult = 'none' | 'negative' | 'positive';
+
 export interface Worker {
   id: string;
   workerCode: string;
@@ -248,6 +265,11 @@ export interface Worker {
   complianceAlertLevel?: 'ok' | 'warning' | 'blocked';
   nearestExpiryInDays?: number | null;
   nearestExpiryAt?: number | null;
+  /** สรุปแผงสารเสพติดสำหรับแดชบอร์ด (อัปเดตจากหน้ารายละเอียดคนงาน) */
+  drugPanelSummaryKind?: 'pending' | 'partial' | 'pass' | 'positive' | 'none_panel';
+  drugPanelSummaryText?: string;
+  drugPanelPassedCount?: number;
+  drugPanelTotalCount?: number;
   totalWorkedHours?: number;
   firstWorkedAt?: number | null;
   lastWorkedAt?: number | null;
@@ -484,7 +506,10 @@ export type SalesContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'C
 export interface SalesContractTerm {
   id: string;
   customerId: string;
-  mainContractId: string;
+  /** สายสัญญา — ว่างได้ถ้าผูกกับใบเสนอราคาแทน */
+  mainContractId?: string;
+  /** สายใบเสนอราคา — ต้องมีเมื่อไม่มี main contract */
+  quotationId?: string;
   purchaseOrderId: string;
   title: string;
   contractNo: string;
@@ -528,8 +553,12 @@ export interface Assignment {
   assignmentNo: string;
   workerId: string;
   waveId: string;
+  /** Required for new mobilizations: links to sales_contract_terms doc; enforced in Firestore rules on create */
+  salesContractTermId?: string;
   poId: string;
   poLineId: string;
+  /** Optional: copied from PO for downstream screens (e.g. mobilization) */
+  contractId?: string;
   positionId: string;
   customerId: string;
   projectName: string;
@@ -792,6 +821,8 @@ export interface AccountsReceivable {
   documentNo: string;
   referenceType: 'TAX_INVOICE' | 'BILLING_NOTE';
   referenceId: string;
+  /** เลขที่ใบกำกับ (แสดงผล / audit) */
+  referenceNo?: string;
   issueDate: string;
   dueDate: string;
   debitAmount: number;
@@ -1189,9 +1220,17 @@ export interface WorkerMedicalRecord {
 
 export interface WorkerDrugTest {
   id: string;
-  testDate: number;
-  result: 'negative' | 'positive';
-  expiryDate: number;
+  /** อ้างอิง id จาก DrugTestPanelSubstance */
+  substanceKey?: string;
+  substanceLabelSnapshot?: string;
+  testDate: number | null;
+  testLocationType?: DrugTestLocationType;
+  /** เมื่อ testLocationType === OTHER */
+  testLocationOther?: string;
+  result: DrugTestResult;
+  /** @deprecated ไม่ใช้แล้ว — ข้อมูลเก่าเท่านั้น */
+  expiryDate?: number;
+  /** @deprecated ใช้ testLocationType / testLocationOther */
   laboratory?: string;
   _path?: string;
 }
@@ -1296,6 +1335,9 @@ export interface StoreTransaction {
   transactionType: TransactionType;
   quantity: number;
   workerId?: string;
+  /** Office staff borrow (no field assignment) */
+  officeStaffId?: string;
+  issueType?: 'field' | 'office';
   assignmentId?: string;
   waveId?: string;
   transactionDate: string;
@@ -1313,7 +1355,22 @@ export interface Receipt {
   receiptNo: string;
   customerId: string;
   receiptDate: string;
+  /**
+   * ยอดตามใบเสร็จ — ต้องตรงกับใบกำกับภาษีเมื่อชำระครบ (เช่น 100+VAT = 107)
+   */
   receivedAmount: number;
+  /**
+   * เงินโอนเข้าบัญชีจริง — น้อยกว่า receivedAmount เมื่อมีหัก ณ (เช่น 104)
+   * ถ้าไม่ระบุ = ไม่มีหัก ณ ที่แยก ใช้ receivedAmount ทั้งหมดเป็นยอดเข้าบัญชี
+   */
+  cashDepositAmount?: number;
+  /**
+   * ภาษีหัก ณ ที่จ่ายคู่กับใบกำกับ — ปิดลูกหนี้ด้วยเอกสารหัก ณ ไม่ผ่านเงินเข้าบัญชี (เช่น 3)
+   * receivedAmount ≈ cashDepositAmount + withholdingTaxAmount
+   */
+  withholdingTaxAmount?: number;
+  /** เลขที่หนังสือหัก ณ ที่จ่าย (ระดับใบเสร็จ ถ้ามี) */
+  whtCertificateNo?: string;
   paymentMethod: PaymentMethod;
   bankAccountId: string;
   status: ReceiptStatus;
@@ -1328,7 +1385,12 @@ export interface ReceiptAllocation {
   id: string;
   receiptId: string;
   taxInvoiceId: string;
+  /** เงินโอน — ตัดลูกหนี้และนับในยอดเข้าบัญชี (ส่วนของยอดใบเสร็จที่เป็นเงินสด) */
   amountAllocated: number;
+  /** หัก ณ คู่ใบกำกับ — ตัดลูกหนี้ด้วยเอกสารหัก ณ ไม่ผ่านเงินเข้าบัญชี */
+  withholdingTaxAmount?: number;
+  /** เลขที่หนังสือหัก ณ ที่จ่าย */
+  whtCertificateNo?: string;
   createdAt: number;
 }
 
@@ -1340,6 +1402,8 @@ export interface TaxInvoice {
   issueDate: string;
   taxableAmount: number;
   vatAmount: number;
+  /** ภาษีหัก ณ ที่จ่าย (จากใบวางบิล — ใช้สอดคล้องยอดลูกหนี้กับเงินรับจริง) */
+  withholdingTaxAmount?: number;
   totalAmount: number;
   currency: string;
   status: TaxInvoiceStatus;

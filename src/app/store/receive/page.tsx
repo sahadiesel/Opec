@@ -28,7 +28,9 @@ import { collection, doc, writeBatch, increment, query, orderBy } from 'firebase
 import { StoreItem, Vendor, Purchase, User as AppUser } from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -60,7 +62,7 @@ export default function StoreReceivePage() {
 
   // Header State
   const [receiveNo, setReceiveNo] = useState(getPreviewPattern('store_receive'));
-  const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split('T')[0]);
+  const [receiveDate, setReceiveDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [vendorId, setVendorId] = useState('');
   const [refPurchaseId, setRefPurchaseId] = useState('');
   const [notes, setNotes] = useState('');
@@ -227,7 +229,11 @@ export default function StoreReceivePage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">วันที่รับของ (Date)</Label>
-                  <Input type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} className="h-11" />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(receiveDate)}
+                    onChange={(ms) => setReceiveDate(timestampToHtmlDateValue(ms))}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">คู่ค้า / ผู้ขาย (Vendor)</Label>

@@ -27,7 +27,9 @@ import { collection, doc, query, where, writeBatch, increment } from 'firebase/f
 import { StoreItem, Worker, Assignment, Wave, StoreTransaction, User as AppUser, Position } from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -47,7 +49,7 @@ export default function StoreReturnPage() {
 
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedAsgnId, setSelectedAsgnId] = useState('');
-  const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
+  const [returnDate, setReturnDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [notes, setNotes] = useState('');
   const [returnList, setReturnList] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -396,7 +398,11 @@ export default function StoreReturnPage() {
                 <div className="pt-4 space-y-4 border-t">
                   <div className="space-y-2">
                     <Label className="font-bold text-xs uppercase text-muted-foreground">วันที่รับคืน (Return Date)</Label>
-                    <Input type="date" value={returnDate} onChange={e => setReturnDate(e.target.value)} className="h-11" />
+                    <DatePickerThaiBE
+                      className="h-11"
+                      value={htmlDateValueToTimestampMs(returnDate)}
+                      onChange={(ms) => setReturnDate(timestampToHtmlDateValue(ms))}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold text-xs uppercase text-muted-foreground">หมายเหตุ (Notes)</Label>

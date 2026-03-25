@@ -26,6 +26,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -89,20 +90,20 @@ function CustomerPOsPageContent() {
   const { data: pos, isLoading: isPOLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
     return collection(firestore, 'customers');
-  }, [firestore, isAuthorized]);
+  }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
     return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
-  }, [firestore, isAuthorized]);
+  }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
   const { data: activeContracts } = useCollection<MainContract>(contractsQuery as any);
   const quotationsQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
     return query(collection(firestore, 'quotations'), where('status', 'in', ['sent', 'accepted']));
-  }, [firestore, isAuthorized]);
+  }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
   const { data: eligibleQuotations } = useCollection<Quotation>(quotationsQuery as any);
 
   useEffect(() => {
@@ -229,12 +230,13 @@ function CustomerPOsPageContent() {
                 <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto grid-cols-1">
+              <div className="flex min-w-0 flex-col gap-4">
               <DialogHeader>
                 <DialogTitle>ลงทะเบียนใบสั่งซื้อใหม่ (New Customer PO Registration)</DialogTitle>
                 <DialogDescription>เลือกบริษัทคู่ค้าและสัญญาหลักที่เกี่ยวข้องเพื่อทำการจองโควต้าพนักงาน</DialogDescription>
               </DialogHeader>
-              <Alert className="col-span-2">
+              <Alert className="w-full">
                 <Info className="h-4 w-4" />
                 <AlertDescription>
                   PO ออกได้จาก <b>สัญญา</b> หรือ <b>ใบเสนอราคา</b> เท่านั้น ถ้าลูกค้ามีสัญญา Active อยู่แล้ว ให้สร้างจากสัญญาโดยตรง
@@ -325,18 +327,24 @@ function CustomerPOsPageContent() {
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มโครงการ (Start Date)</Label>
-                  <Input type="date" value={newPO.startDate ? new Date(newPO.startDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, startDate: new Date(e.target.value).getTime()})} />
+                  <DatePickerThaiBE
+                    value={newPO.startDate}
+                    onChange={(ms) => setNewPO({ ...newPO, startDate: ms })}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่สิ้นสุดโครงการ (End Date)</Label>
-                  <Input type="date" value={newPO.endDate ? new Date(newPO.endDate).toISOString().split('T')[0] : ''} onChange={e => setNewPO({...newPO, endDate: new Date(e.target.value).getTime()})} />
+                  <DatePickerThaiBE
+                    value={newPO.endDate}
+                    onChange={(ms) => setNewPO({ ...newPO, endDate: ms })}
+                  />
                 </div>
                 <div className="grid gap-2 col-span-2">
                   <Label>รายละเอียดเพิ่มเติม</Label>
                   <Textarea value={newPO.description || ''} onChange={e => setNewPO({...newPO, description: e.target.value})} />
                 </div>
               </div>
-              <DialogFooter>
+              <DialogFooter className="w-full sm:justify-end">
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
                 <Button
                   onClick={handleCreate}
@@ -353,6 +361,7 @@ function CustomerPOsPageContent() {
                   ยืนยันและไปจัดการรายการโควต้า (Confirm)
                 </Button>
               </DialogFooter>
+              </div>
             </DialogContent>
           </Dialog>
         </div>
@@ -440,19 +449,26 @@ function CustomerPOsPageContent() {
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
                   <p className="font-bold">ระบุรายการสั่งจอง (Manage PO Lines)</p>
-                  <p className="text-muted-foreground text-xs">คลิกเข้าดู PO เพื่อเพิ่มตำแหน่งงานและจำนวนคนงานที่ลูกค้าต้องการจองตัว (Required Quantity)</p>
+                  <p className="text-muted-foreground text-xs">
+                    สายสัญญา: เพิ่มโควต้า → Wave → มอบหมาย / สายใบเสนอราคา: ขายสินค้าหรือบริการครั้งเดียวจบ (ไม่ใช้ Wave) ส่งมอบแล้ววางบิล — ทั้งสองสายต้องมี Sales Term และใบวางบิลผูก PO ก่อนออกใบกำกับ
+                  </p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">มอบหมายคนงานรายบุคคล (Assign Workers)</p>
-                  <p className="text-muted-foreground text-xs">ไปที่ระบบ 'การมอบหมาย' เพื่อส่งรายชื่อคนงานที่พร้อม (Ready) เข้ามายังโควต้าที่เปิดไว้ในใบสั่งซื้อนี้</p>
+                  <p className="font-bold">สร้าง Wave แล้วมอบหมายคนงาน (Wave → Assignments)</p>
+                  <p className="text-muted-foreground text-xs">
+                    สร้างหรือเลือก Wave ที่ผูกกับ PO/PO Line ของใบสั่งซื้อนี้ จากนั้นไปที่การมอบหมาย เลือก Wave แล้วส่งรายชื่อคนงานที่พร้อม (Ready) — การมอบหมายไม่ได้ผูกกับ PO Line โดยตรง
+                  </p>
                 </div>
               </div>
             </div>
           </CardContent>
-          <CardFooter className="pt-0 justify-end">
+          <CardFooter className="pt-0 justify-end gap-2 flex-wrap">
+            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
+              <a href="/waves">ไปยังระบบ Waves (เวฟ) <ArrowRight className="h-4 w-4" /></a>
+            </Button>
             <Button variant="link" className="gap-2 text-primary font-bold" asChild>
               <a href="/assignments">ไปยังระบบการมอบหมายงาน (Assignments) <ArrowRight className="h-4 w-4" /></a>
             </Button>

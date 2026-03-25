@@ -19,7 +19,9 @@ import {
   Loader2,
   Wallet
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Purchase, PurchaseType, User, Vendor, PurchaseStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -68,7 +70,7 @@ export default function PurchasesPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newPurchase, setNewPurchase] = useState<Partial<Purchase>>({
     purchaseNo: getPreviewPattern('purchase'),
-    purchaseDate: new Date().toISOString().split('T')[0],
+    purchaseDate: timestampToHtmlDateValue(Date.now()),
     purchaseType: 'CREDIT',
     storeReceiptStatus: 'PENDING',
     paymentStatus: 'UNPAID',
@@ -171,7 +173,11 @@ export default function PurchasesPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ซื้อ (Purchase Date)</Label>
-                  <Input type="date" value={newPurchase.purchaseDate} onChange={e => setNewPurchase({...newPurchase, purchaseDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newPurchase.purchaseDate)}
+                    onChange={(ms) => setNewPurchase({ ...newPurchase, purchaseDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>ประเภทการซื้อ</Label>

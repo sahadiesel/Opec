@@ -16,11 +16,11 @@ import {
   Edit2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { StoreItem, User } from '@/lib/types';
+import { StoreItem, User, StoreTransaction } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, query, where, getDocs } from 'firebase/firestore';
 import { addDocumentNonBlocking, deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -159,11 +159,42 @@ export default function StoreItemsPage() {
     setIsEditOpen(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (item: StoreItem) => {
     if (!firestore) return;
-    if (confirm('ยืนยันการลบรายการอุปกรณ์?')) {
-      deleteDocumentNonBlocking(doc(firestore, 'store_items', id));
+    if (!confirm('ยืนยันการลบรายการอุปกรณ์?')) return;
+
+    if (item.isTool) {
+      try {
+        const snap = await getDocs(
+          query(collection(firestore, 'store_transactions'), where('itemId', '==', item.id))
+        );
+        let netOut = 0;
+        snap.forEach((d) => {
+          const tx = d.data() as StoreTransaction;
+          if (tx.transactionType === 'ISSUE') netOut += tx.quantity;
+          else if (tx.transactionType === 'RETURN') netOut -= tx.quantity;
+        });
+        if (netOut > 0) {
+          toast({
+            variant: 'destructive',
+            title: 'ลบไม่ได้: ยังมีเครื่องมือเบิกออกไปคืนไม่ครบ',
+            description: `คงเหลือนอกคลังประมาณ ${netOut} ${item.unit} กรุณาติดตามรับคืนให้ครบก่อนลบรายการ`,
+          });
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+        toast({
+          variant: 'destructive',
+          title: 'ตรวจสอบไม่สำเร็จ',
+          description: 'ไม่สามารถตรวจสอบประวัติการเบิกคืนได้',
+        });
+        return;
+      }
     }
+
+    deleteDocumentNonBlocking(doc(firestore, 'store_items', item.id));
+    toast({ title: 'ลบรายการอุปกรณ์แล้ว' });
   };
 
   if (userLoading || isUserLoading) {
@@ -364,7 +395,7 @@ export default function StoreItemsPage() {
                       </TableCell>
                       <TableCell className="text-right pr-6 space-x-2">
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => openEditDialog(item)}><Edit2 className="h-4 w-4" /></Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item.id)}><Trash2 className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item)}><Trash2 className="h-4 w-4" /></Button>
                       </TableCell>
                     </TableRow>
                   ))}

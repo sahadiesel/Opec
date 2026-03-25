@@ -82,6 +82,15 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const [newTool, setNewTool] = useState<Partial<PositionToolRequirement>>({ allowed: true, quantityDefault: 1, itemType: 'tool' });
 
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('master');
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t === 'master' || t === 'certs' || t === 'ppe' || t === 'tools') {
+      setActiveTab(t);
+    }
+  }, []);
   const selectedCatalogItem = useMemo(
     () => (workerDocCatalog || []).find((x) => x.id === (newCert.templateId || '')),
     [workerDocCatalog, newCert.templateId]
@@ -224,7 +233,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           </div>
         </div>
 
-        <Tabs defaultValue="master" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="master" className="gap-2 py-2 px-8"><Briefcase className="h-4 w-4" /> ข้อมูลตำแหน่ง (Profile)</TabsTrigger>
             <TabsTrigger value="certs" className="gap-2 py-2 px-8"><FileText className="h-4 w-4" /> ใบเซอร์ (Certs)</TabsTrigger>

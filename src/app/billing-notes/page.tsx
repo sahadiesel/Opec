@@ -20,7 +20,9 @@ import {
   ShoppingCart,
   ClipboardList
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { BillingNote, BillingNoteStatus, User, Customer, MainContract, PurchaseOrder } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -87,8 +89,8 @@ export default function BillingNotesPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newNote, setNewNote] = useState<Partial<BillingNote>>({
     billingNoteNo: getPreviewPattern('billing_note'),
-    billingDate: new Date().toISOString().split('T')[0],
-    dueDate: new Date(Date.now() + 2592000000).toISOString().split('T')[0], // +30 days
+    billingDate: timestampToHtmlDateValue(Date.now()),
+    dueDate: timestampToHtmlDateValue(Date.now() + 2592000000), // +30 days
     currency: 'THB',
     status: 'DRAFT',
     notes: ''
@@ -106,6 +108,14 @@ export default function BillingNotesPage() {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุลูกค้า" });
       return;
     }
+    if (!newNote.poId) {
+      toast({
+        variant: 'destructive',
+        title: 'ระบุใบสั่งซื้อ (PO)',
+        description: 'ใบวางบิลต้องอ้างอิง Customer PO ทั้งสายสัญญาและสายใบเสนอราคา',
+      });
+      return;
+    }
 
     setIsCreating(true);
     try {
@@ -113,9 +123,20 @@ export default function BillingNotesPage() {
         actor: currentUser.displayName 
       });
 
+      const linkedPo = pos?.find((p) => p.id === newNote.poId);
+      const periodStart =
+        newNote.billingPeriodStart ||
+        (linkedPo ? timestampToHtmlDateValue(linkedPo.startDate) : timestampToHtmlDateValue(Date.now()));
+      const periodEnd =
+        newNote.billingPeriodEnd ||
+        (linkedPo ? timestampToHtmlDateValue(linkedPo.endDate) : timestampToHtmlDateValue(Date.now()));
+
       const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), {
         ...newNote,
         billingNoteNo: finalNo,
+        contractId: linkedPo?.contractId || newNote.contractId || '',
+        billingPeriodStart: periodStart,
+        billingPeriodEnd: periodEnd,
         amountBeforeTax: 0,
         vatAmount: 0,
         withholdingTaxAmount: 0,
@@ -219,23 +240,47 @@ export default function BillingNotesPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-1"><ShoppingCart className="h-3 w-3" /> ใบสั่งซื้อ (Customer PO)</Label>
-                  <Select onValueChange={v => setNewNote({...newNote, poId: v})} value={newNote.poId} disabled={!newNote.customerId}>
-                    <SelectTrigger><SelectValue placeholder="เลือก PO..." /></SelectTrigger>
+                  <Label className="flex items-center gap-1"><ShoppingCart className="h-3 w-3" /> ใบสั่งซื้อ (Customer PO) *</Label>
+                  <Select
+                    onValueChange={(v) => {
+                      const p = pos?.find((x) => x.id === v);
+                      setNewNote({
+                        ...newNote,
+                        poId: v,
+                        contractId: p?.contractId || '',
+                        billingPeriodStart: p ? timestampToHtmlDateValue(p.startDate) : newNote.billingPeriodStart,
+                        billingPeriodEnd: p ? timestampToHtmlDateValue(p.endDate) : newNote.billingPeriodEnd,
+                      });
+                    }}
+                    value={newNote.poId}
+                    disabled={!newNote.customerId}
+                  >
+                    <SelectTrigger><SelectValue placeholder="เลือก PO ที่อ้างอิง..." /></SelectTrigger>
                     <SelectContent>
                       {pos?.map(p => (
-                        <SelectItem key={p.id} value={p.id}>{p.poCode}</SelectItem>
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.poCode} {(p.poType || 'contract') === 'quotation' ? '(QT)' : '(สัญญา)'}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-[10px] text-muted-foreground">ทุกใบวางบิลต้องผูก PO เหมือนสายสัญญาและสายใบเสนอราคา</p>
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่วางบิล (Billing Date)</Label>
-                  <Input type="date" value={newNote.billingDate} onChange={e => setNewNote({...newNote, billingDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newNote.billingDate)}
+                    onChange={(ms) => setNewNote({ ...newNote, billingDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ครบกำหนด (Due Date)</Label>
-                  <Input type="date" value={newNote.dueDate} onChange={e => setNewNote({...newNote, dueDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newNote.dueDate)}
+                    onChange={(ms) => setNewNote({ ...newNote, dueDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>สกุลเงิน (Currency)</Label>

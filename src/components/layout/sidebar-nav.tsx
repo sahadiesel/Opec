@@ -1,5 +1,6 @@
 'use client';
 
+import type { ComponentType } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -39,7 +40,12 @@ import {
   FileBarChart,
   Database,
   Building2,
+  FlaskConical,
+  ChevronRight,
+  Briefcase,
+  LayoutGrid,
 } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Sidebar,
   SidebarContent,
@@ -50,6 +56,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
 import { ModuleKey, canView, isClient } from '@/lib/permissions';
@@ -69,6 +78,78 @@ interface NavGroup {
   label: string;
   audience: NavAudience;
   items: NavItem[];
+  /** แผนกบุคคล: แสดงเมนูแบบหมวดย่อย (collapsible) — รายการใน `items` ไม่ใช้ */
+  hrStructured?: boolean;
+}
+
+/** เมนู HR — ลำดับและคำอธิบายใช้งานจริง */
+const HR_NAV_SUBSECTIONS: Array<{
+  title: string;
+  icon: ComponentType<{ className?: string }>;
+  items: NavItem[];
+}> = [
+  {
+    title: 'ศูนย์กลาง HR',
+    icon: LayoutGrid,
+    items: [
+      { key: 'hr_hub', title: 'แดชบอร์ด HR', href: '/hr/dashboard', icon: Briefcase },
+      { key: 'hr_hub', title: 'ตั้งค่า HR (ภาษี ประกันสังคม)', href: '/hr/settings', icon: Settings },
+    ],
+  },
+  {
+    title: 'ทะเบียนบุคลากร',
+    icon: Users,
+    items: [
+      { key: 'workers', title: 'ลูกจ้าง / คนงาน (Workers)', href: '/workers', icon: HardHat },
+      { key: 'office_staff', title: 'พนักงานสำนักงาน (Office Staff)', href: '/office-staff', icon: UserSearch },
+      { key: 'positions', title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity },
+      { key: 'workers', title: 'รายการเอกสารกลาง (Document Catalog)', href: '/worker-document-catalog', icon: FileText },
+    ],
+  },
+  {
+    title: 'ลงเวลา (คนงานสนาม)',
+    icon: Clock,
+    items: [
+      { key: 'timesheets', title: 'ลงเวลาแบบกลุ่ม (Wave Daily Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
+      { key: 'timesheets', title: 'ประวัติลงเวลารายวัน', href: '/timesheets/daily', icon: Clock },
+    ],
+  },
+  {
+    title: 'จ่ายเงินเดือน (Payroll)',
+    icon: Coins,
+    items: [
+      { key: 'office_payroll', title: 'จ่ายเงินเดือนพนักงาน (Office)', href: '/office-payroll', icon: Coins },
+      { key: 'worker_payroll', title: 'จ่ายเงินเดือนลูกจ้าง (Worker Batches)', href: '/payroll/batches', icon: Coins },
+      { key: 'worker_payroll', title: 'งวด / รอบบัญชี (Periods — คนงาน)', href: '/payroll/periods', icon: CalendarDays },
+    ],
+  },
+];
+
+function pathMatches(pathname: string, href: string): boolean {
+  if (pathname === href) return true;
+  if (href !== '/' && pathname.startsWith(`${href}/`)) return true;
+  return false;
+}
+
+/** หน้า /hr/* ให้ผู้มีสิทธิ์ HR ใดๆ เห็นได้ แม้โปรไฟล์เก่ายังไม่มี key hr_hub */
+function canViewHrHubItem(
+  user: User,
+  profile: PermissionProfile | null,
+  admin: boolean,
+  item: NavItem
+): boolean {
+  if (admin) return true;
+  if (canView(user, item.key, profile)) return true;
+  if (item.href.startsWith('/hr/')) {
+    return (
+      canView(user, 'workers', profile) ||
+      canView(user, 'worker_payroll', profile) ||
+      canView(user, 'office_payroll', profile) ||
+      canView(user, 'office_staff', profile) ||
+      canView(user, 'timesheets', profile)
+    );
+  }
+  return false;
 }
 
 const navGroups: NavGroup[] = [
@@ -90,17 +171,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'บุคคลและเงินเดือน (HR & Payroll)',
     audience: 'internal',
-    items: [
-      { key: 'timesheets', title: 'ลงเวลาแบบกลุ่ม (Wave Daily Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
-      { key: 'timesheets', title: 'ประวัติลงเวลารายวัน (History)', href: '/timesheets/daily', icon: Clock },
-      { key: 'worker_payroll', title: 'งวดการจ่ายเงิน (Payroll Batches)', href: '/payroll/batches', icon: Coins },
-      { key: 'worker_payroll', title: 'จัดการรอบบัญชี (Periods)', href: '/payroll/periods', icon: CalendarDays },
-      { key: 'office_payroll', title: UI_LABELS.OFFICE_PAYROLL, href: '/office-payroll', icon: Coins },
-      { key: 'positions', title: UI_LABELS.POSITIONS, href: '/positions', icon: Activity },
-      { key: 'workers', title: UI_LABELS.WORKERS, href: '/workers', icon: HardHat },
-      { key: 'workers', title: 'รายการเอกสารกลาง (Document Catalog)', href: '/worker-document-catalog', icon: FileText },
-      { key: 'office_staff', title: UI_LABELS.OFFICE_STAFF, href: '/office-staff', icon: UserSearch },
-    ],
+    hrStructured: true,
+    items: [],
   },
   {
     label: 'งานปฏิบัติการ (Operations)',
@@ -138,6 +210,7 @@ const navGroups: NavGroup[] = [
       { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'system_admin', title: 'หัวเอกสารบริษัท (Document Header)', href: '/system-admin/document-profile', icon: Building2 },
+      { key: 'system_admin', title: 'ตั้งค่าแผงตรวจสารเสพติด', href: '/system-admin/drug-test-panel', icon: FlaskConical },
       { key: 'audit_logs', title: 'ประวัติกิจกรรม (Audit Logs)', href: '/system-admin/audit-logs', icon: History },
       { key: 'system_admin', title: 'Migration สิทธิ์ (User Auth)', href: '/system-admin/user-migration', icon: Database },
     ],
@@ -192,6 +265,66 @@ export function SidebarNav({
       <SidebarContent className="py-4">
         {navGroups.map((group) => {
           if (!canSeeGroup(group, user, admin)) return null;
+
+          if (group.hrStructured) {
+            const subsections = HR_NAV_SUBSECTIONS.map((sub) => ({
+              ...sub,
+              visibleItems: sub.items.filter((item) => canViewHrHubItem(user, profile, admin, item)),
+            })).filter((s) => s.visibleItems.length > 0);
+
+            if (subsections.length === 0) return null;
+
+            return (
+              <SidebarGroup key={group.label} className="py-2">
+                <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
+                  {group.label}
+                </SidebarGroupLabel>
+
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {subsections.map((sub) => {
+                      const isSubActive = sub.visibleItems.some((it) => pathMatches(pathname, it.href));
+                      return (
+                        <Collapsible key={sub.title} defaultOpen={isSubActive} className="group">
+                          <SidebarMenuItem>
+                            <CollapsibleTrigger asChild>
+                              <SidebarMenuButton
+                                tooltip={sub.title}
+                                className="transition-all duration-200"
+                              >
+                                <sub.icon className="h-4 w-4 text-muted-foreground" />
+                                <span className="font-semibold text-xs tracking-tight truncate">{sub.title}</span>
+                                <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                              </SidebarMenuButton>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                              <SidebarMenuSub>
+                                {sub.visibleItems.map((item) => {
+                                  const active = pathMatches(pathname, item.href);
+                                  return (
+                                    <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
+                                      <SidebarMenuSubButton asChild isActive={active} size="sm">
+                                        <Link href={item.href}>
+                                          <item.icon
+                                            className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                          />
+                                          <span>{item.title}</span>
+                                        </Link>
+                                      </SidebarMenuSubButton>
+                                    </SidebarMenuSubItem>
+                                  );
+                                })}
+                              </SidebarMenuSub>
+                            </CollapsibleContent>
+                          </SidebarMenuItem>
+                        </Collapsible>
+                      );
+                    })}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            );
+          }
 
           const visibleItems = group.items.filter((item) => admin || canView(user, item.key, profile));
 

@@ -17,7 +17,9 @@ import {
   Loader2,
   Wallet
 } from 'lucide-react';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Receipt as ReceiptType, ReceiptStatus, User, Customer, BankAccount, PaymentMethod } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -68,17 +70,36 @@ export default function ReceiptsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [newReceipt, setNewReceipt] = useState<Partial<ReceiptType>>({
     receiptNo: getPreviewPattern('receipt'),
-    receiptDate: new Date().toISOString().split('T')[0],
+    receiptDate: timestampToHtmlDateValue(Date.now()),
     paymentMethod: 'TRANSFER',
     receivedAmount: 0,
+    withholdingTaxAmount: 0,
     status: 'DRAFT',
     notes: ''
   });
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!newReceipt.customerId || !newReceipt.receivedAmount || !newReceipt.bankAccountId) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุลูกค้า ยอดเงิน และบัญชีธนาคาร" });
+    if (!newReceipt.customerId || !newReceipt.bankAccountId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุลูกค้าและบัญชีธนาคาร" });
+      return;
+    }
+    const gross = Number(newReceipt.receivedAmount);
+    if (!gross || gross <= 0) {
+      toast({ variant: 'destructive', title: 'ระบุยอดใบเสร็จ', description: 'ยอดตามใบเสร็จต้องตรงกับใบกำกับภาษี (เช่น 107 บาท)' });
+      return;
+    }
+    const wht = Number(newReceipt.withholdingTaxAmount) || 0;
+    const cash =
+      newReceipt.cashDepositAmount !== undefined && newReceipt.cashDepositAmount !== null
+        ? Number(newReceipt.cashDepositAmount)
+        : gross - wht;
+    if (wht > 0 && Math.abs(gross - (cash + wht)) > 0.01) {
+      toast({
+        variant: 'destructive',
+        title: 'ยอดไม่สอดคล้อง',
+        description: 'ยอดใบเสร็จควรเท่ากับ เงินเข้าบัญชี + หัก ณ (เช่น 107 = 104 + 3)',
+      });
       return;
     }
 
@@ -88,9 +109,17 @@ export default function ReceiptsPage() {
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'receipt', { actor: currentUser.displayName });
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'receipts'), {
-        ...newReceipt,
         receiptNo: finalNo,
-        receivedAmount: Number(newReceipt.receivedAmount),
+        customerId: newReceipt.customerId,
+        receiptDate: newReceipt.receiptDate,
+        paymentMethod: newReceipt.paymentMethod,
+        bankAccountId: newReceipt.bankAccountId,
+        receivedAmount: gross,
+        cashDepositAmount: wht > 0 ? cash : undefined,
+        withholdingTaxAmount: wht > 0 ? wht : undefined,
+        whtCertificateNo: newReceipt.whtCertificateNo?.trim() || undefined,
+        status: 'DRAFT',
+        notes: newReceipt.notes,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -168,7 +197,11 @@ export default function ReceiptsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่รับเงิน (Date)</Label>
-                  <Input type="date" value={newReceipt.receiptDate} onChange={e => setNewReceipt({...newReceipt, receiptDate: e.target.value})} />
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(newReceipt.receiptDate)}
+                    onChange={(ms) => setNewReceipt({ ...newReceipt, receiptDate: timestampToHtmlDateValue(ms) })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>ช่องทางชำระเงิน</Label>
@@ -194,8 +227,58 @@ export default function ReceiptsPage() {
                   </Select>
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label>จำนวนเงินที่ได้รับจริง (Received Amount)</Label>
-                  <Input type="number" className="text-lg font-bold" value={newReceipt.receivedAmount} onChange={e => setNewReceipt({...newReceipt, receivedAmount: parseFloat(e.target.value)})} />
+                  <Label>ยอดตามใบเสร็จ / ใบกำกับภาษี (เช่น 100 + VAT 7 = 107)</Label>
+                  <Input
+                    type="number"
+                    className="text-lg font-bold"
+                    value={newReceipt.receivedAmount || ''}
+                    onChange={(e) => {
+                      const g = parseFloat(e.target.value) || 0;
+                      const w = Number(newReceipt.withholdingTaxAmount) || 0;
+                      setNewReceipt({
+                        ...newReceipt,
+                        receivedAmount: g,
+                        cashDepositAmount: g - w,
+                      });
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>ภาษีหัก ณ ที่จ่าย (คู่ใบกำกับ — ถ้ามี)</Label>
+                  <Input
+                    type="number"
+                    value={newReceipt.withholdingTaxAmount ?? ''}
+                    onChange={(e) => {
+                      const w = parseFloat(e.target.value) || 0;
+                      const g = Number(newReceipt.receivedAmount) || 0;
+                      setNewReceipt({
+                        ...newReceipt,
+                        withholdingTaxAmount: w,
+                        cashDepositAmount: g - w,
+                      });
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>เงินโอนเข้าบัญชีจริง</Label>
+                  <Input
+                    type="number"
+                    className="font-semibold"
+                    value={newReceipt.cashDepositAmount ?? ''}
+                    onChange={(e) =>
+                      setNewReceipt({ ...newReceipt, cashDepositAmount: parseFloat(e.target.value) || 0 })
+                    }
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    ใบเสร็จยังแสดงยอดเต็มตามใบกำกับ — บัญชีธนาคารรับเฉพาะยอดโอน (หัก ณ ไม่ผ่านบัญชี แต่ใช้ปิดลูกหนี้ 107 บาท)
+                  </p>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>เลขที่หนังสือหัก ณ ที่จ่าย (ถ้ามี)</Label>
+                  <Input
+                    value={newReceipt.whtCertificateNo || ''}
+                    onChange={(e) => setNewReceipt({ ...newReceipt, whtCertificateNo: e.target.value })}
+                  />
                 </div>
               </div>
               <DialogFooter>
