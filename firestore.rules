@@ -137,9 +137,35 @@ service cloud.firestore {
         || (isActiveUser() && isInternalUser() && isOperationUser() && !isStoreOfficerUser());
     }
 
+    /**
+     * พนักงานฝ่ายบุคคล/เงินเดือนโดยตรง — ใช้คู่กับ isOperationUser เมื่อ users/{uid} ยัง resolve
+     * userDepartmentGroup ไม่เป็น operation/accounting (ได้ null) แต่มี department หรือ role ชัดเจน
+     */
+    function isHrStaffDomainUser() {
+      let u = userData();
+      return u != null && isActiveUser() && isInternalUser()
+        && (
+          u.department == 'hr'
+          || assignedRoleKey() == 'hr_manager'
+          || assignedRoleKey() == 'hr_officer'
+          || assignedRoleKey() == 'payroll_officer'
+          || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
+              && u.assignedRoleKeys.hasAny(['hr_manager', 'hr_officer', 'payroll_officer']))
+          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['hr_manager', 'hr_officer', 'payroll_officer']))
+          || u.roleId == 'hr_manager'
+          || u.roleId == 'hr_officer'
+          || u.roleId == 'payroll_officer'
+          || u.permissionProfileKey == 'hr_manager'
+          || u.permissionProfileKey == 'hr_officer'
+          || (u.permissionProfileKeys != null && u.permissionProfileKeys is list
+              && u.permissionProfileKeys.hasAny(['hr_manager', 'hr_officer']))
+        );
+    }
+
     function canAccessHR() {
       return isAdminUser()
-        || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()) && !isStoreOfficerUser());
+        || (isActiveUser() && isInternalUser() && !isStoreOfficerUser()
+            && (isOperationUser() || isAccountingUser() || isHrStaffDomainUser()));
     }
 
     /**

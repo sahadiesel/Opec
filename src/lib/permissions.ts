@@ -347,7 +347,6 @@ function buildHrOfficerPermissionMap(): Record<string, ModulePermission> {
     rate_conditions: READ_ONLY,
     labor_cost_contract_terms: READ_ONLY,
     office_payroll: READ_ONLY,
-    positions: READ_ONLY,
     payment_export_batches: READ_ONLY,
     hr_hub: READ_ONLY,
   };
