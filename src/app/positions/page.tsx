@@ -22,12 +22,13 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, collectionGroup, query, where, getDocs, getDoc } from 'firebase/firestore';
-import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { addDoc, collection, doc, collectionGroup, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function PositionsPage() {
@@ -63,36 +64,44 @@ export default function PositionsPage() {
   }, []);
 
   const handleCreate = async () => {
-    if (!firestore || !user) return;
-    
+    if (!firestore || !user || !firebaseUser) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่พร้อมบันทึก',
+        description: 'กรุณารอให้เข้าสู่ระบบครบถ้วนแล้วลองอีกครั้ง',
+      });
+      return;
+    }
+
     setIsCreating(true);
     try {
-      // Atomic Number Generation
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'position', { actor: user.displayName });
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'position', {
+        actor: user.displayName,
+        userId: firebaseUser.uid,
+      });
 
       const posRef = collection(firestore, 'positions');
-      const docRef = await addDocumentNonBlocking(posRef, {
+      const payload = sanitizeFirestorePayload({
         ...newPosition,
         positionCode: finalNo,
         createdAt: Date.now(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       });
-      
+      const docRef = await addDoc(posRef, payload);
+
       setIsCreateOpen(false);
       toast({
-        title: "สร้างตำแหน่งงานสำเร็จ",
+        title: 'สร้างตำแหน่งงานสำเร็จ',
         description: `รหัสตำแหน่ง: ${finalNo}`,
       });
-      
-      if (docRef) {
-        router.push(`/positions/${docRef.id}`);
-      }
+      router.push(`/positions/${docRef.id}`);
     } catch (error) {
       console.error(error);
+      const msg = error instanceof Error ? error.message : 'ไม่สามารถสร้างตำแหน่งงานได้';
       toast({
-        variant: "destructive",
-        title: "เกิดข้อผิดพลาด",
-        description: "ไม่สามารถสร้างตำแหน่งงานได้",
+        variant: 'destructive',
+        title: 'เกิดข้อผิดพลาด',
+        description: msg,
       });
     } finally {
       setIsCreating(false);

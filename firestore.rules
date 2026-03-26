@@ -137,6 +137,30 @@ service cloud.firestore {
         || (isActiveUser() && isInternalUser() && isOperationUser() && !isStoreOfficerUser());
     }
 
+    /** คีย์โปรไฟล์ที่ผูก users — สอดคล้อง use-permission-profiles getEffectivePermissionProfileKey */
+    function resolvedPermissionProfileKey() {
+      let u = userData();
+      return u == null ? null
+        : (u.permissionProfileKey != null ? u.permissionProfileKey
+          : (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.size() > 0
+              ? u.permissionProfileKeys[0]
+              : null));
+    }
+
+    /** ข้อมูล permission_profiles/{key} บ่งบอกว่าเป็นสาย HR (UI ใช้ป้ายจากโปรไฟล์นี้) */
+    function hrPermissionProfileMarksHr(p) {
+      return ('department' in p && p.department == 'hr')
+        || ('primaryRoleTemplateKey' in p && p.primaryRoleTemplateKey in ['hr_manager', 'hr_officer', 'payroll_officer'])
+        || ('profileKey' in p && p.profileKey in ['hr_manager', 'hr_officer']);
+    }
+
+    function permissionProfileIsHR() {
+      let key = resolvedPermissionProfileKey();
+      return key != null
+        && exists(/databases/$(database)/documents/permission_profiles/$(key))
+        && hrPermissionProfileMarksHr(get(/databases/$(database)/documents/permission_profiles/$(key)).data);
+    }
+
     /**
      * พนักงานฝ่ายบุคคล/เงินเดือนโดยตรง — ใช้คู่กับ isOperationUser เมื่อ users/{uid} ยัง resolve
      * userDepartmentGroup ไม่เป็น operation/accounting (ได้ null) แต่มี department หรือ role ชัดเจน
@@ -159,6 +183,7 @@ service cloud.firestore {
           || u.permissionProfileKey == 'hr_officer'
           || (u.permissionProfileKeys != null && u.permissionProfileKeys is list
               && u.permissionProfileKeys.hasAny(['hr_manager', 'hr_officer']))
+          || permissionProfileIsHR()
         );
     }
 
