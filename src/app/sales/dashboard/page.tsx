@@ -37,7 +37,8 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { isSalesStaff } from '@/lib/permissions';
+import { isSalesStaff, isStoreOfficer } from '@/lib/permissions';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function SalesDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -52,6 +53,8 @@ export default function SalesDashboardPage() {
   const isSalesAuthorized = useMemo(() => {
     return isSalesStaff(currentUser);
   }, [currentUser]);
+
+  const viewerOnly = useMemo(() => isStoreOfficer(currentUser), [currentUser]);
 
   // --- Sales Data Queries ---
   
@@ -178,13 +181,28 @@ export default function SalesDashboardPage() {
       <div className="space-y-8 max-w-[1600px] mx-auto">
         {/* Header */}
         <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3 flex-wrap">
             <TrendingUp className="h-8 w-8" /> แดชบอร์ดฝ่ายขาย (Sales Dashboard)
+            {viewerOnly && (
+              <Badge variant="secondary" className="text-[10px] font-bold uppercase tracking-wide">
+                ดูอย่างเดียว
+              </Badge>
+            )}
           </h1>
           <p className="text-muted-foreground text-lg italic">
             ติดตามลูกค้า สัญญา PO งานรออนุมัติจากลูกค้า และงานเชิงพาณิชย์ที่ต้องติดตาม (Monitor customers, contracts, POs, and commercial actions).
           </p>
         </div>
+
+        {viewerOnly && (
+          <Alert className="border-amber-200 bg-amber-50/80 text-amber-950">
+            <Info className="h-4 w-4 text-amber-700" />
+            <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
+            <AlertDescription>
+              บทบาทเจ้าหน้าที่คลังสามารถดูภาพรวมและคิวงานได้เท่านั้น ไม่สามารถเปิดหน้าทำงานฝ่ายขายหรือแก้ไขข้อมูลจากที่นี่ได้
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Top KPI Row */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
@@ -204,9 +222,14 @@ export default function SalesDashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-lg flex items-center gap-2">
-                      <Clock className="h-5 w-5 text-primary" /> งานที่ต้องดำเนินการ (Sales Action Queue)
+                      <Clock className="h-5 w-5 text-primary" />{' '}
+                      {viewerOnly ? 'งานที่ต้องติดตาม (ภาพรวม)' : 'งานที่ต้องดำเนินการ (Sales Action Queue)'}
                     </CardTitle>
-                    <CardDescription>รายการงานด่วนที่ต้องการการติดตามจากฝ่ายขาย</CardDescription>
+                    <CardDescription>
+                      {viewerOnly
+                        ? 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทนฝ่ายขายได้'
+                        : 'รายการงานด่วนที่ต้องการการติดตามจากฝ่ายขาย'}
+                    </CardDescription>
                   </div>
                   <Badge variant="secondary" className="font-bold">{urgentActions.length} รายการ</Badge>
                 </div>
@@ -214,26 +237,46 @@ export default function SalesDashboardPage() {
               <CardContent className="p-0">
                 {urgentActions.length > 0 ? (
                   <div className="divide-y">
-                    {urgentActions.map(action => (
-                      <Link key={action.id} href={action.link} className="block hover:bg-slate-50 transition-colors group">
-                        <div className="p-4 flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${action.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
-                              {action.type.includes('Contract') ? <FileText className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
-                            </div>
-                            <div className="space-y-0.5">
-                              <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{action.label}</p>
-                              <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
-                                <span>{action.type}</span>
-                                <span>•</span>
-                                <span>{action.sub}</span>
+                    {urgentActions.map(action =>
+                      viewerOnly ? (
+                        <div key={action.id} className="block cursor-default">
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-lg ${action.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                {action.type.includes('Contract') ? <FileText className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-primary">{action.label}</p>
+                                <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                                  <span>{action.type}</span>
+                                  <span>•</span>
+                                  <span>{action.sub}</span>
+                                </div>
                               </div>
                             </div>
                           </div>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                         </div>
-                      </Link>
-                    ))}
+                      ) : (
+                        <Link key={action.id} href={action.link} className="block hover:bg-slate-50 transition-colors group">
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-lg ${action.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                {action.type.includes('Contract') ? <FileText className="h-5 w-5" /> : <UserPlus className="h-5 w-5" />}
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{action.label}</p>
+                                <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                                  <span>{action.type}</span>
+                                  <span>•</span>
+                                  <span>{action.sub}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                          </div>
+                        </Link>
+                      )
+                    )}
                   </div>
                 ) : (
                   <div className="py-20 text-center space-y-4">
@@ -242,11 +285,13 @@ export default function SalesDashboardPage() {
                   </div>
                 )}
               </CardContent>
-              <CardFooter className="bg-muted/30 p-3 flex justify-center border-t">
-                <Button variant="link" className="text-xs text-muted-foreground" asChild>
-                  <Link href="/purchase-orders">ดูใบสั่งซื้อทั้งหมด <ArrowRight className="h-3 w-3 ml-1" /></Link>
-                </Button>
-              </CardFooter>
+              {!viewerOnly && (
+                <CardFooter className="bg-muted/30 p-3 flex justify-center border-t">
+                  <Button variant="link" className="text-xs text-muted-foreground" asChild>
+                    <Link href="/purchase-orders">ดูใบสั่งซื้อทั้งหมด <ArrowRight className="h-3 w-3 ml-1" /></Link>
+                  </Button>
+                </CardFooter>
+              )}
             </Card>
 
             <Card className="shadow-md border-none overflow-hidden">
@@ -275,9 +320,11 @@ export default function SalesDashboardPage() {
                           <Badge variant={asgn.clientApprovalStatus === 'REJECTED' ? 'destructive' : 'outline'} className="text-[9px] font-bold">
                             {asgn.clientApprovalStatus}
                           </Badge>
-                          <Button variant="ghost" size="icon" asChild>
-                            <Link href={`/mobilization/${asgn.id}`}><ChevronRight className="h-4 w-4" /></Link>
-                          </Button>
+                          {!viewerOnly && (
+                            <Button variant="ghost" size="icon" asChild>
+                              <Link href={`/mobilization/${asgn.id}`}><ChevronRight className="h-4 w-4" /></Link>
+                            </Button>
+                          )}
                         </div>
                       </div>
                     );
@@ -292,21 +339,23 @@ export default function SalesDashboardPage() {
 
           {/* Sidebar Section */}
           <div className="space-y-6">
-            <Card className="shadow-md border-none">
-              <CardHeader className="pb-3 border-b">
-                <CardTitle className="text-sm font-bold flex items-center gap-2 text-primary">
-                  <TrendingUp className="h-4 w-4" /> ทางลัดงานฝ่ายขาย (Sales Shortcuts)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4 space-y-2">
-                <ShortcutItem href="/customers" label="ทะเบียนลูกค้า" sub="Customer Directory" icon={Building2} />
-                <ShortcutItem href="/quotations" label="ใบเสนอราคา" sub="Quotations" icon={FileSignature} />
-                <ShortcutItem href="/main-contracts" label="สัญญาหลัก" sub="MSAs & Rates" icon={FileText} />
-                <ShortcutItem href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="Project POs" icon={ShoppingCart} />
-                <ShortcutItem href="/billing-notes" label="ใบวางบิล" sub="Billing Notes" icon={FileText} />
-                <ShortcutItem href="/client-portal" label="Client Portal Preview" sub="Monitoring View" icon={UserCheck} />
-              </CardContent>
-            </Card>
+            {!viewerOnly && (
+              <Card className="shadow-md border-none">
+                <CardHeader className="pb-3 border-b">
+                  <CardTitle className="text-sm font-bold flex items-center gap-2 text-primary">
+                    <TrendingUp className="h-4 w-4" /> ทางลัดงานฝ่ายขาย (Sales Shortcuts)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-4 space-y-2">
+                  <ShortcutItem href="/customers" label="ทะเบียนลูกค้า" sub="Customer Directory" icon={Building2} />
+                  <ShortcutItem href="/quotations" label="ใบเสนอราคา" sub="Quotations" icon={FileSignature} />
+                  <ShortcutItem href="/main-contracts" label="สัญญาหลัก" sub="MSAs & Rates" icon={FileText} />
+                  <ShortcutItem href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="Project POs" icon={ShoppingCart} />
+                  <ShortcutItem href="/billing-notes" label="ใบวางบิล" sub="Billing Notes" icon={FileText} />
+                  <ShortcutItem href="/client-portal" label="Client Portal Preview" sub="Monitoring View" icon={UserCheck} />
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="bg-blue-50 border-blue-100 shadow-none">
               <CardHeader className="pb-2">

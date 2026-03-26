@@ -340,6 +340,8 @@ export interface OfficeStaff {
   fullName: string;
   nickname?: string;
   department: string;
+  /** Optional link to {@link Position} when chosen from ตำแหน่งงาน (category OFFICE). */
+  positionId?: string;
   positionTitle: string;
   /** แยกงวดเงินเดือน: พนักงานทั่วไป vs ผู้บริหาร (จัดการในบัญชี — ไม่รวมในงวด office ทั่วไป) */
   payrollBand?: 'OFFICE' | 'EXECUTIVE';

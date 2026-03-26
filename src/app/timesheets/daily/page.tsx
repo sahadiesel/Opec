@@ -4,7 +4,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Clock, 
@@ -39,11 +39,20 @@ import {
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { DailyTimesheet, DailyTimesheetStatus, User as AppUser, Worker, Assignment, Wave, RateConditionEventType } from '@/lib/types';
+import {
+  DailyTimesheet,
+  DailyTimesheetStatus,
+  User as AppUser,
+  Worker,
+  Assignment,
+  Wave,
+  PurchaseOrder,
+  RateConditionEventType,
+  DeploymentStatus,
+} from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy, limit, doc } from 'firebase/firestore';
-import { addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
@@ -61,6 +70,7 @@ import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
+import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work Day)',
@@ -96,7 +106,46 @@ export default function DailyTimesheetsPage() {
   const mobQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'mobilizations') : null), [firestore]);
   const { data: assignments } = useCollection<Assignment>(mobQuery as any);
 
+  const poQuery = useMemoFirebase(
+    () => (firestore ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null),
+    [firestore]
+  );
+  const { data: purchaseOrders } = useCollection<PurchaseOrder>(poQuery as any);
+
+  const wavesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'waves') : null), [firestore]);
+  const { data: waves } = useCollection<Wave>(wavesQuery as any);
+
+  const waveTimesheetOverview = useMemo(() => {
+    if (!assignments?.length || !waves?.length) return [];
+    const filtered = assignments.filter((a) =>
+      WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)
+    );
+    const byWave = new Map<string, Assignment[]>();
+    for (const a of filtered) {
+      const arr = byWave.get(a.waveId) || [];
+      arr.push(a);
+      byWave.set(a.waveId, arr);
+    }
+    return Array.from(byWave.entries())
+      .map(([waveId, asgns]) => {
+        const wave = waves.find((w) => w.id === waveId);
+        const po = wave ? purchaseOrders?.find((p) => p.id === wave.poId) : undefined;
+        const workerIds = [...new Set(asgns.map((a) => a.workerId))];
+        const names = workerIds.map((wid) => {
+          const w = workers?.find((x) => x.id === wid);
+          return w ? `${w.firstName} ${w.lastName}` : wid.slice(0, 8);
+        });
+        const preview =
+          names.length <= 10 ? names.join(', ') : `${names.slice(0, 10).join(', ')} … (+${names.length - 10})`;
+        return { waveId, wave, po, count: workerIds.length, preview, asgns };
+      })
+      .sort((a, b) => (a.wave?.waveCode || a.waveId).localeCompare(b.wave?.waveCode || b.waveId, 'th'));
+  }, [assignments, waves, purchaseOrders, workers]);
+
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  /** Same flow as Wave Board: PO → Wave → worker from that wave’s mobilizations */
+  const [manualPoId, setManualPoId] = useState('');
+  const [manualWaveId, setManualWaveId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [newTs, setNewTs] = useState<Partial<DailyTimesheet>>({
     date: timestampToHtmlDateValue(Date.now()),
@@ -112,9 +161,41 @@ export default function DailyTimesheetsPage() {
     clientSignedBy: '',
   });
 
+  const assignmentsInSelectedWave = useMemo(() => {
+    if (!manualWaveId || !assignments?.length) return [];
+    return assignments.filter(
+      (a) =>
+        a.waveId === manualWaveId &&
+        WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)
+    );
+  }, [assignments, manualWaveId]);
+
+  const workerIdsInSelectedWave = useMemo(
+    () => [...new Set(assignmentsInSelectedWave.map((a) => a.workerId))],
+    [assignmentsInSelectedWave]
+  );
+
+  const assignmentsForPickedWorker = useMemo(() => {
+    if (!newTs.workerId) return [];
+    return assignmentsInSelectedWave.filter((a) => a.workerId === newTs.workerId);
+  }, [assignmentsInSelectedWave, newTs.workerId]);
+
+  useEffect(() => {
+    if (!newTs.workerId) return;
+    const list = assignmentsInSelectedWave.filter((a) => a.workerId === newTs.workerId);
+    if (list.length === 1) {
+      const onlyId = list[0].id;
+      setNewTs((prev) => (prev.assignmentId === onlyId ? prev : { ...prev, assignmentId: onlyId }));
+    }
+  }, [newTs.workerId, assignmentsInSelectedWave]);
+
   const handleCreate = async () => {
-    if (!firestore || !currentUser || !newTs.workerId || !newTs.assignmentId) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุคนงาน งาน และวันที่" });
+    if (!firestore || !currentUser || !manualWaveId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกใบสั่งซื้อ เวฟ และคนงานในเวฟนั้น" });
+      return;
+    }
+    if (!newTs.workerId || !newTs.assignmentId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกคนงานและงานที่มอบหมายในเวฟ" });
       return;
     }
 
@@ -125,6 +206,9 @@ export default function DailyTimesheetsPage() {
       const asgn = assignments?.find(a => a.id === newTs.assignmentId);
 
       if (!asgn) throw new Error("Could not resolve assignment context");
+      if (asgn.waveId !== manualWaveId) {
+        throw new Error("การมอบหมายไม่ตรงกับเวฟที่เลือก — กรุณาเลือกใหม่");
+      }
 
       await service.bulkUpsertTimesheets([{
         ...newTs,
@@ -145,6 +229,8 @@ export default function DailyTimesheetsPage() {
       }], currentUser);
 
       setIsCreateOpen(false);
+      setManualPoId('');
+      setManualWaveId('');
       setNewTs({
         date: timestampToHtmlDateValue(Date.now()),
         eventType: 'work_day',
@@ -157,6 +243,8 @@ export default function DailyTimesheetsPage() {
         sourceDocumentNo: '',
         supervisorSignedBy: '',
         clientSignedBy: '',
+        workerId: undefined,
+        assignmentId: undefined,
       });
       toast({ title: "บันทึกใบลงเวลาสำเร็จ" });
     } catch (e: any) {
@@ -239,7 +327,31 @@ export default function DailyTimesheetsPage() {
                 <Grid3X3 className="h-5 w-5" /> ลงเวลาแบบกลุ่มเวฟ (Wave Bulk Entry)
               </Link>
             </Button>
-            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <Dialog
+              open={isCreateOpen}
+              onOpenChange={(open) => {
+                setIsCreateOpen(open);
+                if (!open) {
+                  setManualPoId('');
+                  setManualWaveId('');
+                  setNewTs({
+                    date: timestampToHtmlDateValue(Date.now()),
+                    eventType: 'work_day',
+                    shiftType: 'DAY',
+                    normalHours: 8,
+                    status: 'DRAFT',
+                    readyForPayroll: false,
+                    readyForBilling: false,
+                    sourceType: 'PAPER',
+                    sourceDocumentNo: '',
+                    supervisorSignedBy: '',
+                    clientSignedBy: '',
+                    workerId: undefined,
+                    assignmentId: undefined,
+                  });
+                }
+              }}
+            >
               <DialogTrigger asChild>
                 <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold">
                   <Plus className="h-5 w-5" /> บันทึกรายบุคคล (Manual Entry)
@@ -248,7 +360,9 @@ export default function DailyTimesheetsPage() {
               <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>บันทึกเวลาทำงานจากหลักฐานกระดาษ (Entry from Paper)</DialogTitle>
-                  <DialogDescription>กรอกข้อมูลเวลาทำงานที่อ้างอิงจากใบลงเวลาที่เซ็นรับรองแล้ว</DialogDescription>
+                  <DialogDescription>
+                    เลือกลำดับเดียวกับ <b>ลงเวลาแบบกลุ่มเวฟ</b>: ใบสั่งซื้อ → เวฟ → คนงานในเวฟ (ข้อมูล mobilization / wave เดียวกัน)
+                  </DialogDescription>
                 </DialogHeader>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                   <div className="space-y-2">
@@ -271,26 +385,114 @@ export default function DailyTimesheetsPage() {
                     </Select>
                   </div>
                   <div className="space-y-2 md:col-span-2">
-                    <Label className="font-bold">เลือกคนงานหน้างาน (Field Worker) *</Label>
-                    <Select onValueChange={v => setNewTs({...newTs, workerId: v, assignmentId: ''})}>
-                      <SelectTrigger className="h-10"><SelectValue placeholder="ค้นหาลูกจ้างหน้างาน (Field only)..." /></SelectTrigger>
-                      <SelectContent>
-                        {workers?.map(w => (
-                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
+                    <Label className="font-bold text-primary">1. ใบสั่งซื้อ (Customer PO) *</Label>
+                    <Select
+                      value={manualPoId || undefined}
+                      onValueChange={(v) => {
+                        setManualPoId(v);
+                        setManualWaveId('');
+                        setNewTs((prev) => ({ ...prev, workerId: undefined, assignmentId: undefined }));
+                      }}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="เลือก PO ที่มีเวฟงาน..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {purchaseOrders?.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.poCode} · {p.projectName}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2 md:col-span-2">
-                    <Label className="font-bold">เลือกงานที่มอบหมาย (Assignment) *</Label>
-                    <Select onValueChange={v => setNewTs({...newTs, assignmentId: v})} disabled={!newTs.workerId}>
-                      <SelectTrigger className="h-10"><SelectValue placeholder="เลือกโครงการ/เวฟ..." /></SelectTrigger>
-                      <SelectContent>
-                        {assignments?.filter(a => a.workerId === newTs.workerId && a.deploymentStatus !== 'CLOSED').map(a => (
-                          <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.assignmentNo})</SelectItem>
+                    <Label className="font-bold text-primary">2. เวฟงาน (Wave) *</Label>
+                    <Select
+                      value={manualWaveId || undefined}
+                      onValueChange={(v) => {
+                        setManualWaveId(v);
+                        setNewTs((prev) => ({ ...prev, workerId: undefined, assignmentId: undefined }));
+                      }}
+                      disabled={!manualPoId}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder={manualPoId ? 'เลือก Wave...' : 'เลือก PO ก่อน'} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {waves
+                          ?.filter((w) => w.poId === manualPoId)
+                          .map((w) => {
+                            const n =
+                              assignments?.filter(
+                                (a) =>
+                                  a.waveId === w.id &&
+                                  WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)
+                              ).length ?? 0;
+                            return (
+                              <SelectItem key={w.id} value={w.id}>
+                                {`${w.waveCode} · ${w.siteLocation || w.projectName} (${n} คน)`}
+                              </SelectItem>
+                            );
+                          })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-bold text-primary">3. คนงานในเวฟนี้ (Field Worker) *</Label>
+                    <Select
+                      value={newTs.workerId || undefined}
+                      onValueChange={(v) => setNewTs({ ...newTs, workerId: v, assignmentId: undefined })}
+                      disabled={!manualWaveId}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder={manualWaveId ? 'เลือกคนงาน...' : 'เลือกเวฟก่อน'} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {workerIdsInSelectedWave.map((wid) => {
+                          const w = workers?.find((x) => x.id === wid);
+                          return (
+                            <SelectItem key={wid} value={wid}>
+                              {w ? `${w.firstName} ${w.lastName} (${w.workerCode})` : wid}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-bold text-primary">4. งานที่มอบหมาย (Assignment) *</Label>
+                    <Select
+                      value={newTs.assignmentId || undefined}
+                      onValueChange={(v) => setNewTs({ ...newTs, assignmentId: v })}
+                      disabled={!newTs.workerId || assignmentsForPickedWorker.length === 0}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue
+                          placeholder={
+                            !newTs.workerId
+                              ? 'เลือกคนงานก่อน'
+                              : assignmentsForPickedWorker.length === 0
+                                ? 'ไม่มี mobilization ที่พร้อมลงเวลาในเวฟนี้'
+                                : assignmentsForPickedWorker.length === 1
+                                  ? 'เลือกแล้วอัตโนมัติ'
+                                  : 'เลือกรายการมอบหมาย...'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {assignmentsForPickedWorker.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.assignmentNo} · {a.projectName} ({a.deploymentStatus})
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {assignmentsForPickedWorker.length > 1 ? (
+                      <p className="text-[11px] text-amber-700">
+                        พนักงานคนนี้มีหลาย mobilization ในเวฟเดียวกัน — กรุณาเลือกรายการที่ถูกต้อง
+                      </p>
+                    ) : null}
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ประเภทเหตุการณ์ (Event) *</Label>
@@ -354,6 +556,50 @@ export default function DailyTimesheetsPage() {
           </div>
         </div>
 
+        {waveTimesheetOverview.length > 0 ? (
+          <Card className="border-blue-200 bg-blue-50/40 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-lg text-primary">
+                <Waves className="h-5 w-5" />
+                สรุปเวฟที่ลงเวลาได้ (ข้อมูลชุดเดียวกับ Wave Board)
+              </CardTitle>
+              <CardDescription className="text-sm">
+                แสดงจำนวนคนงานต่อเวฟจาก mobilization สถานะ{' '}
+                <span className="font-mono text-xs">{WAVE_TIMESHEET_DEPLOYMENT_STATUSES.join(', ')}</span>
+                {' — '}
+                <Link href="/timesheets/wave-board" className="font-semibold text-primary underline">
+                  ลงเวลาแบบกลุ่มเวฟ
+                </Link>{' '}
+                ใช้เวฟและรายชื่อชุดเดียวกับที่นี่
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {waveTimesheetOverview.map((row) => (
+                  <div
+                    key={row.waveId}
+                    className="rounded-lg border border-blue-100 bg-white p-3 text-sm shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-mono font-bold text-primary">{row.wave?.waveCode || row.waveId}</p>
+                        <p className="truncate text-xs text-muted-foreground">{row.po?.poCode} · {row.wave?.projectName}</p>
+                        {row.wave?.siteLocation ? (
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{row.wave.siteLocation}</p>
+                        ) : null}
+                      </div>
+                      <Badge className="shrink-0 bg-blue-600">{row.count} คน</Badge>
+                    </div>
+                    <p className="mt-2 line-clamp-3 text-[11px] leading-snug text-muted-foreground" title={row.preview}>
+                      {row.preview}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <PageGuidance 
           tips={[
             "รายการที่สถานะเป็น 'LOCKED' ถูกนำเข้าสู่กระบวนการจ่ายเงินแล้ว จะไม่สามารถแก้ไขหรือส่งกลับได้",
@@ -372,6 +618,7 @@ export default function DailyTimesheetsPage() {
                   <TableRow>
                     <TableHead className="pl-6 py-4 font-bold">วันที่ (Date)</TableHead>
                     <TableHead className="font-bold">คนงาน (Worker)</TableHead>
+                    <TableHead className="font-bold min-w-[140px]">เวฟ / โครงการ</TableHead>
                     <TableHead className="font-bold">อ้างอิงเอกสาร (Evidence)</TableHead>
                     <TableHead className="font-bold text-center">ชั่วโมง (Hrs)</TableHead>
                     <TableHead className="font-bold">Readiness (P/B)</TableHead>
@@ -382,6 +629,7 @@ export default function DailyTimesheetsPage() {
                 <TableBody>
                   {timesheets?.map((ts) => {
                     const worker = workers?.find(w => w.id === ts.workerId);
+                    const waveRow = waves?.find((w) => w.id === ts.waveId);
                     const canSubmit = ts.status === 'DRAFT' || ts.status === 'REJECTED' || ts.status === 'CORRECTION_REQUIRED';
                     const canVerifyPaper = ts.status === 'OPS_REVIEWED';
                     const canRequestCorrection = ts.status === 'CLIENT_APPROVED' || ts.status === 'VERIFIED_PAPER';
@@ -399,6 +647,16 @@ export default function DailyTimesheetsPage() {
                           <div className="flex flex-col">
                             <span className="font-bold text-sm">{ts.workerNameSnapshot}</span>
                             <span className="text-[10px] text-muted-foreground uppercase">{worker?.workerCode || '-'}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-[200px]">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-xs font-bold text-primary">
+                              {waveRow?.waveCode || (ts.waveId ? `${ts.waveId.slice(0, 8)}…` : '—')}
+                            </span>
+                            <span className="line-clamp-2 text-[10px] text-muted-foreground">
+                              {waveRow?.projectName || '—'}
+                            </span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -456,7 +714,7 @@ export default function DailyTimesheetsPage() {
                   })}
                   {(!timesheets || timesheets.length === 0) && !isTsLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลการลงเวลาในระบบ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลการลงเวลาในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

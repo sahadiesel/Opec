@@ -142,13 +142,31 @@ service cloud.firestore {
         || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()) && !isStoreOfficerUser());
     }
 
+    /**
+     * คลัง/จัดซื้อ: อิง department หรือ role โดยตรง (ไม่ผูกแค่ userDepartmentGroup == operation)
+     * เพื่อกันผู้ใช้จริงที่เป็น store แต่เอกสาร users ยัง resolve กลุ่มไม่ตรง → อ่าน store_items ไม่ได้
+     */
+    function isStoreDomainUser() {
+      let u = userData();
+      return u != null && isActiveUser() && isInternalUser()
+        && (
+          u.department == 'store'
+          || assignedRoleKey() == 'store_officer'
+          || assignedRoleKey() == 'store_manager'
+          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager']))
+        );
+    }
+
     function canAccessStore() {
       return isAdminUser()
-        || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()));
+        || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()))
+        || isStoreDomainUser();
     }
 
     function canWriteStore() {
-      return isAdminUser() || (isActiveUser() && isInternalUser() && isOperationUser());
+      return isAdminUser()
+        || (isActiveUser() && isInternalUser() && isOperationUser())
+        || isStoreDomainUser();
     }
 
     function canAccessAccounting() {
@@ -200,6 +218,11 @@ service cloud.firestore {
 
     function internalReadNonStoreOfficer() {
       return internalRead() && !isStoreOfficerUser();
+    }
+
+    /** อ่านข้อมูลภายใน + เจ้าหน้าที่คลัง (ต้องใช้พนักงาน/มอบหมายตอนเบิกจ่ายอุปกรณ์) */
+    function internalReadOrStoreOfficer() {
+      return internalReadNonStoreOfficer() || isStoreOfficerUser();
     }
 
     function isOwner(userId) {
@@ -303,17 +326,17 @@ service cloud.firestore {
     // Sales domain
     // -------------------------------------------------------------------------
     match /customers/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(id);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(id);
       allow write: if canAccessSales();
     }
 
     match /quotations/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(resource.data.customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessSales();
     }
 
     match /main_contracts/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow create: if internalReadNonStoreOfficer();
       allow update: if internalReadNonStoreOfficer()
         && (resource.data.status != 'active' || mainContractUpdateWhenActiveAllowed());
@@ -321,22 +344,22 @@ service cloud.firestore {
     }
 
     match /sales_contract_terms/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessSales();
     }
 
     match /purchase_orders/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(resource.data.customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessSales();
     }
 
     match /rate_conditions/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessSales();
     }
 
     match /profit_estimates/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessSales();
     }
 
@@ -344,13 +367,13 @@ service cloud.firestore {
     // Operations domain
     // -------------------------------------------------------------------------
     match /waves/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(resource.data.customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
       allow create: if canAccessOperations() || canAccessSales();
       allow update, delete: if canAccessOperations();
     }
 
     match /mobilizations/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(resource.data.customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
       allow create: if canAccessOperations() && mobilizationCreateHasValidSalesTerm();
       allow update, delete: if canAccessOperations();
     }
@@ -359,49 +382,49 @@ service cloud.firestore {
     // HR domain
     // -------------------------------------------------------------------------
     match /workers/{id} {
-      allow read: if internalReadNonStoreOfficer() || isClientUser();
+      allow read: if internalReadOrStoreOfficer() || isClientUser();
       allow create: if canAccessHR();
       allow update: if canAccessHR();
       allow delete: if canDeleteWorkerRecord();
     }
 
     match /positions/{id} {
-      allow read: if internalReadNonStoreOfficer() || isClientUser();
+      allow read: if internalReadOrStoreOfficer() || isClientUser();
       allow write: if canAccessHR();
     }
 
     match /labor_cost_contract_terms/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /office_staff/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /worker_document_catalog/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /payroll_runs/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /payroll_batches/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /payroll_periods/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /office_payroll_runs/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessAccounting() || canAccessHR();
     }
 
@@ -411,22 +434,22 @@ service cloud.firestore {
     }
 
     match /payment_export_batches/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /daily_timesheets/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(resource.data.customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessHR();
     }
 
     match /exception_requests/{id} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /worker_wave_acceptances/{id} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(resource.data.customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessOperations();
     }
 
@@ -573,7 +596,7 @@ service cloud.firestore {
     }
 
     match /approvals/{id} {
-      allow read: if internalReadNonStoreOfficer() || isClientUser();
+      allow read: if internalReadOrStoreOfficer() || isClientUser();
       allow write: if canAccessHR() || canAccessOperations() || canManageSystem();
     }
 
@@ -586,26 +609,27 @@ service cloud.firestore {
     // Subcollections
     // -------------------------------------------------------------------------
     match /workers/{workerId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer() || isClientUser();
+      allow read: if internalReadOrStoreOfficer() || isClientUser();
       allow write: if canAccessHR();
     }
 
     match /positions/{positionId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer() || isClientUser();
+      allow read: if internalReadOrStoreOfficer() || isClientUser();
       allow write: if canAccessHR();
     }
 
     match /customers/{customerId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer() || sameCustomerId(customerId);
+      allow read: if internalReadOrStoreOfficer() || sameCustomerId(customerId);
       allow write: if canAccessSales();
     }
 
     match /main_contracts/{contractId}/{document=**} {
-      allow read, write: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
+      allow write: if internalReadNonStoreOfficer();
     }
 
     match /quotations/{quotationId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer() || (
+      allow read: if internalReadOrStoreOfficer() || (
         isClientUser()
         && get(/databases/$(database)/documents/quotations/$(quotationId)).data.customerId == userCustomerId()
       );
@@ -613,7 +637,7 @@ service cloud.firestore {
     }
 
     match /purchase_orders/{purchaseOrderId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer() || (
+      allow read: if internalReadOrStoreOfficer() || (
         isClientUser()
         && get(/databases/$(database)/documents/purchase_orders/$(purchaseOrderId)).data.customerId == userCustomerId()
       );
@@ -645,12 +669,12 @@ service cloud.firestore {
     }
 
     match /payroll_batches/{batchId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessHR();
     }
 
     match /office_payroll_runs/{runId}/{document=**} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if canAccessAccounting() || canAccessHR();
     }
 
@@ -663,11 +687,11 @@ service cloud.firestore {
     // Collection Groups
     // -------------------------------------------------------------------------
     match /{path=**}/po_lines/{lineId} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
     }
 
     match /{path=**}/position_rates/{rateId} {
-      allow read: if internalReadNonStoreOfficer();
+      allow read: if internalReadOrStoreOfficer();
       allow write: if internalReadNonStoreOfficer();
     }
 

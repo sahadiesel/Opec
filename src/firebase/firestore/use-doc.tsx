@@ -23,6 +23,8 @@ export interface UseDocResult<T> {
   data: WithId<T> | null; // Document data with ID, or null.
   isLoading: boolean;       // True if loading.
   error: FirestoreError | Error | null; // Error object, or null.
+  /** True when the last snapshot was served from local persistence (may lag server after admin updates). */
+  isDataFromCache: boolean;
 }
 
 /**
@@ -47,12 +49,14 @@ export function useDoc<T = any>(
   const [data, setData] = useState<StateDataType>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<FirestoreError | Error | null>(null);
+  const [isDataFromCache, setIsDataFromCache] = useState<boolean>(false);
 
   useEffect(() => {
     if (!memoizedDocRef) {
       setData(null);
       setIsLoading(false);
       setError(null);
+      setIsDataFromCache(false);
       return;
     }
 
@@ -63,6 +67,7 @@ export function useDoc<T = any>(
     const unsubscribe = onSnapshot(
       memoizedDocRef,
       (snapshot: DocumentSnapshot<DocumentData>) => {
+        setIsDataFromCache(snapshot.metadata.fromCache);
         if (snapshot.exists()) {
           setData({ ...(snapshot.data() as T), id: snapshot.id });
         } else {
@@ -80,6 +85,7 @@ export function useDoc<T = any>(
 
         setData(null)
         setIsLoading(false)
+        setIsDataFromCache(false)
 
         if (isPermissionDeniedWhileLoggedOut(error)) {
           setError(null)
@@ -94,5 +100,5 @@ export function useDoc<T = any>(
     return () => unsubscribe();
   }, [memoizedDocRef]); // Re-run if the memoizedDocRef changes.
 
-  return { data, isLoading, error };
+  return { data, isLoading, error, isDataFromCache };
 }

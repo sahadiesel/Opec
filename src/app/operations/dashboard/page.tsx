@@ -38,7 +38,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
-import { isOperationsStaff } from '@/lib/permissions';
+import { isOperationsStaff, isStoreOfficer } from '@/lib/permissions';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function OperationsDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -53,6 +54,8 @@ export default function OperationsDashboardPage() {
   const isOperationsAuthorized = useMemo(() => {
     return isOperationsStaff(currentUser);
   }, [currentUser]);
+
+  const viewerOnly = useMemo(() => isStoreOfficer(currentUser), [currentUser]);
 
   // --- Operations Data Queries ---
   
@@ -163,13 +166,28 @@ export default function OperationsDashboardPage() {
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3 flex-wrap">
             <HardHat className="h-8 w-8" /> แดชบอร์ดฝ่ายปฏิบัติการ (Operations Dashboard)
+            {viewerOnly && (
+              <Badge variant="secondary" className="text-[10px] font-bold uppercase tracking-wide">
+                ดูอย่างเดียว
+              </Badge>
+            )}
           </h1>
           <p className="text-muted-foreground text-lg italic">
             ติดตามสถานะกำลังพล เวฟงาน และคำขอเปลี่ยนแปลงจากลูกค้า (Manpower & Site operational oversight).
           </p>
         </div>
+
+        {viewerOnly && (
+          <Alert className="border-amber-200 bg-amber-50/80 text-amber-950">
+            <Info className="h-4 w-4 text-amber-700" />
+            <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
+            <AlertDescription>
+              บทบาทเจ้าหน้าที่คลังสามารถดูภาพรวมและคิวงานได้เท่านั้น ไม่สามารถเปิดหน้าทำงานปฏิบัติการหรือแก้ไขข้อมูลจากที่นี่ได้
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <StatCard title="กำลังปฏิบัติงาน" value={stats.activeAsgn} sub="Active Assignments" icon={Users} colorClass="border-l-blue-600" />
@@ -188,9 +206,14 @@ export default function OperationsDashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-lg flex items-center gap-2">
-                      <Clock className="h-5 w-5 text-primary" /> งานที่ต้องดำเนินการ (Operations Action Queue)
+                      <Clock className="h-5 w-5 text-primary" />{' '}
+                      {viewerOnly ? 'งานที่ต้องติดตาม (ภาพรวม)' : 'งานที่ต้องดำเนินการ (Operations Action Queue)'}
                     </CardTitle>
-                    <CardDescription>รายการงานด่วนและคำขอเปลี่ยนแปลงจากลูกค้าที่ต้องจัดการ</CardDescription>
+                    <CardDescription>
+                      {viewerOnly
+                        ? 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทนปฏิบัติการได้'
+                        : 'รายการงานด่วนและคำขอเปลี่ยนแปลงจากลูกค้าที่ต้องจัดการ'}
+                    </CardDescription>
                   </div>
                   <Badge variant="secondary" className="font-bold">{urgentTasks.length} รายการ</Badge>
                 </div>
@@ -198,26 +221,46 @@ export default function OperationsDashboardPage() {
               <CardContent className="p-0">
                 {urgentTasks.length > 0 ? (
                   <div className="divide-y">
-                    {urgentTasks.map(task => (
-                      <Link key={task.id} href={task.link} className="block hover:bg-slate-50 transition-colors group">
-                        <div className="p-4 flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${task.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
-                              <task.icon className="h-5 w-5" />
-                            </div>
-                            <div className="space-y-0.5">
-                              <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{task.label}</p>
-                              <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
-                                <span>{task.type}</span>
-                                <span>•</span>
-                                <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
+                    {urgentTasks.map(task =>
+                      viewerOnly ? (
+                        <div key={task.id} className="block cursor-default">
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-lg ${task.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                <task.icon className="h-5 w-5" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-primary">{task.label}</p>
+                                <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                                  <span>{task.type}</span>
+                                  <span>•</span>
+                                  <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
+                                </div>
                               </div>
                             </div>
                           </div>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                         </div>
-                      </Link>
-                    ))}
+                      ) : (
+                        <Link key={task.id} href={task.link} className="block hover:bg-slate-50 transition-colors group">
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-lg ${task.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                <task.icon className="h-5 w-5" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{task.label}</p>
+                                <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                                  <span>{task.type}</span>
+                                  <span>•</span>
+                                  <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                          </div>
+                        </Link>
+                      )
+                    )}
                   </div>
                 ) : (
                   <div className="py-20 text-center space-y-4">

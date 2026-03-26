@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -40,7 +40,7 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
 } from 'firebase/auth';
-import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, updateDoc, setDoc } from 'firebase/firestore';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { BUSINESS_ROLES, deriveBusinessRoleKey } from '@/lib/auth-mapping';
@@ -99,6 +99,10 @@ export default function Home() {
   const [isRegistering, setIsRegistering] = useState(false);
   /** After self-registration: show confirmation on login shell until user dismisses */
   const [registrationSuccessEmail, setRegistrationSuccessEmail] = useState<string | null>(null);
+  /** True while handleSelfRegister runs — avoids useEffect(PENDING) toast/logout racing the submit handler */
+  const selfRegisterInProgressRef = useRef(false);
+  /** True from synchronous start of handleLogin until its finally — avoids useDoc firing cached PENDING before getDoc finishes */
+  const loginInProgressRef = useRef(false);
 
   const firestore = useFirestore();
   const auth = useAuth();
@@ -106,7 +110,8 @@ export default function Home() {
   const { toast } = useToast();
   
   const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
-  const { data: rawUserDoc, isLoading: isDocLoading } = useDoc<User>(userDocRef as any);
+  const { data: rawUserDoc, isLoading: isDocLoading, isDataFromCache: isUserDocFromCache } =
+    useDoc<User>(userDocRef as any);
 
   // Normalize user doc as soon as it arrives
   const latestUserDoc = useMemo(() => {
@@ -135,6 +140,12 @@ export default function Home() {
   useEffect(() => {
     if (latestUserDoc) {
       if (latestUserDoc.userType !== 'customer_portal' && latestUserDoc.approvalStatus === 'PENDING') {
+        if (selfRegisterInProgressRef.current || loginInProgressRef.current) {
+          return;
+        }
+        if (isUserDocFromCache) {
+          return;
+        }
         toast({
           title: 'รอการอนุมัติจากผู้ดูแลระบบ',
           description: 'บัญชีของคุณยังไม่ได้รับการอนุมัติหรือกำหนดสิทธิ์ — โปรดรอแอดมินดำเนินการที่เมนูจัดการผู้ใช้',
@@ -163,7 +174,7 @@ export default function Home() {
       setUser(latestUserDoc);
       localStorage.setItem('opsflow_user', JSON.stringify(latestUserDoc));
     }
-  }, [latestUserDoc, router]);
+  }, [latestUserDoc, router, isUserDocFromCache]);
 
   const isInternalAuthorized = useMemo(() => {
     if (isDocLoading || !latestUserDoc) return false;
@@ -174,11 +185,12 @@ export default function Home() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    loginInProgressRef.current = true;
     setIsLoggingIn(true);
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
       const docRef = doc(firestore!, 'users', cred.user.uid);
-      const snap = await getDoc(docRef);
+      let snap = await getDocFromServer(docRef).catch(() => getDoc(docRef));
       
       if (snap.exists()) {
         const userData = normalizeCurrentUserPermissions(snap.data());
@@ -229,7 +241,10 @@ export default function Home() {
       }
     } catch (err: any) {
       toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
-    } finally { setIsLoggingIn(false); }
+    } finally {
+      loginInProgressRef.current = false;
+      setIsLoggingIn(false);
+    }
   };
 
   const handleSendPasswordResetEmail = async (e: React.FormEvent) => {
@@ -282,6 +297,7 @@ export default function Home() {
       ]);
 
     let newUid: string | null = null;
+    selfRegisterInProgressRef.current = true;
     setIsRegistering(true);
     try {
       const cred = await withTimeout(
@@ -347,6 +363,7 @@ export default function Home() {
       }
       toast({ variant: 'destructive', title: 'ลงทะเบียนไม่สำเร็จ', description });
     } finally {
+      selfRegisterInProgressRef.current = false;
       setIsRegistering(false);
     }
   };
@@ -686,7 +703,9 @@ export default function Home() {
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Users className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน HR Dashboard</span>
+                    <span className="text-sm font-medium">
+                      {isStoreOfficer(latestUserDoc) ? 'ดู HR Dashboard (อ่านอย่างเดียว)' : 'ตรวจงาน HR Dashboard'}
+                    </span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
@@ -695,7 +714,9 @@ export default function Home() {
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/sales/dashboard')}>
                   <div className="flex items-center gap-3">
                     <TrendingUp className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน Sales Dashboard</span>
+                    <span className="text-sm font-medium">
+                      {isStoreOfficer(latestUserDoc) ? 'ดู Sales Dashboard (อ่านอย่างเดียว)' : 'ตรวจงาน Sales Dashboard'}
+                    </span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
@@ -713,7 +734,9 @@ export default function Home() {
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/operations/dashboard')}>
                   <div className="flex items-center gap-3">
                     <HardHat className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน Operations Dashboard</span>
+                    <span className="text-sm font-medium">
+                      {isStoreOfficer(latestUserDoc) ? 'ดู Operations Dashboard (อ่านอย่างเดียว)' : 'ตรวจงาน Operations Dashboard'}
+                    </span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>

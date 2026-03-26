@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -25,13 +25,28 @@ import {
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
-import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType } from '@/lib/types';
+import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType, Position } from '@/lib/types';
+
+/** Preset แผนก — รวมกับค่าที่ดึงจาก office_staff ที่มีอยู่ */
+const STANDARD_OFFICE_DEPARTMENTS: { value: string; label: string }[] = [
+  { value: 'Administration', label: 'บริหาร (Administration)' },
+  { value: 'HR', label: 'ทรัพยากรบุคคล (HR)' },
+  { value: 'Accounting', label: 'บัญชี (Accounting)' },
+  { value: 'Finance', label: 'การเงิน (Finance)' },
+  { value: 'IT', label: 'เทคโนโลยีสารสนเทศ (IT)' },
+  { value: 'Operations', label: 'ปฏิบัติการ (Operations)' },
+  { value: 'Sales', label: 'งานขาย (Sales)' },
+  { value: 'Store', label: 'คลัง / จัดซื้อ (Store)' },
+  { value: 'Legal', label: 'กฎหมาย (Legal)' },
+  { value: 'QA', label: 'ควบคุมคุณภาพ (QA)' },
+];
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -54,11 +69,23 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const staffQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'office_staff') : null), [firestore]);
   const { data: allOfficeStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
+  const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
+  const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const officeCategoryPositions = useMemo(
+    () =>
+      (allPositions || []).filter((p) => p.category === 'OFFICE' && p.active !== false).sort((a, b) =>
+        (a.positionNameTh || a.positionCode).localeCompare(b.positionNameTh || b.positionCode, 'th')
+      ),
+    [allPositions]
+  );
+
   const [formData, setFormData] = useState<Partial<OfficeStaff>>({
     staffCode: isNew ? getPreviewPattern('office_staff') : '',
     fullName: '',
     nickname: '',
     department: '',
+    positionId: undefined,
     positionTitle: '',
     employmentType: 'FULL_TIME',
     salaryType: 'MONTHLY',
@@ -76,6 +103,21 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const departmentOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const row of allOfficeStaff || []) {
+      const d = (row.department || '').trim();
+      if (d) s.add(d);
+    }
+    for (const { value } of STANDARD_OFFICE_DEPARTMENTS) s.add(value);
+    const cur = (formData.department || '').trim();
+    if (cur) s.add(cur);
+    return Array.from(s).sort((a, b) => a.localeCompare(b, 'th'));
+  }, [allOfficeStaff, formData.department]);
+
+  const departmentLabel = (value: string) =>
+    STANDARD_OFFICE_DEPARTMENTS.find((x) => x.value === value)?.label ?? value;
+
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setCurrentUser(JSON.parse(stored));
@@ -89,10 +131,23 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
-    if (!formData.fullName || !formData.department) {
+    if (!formData.fullName?.trim() || !formData.department?.trim()) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อ และแผนก" });
       return;
     }
+    const posById = formData.positionId
+      ? officeCategoryPositions.find((x: Position) => x.id === formData.positionId)
+      : undefined;
+    const resolvedPositionTitle = (posById?.positionNameTh || formData.positionTitle || '').trim();
+    if (!resolvedPositionTitle) {
+      toast({
+        variant: "destructive",
+        title: "ข้อมูลไม่ครบ",
+        description: "กรุณาเลือกตำแหน่งจากรายการตำแหน่งงาน (หมวด Office)",
+      });
+      return;
+    }
+    const resolvedPositionId = posById ? posById.id : formData.positionId;
 
     setIsSubmitting(true);
     const now = Date.now();
@@ -103,23 +158,33 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
         const { code: finalCode } = await generateNextDocumentCode(firestore, 'office_staff', { actor: currentUser.displayName });
 
         const newRef = doc(collection(firestore, 'office_staff'));
-        await setDoc(newRef, {
-          ...formData,
-          staffCode: finalCode,
-          id: newRef.id,
-          createdAt: now,
-          createdBy: currentUser.displayName,
-          updatedAt: now,
-          updatedBy: currentUser.id
-        });
+        await setDoc(
+          newRef,
+          sanitizeFirestorePayload({
+            ...formData,
+            staffCode: finalCode,
+            id: newRef.id,
+            positionId: resolvedPositionId,
+            positionTitle: resolvedPositionTitle,
+            createdAt: now,
+            createdBy: currentUser.displayName,
+            updatedAt: now,
+            updatedBy: currentUser.id,
+          })
+        );
         toast({ title: "เพิ่มพนักงานสำเร็จ", description: `รหัสพนักงาน: ${finalCode}` });
         router.push('/office-staff');
       } else {
-        await updateDoc(staffRef!, {
-          ...formData,
-          updatedAt: now,
-          updatedBy: currentUser.id
-        });
+        await updateDoc(
+          staffRef!,
+          sanitizeFirestorePayload({
+            ...formData,
+            positionId: resolvedPositionId,
+            positionTitle: resolvedPositionTitle,
+            updatedAt: now,
+            updatedBy: currentUser.id,
+          })
+        );
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
         router.back();
       }
@@ -198,11 +263,67 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">แผนก (Department) *</Label>
-                    <Input value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} placeholder="เช่น HR, IT, Finance" />
+                    <Select
+                      value={formData.department?.trim() ? formData.department : undefined}
+                      onValueChange={(v) => setFormData({ ...formData, department: v })}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="เลือกแผนก" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {departmentOptions.map((d: string) => (
+                          <SelectItem key={d} value={d}>
+                            {departmentLabel(d)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      รวมค่าแผนกจากพนักงานที่ลงทะเบียนแล้วในระบบ และรายการแผนกมาตรฐาน
+                    </p>
                   </div>
                   <div className="space-y-2">
-                    <Label className="font-bold">ตำแหน่ง (Position Title) *</Label>
-                    <Input value={formData.positionTitle} onChange={e => setFormData({...formData, positionTitle: e.target.value})} />
+                    <Label className="font-bold">ตำแหน่ง (จากตำแหน่งงาน — หมวด Office) *</Label>
+                    <Select
+                      value={
+                        formData.positionId ||
+                        officeCategoryPositions.find(
+                          (p: Position) =>
+                            p.positionNameTh === formData.positionTitle ||
+                            p.positionNameEn === formData.positionTitle
+                        )?.id ||
+                        undefined
+                      }
+                      onValueChange={(id) => {
+                        const p = officeCategoryPositions.find((x: Position) => x.id === id);
+                        setFormData({
+                          ...formData,
+                          positionId: id,
+                          positionTitle: p ? p.positionNameTh : formData.positionTitle,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder={officeCategoryPositions.length ? 'เลือกตำแหน่ง' : 'ยังไม่มีตำแหน่งหมวด Office — สร้างที่เมนูตำแหน่งงาน'} />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {formData.positionId &&
+                        !officeCategoryPositions.some((p: Position) => p.id === formData.positionId) ? (
+                          <SelectItem value={formData.positionId}>
+                            {formData.positionTitle || formData.positionId}{' '}
+                            <span className="text-muted-foreground text-xs">(ไม่อยู่ในรายการ Office ปัจจุบัน)</span>
+                          </SelectItem>
+                        ) : null}
+                        {officeCategoryPositions.map((p: Position) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {`${p.positionCode} — ${p.positionNameTh}${p.positionNameEn ? ` (${p.positionNameEn})` : ''}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      ดึงจากเมนู <Link href="/positions" className="text-primary underline font-medium">ตำแหน่งงาน</Link> เฉพาะรายการที่หมวดเป็น Office และสถานะใช้งาน
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ประเภทการจ้าง (Employment Type)</Label>

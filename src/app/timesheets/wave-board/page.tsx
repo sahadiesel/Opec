@@ -36,6 +36,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { Badge } from '@/components/ui/badge';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import Link from 'next/link';
+import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -77,7 +78,11 @@ export default function WaveTimesheetBoardPage() {
 
   const asgnQuery = useMemoFirebase(() => {
     if (!firestore || !selectedWaveId) return null;
-    return query(collection(firestore, 'mobilizations'), where('waveId', '==', selectedWaveId), where('deploymentStatus', 'in', ['ACTIVE', 'READY_TO_MOB', 'MOBILIZING']));
+    return query(
+      collection(firestore, 'mobilizations'),
+      where('waveId', '==', selectedWaveId),
+      where('deploymentStatus', 'in', WAVE_TIMESHEET_DEPLOYMENT_STATUSES)
+    );
   }, [firestore, selectedWaveId]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(asgnQuery as any);
 

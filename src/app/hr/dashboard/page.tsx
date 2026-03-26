@@ -38,7 +38,8 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { isHRStaff } from '@/lib/permissions';
+import { isHRStaff, isStoreOfficer } from '@/lib/permissions';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function HRDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -53,6 +54,8 @@ export default function HRDashboardPage() {
   const isHRAuthorized = useMemo(() => {
     return isHRStaff(currentUser);
   }, [currentUser]);
+
+  const viewerOnly = useMemo(() => isStoreOfficer(currentUser), [currentUser]);
 
   // --- HR Data Queries ---
   
@@ -234,48 +237,65 @@ export default function HRDashboardPage() {
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <Users className="h-8 w-8" /> แดชบอร์ดฝ่ายบุคคล (HR Dashboard)
+            {viewerOnly && (
+              <Badge variant="secondary" className="text-[10px] font-bold uppercase tracking-wide">
+                ดูอย่างเดียว
+              </Badge>
+            )}
           </h1>
           <p className="text-muted-foreground text-lg italic">
             ติดตามความพร้อมของลูกจ้าง งานรออนุมัติ และคำขอแก้ไขข้อมูลหลังปิดงวด (Worker compliance & HR action queues).
           </p>
         </div>
 
-        <Card className="border-primary/20 bg-primary/[0.03]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Info className="h-5 w-5 text-primary" /> เส้นทางการทำงาน (ใช้งานจริง)
-            </CardTitle>
-            <CardDescription>
-              ลงทะเบียนแยก <strong>ลูกจ้าง</strong> กับ <strong>พนักงานสำนักงาน</strong> — ลงเวลาและงวดเงินเดือนใช้กับคนงานสนาม — จ่ายเงินเดือนแยก Office กับ Worker — สลิปต้องตรวจได้ก่อน
-              แล้ว HR Manager อนุมัติรอบจ่ายก่อนส่งบัญชี
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2 pt-0">
-            <Button variant="outline" size="sm" asChild className="font-semibold">
-              <Link href="/workers">ทะเบียนลูกจ้าง</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild className="font-semibold">
-              <Link href="/office-staff">ทะเบียนพนักงาน</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild className="font-semibold">
-              <Link href="/timesheets/wave-board">ลงเวลา (Wave)</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild className="font-semibold">
-              <Link href="/payroll/periods">งวด/รอบ (คนงาน)</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild className="font-semibold">
-              <Link href="/office-payroll">จ่ายเงินเดือนพนักงาน</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild className="font-semibold">
-              <Link href="/payroll/batches">จ่ายเงินเดือนลูกจ้าง</Link>
-            </Button>
-            <Button size="sm" asChild className="font-semibold gap-1">
-              <Link href="/hr/settings">
-                <Settings className="h-3.5 w-3.5" /> ตั้งค่า HR (ภาษี ประกันสังคม)
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+        {viewerOnly && (
+          <Alert className="border-amber-200 bg-amber-50/80 text-amber-950">
+            <Info className="h-4 w-4 text-amber-700" />
+            <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
+            <AlertDescription>
+              บทบาทเจ้าหน้าที่คลังสามารถดูภาพรวมและคิวงานได้เท่านั้น ไม่สามารถเปิดหน้าทำงาน HR หรือแก้ไขข้อมูลจากที่นี่ได้
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!viewerOnly ? (
+          <Card className="border-primary/20 bg-primary/[0.03]">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Info className="h-5 w-5 text-primary" /> เส้นทางการทำงาน (ใช้งานจริง)
+              </CardTitle>
+              <CardDescription>
+                ลงทะเบียนแยก <strong>ลูกจ้าง</strong> กับ <strong>พนักงานสำนักงาน</strong> — ลงเวลาและงวดเงินเดือนใช้กับคนงานสนาม — จ่ายเงินเดือนแยก Office กับ Worker — สลิปต้องตรวจได้ก่อน
+                แล้ว HR Manager อนุมัติรอบจ่ายก่อนส่งบัญชี
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2 pt-0">
+              <Button variant="outline" size="sm" asChild className="font-semibold">
+                <Link href="/workers">ทะเบียนลูกจ้าง</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild className="font-semibold">
+                <Link href="/office-staff">ทะเบียนพนักงาน</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild className="font-semibold">
+                <Link href="/timesheets/wave-board">ลงเวลา (Wave)</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild className="font-semibold">
+                <Link href="/payroll/periods">งวด/รอบ (คนงาน)</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild className="font-semibold">
+                <Link href="/office-payroll">จ่ายเงินเดือนพนักงาน</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild className="font-semibold">
+                <Link href="/payroll/batches">จ่ายเงินเดือนลูกจ้าง</Link>
+              </Button>
+              <Button size="sm" asChild className="font-semibold gap-1">
+                <Link href="/hr/settings">
+                  <Settings className="h-3.5 w-3.5" /> ตั้งค่า HR (ภาษี ประกันสังคม)
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           <StatCard title="ลูกจ้างทั้งหมด" value={stats.total} sub="Total Workers" icon={Users} colorClass="border-l-blue-600" />
@@ -298,9 +318,14 @@ export default function HRDashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-lg flex items-center gap-2">
-                      <Clock className="h-5 w-5 text-primary" /> งานที่ต้องดำเนินการ (HR Action Queue)
+                      <Clock className="h-5 w-5 text-primary" />{' '}
+                      {viewerOnly ? 'งานที่ต้องติดตาม (ภาพรวม)' : 'งานที่ต้องดำเนินการ (HR Action Queue)'}
                     </CardTitle>
-                    <CardDescription>รายการด่วนที่ต้องการการตรวจสอบหรืออนุมัติจากฝ่ายบุคคล</CardDescription>
+                    <CardDescription>
+                      {viewerOnly
+                        ? 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทน HR ได้'
+                        : 'รายการด่วนที่ต้องการการตรวจสอบหรืออนุมัติจากฝ่ายบุคคล'}
+                    </CardDescription>
                   </div>
                   <Badge variant="secondary" className="font-bold">{pendingHRTasks.length} รายการ</Badge>
                 </div>
@@ -308,27 +333,48 @@ export default function HRDashboardPage() {
               <CardContent className="p-0">
                 {pendingHRTasks.length > 0 ? (
                   <div className="divide-y">
-                    {pendingHRTasks.map(task => (
-                      <Link key={task.id} href={task.link} className="block hover:bg-slate-50 transition-colors group">
-                        <div className="p-4 flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${task.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
-                              <task.icon className="h-5 w-5" />
-                            </div>
-                            <div className="space-y-0.5">
-                              <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{task.label}</p>
-                              <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
-                                <span>{task.type}</span>
-                                {task.sub && <span>• {task.sub}</span>}
-                                <span>•</span>
-                                <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
+                    {pendingHRTasks.map(task =>
+                      viewerOnly ? (
+                        <div key={task.id} className="block cursor-default opacity-95">
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-lg ${task.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                <task.icon className="h-5 w-5" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-primary">{task.label}</p>
+                                <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                                  <span>{task.type}</span>
+                                  {task.sub && <span>• {task.sub}</span>}
+                                  <span>•</span>
+                                  <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
+                                </div>
                               </div>
                             </div>
                           </div>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                         </div>
-                      </Link>
-                    ))}
+                      ) : (
+                        <Link key={task.id} href={task.link} className="block hover:bg-slate-50 transition-colors group">
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={`p-2 rounded-lg ${task.priority === 'high' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+                                <task.icon className="h-5 w-5" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="font-bold text-primary group-hover:text-blue-600 transition-colors">{task.label}</p>
+                                <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground">
+                                  <span>{task.type}</span>
+                                  {task.sub && <span>• {task.sub}</span>}
+                                  <span>•</span>
+                                  <span className={task.priority === 'high' ? 'text-red-500' : ''}>{task.status}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
+                          </div>
+                        </Link>
+                      )
+                    )}
                   </div>
                 ) : (
                   <div className="py-20 text-center space-y-4">
@@ -362,11 +408,17 @@ export default function HRDashboardPage() {
                 {contractsMissingCost.length === 0 ? (
                   <p className="text-[10px] text-rose-700">ไม่มีสัญญาที่ค้างกำหนดต้นทุนตำแหน่ง</p>
                 ) : (
-                  contractsMissingCost.slice(0, 6).map((c: any) => (
-                    <Link key={c.id} href={`/main-contracts/${c.id}`} className="block text-[10px] text-rose-700 hover:underline">
-                      {c.contractNumber || c.id}: ต้นทุนไม่ครบ {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
-                    </Link>
-                  ))
+                  contractsMissingCost.slice(0, 6).map((c: any) =>
+                    viewerOnly ? (
+                      <p key={c.id} className="text-[10px] text-rose-700">
+                        {c.contractNumber || c.id}: ต้นทุนไม่ครบ {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                      </p>
+                    ) : (
+                      <Link key={c.id} href={`/main-contracts/${c.id}`} className="block text-[10px] text-rose-700 hover:underline">
+                        {c.contractNumber || c.id}: ต้นทุนไม่ครบ {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                      </Link>
+                    )
+                  )
                 )}
               </CardContent>
             </Card>

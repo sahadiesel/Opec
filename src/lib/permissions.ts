@@ -403,7 +403,12 @@ function hasResolvedModuleAccess(
 
   const level = getEffectiveAccessLevel(user);
   const u = normalizeCurrentUserPermissions(user);
-  
+
+  /** เจ้าหน้าที่คลัง: แก้ไข/ลบ/อนุมัติใน vendors, purchases, store_inventory ได้เต็มที่ */
+  if (u && isStoreOfficer(u) && STORE_MODULES.includes(moduleKey)) {
+    return clonePermission(FULL_ACCESS);
+  }
+
   if (level === 'admin' || level === 'manager') {
     // Office payroll: sensitive; shared across Commercial/HR/Ops pillar managers, plus accounting managers.
     if (moduleKey === 'office_payroll' && level === 'manager') {
@@ -692,7 +697,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'store',
       level: 'officer',
       isActive: true,
-      permissions: buildPermissionMap(STORE_MODULES, OFFICER_ACCESS),
+      permissions: buildPermissionMap(STORE_MODULES, FULL_ACCESS),
     },
   ];
 }
