@@ -231,13 +231,28 @@ service cloud.firestore {
     }
 
     /**
+     * อ่าน/เขียน positions เมื่อ internalRead ล้ม (ข้อมูล users ไม่ครบ) แต่โปรไฟล์ชัดว่า HR / Ops Manager
+     * ไม่รวมลูกค้า portal และเจ้าหน้าที่คลัง — พวกนั้นใช้ internalReadOrStoreOfficer / canAccessHR ตามเดิม
+     */
+    function supplementalPositionsRead() {
+      return isSignedIn() && userExists() && isActiveUser() && !isClientUser()
+        && !isStoreOfficerUser()
+        && (permissionProfileIsHR() || permissionProfileIsOperationsManager());
+    }
+
+    function canReadStandardPositions() {
+      return internalReadOrStoreOfficer() || isClientUser() || supplementalPositionsRead();
+    }
+
+    /**
      * ทะเบียนตำแหน่งงานมาตรฐาน (positions) + รหัส POS- จาก number_sequences/position:
      * Admin, สาย HR (รวม HR Officer), ผู้ใช้ที่ผ่าน canAccessHR เดิม, ผู้จัดการฝ่ายปฏิบัติการ
      */
     function canWriteStandardPositions() {
       return isAdminUser()
         || (isActiveUser() && isInternalUser() && !isStoreOfficerUser()
-            && (canAccessHR() || isOperationsManagerDomainUser()));
+            && (canAccessHR() || isOperationsManagerDomainUser()))
+        || supplementalPositionsRead();
     }
 
     /**
@@ -540,7 +555,7 @@ service cloud.firestore {
     }
 
     match /positions/{id} {
-      allow read: if internalReadOrStoreOfficer() || isClientUser();
+      allow read: if canReadStandardPositions();
       allow write: if canWriteStandardPositions();
     }
 
@@ -740,7 +755,8 @@ service cloud.firestore {
         || (internalReadNonStoreOfficer() && id == 'main_contract')
         || (canWriteStore() && id in ['vendor', 'purchase', 'store_receive', 'store_issue', 'store_return', 'store_writeoff'])
         || (canAccessAccounting() && isAccountingSequenceId(id))
-        || (isHrSequenceId(id) && (canAccessHR() || (id == 'position' && isOperationsManagerDomainUser())))
+        || (isHrSequenceId(id) && (canAccessHR()
+            || (id == 'position' && (isOperationsManagerDomainUser() || supplementalPositionsRead()))))
         || (canAccessSales() && isSalesSequenceId(id))
         || (canAccessOperations() && isOperationsSequenceId(id));
     }
@@ -791,7 +807,7 @@ service cloud.firestore {
     }
 
     match /positions/{positionId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer() || isClientUser();
+      allow read: if canReadStandardPositions();
       allow write: if canWriteStandardPositions();
     }
 
