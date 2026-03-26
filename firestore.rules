@@ -156,9 +156,46 @@ service cloud.firestore {
 
     function permissionProfileIsHR() {
       let key = resolvedPermissionProfileKey();
+      let path = /databases/$(database)/documents/permission_profiles/$(key);
+      // doc id มักเท่ากับ template key แม้ฟิลด์ในเอกสารจะไม่ครบ
       return key != null
-        && exists(/databases/$(database)/documents/permission_profiles/$(key))
-        && hrPermissionProfileMarksHr(get(/databases/$(database)/documents/permission_profiles/$(key)).data);
+        && exists(path)
+        && (
+          key in ['hr_manager', 'hr_officer', 'payroll_officer']
+          || hrPermissionProfileMarksHr(get(path).data)
+        );
+    }
+
+    /** โปรไฟล์ / บทบาท = ผู้จัดการฝ่ายปฏิบัติการ (แก้ทะเบียนตำแหน่งงานมาตรฐานได้) */
+    function opsManagerPermissionProfileMarks(p) {
+      return ('primaryRoleTemplateKey' in p && p.primaryRoleTemplateKey in ['operations_manager', 'operation_manager'])
+        || ('profileKey' in p && p.profileKey in ['operations_manager', 'operation_manager'])
+        || ('department' in p && p.department == 'operations' && 'level' in p && p.level == 'manager');
+    }
+
+    function permissionProfileIsOperationsManager() {
+      let key = resolvedPermissionProfileKey();
+      let path = /databases/$(database)/documents/permission_profiles/$(key);
+      return key != null
+        && exists(path)
+        && (
+          key in ['operations_manager', 'operation_manager']
+          || opsManagerPermissionProfileMarks(get(path).data)
+        );
+    }
+
+    function isOperationsManagerDomainUser() {
+      let u = userData();
+      return u != null && isActiveUser() && isInternalUser()
+        && (
+          assignedRoleKey() == 'operations_manager'
+          || assignedRoleKey() == 'operation_manager'
+          || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
+              && u.assignedRoleKeys.hasAny(['operations_manager', 'operation_manager']))
+          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['operations_manager', 'operation_manager']))
+          || u.roleId == 'operations_manager'
+          || permissionProfileIsOperationsManager()
+        );
     }
 
     /**
@@ -191,6 +228,16 @@ service cloud.firestore {
       return isAdminUser()
         || (isActiveUser() && isInternalUser() && !isStoreOfficerUser()
             && (isOperationUser() || isAccountingUser() || isHrStaffDomainUser()));
+    }
+
+    /**
+     * ทะเบียนตำแหน่งงานมาตรฐาน (positions) + รหัส POS- จาก number_sequences/position:
+     * Admin, สาย HR (รวม HR Officer), ผู้ใช้ที่ผ่าน canAccessHR เดิม, ผู้จัดการฝ่ายปฏิบัติการ
+     */
+    function canWriteStandardPositions() {
+      return isAdminUser()
+        || (isActiveUser() && isInternalUser() && !isStoreOfficerUser()
+            && (canAccessHR() || isOperationsManagerDomainUser()));
     }
 
     /**
@@ -494,7 +541,7 @@ service cloud.firestore {
 
     match /positions/{id} {
       allow read: if internalReadOrStoreOfficer() || isClientUser();
-      allow write: if canAccessHR();
+      allow write: if canWriteStandardPositions();
     }
 
     match /labor_cost_contract_terms/{id} {
@@ -693,7 +740,7 @@ service cloud.firestore {
         || (internalReadNonStoreOfficer() && id == 'main_contract')
         || (canWriteStore() && id in ['vendor', 'purchase', 'store_receive', 'store_issue', 'store_return', 'store_writeoff'])
         || (canAccessAccounting() && isAccountingSequenceId(id))
-        || (canAccessHR() && isHrSequenceId(id))
+        || (isHrSequenceId(id) && (canAccessHR() || (id == 'position' && isOperationsManagerDomainUser())))
         || (canAccessSales() && isSalesSequenceId(id))
         || (canAccessOperations() && isOperationsSequenceId(id));
     }
@@ -745,7 +792,7 @@ service cloud.firestore {
 
     match /positions/{positionId}/{document=**} {
       allow read: if internalReadOrStoreOfficer() || isClientUser();
-      allow write: if canAccessHR();
+      allow write: if canWriteStandardPositions();
     }
 
     match /customers/{customerId}/{document=**} {
