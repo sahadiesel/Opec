@@ -108,42 +108,10 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // Group predicates (UI / permission-core aligned)
+    // RBAC — canonical role resolution (assignedRoleKey(s), roleId(s), permissionProfileKey(s), profile doc)
     // -------------------------------------------------------------------------
 
-    function isAdminUser() {
-      return isSignedIn() && userExists() && isActiveUser() && isInternalUser()
-        && (userDepartmentGroup() == 'admin'
-            || assignedRoleKey() == 'system_admin'
-            || (roleIds() != null && roleIds().hasAny(['system_admin'])));
-    }
-
-    function isOperationUser() {
-      return isSignedIn() && userExists() && isActiveUser() && isInternalUser()
-        && userDepartmentGroup() == 'operation';
-    }
-
-    function isAccountingUser() {
-      return isSignedIn() && userExists() && isActiveUser() && isInternalUser()
-        && userDepartmentGroup() == 'accounting';
-    }
-
-    function canManageSystem() {
-      return isAdminUser();
-    }
-
-    // Domain gates
-    function canAccessSales() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()) && !isStoreOfficerUser());
-    }
-
-    function canAccessOperations() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && isOperationUser() && !isStoreOfficerUser());
-    }
-
-    /** คีย์โปรไฟล์ที่ผูก users — สอดคล้อง use-permission-profiles getEffectivePermissionProfileKey */
+    /** Primary permission profile document id — aligns with getEffectivePermissionProfileKey (client) */
     function resolvedPermissionProfileKey() {
       let u = userData();
       return u == null ? null
@@ -153,150 +121,239 @@ service cloud.firestore {
               : null));
     }
 
-    /** ข้อมูล permission_profiles/{key} บ่งบอกว่าเป็นสาย HR (UI ใช้ป้ายจากโปรไฟล์นี้) */
-    function hrPermissionProfileMarksHr(p) {
-      return ('department' in p && p.department == 'hr')
-        || ('primaryRoleTemplateKey' in p && p.primaryRoleTemplateKey in ['hr_manager', 'hr_officer', 'payroll_officer'])
-        || ('profileKey' in p && p.profileKey in ['hr_manager', 'hr_officer']);
-    }
-
-    function permissionProfileIsHR() {
-      let key = resolvedPermissionProfileKey();
-      let path = /databases/$(database)/documents/permission_profiles/$(key);
-      // doc id มักเท่ากับ template key แม้ฟิลด์ในเอกสารจะไม่ครบ
-      return key != null
-        && exists(path)
-        && (
-          key in ['hr_manager', 'hr_officer', 'payroll_officer']
-          || hrPermissionProfileMarksHr(get(path).data)
-        );
-    }
-
-    /** โปรไฟล์ / บทบาท = ผู้จัดการฝ่ายปฏิบัติการ (แก้ทะเบียนตำแหน่งงานมาตรฐานได้) */
-    function opsManagerPermissionProfileMarks(p) {
-      return ('primaryRoleTemplateKey' in p && p.primaryRoleTemplateKey in ['operations_manager', 'operation_manager'])
-        || ('profileKey' in p && p.profileKey in ['operations_manager', 'operation_manager'])
-        || ('department' in p && p.department == 'operations' && 'level' in p && p.level == 'manager');
-    }
-
-    function permissionProfileIsOperationsManager() {
+    function permissionProfileDocHasAnyRole(roles) {
       let key = resolvedPermissionProfileKey();
       let path = /databases/$(database)/documents/permission_profiles/$(key);
       return key != null
-        && exists(path)
         && (
-          key in ['operations_manager', 'operation_manager']
-          || opsManagerPermissionProfileMarks(get(path).data)
+          (!exists(path) && roles.hasAny([key]))
+          || (exists(path) && (
+            roles.hasAny([key])
+            || ('profileKey' in get(path).data && roles.hasAny([get(path).data.profileKey]))
+            || ('primaryRoleTemplateKey' in get(path).data
+              && roles.hasAny([get(path).data.primaryRoleTemplateKey]))
+          ))
         );
     }
 
-    function isOperationsManagerDomainUser() {
+    function hasAnyAssignedRole(roles) {
       let u = userData();
-      return u != null && isActiveUser() && isInternalUser()
-        && (
-          assignedRoleKey() == 'operations_manager'
-          || assignedRoleKey() == 'operation_manager'
-          || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
-              && u.assignedRoleKeys.hasAny(['operations_manager', 'operation_manager']))
-          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['operations_manager', 'operation_manager']))
-          || u.roleId == 'operations_manager'
-          || permissionProfileIsOperationsManager()
-        );
+      return u != null && (
+        (assignedRoleKey() != null && roles.hasAny([assignedRoleKey()]))
+        || (u.assignedRoleKeys != null && u.assignedRoleKeys is list && u.assignedRoleKeys.hasAny(roles))
+        || (u.roleId != null && roles.hasAny([u.roleId]))
+        || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(roles))
+        || (u.permissionProfileKey != null && roles.hasAny([u.permissionProfileKey]))
+        || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny(roles))
+        || permissionProfileDocHasAnyRole(roles)
+      );
     }
 
-    /**
-     * พนักงานฝ่ายบุคคล/เงินเดือนโดยตรง — ใช้คู่กับ isOperationUser เมื่อ users/{uid} ยัง resolve
-     * userDepartmentGroup ไม่เป็น operation/accounting (ได้ null) แต่มี department หรือ role ชัดเจน
-     */
-    function isHrStaffDomainUser() {
+    function hasAssignedRole(role) {
+      return hasAnyAssignedRole([role]);
+    }
+
+    function isEligibleInternalUser() {
+      return isSignedIn() && userExists() && isActiveUser() && isInternalUser();
+    }
+
+    function isSystemAdmin() {
+      return isEligibleInternalUser()
+        && (hasAnyAssignedRole(['system_admin']) || userDepartmentGroup() == 'admin');
+    }
+
+    function canManageSystem() {
+      return isSystemAdmin();
+    }
+
+    function isHrUser() {
+      return isEligibleInternalUser()
+        && hasAnyAssignedRole(['hr_manager', 'hr_officer', 'payroll_officer']);
+    }
+
+    function isHrManager() {
+      return isEligibleInternalUser() && hasAnyAssignedRole(['hr_manager']);
+    }
+
+    function isOperationsUser() {
+      return isEligibleInternalUser() && userDepartmentGroup() == 'operation';
+    }
+
+    function isOperationsManager() {
+      return isEligibleInternalUser()
+        && hasAnyAssignedRole(['operations_manager', 'operation_manager']);
+    }
+
+    function isStoreUser() {
       let u = userData();
-      return u != null && isActiveUser() && isInternalUser()
-        && (
-          u.department == 'hr'
-          || assignedRoleKey() == 'hr_manager'
-          || assignedRoleKey() == 'hr_officer'
-          || assignedRoleKey() == 'payroll_officer'
-          || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
-              && u.assignedRoleKeys.hasAny(['hr_manager', 'hr_officer', 'payroll_officer']))
-          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['hr_manager', 'hr_officer', 'payroll_officer']))
-          || u.roleId == 'hr_manager'
-          || u.roleId == 'hr_officer'
-          || u.roleId == 'payroll_officer'
-          || u.permissionProfileKey == 'hr_manager'
-          || u.permissionProfileKey == 'hr_officer'
-          || (u.permissionProfileKeys != null && u.permissionProfileKeys is list
-              && u.permissionProfileKeys.hasAny(['hr_manager', 'hr_officer']))
-          || permissionProfileIsHR()
-        );
+      return isEligibleInternalUser()
+        && (u.department == 'store' || hasAnyAssignedRole(['store_officer', 'store_manager']));
+    }
+
+    function isStoreOfficer() {
+      let u = userData();
+      return isEligibleInternalUser()
+        && userDepartmentGroup() == 'operation'
+        && userAccessLevel() == 'officer'
+        && (hasAnyAssignedRole(['store_officer']) || u.department == 'store');
+    }
+
+    function isAccountingUser() {
+      return isEligibleInternalUser()
+        && (userDepartmentGroup() == 'accounting'
+          || hasAnyAssignedRole(['accounting_manager', 'accounting_officer']));
+    }
+
+    function isSalesUser() {
+      return isEligibleInternalUser()
+        && hasAnyAssignedRole(['sales_manager', 'sales_officer']);
+    }
+
+    function internalRead() {
+      return isSignedIn() && userExists() && isActiveUser() && isInternalUser();
+    }
+
+    function internalReadNonStoreOfficer() {
+      return internalRead() && !isStoreOfficer();
+    }
+
+    function internalReadOrStoreOfficer() {
+      return internalReadNonStoreOfficer() || isStoreOfficer();
+    }
+
+    function canReadInternalData() {
+      return internalReadOrStoreOfficer();
+    }
+
+    /** @deprecated use isOperationsUser — kept for non-refactored rules */
+    function isOperationUser() {
+      return isOperationsUser();
+    }
+
+    /** @deprecated use canManageSystem — kept for non-refactored rules */
+    function isAdminUser() {
+      return canManageSystem();
+    }
+
+    /** @deprecated use isStoreOfficer — kept for non-refactored rules */
+    function isStoreOfficerUser() {
+      return isStoreOfficer();
+    }
+
+    function canAccessSales() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && (isOperationsUser() || isAccountingUser()) && !isStoreOfficer());
+    }
+
+    function canAccessOperations() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && isOperationsUser() && !isStoreOfficer());
     }
 
     function canAccessHR() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && !isStoreOfficerUser()
-            && (isOperationUser() || isAccountingUser() || isHrStaffDomainUser()));
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer()
+          && (isOperationsUser() || isAccountingUser() || isHrUser() || isSalesUser()));
     }
 
-    /**
-     * อ่าน/เขียน positions เมื่อ internalRead ล้ม (ข้อมูล users ไม่ครบ) แต่โปรไฟล์ชัดว่า HR / Ops Manager
-     * กันพลาด: ห้ามใช้ !isClientUser() — พนักงานที่ accessGroup=client ผิดจะอ่านผ่าน isClientUser ได้แต่เขียนไม่ได้
-     * อนุญาตเฉพาะที่ไม่ใช่ customer_portal จริง + ไม่ใช่เจ้าหน้าที่คลัง
-     */
-    function supplementalPositionsRead() {
-      return isSignedIn() && userExists() && isActiveUser() && !isCustomerPortalUser()
-        && !isStoreOfficerUser()
-        && (permissionProfileIsHR() || permissionProfileIsOperationsManager());
-    }
-
-    function canReadStandardPositions() {
-      return internalReadOrStoreOfficer() || isClientUser() || supplementalPositionsRead();
-    }
-
-    /**
-     * ทะเบียนตำแหน่งงานมาตรฐาน (positions) + รหัส POS- จาก number_sequences/position:
-     * Admin, สาย HR (รวม HR Officer), ผู้ใช้ที่ผ่าน canAccessHR เดิม, ผู้จัดการฝ่ายปฏิบัติการ
-     */
-    function canWriteStandardPositions() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && !isStoreOfficerUser()
-            && (canAccessHR() || isOperationsManagerDomainUser()))
-        || supplementalPositionsRead();
-    }
-
-    /**
-     * คลัง/จัดซื้อ: อิง department หรือ role โดยตรง (ไม่ผูกแค่ userDepartmentGroup == operation)
-     * เพื่อกันผู้ใช้จริงที่เป็น store แต่เอกสาร users ยัง resolve กลุ่มไม่ตรง → อ่าน store_items ไม่ได้
-     */
     function isStoreDomainUser() {
       let u = userData();
-      return u != null && isActiveUser() && isInternalUser()
+      return isEligibleInternalUser()
         && (
           u.department == 'store'
-          || assignedRoleKey() == 'store_officer'
-          || assignedRoleKey() == 'store_manager'
-          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager']))
+          || hasAnyAssignedRole(['store_officer', 'store_manager'])
         );
     }
 
     function canAccessStore() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && (isOperationUser() || isAccountingUser()))
+      return canManageSystem()
+        || (isEligibleInternalUser() && (isOperationsUser() || isAccountingUser()))
         || isStoreDomainUser();
     }
 
     function canWriteStore() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && isOperationUser())
+      return canManageSystem()
+        || (isEligibleInternalUser() && isOperationsUser())
         || isStoreDomainUser();
     }
 
     function canAccessAccounting() {
-      return isAdminUser() || (isActiveUser() && isInternalUser() && isAccountingUser());
+      return canManageSystem() || (isEligibleInternalUser() && isAccountingUser());
     }
 
-    /** HR ฝั่งปฏิบัติการ (ไม่ใช่บัญชี) — คีย์ timesheet / เตรียม payroll */
+    /** Profile fallback when user doc / internal flags are incomplete (non–customer_portal only) */
+    function supplementalPositionsByProfile(roles) {
+      return isSignedIn() && userExists() && isActiveUser() && !isCustomerPortalUser()
+        && !isStoreOfficer()
+        && permissionProfileDocHasAnyRole(roles);
+    }
+
+    function canReadPositions() {
+      return canReadInternalData() || isClientUser()
+        || supplementalPositionsByProfile([
+          'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
+        ]);
+    }
+
+    function canManagePositions() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer()
+          && hasAnyAssignedRole([
+            'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
+          ]))
+        || supplementalPositionsByProfile([
+          'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
+        ]);
+    }
+
+    function canDeletePositions() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer()
+          && hasAnyAssignedRole(['hr_manager', 'operations_manager', 'operation_manager']))
+        || supplementalPositionsByProfile(['hr_manager', 'operations_manager', 'operation_manager']);
+    }
+
+    function canReadWorkers() {
+      return canReadInternalData() || isClientUser();
+    }
+
+    function canManageWorkers() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer()
+          && hasAnyAssignedRole(['hr_manager', 'hr_officer']));
+    }
+
+    function canDeleteWorkers() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer() && hasAnyAssignedRole(['hr_manager']));
+    }
+
+    function canManagePayrollOperational() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer()
+          && userDepartmentGroup() != 'accounting'
+          && hasAnyAssignedRole(['hr_manager', 'hr_officer', 'payroll_officer']));
+    }
+
+    function canManagePayrollFinancial() {
+      return canManageSystem()
+        || (isEligibleInternalUser()
+          && hasAnyAssignedRole(['accounting_manager', 'accounting_officer']));
+    }
+
+    /** @deprecated use canManagePayrollOperational — kept for non-refactored rules */
     function canWriteHrPayrollOperationalData() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && canAccessHR() && userDepartmentGroup() != 'accounting');
+      return canManagePayrollOperational();
+    }
+
+    /** @deprecated use canManageWorkers — kept for non-refactored rules */
+    function canEditWorkerRegistry() {
+      return canManageWorkers();
+    }
+
+    /** @deprecated use canDeleteWorkers — kept for non-refactored rules */
+    function canDeleteWorkerRecord() {
+      return canDeleteWorkers();
     }
 
     function dailyTimesheetFinalized(data) {
@@ -339,13 +396,6 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/payroll_batches/$(batchId)).data;
     }
 
-    /** ทะเบียนคนงาน/ออฟฟิศ: แก้ได้ระดับ manager+ (และแอดมิน) — officer ดูอย่างเดียวตามนโยบาย HR */
-    function canEditWorkerRegistry() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && canAccessHR() && userDepartmentGroup() != 'accounting'
-            && (userAccessLevel() == 'manager' || userAccessLevel() == 'admin'));
-    }
-
     /** คีย์ใน number_sequences — ต้องสอดคล้องกับ SEQUENCE_REGISTRY (numbering-service.ts) */
     function isAccountingSequenceId(seqId) {
       return seqId in [
@@ -363,39 +413,6 @@ service cloud.firestore {
     }
     function isOperationsSequenceId(seqId) {
       return seqId in ['wave', 'assignment'];
-    }
-
-    /** ลบทะเบียนคนงาน: ผู้ดูแลระบบ หรือ HR ระดับ manager/admin เท่านั้น */
-    function canDeleteWorkerRecord() {
-      return isAdminUser()
-        || (isActiveUser() && isInternalUser() && canAccessHR()
-            && (userAccessLevel() == 'manager' || userAccessLevel() == 'admin'));
-    }
-
-    function internalRead() {
-      return isSignedIn() && userExists() && isActiveUser() && isInternalUser();
-    }
-
-    /** เจ้าหน้าที่คลัง: จำกัดเฉพาะงานคลัง/จัดซื้อ (สอดคล้อง permissions.ts) */
-    function isStoreOfficerUser() {
-      let u = userData();
-      return u != null && isActiveUser() && isInternalUser()
-        && userDepartmentGroup() == 'operation'
-        && userAccessLevel() == 'officer'
-        && (
-          u.assignedRoleKey == 'store_officer'
-          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer']))
-          || u.department == 'store'
-        );
-    }
-
-    function internalReadNonStoreOfficer() {
-      return internalRead() && !isStoreOfficerUser();
-    }
-
-    /** อ่านข้อมูลภายใน + เจ้าหน้าที่คลัง (ต้องใช้พนักงาน/มอบหมายตอนเบิกจ่ายอุปกรณ์) */
-    function internalReadOrStoreOfficer() {
-      return internalReadNonStoreOfficer() || isStoreOfficerUser();
     }
 
     function isOwner(userId) {
@@ -555,15 +572,15 @@ service cloud.firestore {
     // HR domain
     // -------------------------------------------------------------------------
     match /workers/{id} {
-      allow read: if internalReadOrStoreOfficer() || isClientUser();
-      allow create: if canEditWorkerRegistry();
-      allow update: if canEditWorkerRegistry();
-      allow delete: if canDeleteWorkerRecord();
+      allow read: if canReadWorkers();
+      allow create, update: if canManageWorkers();
+      allow delete: if canDeleteWorkers();
     }
 
     match /positions/{id} {
-      allow read: if canReadStandardPositions();
-      allow write: if canWriteStandardPositions();
+      allow read: if canReadPositions();
+      allow create, update: if canManagePositions();
+      allow delete: if canDeletePositions();
     }
 
     match /labor_cost_contract_terms/{id} {
@@ -572,9 +589,9 @@ service cloud.firestore {
     }
 
     match /office_staff/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow create, update: if canEditWorkerRegistry();
-      allow delete: if isAdminUser() || canEditWorkerRegistry();
+      allow read: if canReadInternalData();
+      allow create, update: if canManageWorkers();
+      allow delete: if canDeleteWorkers();
     }
 
     match /worker_document_catalog/{id} {
@@ -583,17 +600,17 @@ service cloud.firestore {
     }
 
     match /payroll_runs/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow read: if canReadInternalData();
+      allow write: if canManagePayrollOperational() || canManagePayrollFinancial();
     }
 
     match /payroll_batches/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow create: if canWriteHrPayrollOperationalData();
-      allow update: if isAdminUser()
-        || (canWriteHrPayrollOperationalData() && !payrollBatchFinanciallyLocked(resource.data))
-        || accountingPayrollBatchSafeUpdate();
-      allow delete: if isAdminUser();
+      allow read: if canReadInternalData();
+      allow create: if canManagePayrollOperational();
+      allow update: if canManageSystem()
+        || (canManagePayrollOperational() && !payrollBatchFinanciallyLocked(resource.data))
+        || (canManagePayrollFinancial() && accountingPayrollBatchSafeUpdate());
+      allow delete: if canManageSystem();
     }
 
     match /payroll_periods/{id} {
@@ -604,7 +621,7 @@ service cloud.firestore {
     /** D8 — นโยบาย payroll แบบ versioned (SSO / tax / allowance) */
     match /payroll_policies/{id} {
       allow read: if internalReadOrStoreOfficer();
-      allow write: if isAdminUser() || canManageSystem();
+      allow write: if canManageSystem();
     }
 
     /** D8 — คำขอแก้ไขหลัง approve/paid */
@@ -616,12 +633,12 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow create: if canWriteHrPayrollOperationalData() || isAdminUser();
-      allow update: if isAdminUser()
-        || (canWriteHrPayrollOperationalData() && !officePayrollRunFrozen(resource.data))
-        || accountingOfficePayrollSafeUpdate();
-      allow delete: if isAdminUser();
+      allow read: if canReadInternalData();
+      allow create: if canManagePayrollOperational() || canManageSystem();
+      allow update: if canManageSystem()
+        || (canManagePayrollOperational() && !officePayrollRunFrozen(resource.data))
+        || (canManagePayrollFinancial() && accountingOfficePayrollSafeUpdate());
+      allow delete: if canManageSystem();
     }
 
     match /executive_payroll_runs/{id} {
@@ -635,11 +652,11 @@ service cloud.firestore {
     }
 
     match /daily_timesheets/{id} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow create: if canWriteHrPayrollOperationalData();
-      allow update: if canWriteHrPayrollOperationalData()
-        && (isAdminUser() || !dailyTimesheetFinalized(resource.data));
-      allow delete: if isAdminUser();
+      allow read: if canReadInternalData() || sameCustomerId(resource.data.customerId);
+      allow create: if canManagePayrollOperational();
+      allow update: if canManagePayrollOperational()
+        && (canManageSystem() || !dailyTimesheetFinalized(resource.data));
+      allow delete: if canManageSystem();
     }
 
     match /exception_requests/{id} {
@@ -762,8 +779,11 @@ service cloud.firestore {
         || (internalReadNonStoreOfficer() && id == 'main_contract')
         || (canWriteStore() && id in ['vendor', 'purchase', 'store_receive', 'store_issue', 'store_return', 'store_writeoff'])
         || (canAccessAccounting() && isAccountingSequenceId(id))
-        || (isHrSequenceId(id) && (canAccessHR()
-            || (id == 'position' && (isOperationsManagerDomainUser() || supplementalPositionsRead()))))
+        || (isHrSequenceId(id) && (
+            canManagePayrollOperational()
+            || canManagePayrollFinancial()
+            || (id == 'position' && canManagePositions())
+          ))
         || (canAccessSales() && isSalesSequenceId(id))
         || (canAccessOperations() && isOperationsSequenceId(id));
     }
@@ -809,13 +829,15 @@ service cloud.firestore {
     // Subcollections
     // -------------------------------------------------------------------------
     match /workers/{workerId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer() || isClientUser();
-      allow write: if canEditWorkerRegistry();
+      allow read: if canReadWorkers();
+      allow create, update: if canManageWorkers();
+      allow delete: if canDeleteWorkers();
     }
 
     match /positions/{positionId}/{document=**} {
-      allow read: if canReadStandardPositions();
-      allow write: if canWriteStandardPositions();
+      allow read: if canReadPositions();
+      allow create, update: if canManagePositions();
+      allow delete: if canDeletePositions();
     }
 
     match /customers/{customerId}/{document=**} {
@@ -873,20 +895,20 @@ service cloud.firestore {
      * (recursive {document=**} ใต้ batch/run บางกรณีไม่ครอบคลุม list แบบ collection group)
      */
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read: if internalReadOrStoreOfficer() || canAccessAccounting();
-      allow write: if isAdminUser()
-        || (canWriteHrPayrollOperationalData()
+      allow read: if canReadInternalData() || canManagePayrollFinancial();
+      allow write: if canManageSystem()
+        || (canManagePayrollOperational()
             && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
-        || (isAccountingUser()
+        || (canManagePayrollFinancial()
             && payrollBatchSnapshot(batchId).status in ['HR_APPROVED', 'FINANCE_PREPARED']);
     }
 
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if internalReadOrStoreOfficer() || canAccessAccounting();
-      allow write: if isAdminUser()
-        || (canWriteHrPayrollOperationalData()
+      allow read: if canReadInternalData() || canManagePayrollFinancial();
+      allow write: if canManageSystem()
+        || (canManagePayrollOperational()
             && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
-        || (isAccountingUser()
+        || (canManagePayrollFinancial()
             && get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data.status == 'HR_APPROVED');
     }
 
@@ -896,20 +918,20 @@ service cloud.firestore {
     }
 
     match /payroll_batches/{batchId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if isAdminUser()
-        || (canWriteHrPayrollOperationalData()
+      allow read: if canReadInternalData();
+      allow write: if canManageSystem()
+        || (canManagePayrollOperational()
             && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
-        || (isAccountingUser()
+        || (canManagePayrollFinancial()
             && payrollBatchSnapshot(batchId).status in ['HR_APPROVED', 'FINANCE_PREPARED']);
     }
 
     match /office_payroll_runs/{runId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if isAdminUser()
-        || (canWriteHrPayrollOperationalData()
+      allow read: if canReadInternalData();
+      allow write: if canManageSystem()
+        || (canManagePayrollOperational()
             && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
-        || (isAccountingUser()
+        || (canManagePayrollFinancial()
             && get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data.status == 'HR_APPROVED');
     }
 
