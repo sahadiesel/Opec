@@ -35,6 +35,7 @@ import {
   Hash,
   CalendarDays,
   History,
+  RotateCcw,
   Grid3X3,
   Lock,
   FileBarChart,
@@ -44,7 +45,8 @@ import {
   ChevronRight,
   Briefcase,
   LayoutGrid,
-  Eye,
+  ListChecks,
+  Sheet,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -85,45 +87,51 @@ interface NavGroup {
   accountingStructured?: boolean;
 }
 
-/** เมนู HR — ลำดับและคำอธิบายใช้งานจริง */
+/**
+ * HR-D1: เมนูตามงานที่ต้องทำ — 3 โซน (เตรียมจ่าย / อนุมัติ / ทะเบียน)
+ * คงการแยก Office | Worker ในรายการย่อย (สอดคล้อง HR-D3)
+ */
 const HR_NAV_SUBSECTIONS: Array<{
   title: string;
+  description: string;
   icon: ComponentType<{ className?: string }>;
   items: NavItem[];
 }> = [
   {
-    title: 'ศูนย์กลาง HR',
-    icon: LayoutGrid,
+    title: 'เตรียมจ่าย (Preparation)',
+    description: 'HR Officer · งานประจำวัน',
+    icon: ListChecks,
     items: [
-      { key: 'hr_hub', title: 'แดชบอร์ด HR', href: '/hr/dashboard', icon: Briefcase },
-      { key: 'hr_hub', title: 'ตั้งค่า HR (ภาษี ประกันสังคม)', href: '/hr/settings', icon: Settings },
+      { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
+      { key: 'timesheets', title: 'คีย์ Timesheet (Wave Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
+      { key: 'timesheets', title: 'คีย์ทั้ง Wave (Excel)', href: '/timesheets/wave-excel', icon: Sheet },
+      { key: 'timesheets', title: 'ตรวจ Timesheet รายวัน', href: '/timesheets/daily', icon: Clock },
+      { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (Batches)', href: '/payroll/batches', icon: Coins },
+      { key: 'worker_payroll', title: 'รอบจ่ายและตัดยอด (งวดคนงาน)', href: '/payroll/periods', icon: CalendarDays },
+      { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
     ],
   },
   {
-    title: 'ทะเบียนบุคลากร',
-    icon: Users,
+    title: 'อนุมัติ (Approval)',
+    description: 'HR Manager · ตรวจและอนุมัติ',
+    icon: ShieldCheck,
     items: [
-      { key: 'workers', title: 'ลูกจ้าง / คนงาน (Workers)', href: '/workers', icon: HardHat },
-      { key: 'office_staff', title: 'พนักงานสำนักงาน (Office Staff)', href: '/office-staff', icon: UserSearch },
-      { key: 'positions', title: 'ตำแหน่งงาน (Positions)', href: '/positions', icon: Activity },
-      { key: 'workers', title: 'รายการเอกสารกลาง (Document Catalog)', href: '/worker-document-catalog', icon: FileText },
+      { key: 'hr_hub', title: 'ศูนย์อนุมัติ Payroll (Approval Center)', href: '/hr/payroll-approval', icon: ShieldCheck },
+      { key: 'hr_hub', title: 'รายการรออนุมัติ', href: '/hr/payroll-approval#pending', icon: ClipboardList },
+      { key: 'hr_hub', title: 'คำขอแก้ไข (Corrections)', href: '/hr/dashboard#hr-action-queue', icon: RotateCcw },
     ],
   },
   {
-    title: 'ลงเวลา (คนงานสนาม)',
-    icon: Clock,
+    title: 'ทะเบียน (Master Data)',
+    description: 'Officer + Manager · ไม่ใช่งานประจำวัน',
+    icon: Database,
     items: [
-      { key: 'timesheets', title: 'ลงเวลาแบบกลุ่ม (Wave Daily Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
-      { key: 'timesheets', title: 'ประวัติลงเวลารายวัน', href: '/timesheets/daily', icon: Clock },
-    ],
-  },
-  {
-    title: 'จ่ายเงินเดือน (Payroll)',
-    icon: Coins,
-    items: [
-      { key: 'office_payroll', title: 'ดูเงินเดือนพนักงาน (อ่านอย่างเดียว)', href: '/office-payroll', icon: Eye },
-      { key: 'worker_payroll', title: 'จ่ายเงินเดือนลูกจ้าง (Worker Batches)', href: '/payroll/batches', icon: Coins },
-      { key: 'worker_payroll', title: 'งวด / รอบบัญชี (Periods — คนงาน)', href: '/payroll/periods', icon: CalendarDays },
+      { key: 'workers', title: 'ทะเบียนลูกจ้าง', href: '/workers', icon: HardHat },
+      { key: 'office_staff', title: 'ทะเบียนพนักงานออฟฟิศ', href: '/office-staff', icon: UserSearch },
+      { key: 'positions', title: 'ตำแหน่งงาน', href: '/positions', icon: Activity },
+      { key: 'workers', title: 'เอกสารบุคลากร (Catalog)', href: '/worker-document-catalog', icon: FileText },
+      { key: 'hr_hub', title: 'ตั้งค่า HR', href: '/hr/settings', icon: Settings },
+      { key: 'hr_hub', title: 'แดชบอร์ด HR (ภาพรวม)', href: '/hr/dashboard', icon: Briefcase },
     ],
   },
 ];
@@ -155,8 +163,9 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
 ];
 
 function pathMatches(pathname: string, href: string): boolean {
-  if (pathname === href) return true;
-  if (href !== '/' && pathname.startsWith(`${href}/`)) return true;
+  const base = href.split('#')[0];
+  if (pathname === base) return true;
+  if (base !== '/' && pathname.startsWith(`${base}/`)) return true;
   return false;
 }
 
@@ -198,7 +207,7 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: 'บุคคลและเงินเดือน (HR & Payroll)',
+    label: 'งานบุคคล (HR — โต๊ะทำงาน)',
     audience: 'internal',
     hrStructured: true,
     items: [],
@@ -387,11 +396,18 @@ export function SidebarNav({
                           <SidebarMenuItem>
                             <CollapsibleTrigger asChild>
                               <SidebarMenuButton
-                                tooltip={sub.title}
-                                className="transition-all duration-200"
+                                tooltip={`${sub.title} — ${sub.description}`}
+                                className="h-auto min-h-10 py-2 transition-all duration-200"
                               >
-                                <sub.icon className="h-4 w-4 text-muted-foreground" />
-                                <span className="font-semibold text-xs tracking-tight truncate">{sub.title}</span>
+                                <sub.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="grid min-w-0 flex-1 gap-0.5 pr-1 text-left leading-tight">
+                                  <span className="line-clamp-2 text-[11px] font-semibold tracking-tight text-foreground">
+                                    {sub.title}
+                                  </span>
+                                  <span className="line-clamp-2 text-[9px] font-normal text-muted-foreground">
+                                    {sub.description}
+                                  </span>
+                                </div>
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                               </SidebarMenuButton>
                             </CollapsibleTrigger>

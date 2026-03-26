@@ -25,6 +25,7 @@ import {
   calculateThaiAnnualPIT,
 } from '@/lib/hr/pit-thailand';
 import { isHRStaff } from '@/lib/permissions';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useRouter } from 'next/navigation';
 
 export default function HrSettingsPage() {
@@ -68,10 +69,11 @@ export default function HrSettingsPage() {
               <ArrowLeft className="h-5 w-5" />
             </Link>
           </Button>
-          <div>
+          <div className="space-y-2 min-w-0">
+            <PayrollScopeTag scope="both" />
             <h1 className="text-2xl font-bold tracking-tight">ตั้งค่า HR — ภาษีและประกันสังคม</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              กฎอ้างอิงสำหรับออกแบบการคำนวณสลิปเงินเดือน / นำส่งภาษี — ตรวจสอบประกาศกรมสรรพากรและ กสร. ฉบับล่าสุดเมื่อมีการเปลี่ยนแปลง
+              กฎอ้างอิงสำหรับออกแบบการคำนวณสลิป — ใช้ได้ทั้ง Office และ Worker payroll — ตรวจสอบประกาศกรมสรรพากรและ กสร. ฉบับล่าสุดเมื่อมีการเปลี่ยนแปลง
             </p>
           </div>
         </div>

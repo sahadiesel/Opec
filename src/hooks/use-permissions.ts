@@ -2,7 +2,13 @@
 
 import { useMemo } from 'react';
 import { User } from '@/lib/types';
-import { ModuleKey, getPermissions } from '@/lib/permissions';
+import {
+  ModuleKey,
+  getPermissions,
+  canPayrollPermission,
+  type PayrollMatrixResource,
+  type PayrollMatrixAction,
+} from '@/lib/permissions';
 import { usePermissionProfiles } from '@/hooks/use-permission-profiles';
 
 /**
@@ -25,6 +31,9 @@ export function usePermissions(user: User | null) {
         const permissions = getPermissions(user, moduleKey, profile);
         return permissions[action] || false;
       },
+      /** Role × Resource × Action (payroll / timesheet / policy) — ใช้ซ่อนปุ่มและคู่กับ assert ใน service */
+      payroll: (resource: PayrollMatrixResource, action: PayrollMatrixAction) =>
+        canPayrollPermission(user, resource, action),
     }),
     [user, profile, isLoading, error]
   );

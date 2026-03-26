@@ -30,8 +30,11 @@ import {
   Phone,
   History,
   Info,
-  HardHat
+  HardHat,
+  Receipt
 } from 'lucide-react';
+import { WorkerPayslipHistory } from '@/components/payroll/worker-payslip-history';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { 
   Dialog, 
   DialogContent, 
@@ -71,6 +74,7 @@ import {
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
+import { usePermissions } from '@/hooks/use-permissions';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -199,7 +203,18 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
+  const { payroll } = usePermissions(currentUser);
+  const canEditWorker = payroll('worker', 'edit');
+
   const handleSaveMaster = () => {
+    if (!canEditWorker) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์แก้ไข',
+        description: 'ทะเบียนคนงานแก้ได้เฉพาะ HR Manager / Admin ตามนโยบายสิทธิ์',
+      });
+      return;
+    }
     if (!workerRef) return;
     const payload = sanitizeFirestorePayload({ ...editedWorker, updatedAt: Date.now() });
     updateDoc(workerRef, payload)
@@ -384,14 +399,17 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
               )}
             </div>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
-              <Info className="h-4 w-4" /> ดูและจัดการข้อมูลประวัติ (Worker Profile), ใบรับรอง และผลตรวจร่างกาย
+              <Info className="h-4 w-4" /> <strong>Worker Payroll</strong> — ประวัติลูกจ้าง, ใบรับรอง และข้อมูลประกอบ timesheet
             </p>
+            <PayrollScopeTag scope="worker" showHint={false} className="mt-2" />
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" className="h-11" onClick={() => { setEditedWorker(worker); setIsEditing(!isEditing); }}>
-              {isEditing ? 'ยกเลิก (Cancel)' : 'แก้ไขประวัติ (Edit Profile)'}
-            </Button>
-            {isEditing && (
+            {canEditWorker && (
+              <Button variant="outline" className="h-11" onClick={() => { setEditedWorker(worker); setIsEditing(!isEditing); }}>
+                {isEditing ? 'ยกเลิก (Cancel)' : 'แก้ไขประวัติ (Edit Profile)'}
+              </Button>
+            )}
+            {canEditWorker && isEditing && (
               <Button className="h-11 gap-2 bg-primary font-bold shadow-md" onClick={handleSaveMaster}>
                 <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง (Save)
               </Button>
@@ -400,13 +418,14 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         </div>
 
         <Tabs defaultValue="info" className="w-full">
-          <TabsList className="grid grid-cols-6 w-full md:w-fit h-auto p-1 bg-muted/50">
+          <TabsList className="flex flex-wrap w-full md:w-fit h-auto p-1 bg-muted/50 gap-1">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><User className="h-4 w-4" /> ข้อมูลประวัติ (Info)</TabsTrigger>
             <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบเซอร์ (Certs)</TabsTrigger>
             <TabsTrigger value="medical" className="gap-2 py-2 px-6"><Stethoscope className="h-4 w-4" /> ตรวจร่างกาย (Medical)</TabsTrigger>
             <TabsTrigger value="drug" className="gap-2 py-2 px-6"><AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)</TabsTrigger>
             <TabsTrigger value="docs" className="gap-2 py-2 px-6"><FileSearch className="h-4 w-4" /> เอกสาร (Docs)</TabsTrigger>
             <TabsTrigger value="worklog" className="gap-2 py-2 px-6"><History className="h-4 w-4" /> ประวัติชั่วโมงงาน</TabsTrigger>
+            <TabsTrigger value="payslips" className="gap-2 py-2 px-6"><Receipt className="h-4 w-4" /> สลิปเงินเดือน</TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6 space-y-6">
@@ -1319,6 +1338,10 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                 </Table>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="payslips" className="mt-6">
+            <WorkerPayslipHistory workerId={id} currentUser={currentUser} />
           </TabsContent>
         </Tabs>
       </div>

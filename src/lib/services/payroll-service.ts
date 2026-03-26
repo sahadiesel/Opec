@@ -11,6 +11,7 @@ import {
   where, 
   writeBatch, 
   updateDoc,
+  deleteField,
   CollectionReference,
   limit
 } from 'firebase/firestore';
@@ -27,7 +28,14 @@ import {
 } from '@/lib/types';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
+import { assertPayrollPermission } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
+import {
+  batchStatusToD8Lifecycle,
+  computeWorkerPayrollLineD8,
+  loadPayrollPoliciesFromFirestore,
+  resolvePayrollPoliciesForDate,
+} from '@/lib/payroll/d8';
 
 type GlobalCostMultiplierPolicy = {
   otAfterShift?: number;
@@ -102,6 +110,7 @@ export class PayrollService {
     user: User, 
     filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed' }
   ): Promise<string> {
+    assertPayrollPermission(user, 'payroll_worker', 'create_batch');
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
     if (!periodSnap.exists()) throw new Error('Payroll period not found');
@@ -183,7 +192,12 @@ export class PayrollService {
     const lines: PayrollBatchLine[] = [];
 
     let batchGross = 0;
+    let batchDeductions = 0;
+    let batchNet = 0;
     const writeOp = writeBatch(this.db);
+
+    const policyRecords = await loadPayrollPoliciesFromFirestore(this.db);
+    const asOf = period.endDate;
 
     for (const workerId in workerMap) {
       const workerTs = workerMap[workerId];
@@ -201,6 +215,9 @@ export class PayrollService {
       const eventBreakdown: Record<string, number> = {};
       const earningsBreakdown: Record<string, number> = {};
       let workerGross = 0;
+      const laborTermIds = new Set<string>();
+      const conditionIds = new Set<string>();
+      let usedContractFallback = false;
 
       for (const ts of workerTs) {
         const contract = allCostTerms.find(ct => 
@@ -209,13 +226,16 @@ export class PayrollService {
         );
         
         if (contract) {
+          laborTermIds.add(contract.id);
           const condition = resolveApplicableCostRateCondition(allConditions, ts, contract);
           if (condition) {
+            conditionIds.add(condition.id);
             const cost = calculateDailyLaborCost(ts, condition, 0);
             workerGross += cost;
             eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
             earningsBreakdown[ts.eventType] = (earningsBreakdown[ts.eventType] || 0) + cost;
           } else {
+            usedContractFallback = true;
             const poLine = poLineById.get(ts.poLineId) || {};
             const baseCost = Number(poLine?.costBaselineSnapshot || 0);
             const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
@@ -230,6 +250,30 @@ export class PayrollService {
         }
       }
 
+      const rateSummary =
+        conditionIds.size > 0
+          ? `rate_conditions: ${[...conditionIds].join(', ')}`
+          : usedContractFallback || laborTermIds.size > 0
+            ? `labor_cost_term + contract policy fallback (terms: ${[...laborTermIds].join(', ') || '—'})`
+            : 'no_applicable_labor_term';
+
+      const resolvedPolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'worker');
+      const d8Line = computeWorkerPayrollLineD8({
+        asOfDate: asOf,
+        policies: resolvedPolicies,
+        grossFromTimesheets: workerGross,
+        rate: {
+          summary: rateSummary,
+          conditionIds: [...conditionIds],
+          laborTermIds: [...laborTermIds],
+        },
+        earningsBreakdown,
+      });
+
+      const lineDedTotal = Object.values(d8Line.deductionsBreakdown).reduce((a, b) => a + b, 0);
+      batchDeductions += lineDedTotal;
+      batchNet += d8Line.netAmount;
+
       const line: PayrollBatchLine = {
         id: `${batchId}_${workerId}`,
         payrollBatchId: batchId,
@@ -242,9 +286,10 @@ export class PayrollService {
         periodEndDate: period.endDate,
         eventBreakdown,
         earningsBreakdown,
-        deductionsBreakdown: {},
+        deductionsBreakdown: d8Line.deductionsBreakdown,
         grossAmount: workerGross,
-        netAmount: workerGross,
+        netAmount: d8Line.netAmount,
+        d8Snapshot: d8Line.snapshot,
         exportStatus: 'pending'
       };
 
@@ -268,10 +313,11 @@ export class PayrollService {
       payrollPeriodId: periodId,
       workModeScope: filters?.workModeScope || 'mixed',
       status: 'GENERATED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('GENERATED'),
       totalWorkers: lines.length,
       grossAmount: batchGross,
-      totalDeductions: 0,
-      netAmount: batchGross,
+      totalDeductions: Math.round(batchDeductions * 100) / 100,
+      netAmount: Math.round(batchNet * 100) / 100,
       createdBy: user.displayName,
       updatedBy: user.displayName,
       createdAt: Date.now(),
@@ -300,9 +346,17 @@ export class PayrollService {
   }
 
   async approveBatch(id: string, user: User) {
+    assertPayrollPermission(user, 'payroll_worker', 'approve');
     const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const st = (snap.data() as PayrollBatch).status;
+    if (st !== 'GENERATED' && st !== 'HR_REVIEWED') {
+      throw new Error('อนุมัติได้เฉพาะงวดสถานะ GENERATED / HR_REVIEWED');
+    }
     await updateDoc(docRef, {
       status: 'HR_APPROVED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('HR_APPROVED'),
       hrApprovedBy: user.displayName,
       hrApprovedAt: Date.now(),
       updatedAt: Date.now()
@@ -318,10 +372,66 @@ export class PayrollService {
     });
   }
 
+  /** HR ส่งกลับแก้ไข — คืนสถานะก่อนอนุมัติ (ล้าง hr approval) */
+  async sendBackBatch(id: string, user: User) {
+    assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const st = (snap.data() as PayrollBatch).status;
+    if (st !== 'GENERATED' && st !== 'HR_REVIEWED') {
+      throw new Error('ส่งกลับได้เฉพาะงวดที่ยังไม่ HR อนุมัติ');
+    }
+    await updateDoc(docRef, {
+      status: 'GENERATED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('GENERATED'),
+      hrApprovedBy: deleteField(),
+      hrApprovedAt: deleteField(),
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(this.db, user, {
+      actionType: 'REJECT',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      payrollBatchId: id,
+      sourceModule: 'hr',
+      afterSummary: 'HR sent batch back for correction (status GENERATED)',
+    });
+  }
+
+  /** หลัง HR_APPROVED — ส่งต่อบัญชีเตรียมจ่าย */
+  async financePrepareBatch(id: string, user: User) {
+    assertPayrollPermission(user, 'payroll_worker', 'approve');
+    const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const st = (snap.data() as PayrollBatch).status;
+    if (st !== 'HR_APPROVED') {
+      throw new Error('ส่งต่อบัญชีได้หลัง HR อนุมัติแล้วเท่านั้น');
+    }
+    await updateDoc(docRef, {
+      status: 'FINANCE_PREPARED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('FINANCE_PREPARED'),
+      financePreparedBy: user.displayName,
+      financePreparedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(this.db, user, {
+      actionType: 'SUBMIT',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      payrollBatchId: id,
+      sourceModule: 'hr',
+      afterSummary: 'Handed off to finance (FINANCE_PREPARED)',
+    });
+  }
+
   async lockBatch(id: string, user: User) {
+    assertPayrollPermission(user, 'payroll_worker', 'lock');
     const docRef = doc(this.getBatchCollection(), id);
     await updateDoc(docRef, {
       status: 'LOCKED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('LOCKED'),
       lockedBy: user.displayName,
       lockedAt: Date.now(),
       updatedAt: Date.now()

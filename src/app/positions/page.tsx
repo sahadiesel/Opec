@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function PositionsPage() {
   const router = useRouter();
@@ -160,13 +161,16 @@ export default function PositionsPage() {
     <AppShell user={user} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         {/* 1. Page Header & Description */}
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <Activity className="h-8 w-8" /> เมทริกซ์ตำแหน่งงาน (Positions Management)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            กำหนดมาตรฐานตำแหน่งงาน เกณฑ์ความพร้อม (Readiness Matrix), รายการใบเซอร์บังคับ และอุปกรณ์ PPE ที่จำเป็น
-          </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-2 min-w-0">
+            <PayrollScopeTag scope="worker" showHint={false} />
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <Activity className="h-8 w-8 shrink-0" /> ตำแหน่งงาน (Positions)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              ใช้กับมอบหมายงานและ <strong>Worker Payroll</strong> — ไม่ใช่ตำแหน่งพนักงานออฟฟิศ
+            </p>
+          </div>
         </div>
 
         {/* 2. Compliance Warning Box */}

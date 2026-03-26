@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import Link from 'next/link';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -65,6 +66,15 @@ export default function WaveTimesheetBoardPage() {
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const po = params.get('poId');
+    const wv = params.get('waveId');
+    if (po) setSelectedPoId(po);
+    if (wv) setSelectedWaveId(wv);
   }, []);
 
   const poQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null), [firestore]);
@@ -213,13 +223,14 @@ export default function WaveTimesheetBoardPage() {
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6">
         <section className="grid w-full gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-          <div className="w-full min-w-0 space-y-1">
+          <div className="w-full min-w-0 space-y-2">
+            <PayrollScopeTag scope="worker" showHint={false} />
             <h1 className="text-3xl font-bold tracking-tight text-primary">
               <Waves className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
-              ลงเวลารายวันตามกลุ่มเวฟ (Wave Daily Board)
+              คีย์ลงเวลาแบบกลุ่ม (Wave Daily Board)
             </h1>
             <p className="text-muted-foreground text-lg">
-              จัดการลงเวลาสำหรับคนงานจำนวนมาก โดยอ้างอิงรายชื่อตาม Wave และโครงการ
+              <strong>Worker Payroll</strong> — ลง timesheet รายวันตาม wave / โครงการ (ไม่ใช้กับพนักงานออฟฟิศ)
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">

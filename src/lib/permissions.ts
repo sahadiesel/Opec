@@ -49,6 +49,11 @@ export {
   type UserAccessContext,
 } from './permission-core';
 import { legacyDeptToDepartmentGroup } from './permission-profile-helpers';
+import {
+  resolvePayrollMatrixDecision,
+  type PayrollMatrixAction,
+  type PayrollMatrixResource,
+} from './permission-payroll-matrix';
 
 export {
   legacyDeptToDepartmentGroup,
@@ -331,6 +336,25 @@ function buildPermissionMap(
     }
     return acc;
   }, {} as Record<string, ModulePermission>);
+}
+
+/** HR Officer baseline: คีย์ timesheet / เตรียม batch ได้ — ทะเบียนคน + อัตรา + office payroll ดูอย่างเดียว */
+function buildHrOfficerPermissionMap(): Record<string, ModulePermission> {
+  const base = buildPermissionMap(HR_MODULES, OFFICER_ACCESS);
+  const narrowReadOnly: Partial<Record<ModuleKey, ModulePermission>> = {
+    workers: READ_ONLY,
+    office_staff: READ_ONLY,
+    rate_conditions: READ_ONLY,
+    labor_cost_contract_terms: READ_ONLY,
+    office_payroll: READ_ONLY,
+    positions: READ_ONLY,
+    payment_export_batches: READ_ONLY,
+    hr_hub: READ_ONLY,
+  };
+  (Object.entries(narrowReadOnly) as [ModuleKey, ModulePermission][]).forEach(([key, perm]) => {
+    base[key] = clonePermission(perm);
+  });
+  return base;
 }
 
 /**
@@ -628,7 +652,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'hr',
       level: 'officer',
       isActive: true,
-      permissions: buildPermissionMap(HR_MODULES, OFFICER_ACCESS),
+      permissions: buildHrOfficerPermissionMap(),
     },
 
     {
@@ -700,4 +724,80 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       permissions: buildPermissionMap(STORE_MODULES, FULL_ACCESS),
     },
   ];
+}
+
+export type { PayrollMatrixResource, PayrollMatrixAction };
+
+function payrollMatrixModuleFallback(
+  user: User | null,
+  resource: PayrollMatrixResource,
+  action: PayrollMatrixAction
+): boolean {
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return false;
+
+  switch (resource) {
+    case 'timesheet':
+      if (action === 'view') return getPermissions(u, 'timesheets').view;
+      if (action === 'create' || action === 'edit' || action === 'submit')
+        return getPermissions(u, 'timesheets').edit;
+      if (action === 'verify') return getPermissions(u, 'timesheets').approve;
+      return false;
+    case 'payroll_worker':
+      if (action === 'view') return getPermissions(u, 'worker_payroll').view;
+      if (action === 'create_batch' || action === 'edit_batch')
+        return getPermissions(u, 'worker_payroll').edit || getPermissions(u, 'worker_payroll').create;
+      if (action === 'approve' || action === 'lock')
+        return getPermissions(u, 'worker_payroll').approve;
+      if (action === 'export' || action === 'mark_paid' || action === 'finance_approve')
+        return getPermissions(u, 'worker_payroll').view && getPermissions(u, 'payment_export_batches').edit;
+      return false;
+    case 'payroll_office':
+      if (action === 'view') return getPermissions(u, 'office_payroll').view;
+      if (action === 'create' || action === 'edit' || action === 'submit')
+        return getPermissions(u, 'office_payroll').edit;
+      if (action === 'approve' || action === 'lock' || action === 'finance_approve')
+        return getPermissions(u, 'office_payroll').approve;
+      return false;
+    case 'policy':
+      return action === 'view' ? getPermissions(u, 'hr_hub').view : getPermissions(u, 'hr_hub').edit;
+    case 'worker':
+      if (action === 'view') return getPermissions(u, 'workers').view;
+      return getPermissions(u, 'workers').create || getPermissions(u, 'workers').edit;
+    case 'office_staff':
+      if (action === 'view') return getPermissions(u, 'office_staff').view;
+      return getPermissions(u, 'office_staff').create || getPermissions(u, 'office_staff').edit;
+    case 'rate_term_cost':
+      if (action === 'view')
+        return getPermissions(u, 'rate_conditions').view || getPermissions(u, 'labor_cost_contract_terms').view;
+      return getPermissions(u, 'rate_conditions').edit || getPermissions(u, 'labor_cost_contract_terms').edit;
+    default:
+      return false;
+  }
+}
+
+/**
+ * สิทธิ์แบบ Role × Resource × Action สำหรับ payroll / timesheet / policy (ชั้น UI + service).
+ * ค่า inherit จาก matrix จะ fallback ไป module permission เดิม
+ */
+export function canPayrollPermission(
+  user: User | null,
+  resource: PayrollMatrixResource,
+  action: PayrollMatrixAction
+): boolean {
+  const d = resolvePayrollMatrixDecision(user, resource, action);
+  if (d === 'allow') return true;
+  if (d === 'deny') return false;
+  return payrollMatrixModuleFallback(user, resource, action);
+}
+
+export function assertPayrollPermission(
+  user: User | null,
+  resource: PayrollMatrixResource,
+  action: PayrollMatrixAction,
+  message?: string
+): void {
+  if (!canPayrollPermission(user, resource, action)) {
+    throw new Error(message || `Permission denied: ${resource}.${action}`);
+  }
 }

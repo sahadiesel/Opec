@@ -21,6 +21,7 @@ import {
   HardHat,
   RotateCcw,
   Settings,
+  Building2,
 } from 'lucide-react';
 import { 
   User, 
@@ -40,6 +41,7 @@ import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { isHRStaff, isStoreOfficer } from '@/lib/permissions';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function HRDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -49,6 +51,15 @@ export default function HRDashboardPage() {
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.location.hash === '#hr-action-queue') {
+      requestAnimationFrame(() => {
+        document.getElementById('hr-action-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
   }, []);
 
   const isHRAuthorized = useMemo(() => {
@@ -259,43 +270,90 @@ export default function HRDashboardPage() {
         )}
 
         {!viewerOnly ? (
-          <Card className="border-primary/20 bg-primary/[0.03]">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Info className="h-5 w-5 text-primary" /> เส้นทางการทำงาน (ใช้งานจริง)
-              </CardTitle>
-              <CardDescription>
-                ลงทะเบียนแยก <strong>ลูกจ้าง</strong> กับ <strong>พนักงานสำนักงาน</strong> — ลงเวลาและงวดเงินเดือนใช้กับคนงานสนาม — จ่ายเงินเดือนแยก Office กับ Worker — สลิปต้องตรวจได้ก่อน
-                แล้ว HR Manager อนุมัติรอบจ่ายก่อนส่งบัญชี
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2 pt-0">
-              <Button variant="outline" size="sm" asChild className="font-semibold">
-                <Link href="/workers">ทะเบียนลูกจ้าง</Link>
-              </Button>
-              <Button variant="outline" size="sm" asChild className="font-semibold">
-                <Link href="/office-staff">ทะเบียนพนักงาน</Link>
-              </Button>
-              <Button variant="outline" size="sm" asChild className="font-semibold">
-                <Link href="/timesheets/wave-board">ลงเวลา (Wave)</Link>
-              </Button>
-              <Button variant="outline" size="sm" asChild className="font-semibold">
-                <Link href="/payroll/periods">งวด/รอบ (คนงาน)</Link>
-              </Button>
-              <Button variant="outline" size="sm" asChild className="font-semibold">
-                <Link href="/office-payroll">จ่ายเงินเดือนพนักงาน</Link>
-              </Button>
-              <Button variant="outline" size="sm" asChild className="font-semibold">
-                <Link href="/payroll/batches">จ่ายเงินเดือนลูกจ้าง</Link>
-              </Button>
-              <Button size="sm" asChild className="font-semibold gap-1">
-                <Link href="/hr/settings">
-                  <Settings className="h-3.5 w-3.5" /> ตั้งค่า HR (ภาษี ประกันสังคม)
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border-l-4 border-l-indigo-600 shadow-md">
+              <CardHeader className="pb-2">
+                <PayrollScopeTag scope="office" />
+                <CardTitle className="text-base flex items-center gap-2 mt-3">
+                  <Building2 className="h-5 w-5 text-indigo-600 shrink-0" /> เส้นทาง: พนักงานออฟฟิศ
+                </CardTitle>
+                <CardDescription>
+                  ฐานเงินเดือนรายเดือน — <strong>ไม่ใช้</strong> timesheet รายวัน — จ่ายผ่าน <strong>Office payroll run</strong>
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2 pt-0">
+                <Button variant="outline" size="sm" asChild className="font-semibold border-indigo-200">
+                  <Link href="/office-staff">ทะเบียนพนักงานออฟฟิศ</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild className="font-semibold border-indigo-200">
+                  <Link href="/office-payroll">งวดจ่ายเงินเดือนออฟฟิศ</Link>
+                </Button>
+              </CardContent>
+            </Card>
+            <Card className="border-l-4 border-l-amber-600 shadow-md">
+              <CardHeader className="pb-2">
+                <PayrollScopeTag scope="worker" />
+                <CardTitle className="text-base flex items-center gap-2 mt-3">
+                  <HardHat className="h-5 w-5 text-amber-600 shrink-0" /> เส้นทาง: ลูกจ้างหน้างาน
+                </CardTitle>
+                <CardDescription>
+                  <strong>Timesheet รายวัน</strong> ตาม wave → รอบ <strong>period</strong> → <strong>Payroll batch</strong>
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2 pt-0">
+                <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
+                  <Link href="/workers">ทะเบียนลูกจ้าง</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
+                  <Link href="/timesheets/wave-board">คีย์ลงเวลา (Wave)</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
+                  <Link href="/timesheets/daily">ตรวจ Timesheet รายวัน</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
+                  <Link href="/payroll/periods">รอบจ่ายเงินและตัดยอด</Link>
+                </Button>
+                <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
+                  <Link href="/payroll/batches">งวดจ่ายลูกจ้าง (Batches)</Link>
+                </Button>
+              </CardContent>
+            </Card>
+            <div className="lg:col-span-2">
+              <Card className="border-muted">
+                <CardHeader className="py-3 pb-2">
+                  <PayrollScopeTag scope="both" showHint={false} />
+                  <CardTitle className="text-sm flex items-center gap-2 mt-2">
+                    <Settings className="h-4 w-4" /> ตั้งค่าและข้อมูลประกอบ
+                  </CardTitle>
+                  <CardDescription className="text-xs">ตำแหน่งงานและเอกสารกลาง — ใช้ประกอบงานลูกจ้าง/โครงการ</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2 pt-0 pb-4">
+                  <Button size="sm" variant="secondary" asChild className="font-semibold gap-1">
+                    <Link href="/hr/settings">
+                      <Settings className="h-3.5 w-3.5" /> ตั้งค่า HR
+                    </Link>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href="/positions">ตำแหน่งงาน</Link>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href="/worker-document-catalog">เอกสารกลาง</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         ) : null}
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-primary">สรุปสถานะลูกจ้าง</h2>
+            <p className="text-sm text-muted-foreground">
+              ตัวเลขและคิวด้านล่างเป็นขอบเขต <strong>ลูกจ้างหน้างาน</strong> เท่านั้น — ไม่รวมพนักงานออฟฟิศ
+            </p>
+          </div>
+          <PayrollScopeTag scope="worker" showHint={false} className="shrink-0" />
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
           <StatCard title="ลูกจ้างทั้งหมด" value={stats.total} sub="Total Workers" icon={Users} colorClass="border-l-blue-600" />
@@ -313,7 +371,7 @@ export default function HRDashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Action Queue Section */}
           <div className="lg:col-span-2 space-y-6">
-            <Card className="shadow-md border-none overflow-hidden">
+            <Card id="hr-action-queue" className="scroll-mt-24 shadow-md border-none overflow-hidden">
               <CardHeader className="bg-primary/5 border-b pb-4">
                 <div className="flex items-center justify-between">
                   <div>

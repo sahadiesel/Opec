@@ -41,6 +41,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function PayrollPeriodsPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -99,12 +100,15 @@ export default function PayrollPeriodsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div className="flex flex-col gap-2 min-w-0">
+            <PayrollScopeTag scope="worker" showHint={false} />
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Calendar className="h-8 w-8" /> รอบบัญชีและการจ่ายเงิน (Payroll Periods)
+              <Calendar className="h-8 w-8 shrink-0" /> รอบจ่ายเงินและตัดยอด (ลูกจ้าง)
             </h1>
-            <p className="text-muted-foreground text-lg italic">จัดการช่วงเวลาการตัดรอบเพื่อสรุปยอดเงินเดือนและวางบิล (Financial Cut-offs).</p>
+            <p className="text-muted-foreground text-lg italic">
+              <strong>Worker Payroll</strong> — กำหนดช่วงตัดยอดสำหรับ timesheet และ payroll batch (ไม่ใช้กับพนักงานออฟฟิศ)
+            </p>
           </div>
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>

@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import Link from 'next/link';
 import { 
   ArrowLeft, 
   Coins, 
@@ -21,13 +22,21 @@ import {
   Info,
   Building2,
   FileText,
-  CreditCard
+  CreditCard,
+  Printer
 } from 'lucide-react';
+import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+
+function lineDeductionsTotal(line: PayrollBatchLine): number {
+  return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+}
 
 export default function PayrollBatchDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -63,8 +72,9 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
             <Button variant="ghost" size="icon" onClick={() => router.push('/payroll/batches')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">Payroll Settlement Detail</h1>
+            <div className="space-y-2">
+              <PayrollScopeTag scope="worker" showHint={false} />
+              <h1 className="text-2xl font-bold tracking-tight">รายละเอียดงวดจ่ายลูกจ้าง (Batch)</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{batch.id}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -72,10 +82,18 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
               </div>
             </div>
           </div>
-          <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4' : 'py-1.5 px-4'}>
-            {isLocked && <Lock className="h-3 w-3 mr-2" />}
-            STATUS: {batch.status}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" asChild className="gap-1">
+              <Link href={`/payroll/batches/${id}/print`}>
+                <Printer className="h-4 w-4" />
+                สลิปทั้ง batch
+              </Link>
+            </Button>
+            <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4' : 'py-1.5 px-4'}>
+              {isLocked && <Lock className="h-3 w-3 mr-2" />}
+              STATUS: {batch.status}
+            </Badge>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -131,11 +149,15 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                       <TableHead className="text-right">Gross</TableHead>
                       <TableHead className="text-right">Deductions</TableHead>
                       <TableHead className="text-right font-bold">Net Amount</TableHead>
+                      <TableHead className="text-right pr-2 w-[100px]">สลิป</TableHead>
                       <TableHead className="text-right pr-6">Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map(line => (
+                    {lines?.map(line => {
+                      const periodLabel = period?.label || batch.payrollPeriodId;
+                      const slipModel = buildPayslipFromWorkerLine(line, batch, periodLabel);
+                      return (
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         <TableCell className="pl-6">
                           <div className="flex flex-col">
@@ -150,16 +172,21 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                           </div>
                         </TableCell>
                         <TableCell className="text-right text-xs font-medium">฿{line.grossAmount.toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-xs text-red-600">฿0</TableCell>
+                        <TableCell className="text-right text-xs text-red-600">
+                          ฿{lineDeductionsTotal(line).toLocaleString()}
+                        </TableCell>
                         <TableCell className="text-right font-black text-primary">฿{line.netAmount.toLocaleString()}</TableCell>
+                        <TableCell className="text-right pr-2">
+                          <PayslipDialog model={slipModel} />
+                        </TableCell>
                         <TableCell className="text-right pr-6">
                           <Badge variant="outline" className="text-[9px] uppercase font-bold">{line.exportStatus}</Badge>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    );})}
                     {(!lines || lines.length === 0) && !isLinesLoading && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
+                        <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

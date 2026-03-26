@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { FileText, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 type CatalogForm = Partial<WorkerDocumentCatalogItem>;
 
@@ -130,9 +131,14 @@ export default function WorkerDocumentCatalogPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1200px] mx-auto">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">รายการเอกสารกลาง (Worker Document Catalog)</h1>
-          <p className="text-muted-foreground">ใช้กำหนดชื่อเอกสาร/ใบเซอร์กลาง เพื่อเรียกใช้ในหน้า ตำแหน่งงาน และทะเบียนลูกจ้าง</p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 space-y-2">
+            <PayrollScopeTag scope="worker" showHint={false} />
+            <h1 className="text-3xl font-bold tracking-tight text-primary">รายการเอกสารกลาง (ลูกจ้าง)</h1>
+            <p className="text-muted-foreground">
+              <strong>Worker Payroll</strong> — ใช้กับตำแหน่งงานและทะเบียนลูกจ้าง (ไม่ใช้กับพนักงานออฟฟิศ)
+            </p>
+          </div>
         </div>
 
         <Card>

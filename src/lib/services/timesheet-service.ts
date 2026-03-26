@@ -24,6 +24,7 @@ import {
   Wave
 } from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
+import { assertPayrollPermission } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
 import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
 
@@ -90,6 +91,7 @@ export class TimesheetService {
    * Safeguard: Strictly skips any record already finalized or locked.
    */
   async bulkUpsertTimesheets(timesheets: Partial<DailyTimesheet>[], user: User) {
+    assertPayrollPermission(user, 'timesheet', 'edit');
     const batch = writeBatch(this.db);
     const results = { created: 0, updated: 0, skipped: 0 };
 
@@ -149,6 +151,7 @@ export class TimesheetService {
    * This prevents silent overwrites of billed/paid data.
    */
   async requestCorrection(id: string, user: User, reason: string) {
+    assertPayrollPermission(user, 'timesheet', 'verify');
     const docRef = doc(this.getCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return;
@@ -178,6 +181,7 @@ export class TimesheetService {
   }
 
   async submitTimesheet(id: string, user: User) {
+    assertPayrollPermission(user, 'timesheet', 'submit');
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'SUBMITTED',
@@ -195,6 +199,7 @@ export class TimesheetService {
   }
 
   async markAsReviewed(id: string, user: User) {
+    assertPayrollPermission(user, 'timesheet', 'verify');
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'OPS_REVIEWED',
@@ -215,6 +220,7 @@ export class TimesheetService {
   }
 
   async markAsVerifiedPaper(id: string, user: User) {
+    assertPayrollPermission(user, 'timesheet', 'verify');
     const docRef = doc(this.getCollection(), id);
     await updateDoc(docRef, {
       status: 'VERIFIED_PAPER',
@@ -245,6 +251,7 @@ export class TimesheetService {
     targetDate: string,
     user: User
   ): Promise<{ created: number; updated: number }> {
+    assertPayrollPermission(user, 'timesheet', 'edit');
     const prev = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
     const q = query(
       this.getCollection(),

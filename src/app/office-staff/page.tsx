@@ -31,6 +31,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function OfficeStaffPage() {
   const router = useRouter();
@@ -91,13 +92,16 @@ export default function OfficeStaffPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <UserSearch className="h-8 w-8" /> พนักงานออฟฟิศ (Office Staff Directory)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            จัดการข้อมูลพนักงานบริษัทส่วนกลาง (Internal Employees) รวมถึงตำแหน่งและฐานเงินเดือนรายเดือน
-          </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-1 min-w-0">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <UserSearch className="h-8 w-8 shrink-0" /> ทะเบียนพนักงานออฟฟิศ
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              ฐานข้อมูลพนักงานส่วนกลาง — ใช้กับ <strong>Office Payroll</strong> รายเดือน (ไม่ใช้ timesheet รายวัน)
+            </p>
+          </div>
+          <PayrollScopeTag scope="office" className="shrink-0" />
         </div>
 
         <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">

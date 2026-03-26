@@ -763,12 +763,25 @@ export default function Home() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             {isHRStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
-              <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
-                <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวมบุคคล" />
-                <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />
-                <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
-                <ShortcutLink href="/office-staff" label="พนักงานออฟฟิศ" sub="Office Staff" />
-              </ShortcutGroup>
+              <>
+                <ShortcutGroup title="HR — Office Payroll" icon={Building2} color="border-l-indigo-600">
+                  <ShortcutLink href="/office-staff" label="ทะเบียนพนักงานออฟฟิศ" sub="รายเดือน · ไม่ใช้ timesheet รายวัน" />
+                  <ShortcutLink href="/office-payroll" label="งวดจ่ายเงินเดือนออฟฟิศ" sub="Office payroll run" />
+                </ShortcutGroup>
+                <ShortcutGroup title="HR — Worker Payroll" icon={HardHat} color="border-l-amber-600">
+                  <ShortcutLink href="/workers" label="ทะเบียนลูกจ้าง" sub="Timesheet + batch" />
+                  <ShortcutLink href="/timesheets/wave-board" label="คีย์ลงเวลา (Wave)" sub="Worker timesheet" />
+                  <ShortcutLink href="/timesheets/daily" label="ตรวจ Timesheet รายวัน" sub="ประวัติรายวัน" />
+                  <ShortcutLink href="/payroll/periods" label="รอบจ่ายและตัดยอด" sub="งวดคนงาน" />
+                  <ShortcutLink href="/payroll/batches" label="งวดจ่ายลูกจ้าง" sub="Payroll batches" />
+                </ShortcutGroup>
+                <ShortcutGroup title="HR — ภาพรวมและตั้งค่า" icon={Users} color="border-l-orange-500">
+                  <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวม" />
+                  <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
+                  <ShortcutLink href="/worker-document-catalog" label="เอกสารกลาง" sub="Document catalog" />
+                  <ShortcutLink href="/hr/settings" label="ตั้งค่า HR" sub="ภาษี · ประกันสังคม" />
+                </ShortcutGroup>
+              </>
             )}
 
             {isSalesStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (

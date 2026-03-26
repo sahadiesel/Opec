@@ -14,6 +14,8 @@ export const DOMAIN_TO_MODULE_MAP: Record<string, string> = {
   'payroll_batches': 'worker_payroll',
   'payroll_runs': 'worker_payroll',
   'office_payroll_runs': 'office_payroll',
+  'payroll_policies': 'hr_hub',
+  'payroll_correction_requests': 'hr_hub',
   'executive_payroll_runs': 'executive_payroll',
   'mobilizations': 'mobilization',
   'store_items': 'store_inventory',

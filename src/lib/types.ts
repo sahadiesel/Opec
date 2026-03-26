@@ -112,6 +112,73 @@ export type PayrollBatchStatus =
   | 'PAID' 
   | 'LOCKED';
 
+// --- D8 Payroll Engine (lifecycle + policies; คู่กับ legacy status ด้านบน) ---
+
+export type PayrollPolicyKind = 'sso' | 'tax' | 'allowance_deduction';
+
+export type PayrollPolicyRecordStatus = 'draft' | 'active' | 'superseded' | 'archived';
+
+/** นโยบายจ่ายเงินแบบ versioned — เก็บใน `payroll_policies` */
+export interface PayrollPolicyRecord {
+  id: string;
+  kind: PayrollPolicyKind;
+  name: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  status: PayrollPolicyRecordStatus;
+  /** ใช้คู่กับ kind=tax / allowance_deduction เมื่อมีหลายชุด */
+  appliesTo?: 'office' | 'worker' | 'all';
+  config: Record<string, unknown>;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+/** สถานะชีวิต payroll แบบ D8 (camelCase) */
+export type PayrollLifecycleStatus =
+  | 'draft'
+  | 'reviewed'
+  | 'approved'
+  | 'readyForFinance'
+  | 'paid'
+  | 'locked'
+  | 'correction_required'
+  | 'adjusted';
+
+/** Snapshot ตอน generate — ห้ามคำนวณใหม่ตอนเปิดหน้า */
+export interface PayrollLineD8Snapshot {
+  engineVersion: string;
+  asOfDate: string;
+  policiesApplied: Array<{
+    kind: PayrollPolicyKind;
+    policyId: string;
+    policyName: string;
+    effectiveFrom: string;
+  }>;
+  rate?: { summary: string; conditionIds?: string[]; laborTermIds?: string[] };
+  earningsComponents?: Record<string, number>;
+  gross: number;
+  deductions: Record<string, number>;
+  net: number;
+  frozenAt: number;
+}
+
+/** คำขอแก้ไขหลัง approve/paid — เก็บใน `payroll_correction_requests` */
+export interface PayrollCorrectionRequest {
+  id: string;
+  scope: 'worker_batch' | 'office_run';
+  targetBatchOrRunId: string;
+  targetLineId?: string | null;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected' | 'applied';
+  requestedByUserId: string;
+  requestedByName: string;
+  requestedAt: number;
+  reviewedByUserId?: string;
+  reviewedByName?: string;
+  reviewedAt?: number;
+  resolutionNotes?: string;
+}
+
 export type BillingStatus = 
   | 'DRAFT'               // ฉบับร่าง
   | 'ISSUED'              // ออกเอกสารแล้ว
@@ -995,6 +1062,8 @@ export interface OfficePayrollRun {
   payrollPeriodStart: string;
   payrollPeriodEnd: string;
   status: PayrollRunStatus;
+  /** D8 lifecycle — อ่านคู่กับ legacy `status` */
+  d8LifecycleStatus?: PayrollLifecycleStatus;
   staffCount: number;
   grossAmount: number;
   totalAllowances: number;
@@ -1014,6 +1083,8 @@ export interface OfficePayrollRun {
 
 export interface OfficePayrollLine {
   id: string;
+  /** อ้างอิงงวด — ใช้ค้นประวัติสลิปจาก collection group */
+  officePayrollRunId?: string;
   staffId: string;
   staffName: string;
   department: string;
@@ -1021,11 +1092,15 @@ export interface OfficePayrollLine {
   baseSalary: number;
   allowance: number;
   bonus: number;
+  /** OT / income อื่น (ถ้ามี) — รวมใน gross ตอน D8 */
+  overtimeAmount?: number;
+  otherIncome?: number;
   deductions: number;
   tax: number;
   socialSecurity: number;
   grossPay: number;
   netPay: number;
+  d8Snapshot?: PayrollLineD8Snapshot;
   createdAt: number;
   updatedAt: number;
 }
@@ -1095,6 +1170,7 @@ export interface PayrollBatch {
   payrollPeriodId: string;
   workModeScope: 'onshore' | 'offshore' | 'mixed';
   status: PayrollBatchStatus;
+  d8LifecycleStatus?: PayrollLifecycleStatus;
   totalWorkers: number;
   grossAmount: number;
   totalDeductions: number;
@@ -1127,6 +1203,7 @@ export interface PayrollBatchLine {
   deductionsBreakdown: Record<string, number>; // Maps specific deduction category to amount
   grossAmount: number;
   netAmount: number;
+  d8Snapshot?: PayrollLineD8Snapshot;
   exportStatus: 'pending' | 'exported' | 'failed';
   remarks?: string;
 }

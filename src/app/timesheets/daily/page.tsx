@@ -54,6 +54,7 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { 
   Dialog, 
   DialogContent, 
@@ -311,13 +312,14 @@ export default function DailyTimesheetsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div className="flex flex-col gap-2 min-w-0">
+            <PayrollScopeTag scope="worker" showHint={false} />
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Clock className="h-8 w-8" /> ประวัติการลงเวลา (Timesheet History)
+              <Clock className="h-8 w-8 shrink-0" /> ตรวจ / ประวัติ Timesheet รายวัน
             </h1>
             <p className="text-muted-foreground text-lg italic">
-              ตรวจสอบและติดตามสถานะใบลงเวลาทำงานรายวันของ <b>ลูกจ้างหน้างาน (Field Workers)</b>
+              <strong>Worker Payroll</strong> — เฉพาะลูกจ้างหน้างาน · พนักงานออฟฟิศไม่ใช้หน้านี้
             </p>
           </div>
           

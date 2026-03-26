@@ -26,8 +26,11 @@ import {
   Clock,
   Building2,
   Briefcase,
-  ShieldAlert
+  ShieldAlert,
+  Printer
 } from 'lucide-react';
+import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -40,6 +43,7 @@ import {
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -47,9 +51,11 @@ import { canView } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import {
-  monthlyEmployeePITWithholding,
-  monthlyEmployeeSocialSecurity,
-} from '@/lib/payroll/employee-payroll-deductions';
+  computeOfficePayrollLineD8,
+  loadPayrollPoliciesFromFirestore,
+  resolvePayrollPoliciesForDate,
+  runStatusToD8Lifecycle,
+} from '@/lib/payroll/d8';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -84,6 +90,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     if (!firestore || !run || !runRef || !currentUser) return;
     const updateData: Record<string, unknown> = {
       status: newStatus,
+      d8LifecycleStatus: runStatusToD8Lifecycle(newStatus),
       updatedAt: Date.now(),
     };
 
@@ -144,6 +151,10 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
       let totalAllowances = 0;
       let totalDeductions = 0;
 
+      const policyRecords = await loadPayrollPoliciesFromFirestore(firestore);
+      const asOf = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
+      const officePolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'office');
+
       for (const staff of activeStaff) {
         const lineId = `OPL-${staff.staffCode}-${id.substring(0, 5)}`;
         const lineDoc = doc(linesCol, lineId);
@@ -151,15 +162,19 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
         const baseSalary = staff.monthlySalary || 0;
         const allowance = 0;
         const bonus = 0;
-        const grossPay = baseSalary + allowance + bonus;
-        const tax = monthlyEmployeePITWithholding({ monthlyTaxableGross: grossPay });
-        const socialSecurity = monthlyEmployeeSocialSecurity(grossPay);
-        const deductions = tax + socialSecurity;
-        
-        const netPay = grossPay - deductions;
+        const d8 = computeOfficePayrollLineD8({
+          asOfDate: asOf,
+          policies: officePolicies,
+          baseSalary,
+          allowance,
+          bonus,
+          overtimeAmount: 0,
+          otherIncome: 0,
+        });
 
         const newLine: OfficePayrollLine = {
           id: lineId,
+          officePayrollRunId: id,
           staffId: staff.id,
           staffName: staff.fullName,
           department: staff.department,
@@ -167,26 +182,30 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           baseSalary,
           allowance,
           bonus,
-          deductions,
-          tax,
-          socialSecurity,
-          grossPay,
-          netPay,
+          overtimeAmount: 0,
+          otherIncome: 0,
+          deductions: d8.deductions,
+          tax: d8.tax,
+          socialSecurity: d8.socialSecurity,
+          grossPay: d8.grossPay,
+          netPay: d8.netPay,
+          d8Snapshot: d8.snapshot,
           createdAt: Date.now(),
           updatedAt: Date.now()
         };
 
         batch.set(lineDoc, newLine);
-        totalGross += grossPay;
-        totalNet += netPay;
+        totalGross += d8.grossPay;
+        totalNet += d8.netPay;
         totalAllowances += allowance + bonus;
-        totalDeductions += deductions;
+        totalDeductions += d8.deductions;
       }
 
       await batch.commit();
 
       await updateDoc(runRef, {
         status: 'CALCULATED',
+        d8LifecycleStatus: runStatusToD8Lifecycle('CALCULATED'),
         staffCount: activeStaff.length,
         grossAmount: totalGross,
         netAmount: totalNet,
@@ -240,8 +259,9 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             <Button variant="ghost" size="icon" onClick={() => router.push('/office-payroll')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">Office Payroll Details (การจ่ายเงินพนักงานบริษัท)</h1>
+            <div className="space-y-2">
+              <PayrollScopeTag scope="office" showHint={false} />
+              <h1 className="text-2xl font-bold tracking-tight">รายละเอียดงวดจ่ายพนักงานออฟฟิศ</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -249,7 +269,13 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" asChild className="gap-1">
+              <Link href={`/office-payroll/${id}/print`}>
+                <Printer className="h-4 w-4" />
+                สลิปทั้งงวด
+              </Link>
+            </Button>
             <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4' : 'py-1.5 px-4'}>
               {isLocked && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {run.status}
@@ -311,11 +337,14 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                       <TableHead className="text-right">ยอดรวม (Gross)</TableHead>
                       <TableHead className="text-right">รายการหัก</TableHead>
                       <TableHead className="text-right font-bold">สุทธิ (Net)</TableHead>
+                      <TableHead className="text-right w-[100px]">สลิป</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map(line => (
+                    {lines?.map(line => {
+                      const slipModel = buildPayslipFromOfficeLine(line, run);
+                      return (
                       <TableRow key={line.id} className="hover:bg-muted/20">
                         <TableCell>
                           <div className="flex flex-col">
@@ -330,13 +359,16 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                         <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
                         <TableCell className="text-right">
+                          <PayslipDialog model={slipModel} />
+                        </TableCell>
+                        <TableCell className="text-right">
                           <Button variant="ghost" size="icon"><ChevronRight className="h-4 w-4" /></Button>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    );})}
                     {(!lines || lines.length === 0) && !isLinesLoading && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">
+                        <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
                           ยังไม่มีข้อมูลรายการจ่ายเงิน กรุณากดปุ่ม "คำนวณเงินเดือนพนักงาน"
                         </TableCell>
                       </TableRow>

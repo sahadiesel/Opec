@@ -1,0 +1,72 @@
+'use client';
+
+import { useRef, type ReactNode } from 'react';
+import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
+import { PayslipDocument } from '@/components/payroll/payslip-document';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Printer, Receipt } from 'lucide-react';
+
+export function PayslipDialog({
+  model,
+  trigger,
+  title = 'สลิปเงินเดือน',
+}: {
+  model: PayslipViewModel;
+  trigger?: ReactNode;
+  title?: string;
+}) {
+  const printRef = useRef<HTMLDivElement>(null);
+
+  const handlePrint = () => {
+    const w = window.open('', '_blank', 'width=900,height=1200');
+    if (!w) return;
+    const node = printRef.current;
+    if (!node) return;
+    w.document.write(
+      `<!DOCTYPE html><html><head><title>Payslip</title>
+      <style>
+        body { font-family: system-ui, sans-serif; margin: 16px; color: #111; }
+        @media print { body { margin: 0; } }
+      </style>
+      </head><body>${node.innerHTML}</body></html>`
+    );
+    w.document.close();
+    w.focus();
+    w.print();
+    w.close();
+  };
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        {trigger ?? (
+          <Button type="button" variant="outline" size="sm" className="gap-1">
+            <Receipt className="h-3.5 w-3.5" /> สลิป
+          </Button>
+        )}
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>ข้อมูลจาก Payroll Line (snapshot)</DialogDescription>
+        </DialogHeader>
+        <div className="flex justify-end gap-2 print:hidden">
+          <Button type="button" variant="secondary" size="sm" className="gap-1" onClick={handlePrint}>
+            <Printer className="h-3.5 w-3.5" /> พิมพ์ / บันทึก PDF
+          </Button>
+        </div>
+        <div ref={printRef}>
+          <PayslipDocument model={model} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -42,6 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PayrollService } from '@/lib/services/payroll-service';
 import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
@@ -106,12 +107,15 @@ export default function PayrollBatchesPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+          <div className="flex flex-col gap-2 min-w-0">
+            <PayrollScopeTag scope="worker" showHint={false} />
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Coins className="h-8 w-8" /> รายการจ่ายเงินเดือน (Payroll Batches)
+              <Coins className="h-8 w-8 shrink-0" /> งวดจ่ายลูกจ้าง (Payroll Batches)
             </h1>
-            <p className="text-muted-foreground text-lg italic">ประมวลผลการจ่ายเงินคนงาน โดยสรุปจากใบลงเวลาที่ผ่านการอนุมัติแล้ว (Batch financial settlement).</p>
+            <p className="text-muted-foreground text-lg italic">
+              <strong>Worker Payroll</strong> — สรุปจาก timesheet รายวันที่ผ่านการอนุมัติแล้ว ต่อรอบ period / wave
+            </p>
           </div>
           
           <Dialog open={isGenerateOpen} onOpenChange={setIsGenerateOpen}>

@@ -173,6 +173,59 @@ service cloud.firestore {
       return isAdminUser() || (isActiveUser() && isInternalUser() && isAccountingUser());
     }
 
+    /** HR ฝั่งปฏิบัติการ (ไม่ใช่บัญชี) — คีย์ timesheet / เตรียม payroll */
+    function canWriteHrPayrollOperationalData() {
+      return isAdminUser()
+        || (isActiveUser() && isInternalUser() && canAccessHR() && userDepartmentGroup() != 'accounting');
+    }
+
+    function dailyTimesheetFinalized(data) {
+      return data.status in ['LOCKED', 'CLIENT_APPROVED', 'VERIFIED_PAPER'];
+    }
+
+    function payrollBatchFinanciallyLocked(data) {
+      return data.status in ['LOCKED', 'PAID'];
+    }
+
+    function officePayrollRunFrozen(data) {
+      return data.status in ['FINANCE_APPROVED', 'PAID', 'LOCKED'];
+    }
+
+    /** บัญชีแก้เฉพาะ workflow หลัง HR อนุมัติ — ห้ามเปลี่ยนยอด snapshot */
+    function accountingPayrollBatchSafeUpdate() {
+      return isAccountingUser()
+        && resource.data.status in ['HR_APPROVED', 'FINANCE_PREPARED']
+        && request.resource.data.grossAmount == resource.data.grossAmount
+        && request.resource.data.netAmount == resource.data.netAmount
+        && request.resource.data.totalWorkers == resource.data.totalWorkers
+        && request.resource.data.totalDeductions == resource.data.totalDeductions
+        && request.resource.data.payrollPeriodId == resource.data.payrollPeriodId
+        && request.resource.data.workModeScope == resource.data.workModeScope;
+    }
+
+    function accountingOfficePayrollSafeUpdate() {
+      return isAccountingUser()
+        && resource.data.status == 'HR_APPROVED'
+        && request.resource.data.grossAmount == resource.data.grossAmount
+        && request.resource.data.netAmount == resource.data.netAmount
+        && request.resource.data.staffCount == resource.data.staffCount
+        && request.resource.data.totalAllowances == resource.data.totalAllowances
+        && request.resource.data.totalDeductions == resource.data.totalDeductions
+        && request.resource.data.payrollMonth == resource.data.payrollMonth
+        && request.resource.data.payrollRunNo == resource.data.payrollRunNo;
+    }
+
+    function payrollBatchSnapshot(batchId) {
+      return get(/databases/$(database)/documents/payroll_batches/$(batchId)).data;
+    }
+
+    /** ทะเบียนคนงาน/ออฟฟิศ: แก้ได้ระดับ manager+ (และแอดมิน) — officer ดูอย่างเดียวตามนโยบาย HR */
+    function canEditWorkerRegistry() {
+      return isAdminUser()
+        || (isActiveUser() && isInternalUser() && canAccessHR() && userDepartmentGroup() != 'accounting'
+            && (userAccessLevel() == 'manager' || userAccessLevel() == 'admin'));
+    }
+
     /** คีย์ใน number_sequences — ต้องสอดคล้องกับ SEQUENCE_REGISTRY (numbering-service.ts) */
     function isAccountingSequenceId(seqId) {
       return seqId in [
@@ -383,8 +436,8 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /workers/{id} {
       allow read: if internalReadOrStoreOfficer() || isClientUser();
-      allow create: if canAccessHR();
-      allow update: if canAccessHR();
+      allow create: if canEditWorkerRegistry();
+      allow update: if canEditWorkerRegistry();
       allow delete: if canDeleteWorkerRecord();
     }
 
@@ -400,7 +453,8 @@ service cloud.firestore {
 
     match /office_staff/{id} {
       allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow create, update: if canEditWorkerRegistry();
+      allow delete: if isAdminUser() || canEditWorkerRegistry();
     }
 
     match /worker_document_catalog/{id} {
@@ -415,7 +469,11 @@ service cloud.firestore {
 
     match /payroll_batches/{id} {
       allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow create: if canWriteHrPayrollOperationalData();
+      allow update: if isAdminUser()
+        || (canWriteHrPayrollOperationalData() && !payrollBatchFinanciallyLocked(resource.data))
+        || accountingPayrollBatchSafeUpdate();
+      allow delete: if isAdminUser();
     }
 
     match /payroll_periods/{id} {
@@ -423,9 +481,27 @@ service cloud.firestore {
       allow write: if canAccessHR();
     }
 
+    /** D8 — นโยบาย payroll แบบ versioned (SSO / tax / allowance) */
+    match /payroll_policies/{id} {
+      allow read: if internalReadOrStoreOfficer();
+      allow write: if isAdminUser() || canManageSystem();
+    }
+
+    /** D8 — คำขอแก้ไขหลัง approve/paid */
+    match /payroll_correction_requests/{id} {
+      allow read: if internalReadOrStoreOfficer();
+      allow create: if canWriteHrPayrollOperationalData();
+      allow update: if canWriteHrPayrollOperationalData() || isAdminUser();
+      allow delete: if isAdminUser();
+    }
+
     match /office_payroll_runs/{id} {
       allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessAccounting() || canAccessHR();
+      allow create: if canWriteHrPayrollOperationalData() || isAdminUser();
+      allow update: if isAdminUser()
+        || (canWriteHrPayrollOperationalData() && !officePayrollRunFrozen(resource.data))
+        || accountingOfficePayrollSafeUpdate();
+      allow delete: if isAdminUser();
     }
 
     match /executive_payroll_runs/{id} {
@@ -440,7 +516,10 @@ service cloud.firestore {
 
     match /daily_timesheets/{id} {
       allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow write: if canAccessHR();
+      allow create: if canWriteHrPayrollOperationalData();
+      allow update: if canWriteHrPayrollOperationalData()
+        && (isAdminUser() || !dailyTimesheetFinalized(resource.data));
+      allow delete: if isAdminUser();
     }
 
     match /exception_requests/{id} {
@@ -610,7 +689,7 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /workers/{workerId}/{document=**} {
       allow read: if internalReadOrStoreOfficer() || isClientUser();
-      allow write: if canAccessHR();
+      allow write: if canEditWorkerRegistry();
     }
 
     match /positions/{positionId}/{document=**} {
@@ -668,14 +747,49 @@ service cloud.firestore {
       allow write: if canAccessAccounting();
     }
 
+    /**
+     * Payroll line documents — path ชัดเจนเพื่อให้ collectionGroup('lines') + where ทำงาน
+     * (recursive {document=**} ใต้ batch/run บางกรณีไม่ครอบคลุม list แบบ collection group)
+     */
+    match /payroll_batches/{batchId}/lines/{lineId} {
+      allow read: if internalReadOrStoreOfficer() || canAccessAccounting();
+      allow write: if isAdminUser()
+        || (canWriteHrPayrollOperationalData()
+            && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
+        || (isAccountingUser()
+            && payrollBatchSnapshot(batchId).status in ['HR_APPROVED', 'FINANCE_PREPARED']);
+    }
+
+    match /office_payroll_runs/{runId}/lines/{lineId} {
+      allow read: if internalReadOrStoreOfficer() || canAccessAccounting();
+      allow write: if isAdminUser()
+        || (canWriteHrPayrollOperationalData()
+            && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
+        || (isAccountingUser()
+            && get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data.status == 'HR_APPROVED');
+    }
+
+    match /executive_payroll_runs/{runId}/lines/{lineId} {
+      allow read: if canAccessAccounting() || canManageSystem();
+      allow write: if canAccessAccounting() || canManageSystem();
+    }
+
     match /payroll_batches/{batchId}/{document=**} {
       allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow write: if isAdminUser()
+        || (canWriteHrPayrollOperationalData()
+            && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
+        || (isAccountingUser()
+            && payrollBatchSnapshot(batchId).status in ['HR_APPROVED', 'FINANCE_PREPARED']);
     }
 
     match /office_payroll_runs/{runId}/{document=**} {
       allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessAccounting() || canAccessHR();
+      allow write: if isAdminUser()
+        || (canWriteHrPayrollOperationalData()
+            && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
+        || (isAccountingUser()
+            && get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data.status == 'HR_APPROVED');
     }
 
     match /executive_payroll_runs/{runId}/{document=**} {

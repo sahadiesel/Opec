@@ -31,6 +31,18 @@ export const PayrollBatchSchema = z.object({
     'PAID', 
     'LOCKED'
   ]),
+  d8LifecycleStatus: z
+    .enum([
+      'draft',
+      'reviewed',
+      'approved',
+      'readyForFinance',
+      'paid',
+      'locked',
+      'correction_required',
+      'adjusted',
+    ])
+    .optional(),
   totalWorkers: z.number().min(0),
   grossAmount: z.number().min(0),
   totalDeductions: z.number().min(0),
@@ -66,6 +78,7 @@ export const PayrollBatchLineSchema = z.object({
   deductionsBreakdown: z.record(z.number()).default({}),
   grossAmount: z.number(),
   netAmount: z.number(),
+  d8Snapshot: z.record(z.any()).optional().nullable(),
   exportStatus: z.enum(['pending', 'exported', 'failed']),
   remarks: z.string().optional().nullable(),
 });

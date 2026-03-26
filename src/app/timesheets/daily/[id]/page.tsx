@@ -35,6 +35,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ExceptionRequestService } from '@/lib/services/exception-request-service';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function TimesheetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -109,8 +110,9 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
             <Button variant="ghost" size="icon" onClick={() => router.back()}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">Timesheet Audit Detail (รายละเอียดการลงเวลา)</h1>
+            <div className="space-y-2">
+              <PayrollScopeTag scope="worker" showHint={false} />
+              <h1 className="text-2xl font-bold tracking-tight">รายละเอียด Timesheet รายวัน (ลูกจ้าง)</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{ts.date}</span>
                 <Separator orientation="vertical" className="h-3" />

@@ -44,6 +44,7 @@ import { Position, PositionCertificateRequirement, PositionPPERequirement, Posit
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function PositionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -218,8 +219,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
               </Badge>
             </div>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
-              <Info className="h-4 w-4" /> จัดการเกณฑ์มาตรฐานตำแหน่ง (Standard Matrix) และนโยบายการทำงาน (Job Mode Policy)
+              <Info className="h-4 w-4" /> <strong>Worker Payroll</strong> — ตำแหน่งสำหรับมอบหมายงานและคนงานสนาม
             </p>
+            <PayrollScopeTag scope="worker" showHint={false} className="mt-2" />
           </div>
           <div className="flex gap-2">
             <Button variant="outline" className="h-11" onClick={() => { setEditedPos(position); setIsEditing(!isEditing); }}>

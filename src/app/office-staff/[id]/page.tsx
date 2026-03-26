@@ -20,12 +20,15 @@ import {
   History,
   ShieldCheck,
   Info,
-  UserCircle
+  UserCircle,
+  Receipt
 } from 'lucide-react';
+import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
 import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType, Position } from '@/lib/types';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 /** Preset แผนก — รวมกับค่าที่ดึงจาก office_staff ที่มีอยู่ */
 const STANDARD_OFFICE_DEPARTMENTS: { value: string; label: string }[] = [
@@ -212,12 +215,13 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             <Button variant="ghost" size="icon" onClick={() => router.back()}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <div>
+            <div className="space-y-2">
+              <PayrollScopeTag scope="office" showHint={false} />
               <h1 className="text-2xl font-bold tracking-tight text-primary">
                 {isNew ? 'ลงทะเบียนพนักงานออฟฟิศใหม่ (New Staff)' : `แก้ไขข้อมูลพนักงาน: ${formData.fullName}`}
               </h1>
               <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-                <Info className="h-4 w-4" /> ทะเบียนประวัติพนักงานส่วนกลาง (Office Staff) และฐานเงินเดือน
+                <Info className="h-4 w-4" /> <strong>Office Payroll</strong> — ฐานเงินเดือนรายเดือน ไม่ใช้ timesheet รายวัน
               </p>
             </div>
           </div>
@@ -228,10 +232,13 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
         </div>
 
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
+          <TabsList className="flex flex-wrap w-full md:w-fit h-auto p-1 bg-muted/50 gap-1">
             <TabsTrigger value="basic" className="gap-2 py-2 px-8"><Briefcase className="h-4 w-4" /> ข้อมูลทั่วไป (Profile)</TabsTrigger>
             <TabsTrigger value="financial" className="gap-2 py-2 px-8"><CreditCard className="h-4 w-4" /> ข้อมูลการเงิน (Finance)</TabsTrigger>
             <TabsTrigger value="admin" className="gap-2 py-2 px-8"><ShieldCheck className="h-4 w-4" /> การเชื่อมโยง (System)</TabsTrigger>
+            <TabsTrigger value="payslips" className="gap-2 py-2 px-8" disabled={isNew}>
+              <Receipt className="h-4 w-4" /> สลิปเงินเดือน
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="basic" className="mt-6">
@@ -501,6 +508,18 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="payslips" className="mt-6">
+            {isNew ? (
+              <Card>
+                <CardContent className="py-10 text-center text-muted-foreground text-sm">
+                  บันทึกพนักงานก่อน จึงจะดูประวัติสลิปได้
+                </CardContent>
+              </Card>
+            ) : (
+              <OfficeStaffPayslipHistory staffId={id} currentUser={currentUser} />
+            )}
           </TabsContent>
         </Tabs>
       </div>

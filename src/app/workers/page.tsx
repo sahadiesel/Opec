@@ -56,6 +56,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { hasMinimumLevel, isSystemAdmin } from '@/lib/permissions';
 import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/services/worker-delete-service';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 function getInitialNewWorker(): Partial<Worker> {
   return {
@@ -89,7 +90,7 @@ export default function WorkersPage() {
     }
   }, []);
 
-  const { can, check, isLoading: isPermLoading } = usePermissions(currentUser);
+  const { can, check, payroll, isLoading: isPermLoading } = usePermissions(currentUser);
 
   const workersQuery = useMemoFirebase(() => {
     if (isUserLoading || !firebaseUser || !firestore || !currentUser || !can('workers').view) return null;
@@ -301,13 +302,16 @@ export default function WorkersPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <HardHat className="h-8 w-8" /> ทะเบียนคนงานหน้างาน (Field Workers Directory)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            จัดการฐานข้อมูลลูกจ้างหน้างาน (Workforce) ตรวจสอบความพร้อม และการปฏิบัติตามมาตรฐานความปลอดภัย
-          </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-1 min-w-0">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <HardHat className="h-8 w-8 shrink-0" /> ทะเบียนลูกจ้าง (Field Workers)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              จัดการฐานข้อมูลลูกจ้างหน้างาน — ใช้กับ <strong>Worker Payroll</strong> และ timesheet รายวัน
+            </p>
+          </div>
+          <PayrollScopeTag scope="worker" className="shrink-0" />
         </div>
 
         <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
@@ -340,7 +344,7 @@ export default function WorkersPage() {
             </Select>
           </div>
           <div className="flex items-center gap-2">
-            {can('workers').create && (
+            {can('workers').create && payroll('worker', 'create') && (
               <Dialog
                 open={isCreateOpen}
                 onOpenChange={(open) => {

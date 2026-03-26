@@ -43,6 +43,7 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { canView } from '@/lib/permissions';
+import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
 export default function OfficePayrollPage() {
   const router = useRouter();
@@ -140,13 +141,16 @@ export default function OfficePayrollPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <Coins className="h-8 w-8" /> เงินเดือนพนักงาน (Office Payroll)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            คำนวณเงินเดือนพนักงานออฟฟิศรายเดือน (เตรียมข้อมูลโดย HR และจ่ายจริงโดยการเงิน)
-          </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-2 min-w-0">
+            <PayrollScopeTag scope="office" showHint={false} />
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <Coins className="h-8 w-8 shrink-0" /> งวดจ่ายเงินเดือนพนักงานออฟฟิศ
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              <strong>Office Payroll</strong> — รายเดือน ไม่ใช้ timesheet รายวัน · เตรียมโดย HR จ่ายจริงโดยการเงิน
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
