@@ -46,13 +46,14 @@ export default function PositionsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newPosition, setNewPosition] = useState<Partial<Position>>({
-    positionName: '',
+    positionNameTh: '',
+    positionNameEn: '',
     positionCode: getPreviewPattern('position'),
     category: 'OFFSHORE',
+    jobMode: 'ONSHORE',
     active: true,
     description: '',
     payrollBasis: 'DAILY',
-    notes: ''
   });
 
   useEffect(() => {
@@ -201,7 +202,7 @@ export default function PositionsPage() {
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="name">ชื่อตำแหน่ง (Position Name)</Label>
-                  <Input id="name" value={newPosition.positionName} onChange={e => setNewPosition({...newPosition, positionName: e.target.value})} />
+                  <Input id="name" value={newPosition.positionNameTh} onChange={e => setNewPosition({...newPosition, positionNameTh: e.target.value, positionNameEn: e.target.value || newPosition.positionNameEn})} />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="code">รหัสตำแหน่ง (Code)</Label>
@@ -276,7 +277,7 @@ export default function PositionsPage() {
                     >
                       <TableCell className="py-4">
                         <div className="flex flex-col">
-                          <span className="font-bold text-base text-primary">{pos.positionName}</span>
+                          <span className="font-bold text-base text-primary">{pos.positionNameTh}</span>
                           <span className="text-[10px] text-muted-foreground uppercase tracking-tight">Standard Matrix Entry</span>
                         </div>
                       </TableCell>

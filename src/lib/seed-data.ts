@@ -7,9 +7,35 @@ export const SEED_ROLES: Role[] = [
   { id: 'sales_officer', name: 'sales_officer', description: 'Commercial access', permissions: ['customers.*', 'contracts.*'] },
 ];
 
+const now = Date.now();
+
 export const SEED_POSITIONS: Position[] = [
-  { id: 'POS001', name: 'Offshore Welder', code: 'OWEL', description: 'Maintain offshore platforms', isActive: true },
-  { id: 'POS002', name: 'Safety Officer', code: 'SAFE', description: 'HSE Oversight', isActive: true },
+  {
+    id: 'POS001',
+    positionCode: 'OWEL',
+    positionNameTh: 'Offshore Welder',
+    positionNameEn: 'Offshore Welder',
+    category: 'OFFSHORE',
+    jobMode: 'OFFSHORE',
+    payrollBasis: 'DAILY',
+    active: true,
+    description: 'Maintain offshore platforms',
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: 'POS002',
+    positionCode: 'SAFE',
+    positionNameTh: 'Safety Officer',
+    positionNameEn: 'Safety Officer',
+    category: 'ONSHORE',
+    jobMode: 'ONSHORE',
+    payrollBasis: 'DAILY',
+    active: true,
+    description: 'HSE Oversight',
+    createdAt: now,
+    updatedAt: now,
+  },
 ];
 
 export const SEED_WORKERS: Partial<Worker>[] = [
@@ -21,10 +47,14 @@ export const SEED_WORKERS: Partial<Worker>[] = [
     dateOfBirth: new Date('1985-05-20').getTime(),
     contactPhone: '081-234-5678',
     currentPositionId: 'POS001',
-    workerStatus: 'available',
+    workerStatus: 'AVAILABLE',
     readinessStatus: 'READY' as ReadinessStatus,
     nationality: 'Thai',
-    gender: 'Male',
+    gender: 'MALE',
+    jobMode: 'OFFSHORE',
+    skills: [],
+    createdAt: now,
+    updatedAt: now,
   },
   {
     id: 'WKR002',
@@ -34,9 +64,13 @@ export const SEED_WORKERS: Partial<Worker>[] = [
     dateOfBirth: new Date('1990-11-12').getTime(),
     contactPhone: '089-987-6543',
     currentPositionId: 'POS002',
-    workerStatus: 'assigned',
+    workerStatus: 'ASSIGNED',
     readinessStatus: 'MISSING_CERTIFICATE' as ReadinessStatus,
     nationality: 'Thai',
-    gender: 'Female',
+    gender: 'FEMALE',
+    jobMode: 'ONSHORE',
+    skills: [],
+    createdAt: now,
+    updatedAt: now,
   }
 ];

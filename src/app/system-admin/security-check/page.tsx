@@ -22,7 +22,8 @@ import {
   Database,
   PlayCircle,
   FlaskConical,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react';
 import { User, PermissionProfile } from '@/lib/types';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';

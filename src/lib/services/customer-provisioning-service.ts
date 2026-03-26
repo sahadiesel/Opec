@@ -66,7 +66,7 @@ export class CustomerProvisioningService {
       const uid = userCredential.user.uid;
 
       // 3. Prepare the Opec User document fields
-      const roleKey: BusinessRoleKey = portalRole === 'approver' ? 'customer_approver' : 'customer_viewer';
+      const roleKey: BusinessRoleKey = 'client_user';
       const roleFields = getFieldsForBusinessRole(roleKey);
       
       const now = Date.now();

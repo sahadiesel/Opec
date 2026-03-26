@@ -71,13 +71,13 @@ export default function WaveTimesheetBoardPage() {
 
   const waveQuery = useMemoFirebase(() => {
     if (!firestore || !selectedPoId) return null;
-    return query(collection(firestore, 'waves'), where('poId', '==', setSelectedPoId ? selectedPoId : ''));
+    return query(collection(firestore, 'waves'), where('poId', '==', selectedPoId || ''));
   }, [firestore, selectedPoId]);
   const { data: waves } = useCollection<Wave>(waveQuery as any);
 
   const asgnQuery = useMemoFirebase(() => {
     if (!firestore || !selectedWaveId) return null;
-    return query(collection(firestore, 'mobilizations'), where('waveId', '==', selectedWaveId), where('deploymentStatus', 'in', ['ACTIVE', 'READY_TO_MOB', 'MOBILIZING', 'READY']));
+    return query(collection(firestore, 'mobilizations'), where('waveId', '==', selectedWaveId), where('deploymentStatus', 'in', ['ACTIVE', 'READY_TO_MOB', 'MOBILIZING']));
   }, [firestore, selectedWaveId]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(asgnQuery as any);
 
@@ -375,7 +375,7 @@ export default function WaveTimesheetBoardPage() {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
-                                {isLocked && <Lock className="h-3 w-3 text-muted-foreground" title="Locked Document" />}
+                                {isLocked && <span title="Locked Document"><Lock className="h-3 w-3 text-muted-foreground" aria-hidden /></span>}
                                 {row.status ? (
                                   <Badge variant="outline" className={`text-[9px] font-black uppercase ${
                                     row.status === 'CLIENT_APPROVED' ? 'bg-green-50 text-green-700 border-green-200' : 

@@ -253,7 +253,7 @@ export default function ClientTimesheetViewPage() {
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <div className="flex justify-end gap-2 items-center">
-                            {isLocked && <Lock className="h-3 w-3 text-amber-600" title="Locked - Finalized" />}
+                            {isLocked && <span title="Locked - Finalized"><Lock className="h-3 w-3 text-amber-600" aria-hidden /></span>}
                             <Badge variant={ts.status === 'VERIFIED_PAPER' ? 'default' : 'outline'} className={ts.status === 'VERIFIED_PAPER' ? 'bg-blue-700 text-[10px]' : 'uppercase text-[9px]'}>
                               {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
                             </Badge>

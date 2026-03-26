@@ -263,7 +263,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   <CardContent className="flex flex-wrap gap-3">
                     <Button 
                       disabled={!isFullyReady || assignment.mobilizationStatus === 'MOBILIZING'}
-                      onClick={() => handleUpdateMobStatus('READY_TO_MOBILIZE', 'READY')}
+                      onClick={() => handleUpdateMobStatus('READY_TO_MOBILIZE', 'READY_TO_MOB')}
                       className="bg-green-600 hover:bg-green-700 font-bold"
                     >
                       <CheckCircle2 className="h-4 w-4 mr-2" /> ยืนยันความพร้อมเดินทาง (Confirm Mob)

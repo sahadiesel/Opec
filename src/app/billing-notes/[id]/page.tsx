@@ -28,6 +28,7 @@ import {
   XCircle,
   ExternalLink
 } from 'lucide-react';
+import Link from 'next/link';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';

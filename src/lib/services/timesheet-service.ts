@@ -70,7 +70,7 @@ export class TimesheetService {
     const q = query(
       mobRef, 
       where('waveId', '==', waveId),
-      where('deploymentStatus', 'in', ['ACTIVE', 'READY_TO_MOB', 'MOBILIZING', 'READY'])
+      where('deploymentStatus', 'in', ['ACTIVE', 'READY_TO_MOB', 'MOBILIZING'])
     );
     
     const snap = await getDocs(q);
@@ -235,5 +235,52 @@ export class TimesheetService {
       sourceModule: 'operations',
       afterSummary: 'Verified client signature from paper evidence for payroll and billing'
     });
+  }
+
+  /**
+   * Copy previous calendar day’s timesheets for the same wave into targetDate (draft only).
+   */
+  async copyFromPreviousDay(
+    waveId: string,
+    targetDate: string,
+    user: User
+  ): Promise<{ created: number; updated: number }> {
+    const prev = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
+    const q = query(
+      this.getCollection(),
+      where('waveId', '==', waveId),
+      where('date', '==', prev)
+    );
+    const snap = await getDocs(q);
+    const batch = writeBatch(this.db);
+    let created = 0;
+    for (const d of snap.docs) {
+      const ts = d.data() as DailyTimesheet;
+      const id = this.getTimesheetId(ts.workerId, ts.assignmentId, targetDate);
+      const docRef = doc(this.getCollection(), id);
+      const existing = await getDoc(docRef);
+      if (existing.exists()) continue;
+      const { id: _omit, ...rest } = ts;
+      try {
+        const payload = DailyTimesheetSchema.parse({
+          ...rest,
+          id,
+          date: targetDate,
+          status: 'DRAFT',
+          readyForPayroll: false,
+          readyForBilling: false,
+          officeEnteredBy: user.displayName,
+          officeEnteredAt: Date.now(),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        batch.set(docRef, payload);
+        created++;
+      } catch {
+        /* skip rows that fail schema (legacy / partial docs) */
+      }
+    }
+    await batch.commit();
+    return { created, updated: 0 };
   }
 }

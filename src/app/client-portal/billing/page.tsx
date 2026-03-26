@@ -237,7 +237,7 @@ export default function ClientBillingViewPage() {
                               <div className="flex items-center gap-2 text-sm font-bold text-primary">
                                 <FileText className="h-3.5 w-3.5 text-muted-foreground" />
                                 {inv.taxInvoiceNo}
-                                {isSettled && <Lock className="h-3 w-3 text-amber-600" title="Settled - Locked" />}
+                                {isSettled && <span title="Settled - Locked"><Lock className="h-3 w-3 text-amber-600" aria-hidden /></span>}
                               </div>
                             </TableCell>
                             <TableCell className="text-xs font-medium text-muted-foreground">{inv.issueDate}</TableCell>

@@ -50,6 +50,7 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   store_writeoff: { label: 'Store Write-off', prefix: 'WOF-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_writeoffs', fieldName: 'writeoffNo' },
   payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'payroll_runs', fieldName: 'payrollRunNo' },
   office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'office_payroll_runs', fieldName: 'payrollRunNo' },
+  executive_payroll_run: { label: 'Executive Payroll', prefix: 'EPR-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'executive_payroll_runs', fieldName: 'payrollRunNo' },
 };
 
 /**

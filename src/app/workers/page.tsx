@@ -334,7 +334,7 @@ export default function WorkersPage() {
               <SelectContent>
                 <SelectItem value="all">ทุกตำแหน่ง</SelectItem>
                 {(positions || []).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                  <SelectItem key={p.id} value={p.id}>{p.positionNameTh}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -389,7 +389,7 @@ export default function WorkersPage() {
                           <SelectItem value="__none__">— เลือกตำแหน่งงาน —</SelectItem>
                           {positions?.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
-                              {p.positionName}
+                              {p.positionNameTh}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -444,7 +444,7 @@ export default function WorkersPage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
-                            {position?.positionName || worker.currentPositionId || 'N/A'}
+                            {position?.positionNameTh || worker.currentPositionId || 'N/A'}
                           </Badge>
                         </TableCell>
                         <TableCell>{getReadinessBadge(worker.readinessStatus)}</TableCell>

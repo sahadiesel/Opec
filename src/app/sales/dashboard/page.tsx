@@ -114,7 +114,15 @@ export default function SalesDashboardPage() {
   }, [customers, activeQuotations, activeContracts, activePOs, pendingApprovals]);
 
   const urgentActions = useMemo(() => {
-    const actions = [];
+    const actions: Array<{
+      id: string;
+      type: string;
+      label: string;
+      sub: string;
+      status: string;
+      link: string;
+      priority: 'high' | 'medium' | 'low';
+    }> = [];
     
     // Rejected candidates need replacement
     pendingApprovals?.forEach(asgn => {

@@ -40,13 +40,14 @@ export const dbService = {
     });
 
     await this.logAudit({
-      userId,
-      userName,
-      action: 'CREATE',
-      collection: collectionName,
-      documentId: docRef.id,
-      timestamp: Date.now(),
-      changes: data
+      actionType: 'CREATE',
+      entityType: collectionName,
+      entityId: docRef.id,
+      actorUserId: userId,
+      actorName: userName,
+      actorRole: 'system',
+      afterSummary: typeof data === 'object' ? JSON.stringify(data).slice(0, 500) : String(data),
+      eventAt: Date.now(),
     });
 
     return docRef.id;
@@ -60,13 +61,14 @@ export const dbService = {
     });
 
     await this.logAudit({
-      userId,
-      userName,
-      action: 'UPDATE',
-      collection: collectionName,
-      documentId: id,
-      timestamp: Date.now(),
-      changes: data
+      actionType: 'UPDATE',
+      entityType: collectionName,
+      entityId: id,
+      actorUserId: userId,
+      actorName: userName,
+      actorRole: 'system',
+      afterSummary: typeof data === 'object' ? JSON.stringify(data).slice(0, 500) : String(data),
+      eventAt: Date.now(),
     });
   },
 
@@ -75,12 +77,13 @@ export const dbService = {
     await deleteDoc(docRef);
 
     await this.logAudit({
-      userId,
-      userName,
-      action: 'DELETE',
-      collection: collectionName,
-      documentId: id,
-      timestamp: Date.now()
+      actionType: 'DELETE',
+      entityType: collectionName,
+      entityId: id,
+      actorUserId: userId,
+      actorName: userName,
+      actorRole: 'system',
+      eventAt: Date.now(),
     });
   },
 

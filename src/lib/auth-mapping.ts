@@ -226,6 +226,7 @@ export const ACCOUNTING_DEFAULT_MODULES = [
   'accounts_payable',
   'cashbook',
   'bank_accounts',
+  'executive_payroll',
 ] as const;
 
 function canonicalizeRoleKey(roleKey?: string | null): BusinessRoleKey | null {
@@ -291,7 +292,6 @@ function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | nul
   }
 
   if (u.department === 'admin') return 'system_admin';
-  if (u.department === 'client') return 'client_user';
   if (u.department === 'accounting') return u.level === 'manager' ? 'accounting_manager' : 'accounting_officer';
   if (u.department === 'store') return u.level === 'manager' ? 'store_manager' : 'store_officer';
   if (u.department === 'operations') return u.level === 'manager' ? 'operations_manager' : 'operations_officer';

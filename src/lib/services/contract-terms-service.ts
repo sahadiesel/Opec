@@ -119,7 +119,7 @@ export class ContractTermsService {
           entityId: docRef.id,
           entityLabel: validated.title,
           sourceModule: 'commercial',
-          purchaseOrderId: validated.relatedPurchaseOrderId,
+          purchaseOrderId: validated.relatedPurchaseOrderId ?? undefined,
           afterSummary: `Created labor cost term`
         });
       }

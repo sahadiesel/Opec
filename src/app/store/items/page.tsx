@@ -384,8 +384,8 @@ export default function StoreItemsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
-                          {item.isPPE && <HardHat className="h-4 w-4 text-orange-500" title="PPE" />}
-                          {item.isTool && <Hammer className="h-4 w-4 text-blue-500" title="Tool" />}
+                          {item.isPPE && <span title="PPE"><HardHat className="h-4 w-4 text-orange-500" aria-hidden /></span>}
+                          {item.isTool && <span title="Tool"><Hammer className="h-4 w-4 text-blue-500" aria-hidden /></span>}
                         </div>
                       </TableCell>
                       <TableCell>

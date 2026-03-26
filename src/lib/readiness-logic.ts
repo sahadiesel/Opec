@@ -44,7 +44,10 @@ export async function calculateWorkerReadiness(
   // 2. Check Medical Records
   const latestMedical = medicalRecords
     .filter(m => m.status === 'fit_for_duty')
-    .sort((a, b) => new Date(b.recordDate).getTime() - new Date(a.recordDate).getTime())[0];
+    .sort(
+      (a, b) =>
+        new Date(b.recordDate ?? 0).getTime() - new Date(a.recordDate ?? 0).getTime()
+    )[0];
 
   if (!latestMedical) return 'MEDICAL_EXPIRED';
   

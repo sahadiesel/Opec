@@ -58,6 +58,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
     if (stored) setCurrentUser(JSON.parse(stored));
   }, []);
 
+  const { isUserLoading } = useUser();
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
 
   const isAuthorized = useMemo(() => !!currentUser && can('sales_contract_terms').view, [can, currentUser]);
@@ -83,7 +84,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
   const po = allPOs?.find(p => p.id === term?.purchaseOrderId);
 
   const handleSave = () => {
-    if (!termRef || !currentUser || !canModify) return;
+    if (!termRef || !currentUser || !canModify || !term) return;
     const updateData = { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName };
     updateDocumentNonBlocking(termRef, updateData);
     setIsEditing(false);
@@ -104,7 +105,7 @@ export default function SalesTermDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleUpdateStatus = (newStatus: SalesContractStatus) => {
-    if (!termRef || !currentUser || !canModify) return;
+    if (!termRef || !currentUser || !canModify || !term) return;
     updateDocumentNonBlocking(termRef, { status: newStatus, updatedAt: Date.now() });
 
     // Add Audit Log

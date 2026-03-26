@@ -292,7 +292,7 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
                         <div className="flex flex-wrap gap-1">
                           {c.workMode === 'OFFSHORE' && <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200"><Anchor className="h-2 w-2 mr-1" /> Offshore</Badge>}
                           {c.workMode === 'ONSHORE' && <Badge variant="outline" className="text-[9px] bg-green-50 text-green-700 border-green-200"><Globe className="h-2 w-2 mr-1" /> Onshore</Badge>}
-                          {pos && <Badge variant="outline" className="text-[9px]"><Briefcase className="h-2 w-2 mr-1" /> {pos.positionName}</Badge>}
+                          {pos && <Badge variant="outline" className="text-[9px]"><Briefcase className="h-2 w-2 mr-1" /> {pos.positionNameTh}</Badge>}
                           {!pos && !c.workMode && <span className="text-[10px] text-muted-foreground italic">General</span>}
                         </div>
                       </TableCell>
@@ -378,7 +378,7 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
                   <SelectContent>
                     <SelectItem value="all">-- ทุกตำแหน่ง --</SelectItem>
                     {allPositions?.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>{p.positionNameTh}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

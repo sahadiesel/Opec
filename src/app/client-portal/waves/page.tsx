@@ -187,7 +187,7 @@ export default function ClientManpowerPage() {
                                 <div className="flex flex-col">
                                   <div className="flex items-center gap-2">
                                     <span className="font-bold text-sm text-primary">{worker?.firstName} {worker?.lastName}</span>
-                                    {isOpLocked && <Lock className="h-3 w-3 text-amber-600" title="Operational Lock - Finalized" />}
+                                    {isOpLocked && <span title="Operational Lock - Finalized"><Lock className="h-3 w-3 text-amber-600" aria-hidden /></span>}
                                   </div>
                                   <span className="text-[10px] text-muted-foreground">National ID: {worker?.thaiNationalId.substring(0, 10)}...</span>
                                 </div>

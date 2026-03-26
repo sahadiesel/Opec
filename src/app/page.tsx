@@ -38,6 +38,7 @@ import {
   updatePassword,
   sendPasswordResetEmail,
   createUserWithEmailAndPassword,
+  deleteUser,
 } from 'firebase/auth';
 import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { sanitizeFirestorePayload } from '@/lib/utils';
@@ -96,6 +97,8 @@ export default function Home() {
   const [regPassword, setRegPassword] = useState('');
   const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
+  /** After self-registration: show confirmation on login shell until user dismisses */
+  const [registrationSuccessEmail, setRegistrationSuccessEmail] = useState<string | null>(null);
 
   const firestore = useFirestore();
   const auth = useAuth();
@@ -167,7 +170,7 @@ export default function Home() {
     return latestUserDoc.isActive && latestUserDoc.approvalStatus === 'ACTIVE';
   }, [latestUserDoc, isDocLoading]);
 
-  const { check } = usePermissions(user);
+  const { check } = usePermissions(latestUserDoc ?? user);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -255,7 +258,7 @@ export default function Home() {
 
   const handleSelfRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!firestore) return;
+    if (!firestore || !auth) return;
     const name = regDisplayName.trim();
     const phone = regPhone.trim();
     const em = regEmail.trim();
@@ -271,13 +274,25 @@ export default function Home() {
       toast({ variant: 'destructive', title: 'รหัสผ่านไม่ตรงกัน', description: 'กรอกยืนยันรหัสผ่านให้ตรงกัน' });
       return;
     }
+
+    const withTimeout = <T,>(promise: Promise<T>, ms: number, timeoutMsg: string): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(timeoutMsg)), ms)),
+      ]);
+
+    let newUid: string | null = null;
     setIsRegistering(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, em, regPassword);
-      const uid = cred.user.uid;
+      const cred = await withTimeout(
+        createUserWithEmailAndPassword(auth, em, regPassword),
+        90_000,
+        'การสร้างบัญชีหมดเวลา — ตรวจสอบการเชื่อมต่อแล้วลองใหม่'
+      );
+      newUid = cred.user.uid;
       const now = Date.now();
       const newUser: User = {
-        id: uid,
+        id: newUid,
         email: em,
         displayName: name,
         phone,
@@ -290,21 +305,47 @@ export default function Home() {
         createdAt: now,
         updatedAt: now,
       };
-      await setDoc(doc(firestore, 'users', uid), sanitizeFirestorePayload(newUser));
-      await signOut(auth);
-      toast({
-        title: 'ลงทะเบียนแล้ว',
-        description: 'รอผู้ดูแลระบบอนุมัติและกำหนดสิทธิ์ที่เมนูจัดการผู้ใช้ — จากนั้นจึงเข้าสู่ระบบได้',
-      });
+      await withTimeout(
+        setDoc(doc(firestore, 'users', newUid), sanitizeFirestorePayload(newUser)),
+        45_000,
+        'บันทึกข้อมูลในระบบหมดเวลา — ตรวจสอบเน็ตหรือ deploy กฎ Firestore ล่าสุด'
+      );
+      try {
+        await signOut(auth);
+      } catch {
+        /* non-fatal */
+      }
+      setUser(null);
+      localStorage.removeItem('opsflow_user');
       setShowRegisterDialog(false);
       setRegDisplayName('');
       setRegPhone('');
       setRegEmail('');
       setRegPassword('');
       setRegPasswordConfirm('');
+      setRegistrationSuccessEmail(em);
+      toast({
+        title: 'ส่งคำขอลงทะเบียนแล้ว',
+        description: 'รอผู้ดูแลระบบอนุมัติและกำหนดสิทธิ์ที่เมนูจัดการผู้ใช้ — จากนั้นจึงเข้าสู่ระบบด้วยอีเมลนี้ได้',
+      });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'ลงทะเบียนไม่สำเร็จ';
-      toast({ variant: 'destructive', title: 'ลงทะเบียนไม่สำเร็จ', description: msg });
+      const raw = err instanceof Error ? err.message : String(err);
+      const lower = raw.toLowerCase();
+      if (newUid && auth.currentUser?.uid === newUid) {
+        try {
+          await deleteUser(auth.currentUser);
+        } catch {
+          /* ลบใน Auth ไม่สำเร็จ — ให้แอดมินจัดการใน Console */
+        }
+      }
+      let description = raw;
+      if (lower.includes('permission') || lower.includes('insufficient')) {
+        description =
+          'ไม่มีสิทธิ์บันทึกโปรไฟล์ใน Firestore (กฎความปลอดภัย) — อีเมลอาจถูกสร้างใน Auth ชั่วคราวแล้วถูกลบอัตโนมัติ กรุณาลองใหม่หลัง deploy กฎ หรือติดต่อผู้ดูแลระบบ';
+      } else if (lower.includes('email-already') || lower.includes('already in use')) {
+        description = 'อีเมลนี้ลงทะเบียนในระบบแล้ว — ลองเข้าสู่ระบบ หรือใช้อีเมลอื่น';
+      }
+      toast({ variant: 'destructive', title: 'ลงทะเบียนไม่สำเร็จ', description });
     } finally {
       setIsRegistering(false);
     }
@@ -347,8 +388,32 @@ export default function Home() {
 
   if (!isLoaded || isUserLoading) return null;
 
-  // Login Screen
-  if (!user || (!latestUserDoc && isLoggingIn)) {
+  // Wait for Firestore user profile after Firebase Auth (avoid flashing wrong UI)
+  if (firebaseUser && isDocLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950/5">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  const profileMissing = Boolean(firebaseUser && !isDocLoading && !rawUserDoc);
+  const internalNotActive = Boolean(
+    latestUserDoc &&
+    latestUserDoc.userType !== 'customer_portal' &&
+    (latestUserDoc.approvalStatus !== 'ACTIVE' || latestUserDoc.isActive === false)
+  );
+  const portalNotActive = Boolean(
+    latestUserDoc &&
+    latestUserDoc.userType === 'customer_portal' &&
+    (latestUserDoc.approvalStatus !== 'ACTIVE' || latestUserDoc.isActive === false)
+  );
+
+  const mustShowLoginShell =
+    !firebaseUser || profileMissing || internalNotActive || portalNotActive;
+
+  // Login / register shell (never show main dashboard for inactive or missing profile)
+  if (mustShowLoginShell) {
     const loginBg = PlaceHolderImages.find(img => img.id === 'login-bg')?.imageUrl || '';
     return (
       <div 
@@ -364,6 +429,26 @@ export default function Home() {
             </div>
             <CardTitle className="text-3xl font-bold tracking-tight text-primary">OPEC OpsFlow</CardTitle>
             <CardDescription className="text-base font-medium">Enterprise Manpower Supply Operations</CardDescription>
+            {registrationSuccessEmail && (
+              <Alert className="mt-4 text-left border-green-200 bg-green-50 text-green-900">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <AlertTitle className="text-green-900 font-bold">ลงทะเบียนแล้ว — รออนุมัติ</AlertTitle>
+                <AlertDescription className="text-sm text-green-800 space-y-2">
+                  <p>
+                    ส่งคำขอสำหรับ <span className="font-mono font-semibold">{registrationSuccessEmail}</span> แล้ว
+                    ผู้ดูแลระบบจะอนุมัติและกำหนดสิทธิ์ที่เมนู <b>จัดการผู้ใช้งาน</b> (แท็บรออนุมัติ)
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-1 bg-green-700 hover:bg-green-800"
+                    onClick={() => setRegistrationSuccessEmail(null)}
+                  >
+                    เข้าใจแล้ว — ไปหน้าเข้าสู่ระบบ
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
           </CardHeader>
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
@@ -397,7 +482,10 @@ export default function Home() {
                 <button
                   type="button"
                   className="text-primary font-semibold hover:underline inline-flex items-center justify-center gap-1"
-                  onClick={() => setShowRegisterDialog(true)}
+                  onClick={() => {
+                    setRegistrationSuccessEmail(null);
+                    setShowRegisterDialog(true);
+                  }}
                 >
                   <UserPlus className="h-3.5 w-3.5" />
                   ลงทะเบียนผู้ใช้ใหม่
@@ -527,14 +615,22 @@ export default function Home() {
     );
   }
 
+  if (!latestUserDoc) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   // Home / Dashboard Content (use central helper for primary role)
-  const primaryRoleKey = deriveBusinessRoleKey(user);
+  const primaryRoleKey = deriveBusinessRoleKey(latestUserDoc);
   const roleInfo = BUSINESS_ROLES[primaryRoleKey];
   const primaryDept = roleInfo?.dept;
-  const allDepts = primaryDept ? [primaryDept] : (user.department ? [user.department] : []);
+  const allDepts = primaryDept ? [primaryDept] : (latestUserDoc.department ? [latestUserDoc.department] : []);
 
   return (
-    <AppShell user={user} onLogout={handleLogout}>
+    <AppShell user={latestUserDoc} onLogout={handleLogout}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
         {/* Header */}
         <div className="flex flex-col gap-1">
@@ -550,7 +646,7 @@ export default function Home() {
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-muted-foreground uppercase tracking-widest">ยินดีต้อนรับ (Welcome)</p>
-                  <CardTitle className="text-3xl font-black text-primary">{user.displayName}</CardTitle>
+                  <CardTitle className="text-3xl font-black text-primary">{latestUserDoc.displayName}</CardTitle>
                 </div>
                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 px-3 py-1 font-bold">
                   <CheckCircle2 className="h-3 w-3 mr-1" /> Account Verified
@@ -570,9 +666,9 @@ export default function Home() {
                     <Badge key={d} variant="secondary" className="capitalize font-black flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100">
                       <Building2 className="h-2.5 w-2.5" /> {d}
                     </Badge>
-                  )) : <Badge variant="outline">{user.department}</Badge>}
+                  )) : <Badge variant="outline">{latestUserDoc.department}</Badge>}
                   <span className="text-muted-foreground text-xs mx-1">/</span>
-                  <Badge variant="outline" className="capitalize font-bold border-primary/20">{user.level}</Badge>
+                  <Badge variant="outline" className="capitalize font-bold border-primary/20">{latestUserDoc.level}</Badge>
                 </div>
               </div>
             </CardContent>
@@ -586,7 +682,7 @@ export default function Home() {
               <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการตามบทบาท</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {(isHRStaff(user)) && (
+              {(isHRStaff(latestUserDoc)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Users className="h-4 w-4" />
@@ -595,7 +691,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(isSalesStaff(user)) && (
+              {(isSalesStaff(latestUserDoc)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/sales/dashboard')}>
                   <div className="flex items-center gap-3">
                     <TrendingUp className="h-4 w-4" />
@@ -604,7 +700,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(isAccountingStaff(user)) && (
+              {(isAccountingStaff(latestUserDoc)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/accounting/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Coins className="h-4 w-4" />
@@ -613,7 +709,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(isOperationsStaff(user)) && (
+              {(isOperationsStaff(latestUserDoc)) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/operations/dashboard')}>
                   <div className="flex items-center gap-3">
                     <HardHat className="h-4 w-4" />
@@ -622,7 +718,7 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {isSystemAdmin(user) && (
+              {isSystemAdmin(latestUserDoc) && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/users')}>
                   <div className="flex items-center gap-3">
                     <ShieldCheck className="h-4 w-4" />
@@ -643,7 +739,7 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {isHRStaff(user) && !isStoreOfficer(user) && (
+            {isHRStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
               <ShortcutGroup title="ฝ่ายบุคคล (HR)" icon={Users} color="border-l-orange-500">
                 <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวมบุคคล" />
                 <ShortcutLink href="/workers" label="ทะเบียนคนงาน" sub="Workers" />
@@ -652,7 +748,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {isSalesStaff(user) && !isStoreOfficer(user) && (
+            {isSalesStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
                 <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
                 <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
@@ -661,7 +757,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {isOperationsStaff(user) && !isStoreOfficer(user) && (
+            {isOperationsStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
                 <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
                 <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />
@@ -670,7 +766,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {isAccountingStaff(user) && (
+            {isAccountingStaff(latestUserDoc) && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
                 <ShortcutLink href="/accounting/dashboard" label="Accounting Dashboard" sub="ภาพรวมบัญชี" />
                 <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
@@ -679,7 +775,7 @@ export default function Home() {
               </ShortcutGroup>
             )}
 
-            {isStoreStaff(user) && (
+            {isStoreStaff(latestUserDoc) && (
               <ShortcutGroup title="คลังและจัดซื้อ (Store)" icon={Warehouse} color="border-l-amber-500">
                 <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />
                 <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />

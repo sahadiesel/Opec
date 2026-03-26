@@ -158,7 +158,8 @@ service cloud.firestore {
     /** คีย์ใน number_sequences — ต้องสอดคล้องกับ SEQUENCE_REGISTRY (numbering-service.ts) */
     function isAccountingSequenceId(seqId) {
       return seqId in [
-        'billing_note', 'tax_invoice', 'receipt', 'ap_bill', 'ar', 'ap', 'cashbook_entry', 'bank_account'
+        'billing_note', 'tax_invoice', 'receipt', 'ap_bill', 'ar', 'ap', 'cashbook_entry', 'bank_account',
+        'executive_payroll_run'
       ];
     }
     function isHrSequenceId(seqId) {
@@ -205,8 +206,8 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    /** สร้าง users/{uid} ครั้งแรวหลังลงทะเบียนด้วยตนเอง — ห้ามมีสิทธิ์ admin/โปรไฟล์จนกว่าแอดมินจะอนุมัติ */
-    function selfRegistrationUserCreateValid() {
+    /** สร้าง users/{uid} ครั้งแรกหลังลงทะเบียนด้วยตนเอง — ห้ามมีสิทธิ์ admin/โปรไฟล์จนกว่าแอดมินจะอนุมัติ (uid ต้องส่งจาก path) */
+    function selfRegistrationUserCreateValid(uid) {
       let d = request.resource.data;
       return d.approvalStatus == 'PENDING'
         && d.isActive == false
@@ -218,7 +219,7 @@ service cloud.firestore {
         ])
         && d.roleIds is list
         && d.roleIds.size() == 0
-        && d.id == userId;
+        && d.id == uid;
     }
 
     function isModifyingSecurityFields() {
@@ -293,7 +294,7 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if canManageSystem() || isOwner(userId);
       allow list: if canManageSystem();
-      allow create: if canManageSystem() || (isOwner(userId) && selfRegistrationUserCreateValid());
+      allow create: if canManageSystem() || (isOwner(userId) && selfRegistrationUserCreateValid(userId));
       allow update: if canManageSystem() || (isOwner(userId) && !isModifyingSecurityFields());
       allow delete: if canManageSystem();
     }
@@ -401,7 +402,12 @@ service cloud.firestore {
 
     match /office_payroll_runs/{id} {
       allow read: if internalReadNonStoreOfficer();
-      allow write: if canAccessHR();
+      allow write: if canAccessAccounting() || canAccessHR();
+    }
+
+    match /executive_payroll_runs/{id} {
+      allow read: if canAccessAccounting() || canManageSystem();
+      allow write: if canAccessAccounting() || canManageSystem();
     }
 
     match /payment_export_batches/{id} {
@@ -645,7 +651,12 @@ service cloud.firestore {
 
     match /office_payroll_runs/{runId}/{document=**} {
       allow read: if internalReadNonStoreOfficer();
-      allow write: if canAccessHR();
+      allow write: if canAccessAccounting() || canAccessHR();
+    }
+
+    match /executive_payroll_runs/{runId}/{document=**} {
+      allow read: if canAccessAccounting() || canManageSystem();
+      allow write: if canAccessAccounting() || canManageSystem();
     }
 
     // -------------------------------------------------------------------------

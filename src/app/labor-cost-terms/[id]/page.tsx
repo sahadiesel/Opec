@@ -90,7 +90,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
   const contract = allContracts?.find(c => c.id === term?.relatedContractId);
 
   const handleSave = () => {
-    if (!termRef || !currentUser || !isManagement) return;
+    if (!termRef || !currentUser || !isManagement || !term) return;
     const updateData = { ...formData, updatedAt: Date.now(), updatedBy: currentUser.displayName };
     updateDocumentNonBlocking(termRef, updateData);
     setIsEditing(false);
@@ -111,7 +111,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
   };
 
   const handleUpdateStatus = (newStatus: LaborCostContractStatus) => {
-    if (!termRef || !currentUser || !isManagement) return;
+    if (!termRef || !currentUser || !isManagement || !term) return;
     updateDocumentNonBlocking(termRef, { status: newStatus, updatedAt: Date.now() });
 
     // Add Audit Log

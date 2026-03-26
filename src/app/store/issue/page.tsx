@@ -460,7 +460,7 @@ export default function IssueItemsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-primary/5 rounded-lg border border-primary/10">
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground uppercase font-black">ตำแหน่งงาน:</p>
-                      <p className="text-sm font-bold text-primary flex items-center gap-2"><Briefcase className="h-3.5 w-3.5" /> {position?.positionName}</p>
+                      <p className="text-sm font-bold text-primary flex items-center gap-2"><Briefcase className="h-3.5 w-3.5" /> {position?.positionNameTh}</p>
                     </div>
                     <div className="space-y-1">
                       <p className="text-[10px] text-muted-foreground uppercase font-black">รอบการทำงาน (Wave):</p>
@@ -480,7 +480,7 @@ export default function IssueItemsPage() {
                 <CardHeader className="border-b bg-muted/20 flex flex-row items-center justify-between">
                   <div>
                     <CardTitle className="text-lg">รายการอุปกรณ์ที่อนุญาต (Authorized Items)</CardTitle>
-                    <CardDescription>กรองเฉพาะรายการที่ตรงตามเกณฑ์ของตำแหน่ง <b>{position?.positionName}</b></CardDescription>
+                    <CardDescription>กรองเฉพาะรายการที่ตรงตามเกณฑ์ของตำแหน่ง <b>{position?.positionNameTh}</b></CardDescription>
                   </div>
                   <Badge variant="outline" className="bg-white">Requirement Items</Badge>
                 </CardHeader>

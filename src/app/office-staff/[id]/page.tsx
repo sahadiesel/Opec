@@ -70,6 +70,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     taxId: '',
     socialSecurityNo: '',
     status: 'ACTIVE',
+    payrollBand: 'OFFICE',
     notes: ''
   });
 
@@ -260,6 +261,22 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         <SelectItem value="DAILY">รายวัน (Daily)</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">กลุ่มงวดเงินเดือน (Payroll band)</Label>
+                    <Select
+                      onValueChange={(v: 'OFFICE' | 'EXECUTIVE') => setFormData({ ...formData, payrollBand: v })}
+                      value={formData.payrollBand ?? 'OFFICE'}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="OFFICE">พนักงานสำนักงาน (Office payroll / HR เห็นได้)</SelectItem>
+                        <SelectItem value="EXECUTIVE">ผู้บริหาร (Executive — งวดจ่ายแยกในเมนูบัญชีเท่านั้น)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      ผู้บริหารจะไม่ถูกดึงเข้างวดเงินเดือนพนักงานสำนักงาน และต้องใช้เมนูเงินเดือนผู้บริหารในฝ่ายบัญชี
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">เงินเดือนพื้นฐาน (Monthly Salary)</Label>

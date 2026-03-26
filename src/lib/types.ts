@@ -83,14 +83,17 @@ export type ClientApprovalStatus =
 
 export type WaveStatus = 
   | 'PLANNING'            // วางแผน
+  | 'READY'               // พร้อมระดม (UI / legacy)
   | 'RECRUITING'          // สรรหา/มอบหมาย
   | 'MOBILIZING'          // ดำเนินการส่งตัว
+  | 'DEMOBILIZING'        // กำลังถอนกำลัง
   | 'ACTIVE'              // กำลังดำเนินโครงการ
   | 'COMPLETED'           // จบโครงการ
   | 'CLOSED';             // ปิดโครงการและสรุปบัญชี
 
 export type PayrollRunStatus = 
   | 'DRAFT'               // ฉบับร่าง
+  | 'CALCULATED'          // คำนวณแล้ว (รอ workflow ถัดไป)
   | 'PROCESSING'          // กำลังคำนวณ
   | 'HR_REVIEW'           // รอฝ่ายบุคคลตรวจสอบ
   | 'HR_APPROVED'         // ฝ่ายบุคคลอนุมัติ
@@ -338,6 +341,8 @@ export interface OfficeStaff {
   nickname?: string;
   department: string;
   positionTitle: string;
+  /** แยกงวดเงินเดือน: พนักงานทั่วไป vs ผู้บริหาร (จัดการในบัญชี — ไม่รวมในงวด office ทั่วไป) */
+  payrollBand?: 'OFFICE' | 'EXECUTIVE';
   employmentType: 'FULL_TIME' | 'PART_TIME' | 'CONTRACT';
   salaryType: 'MONTHLY' | 'DAILY';
   monthlySalary: number;
@@ -355,6 +360,48 @@ export interface OfficeStaff {
   createdBy?: string;
   updatedAt: number;
   updatedBy?: string;
+}
+
+/** Aliases for forms / imports (mirror OfficeStaff fields). */
+export type StaffStatus = OfficeStaff['status'];
+export type EmploymentType = OfficeStaff['employmentType'];
+export type StaffSalaryType = OfficeStaff['salaryType'];
+
+/** Mobilization workflow (mobilizations collection) — คู่กับ deploymentStatus */
+export type MobilizationStatus =
+  | 'PENDING'
+  | 'READY_TO_MOBILIZE'
+  | 'MOBILIZING'
+  | 'ACTIVE'
+  | 'DEMOBILIZED';
+
+export interface WorkerWaveAcceptance {
+  id: string;
+  waveId: string;
+  assignmentId: string;
+  workerId: string;
+  customerId: string;
+  customerPortalUserId?: string | null;
+  status: 'pending' | 'accepted' | 'rejected' | 'replacement_requested';
+  remark?: string | null;
+  approvedDate?: string | null;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export type PayrollPeriodStatus = 'DRAFT' | 'OPEN' | 'PROCESSING' | 'LOCKED' | 'CLOSED';
+
+export interface PayrollPeriod {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  cycleType: 'MONTHLY' | 'PARTIAL_START' | 'PARTIAL_END' | 'CUSTOM';
+  status: PayrollPeriodStatus;
+  generatedBy: string;
+  generatedAt: number;
 }
 
 export interface Customer {
@@ -564,6 +611,9 @@ export interface Assignment {
   projectName: string;
   startDate: string;
   endDate: string;
+  /** สถานะขั้น mobilization (เอกสาร mobilizations) */
+  mobilizationStatus?: MobilizationStatus | string;
+  mobilizationDate?: string;
   deploymentStatus: DeploymentStatus;
   clientApprovalStatus: ClientApprovalStatus;
   readinessStatus: 'incomplete' | 'ready';
@@ -646,6 +696,8 @@ export interface DailyTimesheet {
   assignmentId: string;
   waveId: string;
   contractId: string;
+  /** Optional link to labor cost contract term for payroll costing */
+  laborCostContractTermId?: string;
   purchaseOrderId: string;
   poLineId: string;
   siteId: string;
@@ -731,7 +783,7 @@ export type RateConditionEventType =
   | 'other';
 
 export type RateConditionUnitType = 'DAY' | 'HALF_DAY' | 'HOUR' | 'TRIP' | 'FIXED';
-export type RateConditionCalculationMethod = 'FLAT' | 'MULTIPLIER' | 'PERCENTAGE' | 'FORMULA';
+export type RateConditionCalculationMethod = 'FLAT' | 'FIXED' | 'MULTIPLIER' | 'PERCENTAGE' | 'FORMULA';
 export type RateConditionParentType = 'SALES_CONTRACT' | 'LABOR_COST_CONTRACT' | 'PO_SNAPSHOT' | 'WAVE_SNAPSHOT';
 export type RateConditionAppliesTo = 'SALES' | 'COST';
 
@@ -949,6 +1001,10 @@ export interface OfficePayrollRun {
   hrApprovedBy?: string;
   financeApprovedBy?: string;
   lockedAt?: number;
+  /** บัญชีอนุมัติจ่ายแล้ว — รายการ cashbook ที่สร้างอัตโนมัติ */
+  financeCashbookEntryId?: string;
+  /** บัญชีธนาคารที่ใช้ตัดจ่าย (ถ้าว่าง ระบบใช้บัญชี ACTIVE แรก) */
+  payoutBankAccountId?: string;
   notes?: string;
   createdAt: number;
   updatedAt: number;
@@ -971,6 +1027,10 @@ export interface OfficePayrollLine {
   createdAt: number;
   updatedAt: number;
 }
+
+/** งวดเงินเดือนผู้บริหาร — โครงเดียวกับ office แต่คนละคอลเลกชันและสิทธิ์เฉพาะบัญชี */
+export type ExecutivePayrollRun = OfficePayrollRun;
+export type ExecutivePayrollLine = OfficePayrollLine;
 
 export interface PayrollRun {
   id: string;

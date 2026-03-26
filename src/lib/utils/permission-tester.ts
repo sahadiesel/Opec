@@ -3,7 +3,7 @@
  * Lightweight utility to validate permission logic against business requirements.
  */
 
-import { User, PermissionProfile, ModulePermission } from '../types';
+import { User, PermissionProfile, ModulePermission, RoleType, BusinessRoleKey } from '../types';
 import { 
   getPermissions, 
   SYSTEM_MODULES, 
@@ -32,8 +32,8 @@ function createMockUser(roles: string[], dept: any, level: any): User {
     id: 'test-user',
     email: 'test@opec.com',
     displayName: 'Test User',
-    roleIds: roles,
-    assignedRoleKeys: roles,
+    roleIds: roles as RoleType[],
+    assignedRoleKeys: roles as BusinessRoleKey[],
     department: dept,
     level: level,
     isActive: true,
@@ -88,8 +88,9 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'Client users must be restricted to client-portal and blocked from internal payroll'
   );
 
-  const essentialFields = ['roleIds', 'isActive', 'approvalStatus', 'department'];
-  const fieldsCovered = essentialFields.every(f => SECURITY_SENSITIVE_FIELDS.includes(f));
+  const essentialFields = ['roleIds', 'isActive', 'approvalStatus', 'department'] as const;
+  const sensitive = SECURITY_SENSITIVE_FIELDS as readonly string[];
+  const fieldsCovered = essentialFields.every((f) => sensitive.includes(f));
   assert(
     'Security Field Registry',
     fieldsCovered,

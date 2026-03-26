@@ -106,7 +106,7 @@ export const SYSTEM_MODULES = [
   { group: 'HR & Payroll (บุคคล)', key: 'hr_hub', label: 'ศูนย์กลาง HR (แดชบอร์ด / ตั้งค่า)' },
   { group: 'HR & Payroll (บุคคล)', key: 'timesheets', label: 'ลงเวลาทำงาน (Timesheets)' },
   { group: 'HR & Payroll (บุคคล)', key: 'worker_payroll', label: 'จ่ายเงินคนงาน (Worker Payroll)' },
-  { group: 'HR & Payroll (บุคคล)', key: 'office_payroll', label: 'เงินเดือนออฟฟิศ (Office Payroll)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'office_payroll', label: 'เงินเดือนออฟฟิศ (Office Payroll — ดู/แก้ตามโปรไฟล์)' },
   { group: 'HR & Payroll (บุคคล)', key: 'payment_export_batches', label: 'ไฟล์โอนเงินธนาคาร (Payment Exports)' },
   { group: 'HR & Payroll (บุคคล)', key: 'labor_cost_contract_terms', label: 'เงื่อนไขต้นทุน (Labor Cost Terms)' },
   { group: 'HR & Payroll (บุคคล)', key: 'positions', label: 'ตำแหน่งงาน (Positions)' },
@@ -129,6 +129,7 @@ export const SYSTEM_MODULES = [
   { group: 'Finance & Accounting (การเงิน)', key: 'accounts_payable', label: 'เจ้าหนี้การค้า (AP)' },
   { group: 'Finance & Accounting (การเงิน)', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
   { group: 'Finance & Accounting (การเงิน)', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
+  { group: 'Finance & Accounting (การเงิน)', key: 'executive_payroll', label: 'เงินเดือนผู้บริหาร (Executive Payroll)' },
 
   { group: 'Administration (ระบบ)', key: 'system_admin', label: 'จัดการผู้ใช้/ระบบ (System Admin)' },
   { group: 'Administration (ระบบ)', key: 'client_portal', label: 'Client Portal (หน้าของลูกค้า)' },
@@ -178,7 +179,8 @@ const MANAGEMENT_ONLY_MODULES = new Set<ModuleKey>([
   'main_contracts',
   'sales_contract_terms',
   'labor_cost_contract_terms',
-  'office_payroll'
+  'office_payroll',
+  'executive_payroll',
 ]);
 
 function clonePermission(permission: ModulePermission): ModulePermission {
@@ -230,6 +232,8 @@ const ACCOUNTING_MODULES: readonly ModuleKey[] = [
   'accounts_payable',
   'cashbook',
   'bank_accounts',
+  'office_payroll',
+  'executive_payroll',
 ];
 
 const ADMIN_ONLY_MODULES = new Set<ModuleKey>(['system_admin', 'document_numbering', 'audit_logs']);
@@ -384,7 +388,7 @@ function getAllowedModules(user: User | null): ModuleKey[] {
   if (!u || !Array.isArray(u.allowedModules)) return [];
 
   const normalized = u.allowedModules
-    .map((moduleKey) => resolvePermissionModuleKey(moduleKey))
+    .map((moduleKey) => resolvePermissionModuleKey(moduleKey) as ModuleKey)
     .filter((moduleKey): moduleKey is ModuleKey => MODULE_KEY_SET.has(moduleKey));
 
   return Array.from(new Set(normalized));
@@ -495,7 +499,7 @@ export function getPermissions(
     return clonePermission(FULL_ACCESS);
   }
 
-  const moduleKey = resolvePermissionModuleKey(rawModuleKey);
+  const moduleKey = resolvePermissionModuleKey(rawModuleKey) as ModuleKey;
   if (!MODULE_KEY_SET.has(moduleKey)) {
     return clonePermission(NO_ACCESS);
   }

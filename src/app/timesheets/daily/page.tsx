@@ -384,7 +384,7 @@ export default function DailyTimesheetsPage() {
                     const worker = workers?.find(w => w.id === ts.workerId);
                     const canSubmit = ts.status === 'DRAFT' || ts.status === 'REJECTED' || ts.status === 'CORRECTION_REQUIRED';
                     const canVerifyPaper = ts.status === 'OPS_REVIEWED';
-                    const canRequestCorrection = (ts.status === 'CLIENT_APPROVED' || ts.status === 'VERIFIED_PAPER') && ts.status !== 'LOCKED';
+                    const canRequestCorrection = ts.status === 'CLIENT_APPROVED' || ts.status === 'VERIFIED_PAPER';
                     const isLocked = ts.status === 'LOCKED';
                     
                     return (

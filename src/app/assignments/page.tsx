@@ -155,8 +155,8 @@ export default function AssignmentsPage() {
 
     // 3. Position Suitability Check
     if (worker.currentPositionId !== targetPositionId) {
-      const targetPosName = position?.positionName || targetPositionId;
-      const workerPosName = allPositions?.find(p => p.id === worker.currentPositionId)?.positionName || worker.currentPositionId;
+      const targetPosName = position?.positionNameTh || targetPositionId;
+      const workerPosName = allPositions?.find(p => p.id === worker.currentPositionId)?.positionNameTh || worker.currentPositionId;
       toast({ 
         variant: "destructive", 
         title: "ตำแหน่งงานไม่ตรงกัน", 
@@ -246,7 +246,7 @@ export default function AssignmentsPage() {
     switch(status) {
       case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 uppercase font-bold">Draft</Badge>;
       case 'READINESS_CHECK': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">Checking</Badge>;
-      case 'READY': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 uppercase font-bold">Ready</Badge>;
+      case 'READY_TO_MOB': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 uppercase font-bold">Ready</Badge>;
       case 'MOBILIZING': return <Badge className="bg-blue-600 uppercase font-bold">Mobilizing</Badge>;
       case 'ACTIVE': return <Badge className="bg-green-600 uppercase font-bold">Active Duty</Badge>;
       default: return <Badge variant="outline">{status}</Badge>;

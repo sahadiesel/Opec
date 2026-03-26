@@ -114,6 +114,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
+  const quotationRef = useMemoFirebase(
+    () => (firestore && po?.quotationId ? doc(firestore, 'quotations', po.quotationId) : null),
+    [firestore, po?.quotationId]
+  );
+  const { data: quotation } = useDoc<Quotation>(quotationRef as any);
+
+  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
+
   const conditionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'rate_conditions') : null), [firestore]);
   const { data: allConditions } = useCollection<RateCondition>(conditionsQuery as any);
 
@@ -156,7 +165,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const isLinkedSourceReady = isContractBasedPO ? isLinkedContractActive : isQuotationAccepted;
 
   const handleSaveMaster = () => {
-    if (!poRef || !currentUser) return;
+    if (!poRef || !currentUser || !po) return;
     updateDocumentNonBlocking(poRef, { ...editedPO, updatedAt: Date.now() });
     setIsEditing(false);
 
@@ -543,10 +552,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             {isContractBasedPO
                               ? rates?.map(r => {
                                   const p = allPositions?.find(pos => pos.id === r.positionId);
-                                  return <SelectItem key={r.id} value={r.positionId}>{p?.positionName || r.positionId}</SelectItem>;
+                                  return <SelectItem key={r.id} value={r.positionId}>{p?.positionNameTh || r.positionId}</SelectItem>;
                                 })
                               : allPositions?.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>{p.positionName}</SelectItem>
+                                  <SelectItem key={p.id} value={p.id}>{p.positionNameTh}</SelectItem>
                                 ))}
                           </SelectContent>
                         </Select>
@@ -631,7 +640,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                         <TableRow key={line.id} className="hover:bg-muted/10 transition-colors">
                           <TableCell className="pl-6 py-4">
                             <div className="flex flex-col">
-                              <span className="font-bold text-primary">{pos?.positionName || line.positionId}</span>
+                              <span className="font-bold text-primary">{pos?.positionNameTh || line.positionId}</span>
                               <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
                                 <Calendar className="h-2.5 w-2.5" />
                                 {new Date(line.startDate).toLocaleDateString('th-TH')} - {new Date(line.endDate).toLocaleDateString('th-TH')}
@@ -872,7 +881,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline" className="text-[10px] font-bold bg-white">{pos?.positionName || asgn.positionId}</Badge>
+                              <Badge variant="outline" className="text-[10px] font-bold bg-white">{pos?.positionNameTh || asgn.positionId}</Badge>
                             </TableCell>
                             <TableCell className="text-xs font-medium">
                               {asgn.startDate} - {asgn.endDate}

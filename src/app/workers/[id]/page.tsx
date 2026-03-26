@@ -225,7 +225,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
     let newStatus: ReadinessStatus = 'READY';
     const now = Date.now();
-    let complianceAlertLevel: 'ok' | 'warning' | 'blocked' = 'ok';
+    const compliance = { level: 'ok' as 'ok' | 'warning' | 'blocked' };
     let nearestExpiryInDays: number | null = null;
     let nearestExpiryAt: number | null = null;
     const catalogByCode = new Map((workerDocCatalog || []).map((x) => [(x.itemCode || '').toLowerCase(), x]));
@@ -241,9 +241,9 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         nearestExpiryAt = exp;
       }
       if (blockBefore > 0 && remainingDays <= blockBefore) {
-        complianceAlertLevel = 'blocked';
-      } else if (complianceAlertLevel !== 'blocked' && alertBefore > 0 && remainingDays <= alertBefore) {
-        complianceAlertLevel = 'warning';
+        compliance.level = 'blocked';
+      } else if (compliance.level !== 'blocked' && alertBefore > 0 && remainingDays <= alertBefore) {
+        compliance.level = 'warning';
       }
     };
 
@@ -301,9 +301,11 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       }
     }
 
-    if (newStatus === 'READY' && complianceAlertLevel === 'blocked') {
+    if (newStatus === 'READY' && compliance.level === 'blocked') {
       newStatus = 'BLOCKED';
     }
+
+    const complianceAlertLevel = compliance.level;
 
     if (
       worker.readinessStatus !== newStatus ||
@@ -469,7 +471,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                             <SelectItem value="__none__">— เลือกตำแหน่ง —</SelectItem>
                             {allPositions?.map((p) => (
                               <SelectItem key={p.id} value={p.id}>
-                                {p.positionName}
+                                {p.positionNameTh}
                               </SelectItem>
                             ))}
                           </SelectContent>

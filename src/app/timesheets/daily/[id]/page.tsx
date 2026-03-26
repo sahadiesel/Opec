@@ -146,7 +146,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
                   </div>
                   <div className="space-y-1">
                     <Label className="text-[10px] uppercase text-muted-foreground font-black">ตำแหน่งงาน:</Label>
-                    <p className="font-bold">{position?.positionName || ts.positionId}</p>
+                    <p className="font-bold">{position?.positionNameTh || ts.positionId}</p>
                   </div>
                 </div>
                 

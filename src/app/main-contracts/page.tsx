@@ -135,7 +135,7 @@ export default function MainContractsPage() {
   if (isUserLoading || !currentUser) return null;
 
   // If not staff, don't render the content (redirect handled by useEffect)
-  if (!isStaff && !isClient) {
+  if (!isStaff && !isClientUser) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
@@ -147,7 +147,7 @@ export default function MainContractsPage() {
     );
   }
 
-  if (isClient && !isStaff) return null; // Wait for redirect
+  if (isClientUser && !isStaff) return null; // Wait for redirect
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

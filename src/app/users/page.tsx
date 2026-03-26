@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Building2,
+  ShieldAlert,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
@@ -49,7 +50,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, writeBatch } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -76,6 +77,7 @@ import {
 } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -95,6 +97,7 @@ export default function UsersPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isRepairing, setIsRepairing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [listTab, setListTab] = useState<'all' | 'pending'>('pending');
 
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
@@ -121,15 +124,31 @@ export default function UsersPage() {
     return profiles.filter((p) => profileAllowedForTargetUser(p, selectedUser));
   }, [profiles, selectedUser]);
 
+  const pendingCount = useMemo(
+    () => (users || []).filter((u) => (u.approvalStatus || 'PENDING') === 'PENDING').length,
+    [users]
+  );
+
   const filteredUsers = useMemo(() => {
     if (!users) return [];
-    return users.filter(u => {
+    const base =
+      listTab === 'pending'
+        ? users.filter((u) => (u.approvalStatus || 'PENDING') === 'PENDING')
+        : [...users].sort((a, b) => {
+            const pa = (a.approvalStatus || 'PENDING') === 'PENDING' ? 0 : 1;
+            const pb = (b.approvalStatus || 'PENDING') === 'PENDING' ? 0 : 1;
+            if (pa !== pb) return pa - pb;
+            return (b.createdAt || 0) - (a.createdAt || 0);
+          });
+    return base.filter((u) => {
       const name = u.displayName || '';
       const email = u.email || '';
-      return name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-             email.toLowerCase().includes(searchTerm.toLowerCase());
+      return (
+        name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        email.toLowerCase().includes(searchTerm.toLowerCase())
+      );
     });
-  }, [users, searchTerm]);
+  }, [users, searchTerm, listTab]);
 
   /**
    * Detection of unsaved changes (Dirty state)
@@ -353,7 +372,7 @@ export default function UsersPage() {
               <ShieldCheck className="h-8 w-8 text-primary" /> จัดการผู้ใช้งาน (User Access Management)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — โปรไฟล์ต้องอยู่ในกลุ่มเดียวกับผู้ใช้ (accessGroup) เพื่อลดการมอบสิทธิ์ผิดกลุ่ม
+              กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — ผู้ลงทะเบียนผ่านหน้าแรกจะอยู่สถานะ PENDING จนกว่าแอดมินจะอนุมัติที่แท็บ <b>รออนุมัติ</b>
             </p>
           </div>
           <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
@@ -361,6 +380,34 @@ export default function UsersPage() {
             ซ่อมสิทธิ์อัตโนมัติ (Full Access Repair)
           </Button>
         </div>
+
+        <Tabs value={listTab} onValueChange={(v) => setListTab(v as 'all' | 'pending')} className="space-y-4">
+          <TabsList className="h-auto flex-wrap justify-start gap-1 bg-muted/50 p-1">
+            <TabsTrigger value="pending" className="gap-2 data-[state=active]:bg-amber-100 data-[state=active]:text-amber-950">
+              <Clock className="h-4 w-4" />
+              รออนุมัติ / ลงทะเบียนใหม่
+              {pendingCount > 0 && (
+                <Badge variant="secondary" className="ml-1 bg-amber-600 text-white tabular-nums">
+                  {pendingCount}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="all" className="gap-2">
+              <UserCog className="h-4 w-4" />
+              ผู้ใช้ทั้งหมด
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value={listTab} className="mt-0 space-y-4">
+        {listTab === 'pending' && (
+          <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertTitle className="text-amber-950">คิวอนุมัติผู้ใช้ใหม่</AlertTitle>
+            <AlertDescription className="text-sm">
+              บัญชีสถานะ <b>PENDING</b> (รวมผู้ลงทะเบียนจากหน้าแรก) — กดเมนู ⋮ แล้วเลือก <b>อนุมัติ / กำหนดสิทธิ์</b> จากนั้นเลือกโปรไฟล์หรือบทบาท และตั้งสถานะเป็น <b>ACTIVE</b>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="flex items-center gap-3 bg-card p-4 rounded-lg border shadow-sm">
           <div className="relative w-full max-w-sm">
@@ -442,10 +489,18 @@ export default function UsersPage() {
                         <TableCell className="text-right pr-6">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full opacity-0 group-hover:opacity-100"><MoreHorizontal className="h-4 w-4" /></Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={`h-8 w-8 rounded-full ${(u.approvalStatus || 'PENDING') === 'PENDING' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEditUser(u)}>แก้ไขสิทธิ์ (Edit Access)</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEditUser(u)}>
+                                {(u.approvalStatus || 'PENDING') === 'PENDING' ? 'อนุมัติ / กำหนดสิทธิ์' : 'แก้ไขสิทธิ์ (Edit Access)'}
+                              </DropdownMenuItem>
                               {isUserAdmin && (
                                 <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(u.id)}>ลบผู้ใช้ (Delete User)</DropdownMenuItem>
                               )}
@@ -460,6 +515,8 @@ export default function UsersPage() {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+        </Tabs>
 
         {/* Access Editor Modal */}
         <Dialog open={isEditDialogOpen} onOpenChange={handleOpenChange}>
