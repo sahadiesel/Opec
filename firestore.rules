@@ -42,6 +42,12 @@ service cloud.firestore {
         && (u.userType == 'customer_portal' || u.accessGroup == 'client' || u.department == 'client');
     }
 
+    /** ลูกค้าที่ login ผ่าน portal จริงๆ — ไม่ใช่พนักงานที่ accessGroup/department ถูกใส่ client ผิด */
+    function isCustomerPortalUser() {
+      let u = userData();
+      return u != null && u.userType == 'customer_portal';
+    }
+
     // -------------------------------------------------------------------------
     // Legacy compatibility — single resolver (accessGroup / departmentGroup / role / department)
     // -------------------------------------------------------------------------
@@ -232,10 +238,11 @@ service cloud.firestore {
 
     /**
      * อ่าน/เขียน positions เมื่อ internalRead ล้ม (ข้อมูล users ไม่ครบ) แต่โปรไฟล์ชัดว่า HR / Ops Manager
-     * ไม่รวมลูกค้า portal และเจ้าหน้าที่คลัง — พวกนั้นใช้ internalReadOrStoreOfficer / canAccessHR ตามเดิม
+     * กันพลาด: ห้ามใช้ !isClientUser() — พนักงานที่ accessGroup=client ผิดจะอ่านผ่าน isClientUser ได้แต่เขียนไม่ได้
+     * อนุญาตเฉพาะที่ไม่ใช่ customer_portal จริง + ไม่ใช่เจ้าหน้าที่คลัง
      */
     function supplementalPositionsRead() {
-      return isSignedIn() && userExists() && isActiveUser() && !isClientUser()
+      return isSignedIn() && userExists() && isActiveUser() && !isCustomerPortalUser()
         && !isStoreOfficerUser()
         && (permissionProfileIsHR() || permissionProfileIsOperationsManager());
     }
