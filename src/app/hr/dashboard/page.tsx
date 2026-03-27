@@ -30,7 +30,10 @@ import {
   Position,
   ExceptionRequest,
   DailyTimesheet,
-  MainContract
+  MainContract,
+  LaborCostContractTerm,
+  RateCondition,
+  PurchaseOrder,
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
@@ -39,7 +42,8 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { isHRStaff, isStoreOfficer } from '@/lib/permissions';
+import { canSeeHrPillarUi } from '@/lib/permissions';
+import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
@@ -63,10 +67,14 @@ export default function HRDashboardPage() {
   }, []);
 
   const isHRAuthorized = useMemo(() => {
-    return isHRStaff(currentUser);
+    return isSystemAdmin(currentUser) || canSeeHrPillarUi(currentUser, null);
   }, [currentUser]);
 
-  const viewerOnly = useMemo(() => isStoreOfficer(currentUser), [currentUser]);
+  const viewerOnly = useMemo(() => {
+    if (!currentUser || isSystemAdmin(currentUser)) return false;
+    const level = getEffectiveAccessLevel(currentUser);
+    return level === 'officer' || level === 'viewer';
+  }, [currentUser]);
 
   // --- HR Data Queries ---
   
@@ -111,6 +119,28 @@ export default function HRDashboardPage() {
     return query(collection(firestore, 'main_contracts'), orderBy('updatedAt', 'desc'), limit(30));
   }, [firestore, isHRAuthorized]);
   const { data: mainContracts } = useCollection<MainContract>(mainContractsQuery as any);
+
+  const activePOsQuery = useMemoFirebase(() => {
+    if (!firestore || !isHRAuthorized) return null;
+    return query(collection(firestore, 'purchase_orders'), where('status', 'in', ['active', 'pending']));
+  }, [firestore, isHRAuthorized]);
+  const { data: activePOs } = useCollection<PurchaseOrder>(activePOsQuery as any);
+
+  const laborTermsQuery = useMemoFirebase(() => {
+    if (!firestore || !isHRAuthorized) return null;
+    return query(collection(firestore, 'labor_cost_contract_terms'), where('status', '==', 'ACTIVE'));
+  }, [firestore, isHRAuthorized]);
+  const { data: laborTerms } = useCollection<LaborCostContractTerm>(laborTermsQuery as any);
+
+  const costConditionsQuery = useMemoFirebase(() => {
+    if (!firestore || !isHRAuthorized) return null;
+    return query(
+      collection(firestore, 'rate_conditions'),
+      where('appliesTo', '==', 'COST'),
+      where('isActive', '==', true),
+    );
+  }, [firestore, isHRAuthorized]);
+  const { data: costConditions } = useCollection<RateCondition>(costConditionsQuery as any);
 
   // --- Computed HR Tasks ---
 
@@ -174,7 +204,49 @@ export default function HRDashboardPage() {
         });
       });
 
-    // 5. Workers requiring document/certificate completion
+    // 5. Active POs without Labor Cost Term
+    const poIdsWithTerm = new Set(
+      (laborTerms || []).map((t) => t.relatedPurchaseOrderId).filter(Boolean),
+    );
+    (activePOs || [])
+      .filter((po) => !poIdsWithTerm.has(po.id))
+      .slice(0, 10)
+      .forEach((po) => {
+        tasks.push({
+          id: `po-no-term-${po.id}`,
+          type: 'ค่าจ้างไม่ครบ',
+          label: `PO ${po.poCode || po.id} ยังไม่มี Labor Cost Term`,
+          sub: 'Payroll จะคำนวณค่าจ้าง = 0',
+          status: 'INCOMPLETE',
+          link: `/labor-cost-terms`,
+          priority: 'high',
+          icon: AlertTriangle,
+        });
+      });
+
+    // 6. Labor Cost Terms without work_day rate condition
+    const termIdsWithWorkDay = new Set(
+      (costConditions || [])
+        .filter((c) => c.eventType === 'work_day' && c.parentType === 'LABOR_COST_CONTRACT')
+        .map((c) => c.parentId),
+    );
+    (laborTerms || [])
+      .filter((t) => !termIdsWithWorkDay.has(t.id))
+      .slice(0, 10)
+      .forEach((t) => {
+        tasks.push({
+          id: `term-no-workday-${t.id}`,
+          type: 'ค่าจ้างไม่ครบ',
+          label: `Labor Term "${t.title}" ยังไม่มีเงื่อนไข work_day`,
+          sub: 'คนงานวันทำงานปกติจะได้ค่าจ้าง = 0',
+          status: 'INCOMPLETE',
+          link: `/labor-cost-terms/${t.id}`,
+          priority: 'high',
+          icon: AlertTriangle,
+        });
+      });
+
+    // 7. Workers requiring document/certificate completion
     (workers || [])
       .filter((w) => w.readinessStatus !== 'READY')
       .slice(0, 10)
@@ -209,7 +281,7 @@ export default function HRDashboardPage() {
       });
 
     return tasks;
-  }, [payrollRuns, pendingExceptions, correctionTs, mainContracts, workers]);
+  }, [payrollRuns, pendingExceptions, correctionTs, mainContracts, workers, activePOs, laborTerms, costConditions]);
 
   const stats = useMemo(() => {
     if (!workers) return { total: 0, ready: 0, missingCert: 0, medExpired: 0, docExpired: 0, expiringSoon: 0, blocked: 0 };
@@ -264,7 +336,7 @@ export default function HRDashboardPage() {
             <Info className="h-4 w-4 text-amber-700" />
             <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
             <AlertDescription>
-              บทบาทเจ้าหน้าที่คลังสามารถดูภาพรวมและคิวงานได้เท่านั้น ไม่สามารถเปิดหน้าทำงาน HR หรือแก้ไขข้อมูลจากที่นี่ได้
+              บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมและคิวงานได้เท่านั้น — การอนุมัติและแก้ไขทำจากเมนูงานที่ได้รับสิทธิ์
             </AlertDescription>
           </Alert>
         )}

@@ -45,6 +45,7 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { positionDetailHeadline, type PositionDoc } from '@/lib/position-display';
 
 export default function PositionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -168,7 +169,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     setIsGenerating(type);
     try {
       const result = await generatePositionRequirements({
-        positionName: position.positionNameEn,
+        positionName: position.positionName || position.positionNameEn,
         requirementsType: type,
         additionalDetails: position.description
       });
@@ -208,7 +209,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           <div className="flex-1">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight text-primary">
-                {position.positionNameTh || position.positionNameEn} ({position.positionNameEn})
+                {positionDetailHeadline(position as PositionDoc)}
               </h1>
               <Badge variant="outline" className="font-mono text-primary border-primary/20">
                 Code: {position.positionCode}
@@ -253,19 +254,11 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
               <CardContent className="space-y-6 pt-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label className="font-bold">ชื่อภาษาไทย (Thai Name) *</Label>
+                    <Label className="font-bold">ชื่อตำแหน่ง (Position Name) *</Label>
                     <Input 
                       disabled={!isEditing} 
-                      value={isEditing ? editedPos.positionNameTh : position.positionNameTh} 
-                      onChange={e => setEditedPos({...editedPos, positionNameTh: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">ชื่อภาษาอังกฤษ (English Name) *</Label>
-                    <Input 
-                      disabled={!isEditing} 
-                      value={isEditing ? editedPos.positionNameEn : position.positionNameEn} 
-                      onChange={e => setEditedPos({...editedPos, positionNameEn: e.target.value})}
+                      value={isEditing ? (editedPos.positionName ?? editedPos.positionNameTh) : (position.positionName ?? position.positionNameTh)} 
+                      onChange={e => setEditedPos({...editedPos, positionName: e.target.value})}
                     />
                   </div>
                   <div className="space-y-2">

@@ -18,12 +18,17 @@ export function legacyDeptToDepartmentGroup(d: DeptType | undefined): Department
   if (!d) return 'operation';
   if (d === 'admin') return 'admin';
   if (d === 'client') return 'client';
-  if (d === 'accounting' || d === 'store') return 'accounting';
+  if (d === 'accounting') return 'accounting';
+  /** คลัง/จัดซื้ออยู่ภายใต้ partition operation (สอดคล้อง user accessGroup + เมนูจัดการผู้ใช้) */
+  if (d === 'store') return 'operation';
   return 'operation';
 }
 
 /** Resolved group for a profile (new field wins, else infer from legacy department). */
 export function getProfileDepartmentGroup(profile: PermissionProfile): DepartmentGroup {
+  if (profile.department === 'store' && profile.departmentGroup === 'accounting') {
+    return 'operation';
+  }
   if (profile.departmentGroup) return profile.departmentGroup;
   return legacyDeptToDepartmentGroup(profile.department);
 }
@@ -121,13 +126,11 @@ export function accessGroupFromAssignedRoleKey(key: string | undefined): Departm
   if (!key) return null;
   if (key === 'system_admin') return 'admin';
   if (key === 'client_user') return 'client';
-  if (
-    key === 'accounting_manager' ||
-    key === 'accounting_officer' ||
-    key === 'store_manager' ||
-    key === 'store_officer'
-  ) {
+  if (key === 'accounting_manager' || key === 'accounting_officer') {
     return 'accounting';
+  }
+  if (key === 'store_manager' || key === 'store_officer') {
+    return 'operation';
   }
   return 'operation';
 }
@@ -143,6 +146,8 @@ export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionPr
     'hr_officer',
     'operations_manager',
     'operations_officer',
+    'operation_manager',
+    'operation_officer',
     'accounting_manager',
     'accounting_officer',
     'sales_manager',

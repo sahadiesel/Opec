@@ -21,12 +21,61 @@ import {
   DailyTimesheetStatus, 
   Assignment,
   RateConditionEventType,
-  Wave
+  Wave,
+  LaborCostContractTerm
 } from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
 import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
+
+/**
+ * Resolves the best-matching LaborCostContractTerm for a given PO + date.
+ * Returns the term ID or undefined if none found.
+ */
+export async function resolveLaborCostTermId(
+  db: Firestore,
+  purchaseOrderId: string,
+  timesheetDate: string,
+): Promise<string | undefined> {
+  if (!purchaseOrderId) return undefined;
+  const q = query(
+    collection(db, 'labor_cost_contract_terms'),
+    where('relatedPurchaseOrderId', '==', purchaseOrderId),
+    where('status', '==', 'ACTIVE'),
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return undefined;
+
+  const terms = snap.docs.map(d => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
+
+  // Prefer the term whose effective range covers the timesheet date
+  const dateMatch = terms.find(
+    t => t.effectiveDate <= timesheetDate && t.endDate >= timesheetDate,
+  );
+  if (dateMatch) return dateMatch.id;
+
+  // Fallback: return the first active term
+  return terms[0].id;
+}
+
+/**
+ * Batch-resolves laborCostContractTermId for multiple PO IDs.
+ * Avoids redundant queries when creating timesheets for the same PO.
+ */
+export async function resolveLaborCostTermIds(
+  db: Firestore,
+  purchaseOrderIds: string[],
+  timesheetDate: string,
+): Promise<Map<string, string>> {
+  const unique = [...new Set(purchaseOrderIds.filter(Boolean))];
+  const result = new Map<string, string>();
+  for (const poId of unique) {
+    const termId = await resolveLaborCostTermId(db, poId, timesheetDate);
+    if (termId) result.set(poId, termId);
+  }
+  return result;
+}
 
 /**
  * Service for managing Daily Timesheets and their refined workflow transitions.
@@ -95,8 +144,21 @@ export class TimesheetService {
     const batch = writeBatch(this.db);
     const results = { created: 0, updated: 0, skipped: 0 };
 
+    // Pre-resolve laborCostContractTermIds for all new timesheets that don't have one
+    const needsResolve = timesheets.filter(ts => !ts.laborCostContractTermId && ts.purchaseOrderId && ts.date);
+    const poIds = needsResolve.map(ts => ts.purchaseOrderId!);
+    const sampleDate = timesheets[0]?.date || format(new Date(), 'yyyy-MM-dd');
+    const costTermMap = poIds.length > 0
+      ? await resolveLaborCostTermIds(this.db, poIds, sampleDate)
+      : new Map<string, string>();
+
     for (const ts of timesheets) {
       if (!ts.workerId || !ts.assignmentId || !ts.date) continue;
+
+      // Auto-fill laborCostContractTermId if not already set
+      if (!ts.laborCostContractTermId && ts.purchaseOrderId) {
+        ts.laborCostContractTermId = costTermMap.get(ts.purchaseOrderId);
+      }
 
       const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
       const docRef = doc(this.getCollection(), id);
@@ -104,7 +166,6 @@ export class TimesheetService {
 
       if (existingSnap.exists()) {
         const current = existingSnap.data() as DailyTimesheet;
-        // SILENT EDIT PREVENTION: Check if already finalized
         if (this.isFinalized(current.status)) {
           results.skipped++;
           continue;
@@ -204,6 +265,7 @@ export class TimesheetService {
     await updateDoc(docRef, {
       status: 'OPS_REVIEWED',
       readyForPayroll: true,
+      readyForBilling: true,
       managerApprovedBy: user.displayName,
       managerApprovedAt: Date.now(),
       updatedAt: Date.now(),
@@ -215,7 +277,29 @@ export class TimesheetService {
       entityId: id,
       timesheetId: id,
       sourceModule: 'operations',
-      afterSummary: 'Operations reviewed and internally approved for payroll'
+      afterSummary: 'Operations reviewed and internally approved for payroll and billing'
+    });
+  }
+
+  async markAsClientApproved(id: string, user: User) {
+    const docRef = doc(this.getCollection(), id);
+    await updateDoc(docRef, {
+      status: 'CLIENT_APPROVED',
+      readyForPayroll: true,
+      readyForBilling: true,
+      approvalSource: 'PORTAL',
+      clientApprovedBy: user.displayName,
+      clientApprovedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'CLIENT_APPROVE',
+      entityType: 'DailyTimesheet',
+      entityId: id,
+      timesheetId: id,
+      sourceModule: 'client_portal',
+      afterSummary: 'Client approved timesheet via portal for payroll and billing'
     });
   }
 
@@ -259,6 +343,15 @@ export class TimesheetService {
       where('date', '==', prev)
     );
     const snap = await getDocs(q);
+
+    // Pre-resolve cost terms for rows missing laborCostContractTermId
+    const poIds = snap.docs
+      .map(d => (d.data() as DailyTimesheet).purchaseOrderId)
+      .filter(Boolean);
+    const costTermMap = poIds.length > 0
+      ? await resolveLaborCostTermIds(this.db, poIds, targetDate)
+      : new Map<string, string>();
+
     const batch = writeBatch(this.db);
     let created = 0;
     for (const d of snap.docs) {
@@ -268,11 +361,17 @@ export class TimesheetService {
       const existing = await getDoc(docRef);
       if (existing.exists()) continue;
       const { id: _omit, ...rest } = ts;
+
+      const costTermId = rest.laborCostContractTermId
+        || costTermMap.get(rest.purchaseOrderId)
+        || undefined;
+
       try {
         const payload = DailyTimesheetSchema.parse({
           ...rest,
           id,
           date: targetDate,
+          laborCostContractTermId: costTermId,
           status: 'DRAFT',
           readyForPayroll: false,
           readyForBilling: false,

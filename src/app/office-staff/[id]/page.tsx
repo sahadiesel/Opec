@@ -78,7 +78,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const officeCategoryPositions = useMemo(
     () =>
       (allPositions || []).filter((p) => p.category === 'OFFICE' && p.active !== false).sort((a, b) =>
-        (a.positionNameTh || a.positionCode).localeCompare(b.positionNameTh || b.positionCode, 'th')
+        (a.positionName || a.positionNameTh || a.positionCode).localeCompare(b.positionName || b.positionNameTh || b.positionCode, 'th')
       ),
     [allPositions]
   );
@@ -141,7 +141,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     const posById = formData.positionId
       ? officeCategoryPositions.find((x: Position) => x.id === formData.positionId)
       : undefined;
-    const resolvedPositionTitle = (posById?.positionNameTh || formData.positionTitle || '').trim();
+    const resolvedPositionTitle = (posById?.positionName || posById?.positionNameTh || formData.positionTitle || '').trim();
     if (!resolvedPositionTitle) {
       toast({
         variant: "destructive",
@@ -296,8 +296,8 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         formData.positionId ||
                         officeCategoryPositions.find(
                           (p: Position) =>
-                            p.positionNameTh === formData.positionTitle ||
-                            p.positionNameEn === formData.positionTitle
+                            (p.positionName || p.positionNameTh) === formData.positionTitle ||
+                            (p.positionName || p.positionNameEn) === formData.positionTitle
                         )?.id ||
                         undefined
                       }
@@ -306,7 +306,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         setFormData({
                           ...formData,
                           positionId: id,
-                          positionTitle: p ? p.positionNameTh : formData.positionTitle,
+                          positionTitle: p ? (p.positionName || p.positionNameTh) : formData.positionTitle,
                         });
                       }}
                     >
@@ -323,7 +323,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         ) : null}
                         {officeCategoryPositions.map((p: Position) => (
                           <SelectItem key={p.id} value={p.id}>
-                            {`${p.positionCode} — ${p.positionNameTh}${p.positionNameEn ? ` (${p.positionNameEn})` : ''}`}
+                            {`${p.positionCode} — ${p.positionName || p.positionNameTh}${p.positionNameEn ? ` (${p.positionName || p.positionNameEn})` : ''}`}
                           </SelectItem>
                         ))}
                       </SelectContent>

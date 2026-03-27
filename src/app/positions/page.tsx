@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Position, User, MainContract, PurchaseOrder } from '@/lib/types';
+import { Position, User } from '@/lib/types';
 import { 
   Dialog, 
   DialogContent, 
@@ -22,7 +22,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { addDoc, collection, doc, collectionGroup, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { addDoc, collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -30,6 +30,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { positionListPrimaryName, positionListSecondaryName, type PositionDoc } from '@/lib/position-display';
 
 export default function PositionsPage() {
   const router = useRouter();
@@ -48,8 +49,7 @@ export default function PositionsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newPosition, setNewPosition] = useState<Partial<Position>>({
-    positionNameTh: '',
-    positionNameEn: '',
+    positionName: '',
     positionCode: getPreviewPattern('position'),
     category: 'OFFSHORE',
     jobMode: 'ONSHORE',
@@ -108,60 +108,19 @@ export default function PositionsPage() {
     }
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const handleDelete = (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!firestore) return;
-    if (!confirm('ยืนยันการลบตำแหน่งงานนี้?')) return;
-
-    try {
-      const blockingLabels = new Set<string>();
-
-      const ratesSnap = await getDocs(
-        query(collectionGroup(firestore, 'position_rates'), where('positionId', '==', id))
-      );
-      for (const d of ratesSnap.docs) {
-        const contractRef = d.ref.parent.parent;
-        if (!contractRef) continue;
-        const cSnap = await getDoc(contractRef);
-        const c = cSnap.data() as MainContract | undefined;
-        if (c && (c.status === 'active' || c.status === 'pending')) {
-          blockingLabels.add(c.contractNumber || contractRef.id);
-        }
-      }
-
-      const poLinesSnap = await getDocs(
-        query(collectionGroup(firestore, 'po_lines'), where('positionId', '==', id))
-      );
-      for (const d of poLinesSnap.docs) {
-        const poRef = d.ref.parent.parent;
-        if (!poRef) continue;
-        const pSnap = await getDoc(poRef);
-        const po = pSnap.data() as PurchaseOrder | undefined;
-        if (po && (po.status === 'active' || po.status === 'pending')) {
-          blockingLabels.add(po.poCode || poRef.id);
-        }
-      }
-
-      if (blockingLabels.size > 0) {
-        toast({
-          variant: 'destructive',
-          title: 'ลบไม่ได้: ตำแหน่งนี้ยังมีอยู่ในสัญญาที่ยังไม่จบ',
-          description: `พบการอ้างอิงในเอกสารที่ยังใช้งานอยู่ เช่น ${Array.from(blockingLabels).slice(0, 5).join(', ')}${blockingLabels.size > 5 ? ' …' : ''}`,
-        });
-        return;
-      }
-
-      deleteDocumentNonBlocking(doc(firestore, 'positions', id));
-      toast({ title: 'ลบตำแหน่งงานแล้ว' });
-    } catch (err) {
-      console.error(err);
-      toast({
-        variant: 'destructive',
-        title: 'ตรวจสอบไม่สำเร็จ',
-        description: 'ไม่สามารถตรวจสอบการอ้างอิงก่อนลบได้ กรุณาลองใหม่',
-      });
+    if (
+      !confirm(
+        'ลบตำแหน่งนี้จากมาสเตอร์?\n\nสัญญา/PO ที่บันทึกแล้วใช้ข้อมูล snapshot — เอกสารเก่าไม่เปลี่ยน แต่จะไม่สามารถเลือกตำแหน่งนี้ในสัญญาใหม่ได้'
+      )
+    ) {
+      return;
     }
+    deleteDocumentNonBlocking(doc(firestore, 'positions', id));
+    toast({ title: 'ลบตำแหน่งงานจากมาสเตอร์แล้ว' });
   };
 
   if (isUserLoading || !user) return null;
@@ -215,7 +174,7 @@ export default function PositionsPage() {
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="name">ชื่อตำแหน่ง (Position Name)</Label>
-                  <Input id="name" value={newPosition.positionNameTh} onChange={e => setNewPosition({...newPosition, positionNameTh: e.target.value, positionNameEn: e.target.value || newPosition.positionNameEn})} />
+                  <Input id="name" value={newPosition.positionName} onChange={e => setNewPosition({...newPosition, positionName: e.target.value})} />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="code">รหัสตำแหน่ง (Code)</Label>
@@ -282,16 +241,21 @@ export default function PositionsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {positions?.map((pos) => (
+                  {positions?.map((pos) => {
+                    const p = pos as PositionDoc;
+                    const nameSecondary = positionListSecondaryName(p);
+                    return (
                     <TableRow 
                       key={pos.id} 
                       className="cursor-pointer hover:bg-muted/50 group transition-all" 
                       onClick={() => router.push(`/positions/${pos.id}`)}
                     >
                       <TableCell className="py-4">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-base text-primary">{pos.positionNameTh}</span>
-                          <span className="text-[10px] text-muted-foreground uppercase tracking-tight">Standard Matrix Entry</span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-bold text-base text-primary">{positionListPrimaryName(p)}</span>
+                          {nameSecondary ? (
+                            <span className="text-xs text-muted-foreground">{nameSecondary}</span>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs font-bold text-primary">{pos.positionCode}</TableCell>
@@ -319,7 +283,8 @@ export default function PositionsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                   {(!positions || positions.length === 0) && !isLoading && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงานมาตรฐานในระบบ</TableCell>

@@ -228,6 +228,37 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
     return user.level === 'manager' ? 'hr_manager' : 'hr_officer';
   }
 
+  /**
+   * โปรไฟล์หลักมักใช้ document id = profileKey เช่น hr_manager — ถ้า assignedRoleKey ว่าง
+   * แต่ผูก permissionProfileKey ไว้ ให้ถือเป็นบทบาทเดียวกับ Firestore hasAnyAssignedRole
+   */
+  const pk =
+    user.permissionProfileKey ??
+    (Array.isArray(user.permissionProfileKeys) && user.permissionProfileKeys.length > 0
+      ? user.permissionProfileKeys[0]
+      : null);
+  if (typeof pk === 'string' && pk.length > 0) {
+    if (pk === 'admin_admin') return 'system_admin';
+    if (pk === 'payroll_officer') return 'hr_officer';
+    const known: readonly string[] = [
+      'system_admin',
+      'hr_manager',
+      'hr_officer',
+      'sales_manager',
+      'sales_officer',
+      'operations_manager',
+      'operations_officer',
+      'operation_manager',
+      'operation_officer',
+      'accounting_manager',
+      'accounting_officer',
+      'store_manager',
+      'store_officer',
+      'client_user',
+    ];
+    if (known.includes(pk)) return pk;
+  }
+
   return null;
 }
 

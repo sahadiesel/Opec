@@ -153,6 +153,14 @@ service cloud.firestore {
       return hasAnyAssignedRole([role]);
     }
 
+    /** HR + payroll + ทะเบียนคนงาน — รวมผู้จัดการปฏิบัติการที่คุมแผนกบุคคลร่วม */
+    function hasOperationHrPayrollRole() {
+      return hasAnyAssignedRole([
+        'hr_manager', 'hr_officer', 'payroll_officer',
+        'operations_manager', 'operation_manager',
+      ]);
+    }
+
     function isEligibleInternalUser() {
       return isSignedIn() && userExists() && isActiveUser() && isInternalUser();
     }
@@ -319,8 +327,7 @@ service cloud.firestore {
 
     function canManageWorkers() {
       return canManageSystem()
-        || (isEligibleInternalUser() && !isStoreOfficer()
-          && hasAnyAssignedRole(['hr_manager', 'hr_officer']));
+        || (isEligibleInternalUser() && !isStoreOfficer() && hasOperationHrPayrollRole());
     }
 
     function canDeleteWorkers() {
@@ -332,13 +339,27 @@ service cloud.firestore {
       return canManageSystem()
         || (isEligibleInternalUser() && !isStoreOfficer()
           && userDepartmentGroup() != 'accounting'
-          && hasAnyAssignedRole(['hr_manager', 'hr_officer', 'payroll_officer']));
+          && hasOperationHrPayrollRole());
     }
 
     function canManagePayrollFinancial() {
       return canManageSystem()
         || (isEligibleInternalUser()
           && hasAnyAssignedRole(['accounting_manager', 'accounting_officer']));
+    }
+
+    /**
+     * อ่านบรรทัด payroll (collectionGroup('lines') / สลิป) — ไม่ตัดกลุ่มบัญชี
+     * แยกจาก canManagePayrollOperational ที่ห้าม accounting แก้ operational data
+     */
+    function canReadPayrollLinesForSlips() {
+      return canManageSystem()
+        || (isEligibleInternalUser() && !isStoreOfficer() && hasOperationHrPayrollRole())
+        || (isSignedIn() && userExists() && isActiveUser() && !isCustomerPortalUser() && !isStoreOfficer()
+          && permissionProfileDocHasAnyRole([
+            'hr_manager', 'hr_officer', 'payroll_officer',
+            'operations_manager', 'operation_manager',
+          ]));
     }
 
     /** @deprecated use canManagePayrollOperational — kept for non-refactored rules */
@@ -501,6 +522,12 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/sales_contract_terms/$(m.salesContractTermId)).data.status == 'ACTIVE';
     }
 
+    function mobilizationOverlapFieldValid() {
+      let m = request.resource.data;
+      return m.keys().hasAll(['readinessSummary'])
+        && m.readinessSummary.overlapClear == 'pass';
+    }
+
     // -------------------------------------------------------------------------
     // USERS
     // -------------------------------------------------------------------------
@@ -564,7 +591,9 @@ service cloud.firestore {
 
     match /mobilizations/{id} {
       allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow create: if canAccessOperations() && mobilizationCreateHasValidSalesTerm();
+      allow create: if canAccessOperations()
+        && mobilizationCreateHasValidSalesTerm()
+        && mobilizationOverlapFieldValid();
       allow update, delete: if canAccessOperations();
     }
 
@@ -600,12 +629,12 @@ service cloud.firestore {
     }
 
     match /payroll_runs/{id} {
-      allow read: if canReadInternalData();
+      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
       allow write: if canManagePayrollOperational() || canManagePayrollFinancial();
     }
 
     match /payroll_batches/{id} {
-      allow read: if canReadInternalData();
+      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
       allow create: if canManagePayrollOperational();
       allow update: if canManageSystem()
         || (canManagePayrollOperational() && !payrollBatchFinanciallyLocked(resource.data))
@@ -633,7 +662,7 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{id} {
-      allow read: if canReadInternalData();
+      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
       allow create: if canManagePayrollOperational() || canManageSystem();
       allow update: if canManageSystem()
         || (canManagePayrollOperational() && !officePayrollRunFrozen(resource.data))
@@ -895,7 +924,7 @@ service cloud.firestore {
      * (recursive {document=**} ใต้ batch/run บางกรณีไม่ครอบคลุม list แบบ collection group)
      */
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read: if canReadInternalData() || canManagePayrollFinancial();
+      allow read: if canReadInternalData() || canManagePayrollFinancial() || canReadPayrollLinesForSlips();
       allow write: if canManageSystem()
         || (canManagePayrollOperational()
             && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
@@ -904,7 +933,7 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if canReadInternalData() || canManagePayrollFinancial();
+      allow read: if canReadInternalData() || canManagePayrollFinancial() || canReadPayrollLinesForSlips();
       allow write: if canManageSystem()
         || (canManagePayrollOperational()
             && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
@@ -918,7 +947,7 @@ service cloud.firestore {
     }
 
     match /payroll_batches/{batchId}/{document=**} {
-      allow read: if canReadInternalData();
+      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
       allow write: if canManageSystem()
         || (canManagePayrollOperational()
             && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
@@ -927,7 +956,7 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{runId}/{document=**} {
-      allow read: if canReadInternalData();
+      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
       allow write: if canManageSystem()
         || (canManagePayrollOperational()
             && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))

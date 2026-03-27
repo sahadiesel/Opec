@@ -151,10 +151,21 @@ export default function PermissionMatrixPage() {
 
         <Alert className="border-amber-200 bg-amber-50 text-amber-900">
           <Info className="h-4 w-4" />
-          <AlertTitle>แหล่งสิทธิ์หลักถูกเปลี่ยนแนวทางแล้ว</AlertTitle>
-          <AlertDescription>
-            Internal access ควรถูกควบคุมจาก user record ตามแนวทาง accessGroup / accessLevel / allowedModules
-            หน้านี้เหลือไว้เพื่อดูข้อมูล profile เดิม และกู้คืน baseline ในช่วงเปลี่ยนผ่านเท่านั้น
+          <AlertTitle>ทำไมแก้เมทริกซ์แล้ว “ไม่มีผล”</AlertTitle>
+          <AlertDescription className="space-y-2 text-sm">
+            <p>
+              การเข้าถึงข้อมูลจริงใน Firestore ใช้บทบาทแบบ RBAC (เช่น <code className="text-xs">hr_manager</code>) จาก
+              เอกสารผู้ใช้และฟิลด์ <code className="text-xs">primaryRoleTemplateKey</code> ในโปรไฟล์ — ไม่ได้อ่านทุกช่องใน
+              ตารางเมทริกซ์ทีละโมดูล
+            </p>
+            <p>
+              <strong>ให้ทำที่เมนูจัดการผู้ใช้</strong> เลือกโปรไฟล์หรือบทบาท แล้วบันทึก (สถานะ ACTIVE) จากนั้นให้ผู้ใช้คนนั้น{' '}
+              <strong>ออกจากระบบแล้วเข้าใหม่</strong> เพื่อให้เครื่องโหลดสิทธิ์ล่าสุด
+            </p>
+            <p className="text-muted-foreground">
+              หน้านี้ใช้กู้คืน baseline และดูสรุปโปรไฟล์ — แก้รายละเอียดโมดูลหลักได้ที่ &quot;จัดการสิทธิ์การใช้งาน (Permission
+              Profiles)&quot;
+            </p>
           </AlertDescription>
         </Alert>
 

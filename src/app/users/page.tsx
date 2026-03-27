@@ -79,6 +79,39 @@ import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
+/** แปลง baseline partial → โปรไฟล์สำหรับกรองสิทธิ์ / บันทึก user เมื่อยังไม่มี doc ใน Firestore */
+function permissionProfileFromBaseline(p: Partial<PermissionProfile>): PermissionProfile {
+  const key = p.profileKey!;
+  return {
+    id: key,
+    profileKey: key,
+    profileNameTh: p.profileNameTh ?? p.profileNameEn ?? key,
+    profileNameEn: p.profileNameEn ?? key,
+    departmentGroup: p.departmentGroup,
+    department: p.department,
+    level: p.level ?? 'viewer',
+    primaryRoleTemplateKey: p.primaryRoleTemplateKey,
+    isActive: p.isActive !== false,
+    permissions: p.permissions ?? {},
+    updatedAt: p.updatedAt ?? Date.now(),
+    updatedBy: p.updatedBy ?? 'baseline',
+    createdAt: p.createdAt,
+    createdBy: p.createdBy,
+    notes: p.notes,
+  };
+}
+
+function resolvePermissionProfileForKey(
+  profileKey: string,
+  loadedProfiles: PermissionProfile[] | null | undefined
+): PermissionProfile | null {
+  const fromDb = loadedProfiles?.find((x) => x.profileKey === profileKey);
+  if (fromDb) return fromDb;
+  const raw = getBaselineProfiles().find((x) => x.profileKey === profileKey);
+  if (!raw?.profileKey) return null;
+  return permissionProfileFromBaseline(raw);
+}
+
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
@@ -120,8 +153,23 @@ export default function UsersPage() {
   const { data: profiles } = useCollection<PermissionProfile>(profilesQuery as any);
 
   const eligibleProfilesForSelected = useMemo(() => {
-    if (!profiles || !selectedUser) return [];
-    return profiles.filter((p) => profileAllowedForTargetUser(p, selectedUser));
+    if (!selectedUser) return [];
+    const fromDb = profiles ?? [];
+    const byKey = new Map<string, PermissionProfile>();
+
+    for (const raw of getBaselineProfiles()) {
+      if (!raw.profileKey) continue;
+      const stub = permissionProfileFromBaseline(raw);
+      if (profileAllowedForTargetUser(stub, selectedUser)) {
+        byKey.set(raw.profileKey, stub);
+      }
+    }
+    for (const p of fromDb) {
+      if (p.profileKey && profileAllowedForTargetUser(p, selectedUser)) {
+        byKey.set(p.profileKey, p);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.profileKey.localeCompare(b.profileKey));
   }, [profiles, selectedUser]);
 
   const pendingCount = useMemo(
@@ -221,8 +269,8 @@ export default function UsersPage() {
       if (isUserAdmin) {
         let authPartial: Partial<User> = {};
 
-        if (editedProfileKey && profiles) {
-          const profile = profiles.find((p) => p.profileKey === editedProfileKey);
+        if (editedProfileKey) {
+          const profile = resolvePermissionProfileForKey(editedProfileKey, profiles);
           if (!profile) {
             toast({ variant: 'destructive', title: 'ไม่พบโปรไฟล์', description: editedProfileKey });
             setIsSaving(false);
@@ -273,9 +321,9 @@ export default function UsersPage() {
         setIsSaving(false);
         setIsEditDialogOpen(false);
         setSelectedUser(null);
-        toast({ 
-          title: "บันทึกข้อมูลสำเร็จ (Saved)", 
-          description: `อัปเดตข้อมูลของ ${selectedUser.displayName} เรียบร้อยแล้ว` 
+        toast({
+          title: 'บันทึกข้อมูลสำเร็จ (Saved)',
+          description: `อัปเดตข้อมูลของ ${selectedUser.displayName} แล้ว — แนะนำให้ผู้ใช้คนนั้นออกจากระบบแล้วเข้าใหม่ (หรือรีเฟรช) เพื่อให้สิทธิ์ในเครื่องตรงกับฐานข้อมูล`,
         });
       }, 150);
 
@@ -564,7 +612,7 @@ export default function UsersPage() {
                         return;
                       }
                       setEditedProfileKey(v);
-                      const prof = profiles?.find((p) => p.profileKey === v);
+                      const prof = resolvePermissionProfileForKey(v, profiles);
                       if (prof) {
                         setEditedRole(deriveBusinessRoleKeyFromPermissionProfile(prof));
                       }

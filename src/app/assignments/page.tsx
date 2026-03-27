@@ -47,6 +47,7 @@ import { Label } from '@/components/ui/label';
 import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/services/assignment-overlap';
 
 export default function AssignmentsPage() {
   const router = useRouter();
@@ -93,6 +94,19 @@ export default function AssignmentsPage() {
   );
   const { data: allSalesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
 
+  const occupiedWorkerIds = useMemo(
+    () => getOccupiedWorkerIds(assignments || []),
+    [assignments],
+  );
+
+  const availableWorkers = useMemo(
+    () =>
+      (allWorkers || []).filter(
+        (w) => w.readinessStatus === 'READY' && !occupiedWorkerIds.has(w.id),
+      ),
+    [allWorkers, occupiedWorkerIds],
+  );
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
@@ -137,6 +151,23 @@ export default function AssignmentsPage() {
       return;
     }
 
+    // 3. Overlap / Double-assignment Check
+    const overlap = checkWorkerAssignmentOverlap(
+      assignments || [],
+      selectedWorkerId,
+      startDate,
+      endDate,
+    );
+    if (overlap.hasOverlap) {
+      const first = overlap.blockingAssignments[0];
+      toast({
+        variant: 'destructive',
+        title: 'คนงานมีงานมอบหมายอยู่แล้ว (Already Assigned)',
+        description: `${worker.firstName} ${worker.lastName} ถูกมอบหมายอยู่ในโครงการ "${first.projectName}" (${first.assignmentNo}) ช่วง ${first.startDate} – ${first.endDate} ต้องรอจบภารกิจ (Demobilize/Close) ก่อนมอบหมายใหม่`,
+      });
+      return;
+    }
+
     // Resolve Context from PO, PO Line and Position Matrix
     const po = allPOs?.find(p => p.id === wave.poId);
     if (po && (po.poType || 'contract') === 'quotation') {
@@ -153,10 +184,11 @@ export default function AssignmentsPage() {
     const position = allPositions?.find(p => p.id === targetPositionId);
     const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
 
-    // 3. Position Suitability Check
+    // 4. Position Suitability Check
     if (worker.currentPositionId !== targetPositionId) {
-      const targetPosName = position?.positionNameTh || targetPositionId;
-      const workerPosName = allPositions?.find(p => p.id === worker.currentPositionId)?.positionNameTh || worker.currentPositionId;
+      const targetPosName = position?.positionName || position?.positionNameTh || targetPositionId;
+      const workerPos = allPositions?.find((p) => p.id === worker.currentPositionId);
+      const workerPosName = (workerPos?.positionName || workerPos?.positionNameTh) || worker.currentPositionId;
       toast({ 
         variant: "destructive", 
         title: "ตำแหน่งงานไม่ตรงกัน", 
@@ -218,7 +250,7 @@ export default function AssignmentsPage() {
           fitToWork: 'pass',
           ppeIssued: 'missing',
           toolsIssued: 'missing',
-          overlapClear: 'pass',
+          overlapClear: overlap.hasOverlap ? 'fail' : 'pass',
           clientApproved: 'missing'
         },
         notes: notes,
@@ -279,7 +311,7 @@ export default function AssignmentsPage() {
               <ShieldAlert className="h-5 w-5 text-amber-600" />
               <AlertTitle className="font-bold">นโยบายความเหมาะสม (Suitability Policy)</AlertTitle>
               <AlertDescription className="text-sm">
-                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b> และ <b>สถานะความพร้อม (Readiness)</b> โดยอัตโนมัติ ห้ามมอบหมายคนงานที่มีสถานะไม่พร้อมหรือตำแหน่งไม่ตรงตามใบสั่งซื้อ
+                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b>, <b>สถานะความพร้อม (Readiness)</b> และ <b>การซ้อนงาน (Overlap)</b> โดยอัตโนมัติ — ห้ามมอบหมายคนงานที่ไม่พร้อม ตำแหน่งไม่ตรง หรือกำลังปฏิบัติงานในเวฟอื่นอยู่
               </AlertDescription>
             </Alert>
 
@@ -317,14 +349,14 @@ export default function AssignmentsPage() {
                     <div className="space-y-2 md:col-span-2">
                       <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
                       <Select onValueChange={setSelectedWorkerId}>
-                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงานที่พร้อม (Ready)..." /></SelectTrigger>
+                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงานที่ว่างและพร้อม..." /></SelectTrigger>
                         <SelectContent>
-                          {allWorkers?.filter(w => w.readinessStatus === 'READY').map(w => (
+                          {availableWorkers.map(w => (
                             <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className="text-[10px] text-muted-foreground italic">* แสดงเฉพาะคนงานที่มีสถานะ READY เท่านั้น</p>
+                      <p className="text-[10px] text-muted-foreground italic">* แสดงเฉพาะคนงาน READY ที่ยังไม่มีงานมอบหมายซ้อน — คนที่ถูก Assign อยู่จะไม่ปรากฏจนกว่าจะ Demobilize/Close</p>
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>

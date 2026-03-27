@@ -982,7 +982,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                             <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
                             <SelectContent>
                               {allPositions?.map(p => (
-                                <SelectItem key={p.id} value={p.id}>{p.positionNameTh}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -1113,7 +1113,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       const pos = allPositions?.find(p => p.id === r.positionId);
                       return (
                         <TableRow key={r.id}>
-                          <TableCell className="font-semibold text-primary">{pos?.positionNameTh || r.positionId}</TableCell>
+                          <TableCell className="font-semibold text-primary">{(pos?.positionName || pos?.positionNameTh) || r.positionId}</TableCell>
                           <TableCell className="text-green-600 font-bold">{contract.currency} {r.sellRate.toLocaleString()}</TableCell>
                           {canViewCostFields && <TableCell className="text-muted-foreground">{contract.currency} {r.costBaseline.toLocaleString()}</TableCell>}
                           <TableCell>{r.normalWorkHours || 8} ชม.</TableCell>

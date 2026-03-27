@@ -57,6 +57,7 @@ function resolvePersona(u: User | null): 'admin' | 'hr_manager' | 'hr_officer' |
 
   if (role === 'hr_manager') return 'hr_manager';
   if (role === 'hr_officer' || role === 'payroll_officer') return 'hr_officer';
+  if (role === 'operations_manager' || role === 'operation_manager') return 'hr_manager';
   if (dept === 'hr' && level === 'manager') return 'hr_manager';
   if (dept === 'hr' && (level === 'officer' || level === 'viewer')) return 'hr_officer';
 
@@ -106,7 +107,9 @@ export function resolvePayrollMatrixDecision(
       return 'deny';
     }
     if (resource === 'payroll_office') {
-      return action === 'view' ? 'allow' : 'deny';
+      if (['view', 'create', 'edit', 'submit'].includes(action)) return 'allow';
+      if (action === 'approve' || action === 'lock' || action === 'finance_approve') return 'deny';
+      return 'deny';
     }
     if (resource === 'policy') return action === 'view' ? 'allow' : 'deny';
     if (resource === 'worker' || resource === 'office_staff') return action === 'view' ? 'allow' : 'deny';

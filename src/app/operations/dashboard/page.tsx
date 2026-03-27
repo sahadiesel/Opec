@@ -38,7 +38,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
-import { isOperationsStaff, isStoreOfficer } from '@/lib/permissions';
+import { canSeeOperationsPillarUi } from '@/lib/permissions';
+import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function OperationsDashboardPage() {
@@ -52,10 +53,14 @@ export default function OperationsDashboardPage() {
   }, []);
 
   const isOperationsAuthorized = useMemo(() => {
-    return isOperationsStaff(currentUser);
+    return isSystemAdmin(currentUser) || canSeeOperationsPillarUi(currentUser, null);
   }, [currentUser]);
 
-  const viewerOnly = useMemo(() => isStoreOfficer(currentUser), [currentUser]);
+  const viewerOnly = useMemo(() => {
+    if (!currentUser || isSystemAdmin(currentUser)) return false;
+    const level = getEffectiveAccessLevel(currentUser);
+    return level === 'officer' || level === 'viewer';
+  }, [currentUser]);
 
   // --- Operations Data Queries ---
   
@@ -184,7 +189,7 @@ export default function OperationsDashboardPage() {
             <Info className="h-4 w-4 text-amber-700" />
             <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
             <AlertDescription>
-              บทบาทเจ้าหน้าที่คลังสามารถดูภาพรวมและคิวงานได้เท่านั้น ไม่สามารถเปิดหน้าทำงานปฏิบัติการหรือแก้ไขข้อมูลจากที่นี่ได้
+              บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมได้เท่านั้น — แก้ไขและอนุมัติจากเมนูที่ได้รับสิทธิ์
             </AlertDescription>
           </Alert>
         )}

@@ -23,7 +23,7 @@ import {
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { BillingNote, BillingNoteStatus, User, Customer, MainContract, PurchaseOrder } from '@/lib/types';
+import { BillingNote, BillingNoteStatus, User, Customer, MainContract, PurchaseOrder, Wave, SalesContractTerm, Quotation } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, where } from 'firebase/firestore';
@@ -102,6 +102,16 @@ export default function BillingNotesPage() {
   const poQuery = useMemoFirebase(() => (firestore && newNote.customerId ? query(collection(firestore, 'purchase_orders'), where('customerId', '==', newNote.customerId)) : null), [firestore, newNote.customerId]);
   const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
 
+  const wavesQuery = useMemoFirebase(() => (firestore && newNote.poId ? query(collection(firestore, 'waves'), where('poId', '==', newNote.poId)) : null), [firestore, newNote.poId]);
+  const { data: waves } = useCollection<Wave>(wavesQuery as any);
+
+  const salesTermsQuery = useMemoFirebase(() => (firestore && newNote.poId ? query(collection(firestore, 'sales_contract_terms'), where('purchaseOrderId', '==', newNote.poId), where('status', '==', 'ACTIVE')) : null), [firestore, newNote.poId]);
+  const { data: salesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
+
+  const selectedPo = pos?.find(p => p.id === newNote.poId);
+  const quotationsQuery = useMemoFirebase(() => (firestore && selectedPo?.quotationId ? query(collection(firestore, 'quotations'), where('__name__', '==', selectedPo.quotationId)) : null), [firestore, selectedPo?.quotationId]);
+  const { data: quotations } = useCollection<Quotation>(quotationsQuery as any);
+
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     if (!newNote.customerId) {
@@ -131,12 +141,19 @@ export default function BillingNotesPage() {
         newNote.billingPeriodEnd ||
         (linkedPo ? timestampToHtmlDateValue(linkedPo.endDate) : timestampToHtmlDateValue(Date.now()));
 
-      const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), {
+      // Resolve vatPercent from source chain: SalesTerm > Quotation > default 7
+      const activeSalesTerm = salesTerms?.[0];
+      const linkedQuotation = quotations?.[0];
+      const vatPercent = activeSalesTerm?.vatPercent ?? linkedQuotation?.taxPercent ?? 7;
+
+      const payload: Record<string, unknown> = {
         ...newNote,
         billingNoteNo: finalNo,
         contractId: linkedPo?.contractId || newNote.contractId || '',
+        quotationId: linkedPo?.quotationId || '',
         billingPeriodStart: periodStart,
         billingPeriodEnd: periodEnd,
+        vatPercent,
         amountBeforeTax: 0,
         vatAmount: 0,
         withholdingTaxAmount: 0,
@@ -144,8 +161,10 @@ export default function BillingNotesPage() {
         createdAt: Date.now(),
         createdBy: currentUser.displayName,
         updatedAt: Date.now(),
-        updatedBy: currentUser.displayName
-      });
+        updatedBy: currentUser.displayName,
+      };
+      if (newNote.waveId) payload.waveId = newNote.waveId;
+      const docRef = await addDocumentNonBlocking(collection(firestore, 'billing_notes'), payload);
 
       setIsDialogOpen(false);
       toast({ title: "สร้างใบวางบิลสำเร็จ", description: `เลขที่เอกสาร: ${finalNo}` });
@@ -163,6 +182,7 @@ export default function BillingNotesPage() {
       case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
       case 'ISSUED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">ISSUED</Badge>;
       case 'SUBMITTED': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">SUBMITTED</Badge>;
+      case 'INVOICED': return <Badge className="bg-indigo-600">INVOICED</Badge>;
       case 'PARTIALLY_PAID': return <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">PARTIALLY PAID</Badge>;
       case 'PAID': return <Badge className="bg-green-600">PAID</Badge>;
       case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
@@ -266,6 +286,24 @@ export default function BillingNotesPage() {
                   </Select>
                   <p className="text-[10px] text-muted-foreground">ทุกใบวางบิลต้องผูก PO เหมือนสายสัญญาและสายใบเสนอราคา</p>
                 </div>
+                {waves && waves.length > 0 && (
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="flex items-center gap-1">เวฟ (Wave) — ไม่บังคับ</Label>
+                    <Select
+                      onValueChange={(v) => setNewNote({ ...newNote, waveId: v === '__none__' ? undefined : v })}
+                      value={newNote.waveId || '__none__'}
+                    >
+                      <SelectTrigger><SelectValue placeholder="ทั้งหมด (All Waves)" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">ทั้งหมด (All Waves)</SelectItem>
+                        {waves.map((w) => (
+                          <SelectItem key={w.id} value={w.id}>{w.waveCode} — {w.projectName}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[10px] text-muted-foreground">เลือกเวฟเพื่อแยกใบวางบิลตามล็อตงาน ไม่เลือก = รวมทุกเวฟ</p>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label>วันที่วางบิล (Billing Date)</Label>
                   <DatePickerThaiBE

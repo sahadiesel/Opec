@@ -157,6 +157,29 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
 
   const handleSave = async () => {
     if (!firestore || !canEdit) return;
+
+    const method = formData.calculationMethod;
+    const base = Number(formData.baseRate ?? 0);
+    const fixed = Number(formData.fixedAmount ?? 0);
+
+    if ((method === 'MULTIPLIER' || method === 'PERCENTAGE' || method === 'FORMULA') && base === 0) {
+      const proceed = confirm(
+        `คุณเลือกวิธีคำนวณ "${method}" แต่ Base Rate = 0\n\n` +
+        `ผลคำนวณจะเป็น 0 บาทเสมอ (0 × ตัวคูณ = 0)\n\n` +
+        `ต้องการบันทึกต่อหรือไม่? (กดยกเลิกเพื่อกลับไปแก้ไข Base Rate)`,
+      );
+      if (!proceed) return;
+    }
+
+    if ((method === 'FIXED' || method === 'FLAT') && base === 0 && fixed === 0) {
+      const proceed = confirm(
+        `คุณเลือกวิธีคำนวณ "${method}" แต่ทั้ง Base Rate และ Fixed Amount = 0\n\n` +
+        `ผลคำนวณจะเป็น 0 บาทเสมอ\n\n` +
+        `ต้องการบันทึกต่อหรือไม่?`,
+      );
+      if (!proceed) return;
+    }
+
     setIsSaving(true);
 
     try {
@@ -292,7 +315,7 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
                         <div className="flex flex-wrap gap-1">
                           {c.workMode === 'OFFSHORE' && <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200"><Anchor className="h-2 w-2 mr-1" /> Offshore</Badge>}
                           {c.workMode === 'ONSHORE' && <Badge variant="outline" className="text-[9px] bg-green-50 text-green-700 border-green-200"><Globe className="h-2 w-2 mr-1" /> Onshore</Badge>}
-                          {pos && <Badge variant="outline" className="text-[9px]"><Briefcase className="h-2 w-2 mr-1" /> {pos.positionNameTh}</Badge>}
+                          {pos && <Badge variant="outline" className="text-[9px]"><Briefcase className="h-2 w-2 mr-1" /> {pos.positionName || pos.positionNameTh}</Badge>}
                           {!pos && !c.workMode && <span className="text-[10px] text-muted-foreground italic">General</span>}
                         </div>
                       </TableCell>
@@ -378,7 +401,7 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
                   <SelectContent>
                     <SelectItem value="all">-- ทุกตำแหน่ง --</SelectItem>
                     {allPositions?.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.positionNameTh}</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

@@ -490,7 +490,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                             <SelectItem value="__none__">— เลือกตำแหน่ง —</SelectItem>
                             {allPositions?.map((p) => (
                               <SelectItem key={p.id} value={p.id}>
-                                {p.positionNameTh}
+                                {p.positionName || p.positionNameTh}
                               </SelectItem>
                             ))}
                           </SelectContent>

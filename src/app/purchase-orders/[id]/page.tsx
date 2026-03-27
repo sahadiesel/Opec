@@ -202,6 +202,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     let costBaselineSnapshot = Number(newLine.costBaselineSnapshot) || 0;
     let billingUnitSnapshot = newLine.billingUnitSnapshot || 'daily';
     let overtimeRuleSnapshot = newLine.overtimeRuleSnapshot || '1.5x of Hourly Rate';
+    let sellOtRulesSnapshot: Record<string, number> | undefined;
+    let costOtRulesSnapshot: Record<string, number> | undefined;
+    let normalWorkHoursSnapshot: number | undefined;
 
     if (isContractBasedPO) {
       const rate = rates?.find(r => r.positionId === newLine.positionId);
@@ -213,11 +216,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       costBaselineSnapshot = Number(rate.costBaseline) || 0;
       billingUnitSnapshot = rate.billingUnit || 'daily';
       overtimeRuleSnapshot = rate.overtimeRule || '1.5x of Hourly Rate';
+      if (rate.sellOtRules) sellOtRulesSnapshot = { ...rate.sellOtRules };
+      if (rate.costOtRules) costOtRulesSnapshot = { ...rate.costOtRules };
+      if (rate.normalWorkHours) normalWorkHoursSnapshot = rate.normalWorkHours;
     }
 
     setIsAddingLine(true);
     try {
-      const lineRef = await addDoc(poLinesQuery, {
+      const linePayload: Record<string, unknown> = {
         poId: id,
         positionId: newLine.positionId,
         quantity: Number(newLine.quantity) || 1,
@@ -227,8 +233,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         costBaselineSnapshot,
         billingUnitSnapshot,
         overtimeRuleSnapshot,
-        status: 'active'
-      });
+        status: 'active',
+      };
+      if (sellOtRulesSnapshot) linePayload.sellOtRulesSnapshot = sellOtRulesSnapshot;
+      if (costOtRulesSnapshot) linePayload.costOtRulesSnapshot = costOtRulesSnapshot;
+      if (normalWorkHoursSnapshot) linePayload.normalWorkHoursSnapshot = normalWorkHoursSnapshot;
+      const lineRef = await addDoc(poLinesQuery, linePayload);
       const lineId = lineRef.id;
 
       if (isContractBasedPO) {
@@ -552,10 +562,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             {isContractBasedPO
                               ? rates?.map(r => {
                                   const p = allPositions?.find(pos => pos.id === r.positionId);
-                                  return <SelectItem key={r.id} value={r.positionId}>{p?.positionNameTh || r.positionId}</SelectItem>;
+                                  return <SelectItem key={r.id} value={r.positionId}>{(p?.positionName || p?.positionNameTh) || r.positionId}</SelectItem>;
                                 })
                               : allPositions?.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>{p.positionNameTh}</SelectItem>
+                                  <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
                                 ))}
                           </SelectContent>
                         </Select>
@@ -640,7 +650,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                         <TableRow key={line.id} className="hover:bg-muted/10 transition-colors">
                           <TableCell className="pl-6 py-4">
                             <div className="flex flex-col">
-                              <span className="font-bold text-primary">{pos?.positionNameTh || line.positionId}</span>
+                              <span className="font-bold text-primary">{(pos?.positionName || pos?.positionNameTh) || line.positionId}</span>
                               <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
                                 <Calendar className="h-2.5 w-2.5" />
                                 {new Date(line.startDate).toLocaleDateString('th-TH')} - {new Date(line.endDate).toLocaleDateString('th-TH')}
@@ -881,7 +891,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline" className="text-[10px] font-bold bg-white">{pos?.positionNameTh || asgn.positionId}</Badge>
+                              <Badge variant="outline" className="text-[10px] font-bold bg-white">{(pos?.positionName || pos?.positionNameTh) || asgn.positionId}</Badge>
                             </TableCell>
                             <TableCell className="text-xs font-medium">
                               {asgn.startDate} - {asgn.endDate}

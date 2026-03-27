@@ -180,11 +180,11 @@ export const NO_ACCESS: ModulePermission = {
  * Modules restricted to Managers and Admins only.
  * Officers and Viewers will be denied access regardless of group allowedModules.
  */
+/** โมดูลที่ officer ทำรายการเองไม่ได้ — ไม่รวม office_payroll เพื่อให้ hr_officer ทำงานสิ้นเดือนได้ */
 const MANAGEMENT_ONLY_MODULES = new Set<ModuleKey>([
   'main_contracts',
   'sales_contract_terms',
   'labor_cost_contract_terms',
-  'office_payroll',
   'executive_payroll',
 ]);
 
@@ -228,6 +228,14 @@ const OPERATIONS_MODULES: readonly ModuleKey[] = ['waves', 'assignments', 'mobil
 
 const STORE_MODULES: readonly ModuleKey[] = ['vendors', 'purchases', 'store_inventory'];
 
+/** ทุกแผนกภายใต้กลุ่ม operation (ขาย / บุคคล / ปฏิบัติการ / คลัง) */
+const ALL_OPERATION_PILLAR_MODULES: readonly ModuleKey[] = [
+  ...SALES_MODULES,
+  ...HR_MODULES,
+  ...OPERATIONS_MODULES,
+  ...STORE_MODULES,
+];
+
 const ACCOUNTING_MODULES: readonly ModuleKey[] = [
   'billing_notes',
   'tax_invoices',
@@ -258,29 +266,61 @@ const OPERATION_GROUP_MODULES = new Set<ModuleKey>([
   ...OPERATIONS_MODULES,
 ]);
 
+/** Officer ทุกคนไม่ approve — ใช้กับกลุ่ม operation (และ accounting officer ด้านล่าง) */
+const OFFICER_NO_APPROVE: ModulePermission = {
+  ...OFFICER_ACCESS,
+  approve: false,
+};
+
+const VIEWER_NO_APPROVE: ModulePermission = {
+  ...READ_ONLY,
+  approve: false,
+};
+
 /**
- * Managers across Commercial / HR & Payroll / Operations (and store, under Ops nav)
- * share the same module envelope: all operation-side pillars + store, never accounting or admin-only keys.
+ * ชุดเมนูตามบทบาท (กลุ่ม Operation — แผนกขาย / บุคคล / ปฏิบัติการ / คลัง)
+ * hr_manager = ทุกแผนก; sales_manager = ขาย+ปฏิบัติการ; operation(s)_manager = ปฏิบัติการ+บุคคล;
+ * hr_officer = บุคคลทั้งหมด; store_* = คลัง+จัดซื้อ
  */
-const CROSS_PILLAR_OPERATION_MANAGER_ROLES = new Set<string>([
-  'sales_manager',
-  'hr_manager',
-  'operations_manager',
-  'operation_manager',
-  'store_manager',
-]);
+function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleKey> {
+  if (!primaryRole) {
+    return new Set<ModuleKey>(OPERATION_GROUP_MODULES);
+  }
+  if (primaryRole === 'hr_manager') {
+    return new Set<ModuleKey>(ALL_OPERATION_PILLAR_MODULES);
+  }
+  if (primaryRole === 'sales_manager') {
+    return new Set<ModuleKey>([...SALES_MODULES, ...OPERATIONS_MODULES]);
+  }
+  if (primaryRole === 'operations_manager' || primaryRole === 'operation_manager') {
+    return new Set<ModuleKey>([...OPERATIONS_MODULES, ...HR_MODULES]);
+  }
+  if (primaryRole === 'hr_officer' || primaryRole === 'payroll_officer') {
+    return new Set<ModuleKey>(HR_MODULES);
+  }
+  if (primaryRole === 'store_officer' || primaryRole === 'store_manager') {
+    return new Set<ModuleKey>(STORE_MODULES);
+  }
+  if (primaryRole === 'sales_officer') {
+    return new Set<ModuleKey>(SALES_MODULES);
+  }
+  if (
+    primaryRole === 'operations_officer' ||
+    primaryRole === 'operation_officer'
+  ) {
+    return new Set<ModuleKey>(OPERATIONS_MODULES);
+  }
+  /* legacy / ยังไม่ระบุบทบาทชัด — เปิดชุดเดิมทั้งกลุ่ม operation */
+  return new Set<ModuleKey>(OPERATION_GROUP_MODULES);
+}
 
-function isCrossPillarOperationManager(user: User | null): boolean {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return false;
-  if (getEffectiveAccessGroup(u) !== 'operation') return false;
-  if (getEffectiveAccessLevel(u) !== 'manager') return false;
-
-  const pr = getPrimaryLegacyRole(u);
-  if (pr && CROSS_PILLAR_OPERATION_MANAGER_ROLES.has(pr)) return true;
-
-  const d = u.department;
-  return d === 'sales' || d === 'hr' || d === 'operations' || d === 'store';
+/** ผู้จัดการที่ควรเข้า office_payroll ในกลุ่ม operation (มีแผนกบุคคล) */
+function operationManagerMayOfficePayroll(primaryRole: string | null): boolean {
+  return (
+    primaryRole === 'hr_manager' ||
+    primaryRole === 'operations_manager' ||
+    primaryRole === 'operation_manager'
+  );
 }
 
 /** Store officer: เฉพาะคลัง/จัดซื้อ (vendors, purchases, store_inventory) — ไม่รวมขาย/HR/ปฏิบัติการอื่น */
@@ -295,21 +335,31 @@ export function isStoreOfficer(user: User | null): boolean {
 }
 
 function getOperationGroupModules(user: User | null): Set<ModuleKey> {
-  const base = new Set<ModuleKey>(OPERATION_GROUP_MODULES);
   const normalized = normalizeCurrentUserPermissions(user);
-  if (!normalized) return base;
+  if (!normalized) {
+    return new Set<ModuleKey>(OPERATION_GROUP_MODULES);
+  }
 
   if (isStoreOfficer(normalized)) {
     return new Set<ModuleKey>(STORE_MODULES);
   }
 
-  if (isCrossPillarOperationManager(normalized)) {
-    const expanded = new Set<ModuleKey>(base);
-    STORE_MODULES.forEach((key) => expanded.add(key));
-    return expanded;
+  const pr = getPrimaryLegacyRole(normalized);
+  let set = operationModulesForPrimaryRole(pr);
+
+  /* ยัง map บทบาทไม่ได้แต่เป็น manager + แผนกรู้จัก — คลุมทุกแผนกเหมือน hr_manager ชั่วคราว */
+  if (
+    !pr &&
+    getEffectiveAccessLevel(normalized) === 'manager' &&
+    getEffectiveAccessGroup(normalized) === 'operation'
+  ) {
+    const d = normalized.department;
+    if (d === 'hr' || d === 'sales' || d === 'operations' || d === 'store') {
+      set = new Set<ModuleKey>(ALL_OPERATION_PILLAR_MODULES);
+    }
   }
 
-  return base;
+  return set;
 }
 
 /** Accounting group: can view operational scheduling for billing accuracy. */
@@ -338,22 +388,9 @@ function buildPermissionMap(
   }, {} as Record<string, ModulePermission>);
 }
 
-/** HR Officer baseline: คีย์ timesheet / เตรียม batch ได้ — ทะเบียนคน + อัตรา + office payroll ดูอย่างเดียว */
+/** HR Officer baseline: แผนกบุคคลทั้งหมด — officer ไม่ approve */
 function buildHrOfficerPermissionMap(): Record<string, ModulePermission> {
-  const base = buildPermissionMap(HR_MODULES, OFFICER_ACCESS);
-  const narrowReadOnly: Partial<Record<ModuleKey, ModulePermission>> = {
-    workers: READ_ONLY,
-    office_staff: READ_ONLY,
-    rate_conditions: READ_ONLY,
-    labor_cost_contract_terms: READ_ONLY,
-    office_payroll: READ_ONLY,
-    payment_export_batches: READ_ONLY,
-    hr_hub: READ_ONLY,
-  };
-  (Object.entries(narrowReadOnly) as [ModuleKey, ModulePermission][]).forEach(([key, perm]) => {
-    base[key] = clonePermission(perm);
-  });
-  return base;
+  return buildPermissionMap(HR_MODULES, OFFICER_NO_APPROVE);
 }
 
 /**
@@ -427,40 +464,39 @@ function hasResolvedModuleAccess(
   const level = getEffectiveAccessLevel(user);
   const u = normalizeCurrentUserPermissions(user);
 
-  /** เจ้าหน้าที่คลัง: แก้ไข/ลบ/อนุมัติใน vendors, purchases, store_inventory ได้เต็มที่ */
+  /** เจ้าหน้าที่คลัง: CRUD ใน store — ไม่ approve */
   if (u && isStoreOfficer(u) && STORE_MODULES.includes(moduleKey)) {
-    return clonePermission(FULL_ACCESS);
+    return clonePermission(OFFICER_NO_APPROVE);
   }
 
   if (level === 'admin' || level === 'manager') {
-    // Office payroll: sensitive; shared across Commercial/HR/Ops pillar managers, plus accounting managers.
-    if (moduleKey === 'office_payroll' && level === 'manager') {
+    if (moduleKey === 'office_payroll' && level === 'manager' && u) {
       const primaryRole = getPrimaryLegacyRole(u);
-      if (!isCrossPillarOperationManager(u) && primaryRole !== 'accounting_manager') {
+      const group = getEffectiveAccessGroup(u);
+      const accountingOk = primaryRole === 'accounting_manager';
+      const operationOk =
+        group === 'operation' && operationManagerMayOfficePayroll(primaryRole);
+      if (!accountingOk && !operationOk) {
         return clonePermission(NO_ACCESS);
       }
     }
     return clonePermission(FULL_ACCESS);
   }
-  
-  // BUSINESS RULE: Certain modules are strictly Manager/Admin only
+
   if (MANAGEMENT_ONLY_MODULES.has(moduleKey)) {
     return clonePermission(NO_ACCESS);
   }
 
-  if (level === 'viewer') return clonePermission(READ_ONLY);
+  if (level === 'viewer') return clonePermission(VIEWER_NO_APPROVE);
 
   const allowedModules = getAllowedModules(user);
 
-  // Transitional default:
-  // officer with no allowedModules yet = allow full group with officer capability,
-  // to prevent operational lockout during migration.
   if (allowedModules.length === 0) {
-    return clonePermission(OFFICER_ACCESS);
+    return clonePermission(OFFICER_NO_APPROVE);
   }
 
   return allowedModules.includes(moduleKey)
-    ? clonePermission(OFFICER_ACCESS)
+    ? clonePermission(OFFICER_NO_APPROVE)
     : clonePermission(NO_ACCESS);
 }
 
@@ -576,6 +612,85 @@ export const canDelete = (user: User | null, moduleKey: string, profile?: Permis
 export const canApprove = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
   getPermissions(user, moduleKey, profile).approve;
 
+/** แยก UI ตามแผนก (สอดคล้องชุดโมดูลตามบทบาท — ไม่ใช่ isOperationGroupMember ทั้งก้อน) */
+const HR_PILLAR_UI_KEYS: ModuleKey[] = [
+  'hr_hub',
+  'workers',
+  'worker_payroll',
+  'office_payroll',
+  'office_staff',
+  'timesheets',
+  'positions',
+  'labor_cost_contract_terms',
+  'payment_export_batches',
+];
+
+const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
+  'customers',
+  'quotations',
+  'main_contracts',
+  'customer_pos',
+  'rate_conditions',
+  'profit_estimates',
+];
+
+const OPS_PILLAR_UI_KEYS: ModuleKey[] = ['waves', 'assignments', 'mobilization'];
+
+const STORE_PILLAR_UI_KEYS: ModuleKey[] = ['vendors', 'purchases', 'store_inventory'];
+
+const ACCOUNTING_PILLAR_UI_KEYS: ModuleKey[] = [
+  'billing_notes',
+  'tax_invoices',
+  'receipts',
+  'ap_bills',
+  'accounts_receivable',
+  'accounts_payable',
+  'cashbook',
+  'bank_accounts',
+  'office_payroll',
+  'executive_payroll',
+];
+
+export function canSeeHrPillarUi(
+  user: User | null,
+  profile?: PermissionProfile | null
+): boolean {
+  if (!user) return false;
+  return HR_PILLAR_UI_KEYS.some((k) => canView(user, k, profile));
+}
+
+export function canSeeSalesPillarUi(
+  user: User | null,
+  profile?: PermissionProfile | null
+): boolean {
+  if (!user) return false;
+  return SALES_PILLAR_UI_KEYS.some((k) => canView(user, k, profile));
+}
+
+export function canSeeOperationsPillarUi(
+  user: User | null,
+  profile?: PermissionProfile | null
+): boolean {
+  if (!user) return false;
+  return OPS_PILLAR_UI_KEYS.some((k) => canView(user, k, profile));
+}
+
+export function canSeeStorePillarUi(
+  user: User | null,
+  profile?: PermissionProfile | null
+): boolean {
+  if (!user) return false;
+  return STORE_PILLAR_UI_KEYS.some((k) => canView(user, k, profile));
+}
+
+export function canSeeAccountingPillarUi(
+  user: User | null,
+  profile?: PermissionProfile | null
+): boolean {
+  if (!user) return false;
+  return ACCOUNTING_PILLAR_UI_KEYS.some((k) => canView(user, k, profile));
+}
+
 export function getBaselineProfiles(): Partial<PermissionProfile>[] {
   return [
     {
@@ -617,7 +732,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'sales',
       level: 'manager',
       isActive: true,
-      permissions: buildPermissionMap(SALES_MODULES, FULL_ACCESS),
+      permissions: buildPermissionMap([...SALES_MODULES, ...OPERATIONS_MODULES], FULL_ACCESS),
     },
     {
       profileKey: 'sales_officer',
@@ -628,7 +743,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'sales',
       level: 'officer',
       isActive: true,
-      permissions: buildPermissionMap(SALES_MODULES, OFFICER_ACCESS),
+      permissions: buildPermissionMap(SALES_MODULES, OFFICER_NO_APPROVE),
     },
 
     {
@@ -640,7 +755,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'hr',
       level: 'manager',
       isActive: true,
-      permissions: buildPermissionMap(HR_MODULES, FULL_ACCESS),
+      permissions: buildPermissionMap(ALL_OPERATION_PILLAR_MODULES, FULL_ACCESS),
     },
     {
       profileKey: 'hr_officer',
@@ -663,7 +778,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'operations',
       level: 'manager',
       isActive: true,
-      permissions: buildPermissionMap(OPERATIONS_MODULES, FULL_ACCESS),
+      permissions: buildPermissionMap([...OPERATIONS_MODULES, ...HR_MODULES], FULL_ACCESS),
     },
     {
       profileKey: 'operations_officer',
@@ -674,7 +789,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'operations',
       level: 'officer',
       isActive: true,
-      permissions: buildPermissionMap(OPERATIONS_MODULES, OFFICER_ACCESS),
+      permissions: buildPermissionMap(OPERATIONS_MODULES, OFFICER_NO_APPROVE),
     },
 
     {
@@ -697,14 +812,14 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'accounting',
       level: 'officer',
       isActive: true,
-      permissions: buildPermissionMap(ACCOUNTING_MODULES, OFFICER_ACCESS),
+      permissions: buildPermissionMap(ACCOUNTING_MODULES, OFFICER_NO_APPROVE),
     },
 
     {
       profileKey: 'store_manager',
       profileNameEn: 'Store Manager',
       profileNameTh: 'ผู้จัดการคลังสินค้า',
-      departmentGroup: legacyDeptToDepartmentGroup('store'),
+      departmentGroup: 'operation',
       primaryRoleTemplateKey: 'store_manager',
       department: 'store',
       level: 'manager',
@@ -715,12 +830,12 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       profileKey: 'store_officer',
       profileNameEn: 'Store Officer',
       profileNameTh: 'เจ้าหน้าที่คลังสินค้า',
-      departmentGroup: legacyDeptToDepartmentGroup('store'),
+      departmentGroup: 'operation',
       primaryRoleTemplateKey: 'store_officer',
       department: 'store',
       level: 'officer',
       isActive: true,
-      permissions: buildPermissionMap(STORE_MODULES, FULL_ACCESS),
+      permissions: buildPermissionMap(STORE_MODULES, OFFICER_NO_APPROVE),
     },
   ];
 }

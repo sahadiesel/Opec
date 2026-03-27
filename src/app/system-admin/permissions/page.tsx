@@ -53,6 +53,7 @@ import {
   INITIAL_PERMISSIONS_TEMPLATE,
   ACCESS_LEVELS_BY_DEPARTMENT_GROUP,
   deriveLegacyDepartmentForGroup,
+  deriveBusinessRoleKeyFromPermissionProfile,
   getProfileDepartmentGroup,
   isAccessLevelAllowedForGroup,
 } from '@/lib/permissions';
@@ -178,12 +179,27 @@ export default function PermissionProfilesPage() {
     try {
       const profileKey = formData.profileKey!;
       const profileRef = doc(firestore, 'permission_profiles', profileKey);
-      const legacyDept = deriveLegacyDepartmentForGroup(group, level);
+      const legacyDept =
+        profileKey === 'store_officer' || profileKey === 'store_manager'
+          ? 'store'
+          : deriveLegacyDepartmentForGroup(group, level);
+
+      const draftProfile = {
+        ...formData,
+        profileKey,
+        departmentGroup: group,
+        department: legacyDept,
+        level,
+      } as PermissionProfile;
+      const primaryRoleTemplateKey =
+        (formData.primaryRoleTemplateKey && String(formData.primaryRoleTemplateKey).trim()) ||
+        deriveBusinessRoleKeyFromPermissionProfile(draftProfile);
 
       const saveData = {
         ...formData,
         departmentGroup: group,
         department: legacyDept,
+        primaryRoleTemplateKey,
         id: profileKey,
         updatedAt: Date.now(),
         updatedBy: currentUser.displayName

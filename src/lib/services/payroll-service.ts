@@ -37,6 +37,20 @@ import {
   resolvePayrollPoliciesForDate,
 } from '@/lib/payroll/d8';
 
+export interface PayrollPreflightZeroWorker {
+  workerId: string;
+  workerName: string;
+  timesheetCount: number;
+  reasons: string[];
+}
+
+export interface PayrollPreflightResult {
+  totalWorkers: number;
+  totalTimesheets: number;
+  zeroGrossWorkers: PayrollPreflightZeroWorker[];
+  hasWarnings: boolean;
+}
+
 type GlobalCostMultiplierPolicy = {
   otAfterShift?: number;
   holiday?: number;
@@ -105,6 +119,102 @@ export class PayrollService {
    * RULE: Only include timesheets where readyForPayroll is TRUE.
    * TRANSITION: Marks source timesheets as LOCKED to prevent double processing.
    */
+  /**
+   * Pre-flight check: identifies workers whose gross will be 0 due to missing rate setup.
+   * Call before generatePayrollBatch to let HR decide whether to proceed.
+   */
+  async preflightPayrollCheck(
+    periodId: string,
+    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed' },
+  ): Promise<PayrollPreflightResult> {
+    const periodRef = doc(this.db, 'payroll_periods', periodId);
+    const periodSnap = await getDoc(periodRef);
+    if (!periodSnap.exists()) throw new Error('Payroll period not found');
+    const period = periodSnap.data() as PayrollPeriod;
+
+    const tsQuery = query(
+      collection(this.db, 'daily_timesheets'),
+      where('date', '>=', period.startDate),
+      where('date', '<=', period.endDate),
+      where('readyForPayroll', '==', true),
+    );
+    const tsSnap = await getDocs(tsQuery);
+    let timesheets = tsSnap.docs
+      .map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet))
+      .filter((ts) => ts.status !== 'LOCKED');
+
+    if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
+      timesheets = timesheets.filter((ts) => ts.workMode.toLowerCase() === filters.workModeScope);
+    }
+
+    const [condSnap, termsSnap] = await Promise.all([
+      getDocs(collection(this.db, 'rate_conditions')),
+      getDocs(collection(this.db, 'labor_cost_contract_terms')),
+    ]);
+    const allConditions = condSnap.docs.map((d) => ({ ...d.data(), id: d.id } as RateCondition));
+    const allCostTerms = termsSnap.docs.map((d) => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
+
+    const workerTsMap: Record<string, DailyTimesheet[]> = {};
+    timesheets.forEach((ts) => {
+      if (!workerTsMap[ts.workerId]) workerTsMap[ts.workerId] = [];
+      workerTsMap[ts.workerId].push(ts);
+    });
+
+    const zeroGrossWorkers: PayrollPreflightZeroWorker[] = [];
+
+    for (const workerId in workerTsMap) {
+      const workerTs = workerTsMap[workerId];
+      let hasAnyRate = false;
+      const missingReasons = new Set<string>();
+
+      for (const ts of workerTs) {
+        const term = allCostTerms.find(
+          (ct) =>
+            ct.id === ts.laborCostContractTermId ||
+            (ct.relatedPurchaseOrderId === ts.purchaseOrderId && ct.status === 'ACTIVE'),
+        );
+
+        if (!term) {
+          missingReasons.add('ไม่มี Labor Cost Term สำหรับ PO นี้');
+          continue;
+        }
+
+        const condition = resolveApplicableCostRateCondition(allConditions, ts, term);
+        if (!condition) {
+          missingReasons.add(`ไม่มี Rate Condition สำหรับ ${ts.eventType}`);
+          continue;
+        }
+
+        if (
+          condition.calculationMethod !== 'FIXED' &&
+          condition.calculationMethod !== 'FLAT' &&
+          !condition.baseRate
+        ) {
+          missingReasons.add(`${ts.eventType}: baseRate = 0 (method: ${condition.calculationMethod})`);
+          continue;
+        }
+
+        hasAnyRate = true;
+      }
+
+      if (!hasAnyRate) {
+        zeroGrossWorkers.push({
+          workerId,
+          workerName: workerTs[0].workerNameSnapshot,
+          timesheetCount: workerTs.length,
+          reasons: Array.from(missingReasons),
+        });
+      }
+    }
+
+    return {
+      totalWorkers: Object.keys(workerTsMap).length,
+      totalTimesheets: timesheets.length,
+      zeroGrossWorkers,
+      hasWarnings: zeroGrossWorkers.length > 0,
+    };
+  }
+
   async generatePayrollBatch(
     periodId: string, 
     user: User, 

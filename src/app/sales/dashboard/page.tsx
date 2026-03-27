@@ -37,7 +37,8 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { isSalesStaff, isStoreOfficer } from '@/lib/permissions';
+import { canSeeSalesPillarUi } from '@/lib/permissions';
+import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function SalesDashboardPage() {
@@ -51,10 +52,14 @@ export default function SalesDashboardPage() {
   }, []);
 
   const isSalesAuthorized = useMemo(() => {
-    return isSalesStaff(currentUser);
+    return isSystemAdmin(currentUser) || canSeeSalesPillarUi(currentUser, null);
   }, [currentUser]);
 
-  const viewerOnly = useMemo(() => isStoreOfficer(currentUser), [currentUser]);
+  const viewerOnly = useMemo(() => {
+    if (!currentUser || isSystemAdmin(currentUser)) return false;
+    const level = getEffectiveAccessLevel(currentUser);
+    return level === 'officer' || level === 'viewer';
+  }, [currentUser]);
 
   // --- Sales Data Queries ---
   
@@ -199,7 +204,7 @@ export default function SalesDashboardPage() {
             <Info className="h-4 w-4 text-amber-700" />
             <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
             <AlertDescription>
-              บทบาทเจ้าหน้าที่คลังสามารถดูภาพรวมและคิวงานได้เท่านั้น ไม่สามารถเปิดหน้าทำงานฝ่ายขายหรือแก้ไขข้อมูลจากที่นี่ได้
+              บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมได้เท่านั้น — แก้ไขและอนุมัติจากเมนูที่ได้รับสิทธิ์
             </AlertDescription>
           </Alert>
         )}

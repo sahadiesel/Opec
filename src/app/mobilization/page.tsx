@@ -157,7 +157,7 @@ export default function MobilizationPage() {
                               <div className="flex flex-col">
                                 <span className="text-[10px] font-mono font-bold text-primary mb-1">{asgn.assignmentNo || asgn.id.substring(0,8)}</span>
                                 <span className="font-bold text-base text-primary">{worker?.firstName} {worker?.lastName}</span>
-                                <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {pos?.positionNameTh}</span>
+                                <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {(pos?.positionName || pos?.positionNameTh)}</span>
                               </div>
                             </TableCell>
                             <TableCell>

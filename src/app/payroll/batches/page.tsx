@@ -19,7 +19,8 @@ import {
   Clock,
   ArrowRight,
   Calculator,
-  Loader2
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PayrollBatch, PayrollPeriod, User } from '@/lib/types';
@@ -39,7 +40,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PayrollService } from '@/lib/services/payroll-service';
+import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
 import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -70,8 +71,28 @@ export default function PayrollBatchesPage() {
 
   const [isGenerateOpen, setIsGenerateOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
   const [targetPeriodId, setTargetPeriodId] = useState('');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
+  const [preflight, setPreflight] = useState<PayrollPreflightResult | null>(null);
+
+  const handlePreflight = async () => {
+    if (!firestore || !targetPeriodId) return;
+    setIsChecking(true);
+    setPreflight(null);
+    try {
+      const service = new PayrollService(firestore);
+      const result = await service.preflightPayrollCheck(targetPeriodId, { workModeScope: workModeFilter });
+      setPreflight(result);
+      if (!result.hasWarnings) {
+        toast({ title: 'ตรวจสอบผ่าน', description: `พร้อมประมวลผล ${result.totalWorkers} คน / ${result.totalTimesheets} ใบงาน` });
+      }
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'ตรวจสอบล้มเหลว', description: e.message });
+    } finally {
+      setIsChecking(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!firestore || !currentUser || !targetPeriodId) return;
@@ -82,6 +103,7 @@ export default function PayrollBatchesPage() {
       const batchId = await service.generatePayrollBatch(targetPeriodId, currentUser, { workModeScope: workModeFilter });
       
       setIsGenerateOpen(false);
+      setPreflight(null);
       toast({ title: "สร้าง Payroll Batch สำเร็จ", description: "ข้อมูลกำลังถูกประมวลผล" });
       router.push(`/payroll/batches/${batchId}`);
     } catch (e: any) {
@@ -153,11 +175,47 @@ export default function PayrollBatchesPage() {
                   </Select>
                 </div>
               </div>
-              <DialogFooter>
-                <Button onClick={handleGenerate} className="w-full bg-primary font-bold h-12" disabled={isGenerating || !targetPeriodId}>
-                  {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <TrendingUp className="h-4 w-4 mr-2" />}
-                  เริ่มการประมวลผล (Start Processing)
-                </Button>
+              {preflight && preflight.hasWarnings && (
+                <Alert className="bg-amber-50 border-amber-300 text-amber-900">
+                  <AlertTriangle className="h-5 w-5 text-amber-600" />
+                  <AlertTitle className="font-bold">พบคนงาน {preflight.zeroGrossWorkers.length} คนที่จะได้ค่าจ้าง 0 บาท</AlertTitle>
+                  <AlertDescription className="text-xs space-y-1 mt-1">
+                    {preflight.zeroGrossWorkers.slice(0, 5).map((w) => (
+                      <div key={w.workerId} className="flex flex-col">
+                        <span className="font-bold">{w.workerName} ({w.timesheetCount} ใบงาน)</span>
+                        <span className="text-amber-700">{w.reasons.join(', ')}</span>
+                      </div>
+                    ))}
+                    {preflight.zeroGrossWorkers.length > 5 && (
+                      <p className="italic">...และอีก {preflight.zeroGrossWorkers.length - 5} คน</p>
+                    )}
+                    <p className="font-bold mt-2">กรุณาให้ HR Manager ตั้งค่า Labor Cost Term + Rate Conditions ให้ครบก่อน หรือกดยืนยันเพื่อสร้าง Batch (คนงานเหล่านี้จะได้ค่าจ้าง 0)</p>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {preflight && !preflight.hasWarnings && (
+                <Alert className="bg-green-50 border-green-300 text-green-900">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <AlertTitle className="font-bold">ตรวจสอบผ่าน</AlertTitle>
+                  <AlertDescription className="text-xs">
+                    พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — ทุกคนมี Rate Condition ครบ
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <DialogFooter className="flex-col gap-2 sm:flex-col">
+                {!preflight ? (
+                  <Button onClick={handlePreflight} variant="outline" className="w-full font-bold h-12" disabled={isChecking || !targetPeriodId}>
+                    {isChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Search className="h-4 w-4 mr-2" />}
+                    ตรวจสอบก่อนประมวลผล (Pre-check)
+                  </Button>
+                ) : (
+                  <Button onClick={handleGenerate} className="w-full bg-primary font-bold h-12" disabled={isGenerating || !targetPeriodId}>
+                    {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <TrendingUp className="h-4 w-4 mr-2" />}
+                    {preflight.hasWarnings ? 'ยืนยันสร้าง Batch (มีคนงานได้ 0)' : 'เริ่มการประมวลผล (Start Processing)'}
+                  </Button>
+                )}
               </DialogFooter>
             </DialogContent>
           </Dialog>

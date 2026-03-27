@@ -26,7 +26,9 @@ import {
   ArrowRight,
   FileBadge,
   XCircle,
-  ExternalLink
+  ExternalLink,
+  Sparkles,
+  AlertTriangle
 } from 'lucide-react';
 import Link from 'next/link';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
@@ -38,10 +40,12 @@ import {
   BillingNoteStatus, 
   User, 
   Customer,
-  TaxInvoice
+  TaxInvoice,
 } from '@/lib/types';
+import { generateBillingLines, saveBillingLines, type BillingLineGenerationResult } from '@/lib/services/billing-line-generator';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
@@ -94,10 +98,55 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
 
   const [isEditingHeader, setIsEditingEditingHeader] = useState(false);
   const [editedNote, setEditedNote] = useState<Partial<BillingNote>>({});
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genResult, setGenResult] = useState<BillingLineGenerationResult | null>(null);
 
   useEffect(() => {
     if (note) setEditedNote(note);
   }, [note]);
+
+  const handleAutoGenerate = async () => {
+    if (!firestore || !note?.poId || !note.billingPeriodStart || !note.billingPeriodEnd) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'ใบวางบิลต้องมี PO, ช่วงเวลาเริ่ม/สิ้นสุด' });
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const result = await generateBillingLines(
+        firestore,
+        note.poId,
+        note.billingPeriodStart,
+        note.billingPeriodEnd,
+        note.waveId || undefined,
+      );
+      setGenResult(result);
+
+      if (result.lines.length === 0) {
+        toast({ variant: 'destructive', title: 'ไม่พบรายการ', description: result.warnings.join('\n') || 'ไม่มี timesheet ที่พร้อมวางบิลในช่วงเวลานี้' });
+        return;
+      }
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'เกิดข้อผิดพลาด', description: e.message });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleConfirmGenLines = async () => {
+    if (!firestore || !genResult || !noteRef) return;
+    setIsGenerating(true);
+    try {
+      await saveBillingLines(firestore, id, genResult.lines);
+      recalculateTotals([...(lines || []), ...genResult.lines.map((l, i) => ({ ...l, id: `gen_${i}`, billingNoteId: id, createdAt: Date.now(), updatedAt: Date.now() }))]);
+      setGenResult(null);
+      toast({ title: 'สร้างรายการสำเร็จ', description: `เพิ่ม ${genResult.lines.length} รายการจาก ${genResult.timesheetCount} timesheets` });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const handleAddLine = async () => {
     if (!firestore || !newLine.description || !newLine.quantity || !newLine.unitPrice) return;
@@ -126,10 +175,12 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
     toast({ title: "ลบรายการสำเร็จ" });
   };
 
+  const vatRate = (note?.vatPercent ?? 7) / 100;
+
   const recalculateTotals = (currentLines: BillingNoteLine[], withholdingOverride?: number) => {
     if (!noteRef || !note) return;
     const amountBeforeTax = currentLines.reduce((sum, l) => sum + Number(l.amount), 0);
-    const vatAmount = amountBeforeTax * 0.07;
+    const vatAmount = amountBeforeTax * vatRate;
     const wht =
       withholdingOverride !== undefined
         ? withholdingOverride
@@ -148,7 +199,7 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
   const handleSaveHeader = () => {
     if (!noteRef || !lines) return;
     const amountBeforeTax = lines.reduce((sum, l) => sum + Number(l.amount), 0);
-    const vatAmount = amountBeforeTax * 0.07;
+    const vatAmount = amountBeforeTax * vatRate;
     const wht = Number(editedNote.withholdingTaxAmount) || 0;
     const netAmount = Math.max(0, amountBeforeTax + vatAmount - wht);
     updateDocumentNonBlocking(noteRef, {
@@ -215,6 +266,13 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                       <CardDescription>ระบุรายการตามสัญญา ใบสั่งซื้อ หรือค่าบริการอื่น ๆ</CardDescription>
                     </div>
                     {note.status === 'DRAFT' && (
+                      <div className="flex gap-2">
+                        {note.poId && (
+                          <Button variant="outline" className="font-bold gap-2 border-green-300 text-green-700 hover:bg-green-50" onClick={handleAutoGenerate} disabled={isGenerating}>
+                            {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            สร้างจาก Timesheet
+                          </Button>
+                        )}
                       <Dialog open={isAddingLine} onOpenChange={setIsAddingLine}>
                         <DialogTrigger asChild>
                           <Button className="bg-primary font-bold"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ</Button>
@@ -244,6 +302,7 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                           </DialogFooter>
                         </DialogContent>
                       </Dialog>
+                      </div>
                     )}
                   </CardHeader>
                   <CardContent className="p-0">
@@ -279,6 +338,64 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                     </Table>
                   </CardContent>
                 </Card>
+
+                {genResult && genResult.lines.length > 0 && (
+                  <Card className="border-2 border-green-200 bg-green-50/30">
+                    <CardHeader className="border-b pb-4">
+                      <CardTitle className="text-lg flex items-center gap-2 text-green-800">
+                        <Sparkles className="h-5 w-5" /> ตัวอย่างรายการจาก Timesheet ({genResult.timesheetCount} records)
+                      </CardTitle>
+                      <CardDescription>
+                        ตรวจสอบรายการก่อนยืนยัน — จะเพิ่มเข้าใบวางบิลนี้
+                      </CardDescription>
+                      {genResult.warnings.length > 0 && (
+                        <Alert className="mt-2 bg-amber-50 border-amber-200 text-amber-800">
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertTitle>คำเตือน</AlertTitle>
+                          <AlertDescription>
+                            {genResult.warnings.map((w, i) => <p key={i} className="text-xs">{w}</p>)}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <Table>
+                        <TableHeader className="bg-green-100/50">
+                          <TableRow>
+                            <TableHead>รายละเอียด</TableHead>
+                            <TableHead className="text-right">จำนวน</TableHead>
+                            <TableHead className="text-right">ราคา/หน่วย</TableHead>
+                            <TableHead className="text-right font-bold">ยอดรวม</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {genResult.lines.map((line, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell className="font-medium text-sm">{line.description}</TableCell>
+                              <TableCell className="text-right">{line.quantity.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">{line.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                              <TableCell className="text-right font-bold text-green-700">
+                                ฿ {line.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </CardContent>
+                    <CardFooter className="flex justify-between items-center pt-4 border-t">
+                      <div className="text-sm font-bold text-green-800">
+                        รวมทั้งหมด: ฿ {genResult.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" onClick={() => setGenResult(null)}>ยกเลิก</Button>
+                        <Button className="bg-green-700 hover:bg-green-800 font-bold gap-2" onClick={handleConfirmGenLines} disabled={isGenerating}>
+                          {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          ยืนยันเพิ่ม {genResult.lines.length} รายการ
+                        </Button>
+                      </div>
+                    </CardFooter>
+                  </Card>
+                )}
               </TabsContent>
 
               <TabsContent value="info" className="mt-6">
@@ -361,7 +478,7 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                       <span className="font-bold">{note.currency} {note.amountBeforeTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm border-b pb-2">
-                      <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม (7%)</span>
+                      <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({note.vatPercent ?? 7}%)</span>
                       <span className="font-bold">{note.currency} {note.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                     </div>
                     {(Number(note.withholdingTaxAmount) || 0) > 0 && (

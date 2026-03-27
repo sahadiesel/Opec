@@ -149,12 +149,9 @@ function CustomerPOsPageContent() {
     if (newPO.poType === 'quotation' && newPO.customerId) {
       const hasActiveContract = (activeContracts || []).some((c) => c.customerId === newPO.customerId);
       if (hasActiveContract) {
-        toast({
-          variant: "destructive",
-          title: "พบสัญญาที่ Active อยู่แล้ว",
-          description: "กรุณาสร้าง PO จากสัญญาโดยตรง เพื่อให้ข้อมูลคน/ราคาเชื่อมต่อถูกต้อง",
-        });
-        return;
+        if (!confirm('ลูกค้านี้มีสัญญาหลัก (Active) อยู่แล้ว\n\nต้องการสร้าง PO จากใบเสนอราคาแยกต่างหาก (งานรับจ้าง/ขายของ) ใช่หรือไม่?')) {
+          return;
+        }
       }
     }
 

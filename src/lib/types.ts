@@ -288,13 +288,18 @@ export interface ModulePermission {
 export interface Position {
   id: string;
   positionCode: string;
+  /** ชื่อตำแหน่ง (field หลักใน Firestore) */
+  positionName: string;
+  /** @deprecated ใช้ positionName แทน — เก็บไว้สำหรับ legacy docs */
   positionNameTh: string;
+  /** @deprecated ใช้ positionName แทน — เก็บไว้สำหรับ legacy docs */
   positionNameEn: string;
   category: 'OFFSHORE' | 'ONSHORE' | 'OFFICE';
   jobMode: JobMode;
   payrollBasis: 'DAILY' | 'MONTHLY' | 'HOURLY';
   active: boolean;
   description?: string;
+  notes?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -603,6 +608,14 @@ export interface PurchaseOrder {
   updatedAt: number;
 }
 
+export interface OtRulesSnapshot {
+  afterShift?: number;
+  holiday?: number;
+  publicHoliday?: number;
+  sunday?: number;
+  sundayOt?: number;
+}
+
 export interface POLine {
   id: string;
   poId: string;
@@ -614,6 +627,9 @@ export interface POLine {
   costBaselineSnapshot: number;
   billingUnitSnapshot: string;
   overtimeRuleSnapshot: string;
+  sellOtRulesSnapshot?: OtRulesSnapshot;
+  costOtRulesSnapshot?: OtRulesSnapshot;
+  normalWorkHoursSnapshot?: 8 | 12;
   status: 'active' | 'cancelled' | 'completed';
 }
 
@@ -1002,11 +1018,15 @@ export interface BillingNote {
   customerId: string;
   contractId?: string;
   poId?: string;
+  waveId?: string;
+  quotationId?: string;
   billingDate: string;
   dueDate: string;
   billingPeriodStart: string;
   billingPeriodEnd: string;
   amountBeforeTax: number;
+  /** VAT percent inherited from SalesTerm or Quotation at creation (default 7) */
+  vatPercent: number;
   vatAmount: number;
   withholdingTaxAmount: number;
   netAmount: number;
@@ -1019,7 +1039,7 @@ export interface BillingNote {
   updatedBy: string;
 }
 
-export type BillingNoteStatus = 'DRAFT' | 'ISSUED' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
+export type BillingNoteStatus = 'DRAFT' | 'ISSUED' | 'SUBMITTED' | 'INVOICED' | 'PARTIALLY_PAID' | 'PAID' | 'CANCELLED';
 
 export interface BillingNoteLine {
   id: string;
@@ -1027,6 +1047,11 @@ export interface BillingNoteLine {
   description: string;
   referenceType: BillingNoteReferenceType;
   referenceId?: string;
+  workerId?: string;
+  workerName?: string;
+  positionId?: string;
+  eventType?: string;
+  timesheetIds?: string[];
   quantity: number;
   unitPrice: number;
   amount: number;
@@ -1538,6 +1563,7 @@ export interface TaxInvoice {
   taxInvoiceNo: string;
   billingNoteId: string;
   customerId: string;
+  waveId?: string;
   issueDate: string;
   taxableAmount: number;
   vatAmount: number;

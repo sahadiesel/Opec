@@ -64,7 +64,7 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView, isClient } from '@/lib/permissions';
+import { ModuleKey, canView, canSeeHrPillarUi, isClient } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { UI_LABELS } from '@/lib/constants/labels';
 
@@ -169,7 +169,7 @@ function pathMatches(pathname: string, href: string): boolean {
   return false;
 }
 
-/** หน้า /hr/* ให้ผู้มีสิทธิ์ HR ใดๆ เห็นได้ แม้โปรไฟล์เก่ายังไม่มี key hr_hub */
+/** หน้า /hr/* เฉพาะผู้ที่มีโมดูลแผนกบุคคลอย่างน้อยหนึ่งรายการ (ไม่โชว์ให้ store / sales ล้วน) */
 function canViewHrHubItem(
   user: User,
   profile: PermissionProfile | null,
@@ -179,13 +179,7 @@ function canViewHrHubItem(
   if (admin) return true;
   if (canView(user, item.key, profile)) return true;
   if (item.href.startsWith('/hr/')) {
-    return (
-      canView(user, 'workers', profile) ||
-      canView(user, 'worker_payroll', profile) ||
-      canView(user, 'office_payroll', profile) ||
-      canView(user, 'office_staff', profile) ||
-      canView(user, 'timesheets', profile)
-    );
+    return canSeeHrPillarUi(user, profile);
   }
   return false;
 }

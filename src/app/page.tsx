@@ -64,12 +64,11 @@ import { PlaceHolderImages } from '@/lib/placeholder-images';
 import {
   normalizeCurrentUserPermissions,
   isSystemAdmin,
-  isHRStaff,
-  isOperationsStaff,
-  isSalesStaff,
-  isAccountingStaff,
-  isStoreStaff,
-  isStoreOfficer,
+  canSeeHrPillarUi,
+  canSeeSalesPillarUi,
+  canSeeOperationsPillarUi,
+  canSeeStorePillarUi,
+  canSeeAccountingPillarUi,
 } from '@/lib/permissions';
 
 export default function Home() {
@@ -181,7 +180,14 @@ export default function Home() {
     return latestUserDoc.isActive && latestUserDoc.approvalStatus === 'ACTIVE';
   }, [latestUserDoc, isDocLoading]);
 
-  const { check } = usePermissions(latestUserDoc ?? user);
+  const { check, profile } = usePermissions(latestUserDoc ?? user);
+
+  const u = latestUserDoc ?? user;
+  const showHrUi = useMemo(() => canSeeHrPillarUi(u, profile), [u, profile]);
+  const showSalesUi = useMemo(() => canSeeSalesPillarUi(u, profile), [u, profile]);
+  const showOpsUi = useMemo(() => canSeeOperationsPillarUi(u, profile), [u, profile]);
+  const showStoreUi = useMemo(() => canSeeStorePillarUi(u, profile), [u, profile]);
+  const showAccountingUi = useMemo(() => canSeeAccountingPillarUi(u, profile), [u, profile]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -699,29 +705,25 @@ export default function Home() {
               <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการตามบทบาท</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {(isHRStaff(latestUserDoc)) && (
+              {showHrUi && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Users className="h-4 w-4" />
-                    <span className="text-sm font-medium">
-                      {isStoreOfficer(latestUserDoc) ? 'ดู HR Dashboard (อ่านอย่างเดียว)' : 'ตรวจงาน HR Dashboard'}
-                    </span>
+                    <span className="text-sm font-medium">ตรวจงาน HR Dashboard</span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(isSalesStaff(latestUserDoc)) && (
+              {showSalesUi && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/sales/dashboard')}>
                   <div className="flex items-center gap-3">
                     <TrendingUp className="h-4 w-4" />
-                    <span className="text-sm font-medium">
-                      {isStoreOfficer(latestUserDoc) ? 'ดู Sales Dashboard (อ่านอย่างเดียว)' : 'ตรวจงาน Sales Dashboard'}
-                    </span>
+                    <span className="text-sm font-medium">ตรวจงาน Sales Dashboard</span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(isAccountingStaff(latestUserDoc)) && (
+              {showAccountingUi && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/accounting/dashboard')}>
                   <div className="flex items-center gap-3">
                     <Coins className="h-4 w-4" />
@@ -730,13 +732,11 @@ export default function Home() {
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
               )}
-              {(isOperationsStaff(latestUserDoc)) && (
+              {showOpsUi && (
                 <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/operations/dashboard')}>
                   <div className="flex items-center gap-3">
                     <HardHat className="h-4 w-4" />
-                    <span className="text-sm font-medium">
-                      {isStoreOfficer(latestUserDoc) ? 'ดู Operations Dashboard (อ่านอย่างเดียว)' : 'ตรวจงาน Operations Dashboard'}
-                    </span>
+                    <span className="text-sm font-medium">ตรวจงาน Operations Dashboard</span>
                   </div>
                   <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
                 </div>
@@ -762,60 +762,114 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {isHRStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
+            {showHrUi && (
               <>
-                <ShortcutGroup title="HR — Office Payroll" icon={Building2} color="border-l-indigo-600">
-                  <ShortcutLink href="/office-staff" label="ทะเบียนพนักงานออฟฟิศ" sub="รายเดือน · ไม่ใช้ timesheet รายวัน" />
-                  <ShortcutLink href="/office-payroll" label="งวดจ่ายเงินเดือนออฟฟิศ" sub="Office payroll run" />
-                </ShortcutGroup>
-                <ShortcutGroup title="HR — Worker Payroll" icon={HardHat} color="border-l-amber-600">
-                  <ShortcutLink href="/workers" label="ทะเบียนลูกจ้าง" sub="Timesheet + batch" />
-                  <ShortcutLink href="/timesheets/wave-board" label="คีย์ลงเวลา (Wave)" sub="Worker timesheet" />
-                  <ShortcutLink href="/timesheets/daily" label="ตรวจ Timesheet รายวัน" sub="ประวัติรายวัน" />
-                  <ShortcutLink href="/payroll/periods" label="รอบจ่ายและตัดยอด" sub="งวดคนงาน" />
-                  <ShortcutLink href="/payroll/batches" label="งวดจ่ายลูกจ้าง" sub="Payroll batches" />
-                </ShortcutGroup>
-                <ShortcutGroup title="HR — ภาพรวมและตั้งค่า" icon={Users} color="border-l-orange-500">
-                  <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวม" />
-                  <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
-                  <ShortcutLink href="/worker-document-catalog" label="เอกสารกลาง" sub="Document catalog" />
-                  <ShortcutLink href="/hr/settings" label="ตั้งค่า HR" sub="ภาษี · ประกันสังคม" />
-                </ShortcutGroup>
+                {(check('office_staff', 'view') || check('office_payroll', 'view')) && (
+                  <ShortcutGroup title="HR — Office Payroll" icon={Building2} color="border-l-indigo-600">
+                    {check('office_staff', 'view') && (
+                      <ShortcutLink href="/office-staff" label="ทะเบียนพนักงานออฟฟิศ" sub="รายเดือน · ไม่ใช้ timesheet รายวัน" />
+                    )}
+                    {check('office_payroll', 'view') && (
+                      <ShortcutLink href="/office-payroll" label="งวดจ่ายเงินเดือนออฟฟิศ" sub="Office payroll run" />
+                    )}
+                  </ShortcutGroup>
+                )}
+                {(check('workers', 'view') ||
+                  check('timesheets', 'view') ||
+                  check('worker_payroll', 'view')) && (
+                  <ShortcutGroup title="HR — Worker Payroll" icon={HardHat} color="border-l-amber-600">
+                    {check('workers', 'view') && (
+                      <ShortcutLink href="/workers" label="ทะเบียนลูกจ้าง" sub="Timesheet + batch" />
+                    )}
+                    {check('timesheets', 'view') && (
+                      <>
+                        <ShortcutLink href="/timesheets/wave-board" label="คีย์ลงเวลา (Wave)" sub="Worker timesheet" />
+                        <ShortcutLink href="/timesheets/daily" label="ตรวจ Timesheet รายวัน" sub="ประวัติรายวัน" />
+                      </>
+                    )}
+                    {check('worker_payroll', 'view') && (
+                      <>
+                        <ShortcutLink href="/payroll/periods" label="รอบจ่ายและตัดยอด" sub="งวดคนงาน" />
+                        <ShortcutLink href="/payroll/batches" label="งวดจ่ายลูกจ้าง" sub="Payroll batches" />
+                      </>
+                    )}
+                  </ShortcutGroup>
+                )}
+                {(check('hr_hub', 'view') || check('positions', 'view') || check('workers', 'view')) && (
+                  <ShortcutGroup title="HR — ภาพรวมและตั้งค่า" icon={Users} color="border-l-orange-500">
+                    {check('hr_hub', 'view') && (
+                      <>
+                        <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวม" />
+                        <ShortcutLink href="/hr/settings" label="ตั้งค่า HR" sub="ภาษี · ประกันสังคม" />
+                      </>
+                    )}
+                    {check('positions', 'view') && (
+                      <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
+                    )}
+                    {check('workers', 'view') && (
+                      <ShortcutLink href="/worker-document-catalog" label="เอกสารกลาง" sub="Document catalog" />
+                    )}
+                  </ShortcutGroup>
+                )}
               </>
             )}
 
-            {isSalesStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
+            {showSalesUi && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
-                <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
-                <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
-                <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />
-                <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />
+                {(check('customers', 'view') || check('quotations', 'view')) && (
+                  <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
+                )}
+                {check('customers', 'view') && (
+                  <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
+                )}
+                {check('main_contracts', 'view') && (
+                  <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />
+                )}
+                {check('customer_pos', 'view') && (
+                  <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />
+                )}
               </ShortcutGroup>
             )}
 
-            {isOperationsStaff(latestUserDoc) && !isStoreOfficer(latestUserDoc) && (
+            {showOpsUi && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
-                <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
-                <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />
-                <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
-                <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />
+                {(check('waves', 'view') || check('assignments', 'view') || check('mobilization', 'view')) && (
+                  <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
+                )}
+                {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
+                {check('assignments', 'view') && (
+                  <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
+                )}
+                {check('mobilization', 'view') && (
+                  <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />
+                )}
               </ShortcutGroup>
             )}
 
-            {isAccountingStaff(latestUserDoc) && (
+            {showAccountingUi && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
                 <ShortcutLink href="/accounting/dashboard" label="Accounting Dashboard" sub="ภาพรวมบัญชี" />
-                <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
-                <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />
-                <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />
+                {check('billing_notes', 'view') && (
+                  <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
+                )}
+                {check('cashbook', 'view') && (
+                  <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />
+                )}
+                {check('ap_bills', 'view') && (
+                  <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />
+                )}
               </ShortcutGroup>
             )}
 
-            {isStoreStaff(latestUserDoc) && (
+            {showStoreUi && (
               <ShortcutGroup title="คลังและจัดซื้อ (Store)" icon={Warehouse} color="border-l-amber-500">
-                <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />
-                <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />
-                <ShortcutLink href="/purchases" label="การสั่งซื้อ" sub="Purchases" />
+                {check('store_inventory', 'view') && (
+                  <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />
+                )}
+                {check('vendors', 'view') && <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />}
+                {check('purchases', 'view') && (
+                  <ShortcutLink href="/purchases" label="การสั่งซื้อ" sub="Purchases" />
+                )}
               </ShortcutGroup>
             )}
           </div>

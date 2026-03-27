@@ -78,6 +78,19 @@ export default function TaxInvoicesPage() {
     notes: ''
   });
 
+  // Billing notes already linked to a tax invoice should not appear in dropdown
+  const usedBillingNoteIds = useMemo(() => {
+    if (!invoices) return new Set<string>();
+    return new Set(invoices.filter(i => i.status !== 'CANCELLED').map(i => i.billingNoteId));
+  }, [invoices]);
+
+  const availableBillingNotes = useMemo(() => {
+    if (!billingNotes) return [];
+    return billingNotes.filter(n =>
+      (n.status === 'ISSUED' || n.status === 'SUBMITTED') && !usedBillingNoteIds.has(n.id)
+    );
+  }, [billingNotes, usedBillingNoteIds]);
+
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     if (!newInvoice.billingNoteId) {
@@ -88,15 +101,17 @@ export default function TaxInvoicesPage() {
     const sourceNote = billingNotes?.find(n => n.id === newInvoice.billingNoteId);
     if (!sourceNote) return;
 
+    if (usedBillingNoteIds.has(sourceNote.id)) {
+      toast({ variant: "destructive", title: "ใบวางบิลนี้ออกใบกำกับภาษีแล้ว", description: "ไม่สามารถสร้างซ้ำได้" });
+      return;
+    }
+
     setIsCreating(true);
     try {
-      // 1. Generate unique Tax Invoice number
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'tax_invoice', { actor: currentUser.displayName });
-
-      // 2. Generate unique AR number for the sub-ledger
       const { code: arNo } = await generateNextDocumentCode(firestore, 'ar', { actor: currentUser.displayName });
 
-      const docRef = await addDocumentNonBlocking(collection(firestore, 'tax_invoices'), {
+      const invoicePayload: Record<string, unknown> = {
         ...newInvoice,
         taxInvoiceNo: finalNo,
         customerId: sourceNote.customerId,
@@ -106,12 +121,14 @@ export default function TaxInvoicesPage() {
         currency: sourceNote.currency || 'THB',
         totalAmount: sourceNote.netAmount,
         createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
+        updatedAt: Date.now(),
+      };
+      if (sourceNote.waveId) invoicePayload.waveId = sourceNote.waveId;
+      const docRef = await addDocumentNonBlocking(collection(firestore, 'tax_invoices'), invoicePayload);
 
-      // 3. Update source Billing Note status
+      // Mark billing note as INVOICED so it won't appear in the dropdown again
       const sourceNoteRef = doc(firestore, 'billing_notes', sourceNote.id);
-      await updateDoc(sourceNoteRef, { status: 'ISSUED', updatedAt: Date.now() });
+      await updateDoc(sourceNoteRef, { status: 'INVOICED', updatedAt: Date.now() });
 
       // 4. Create an AR record automatically with sequential AR- number
       await addDocumentNonBlocking(collection(firestore, 'accounts_receivable'), {
@@ -202,9 +219,14 @@ export default function TaxInvoicesPage() {
                   <Select onValueChange={v => setNewInvoice({...newInvoice, billingNoteId: v})}>
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกใบวางบิล..." /></SelectTrigger>
                     <SelectContent>
-                      {billingNotes?.filter(n => n.status === 'ISSUED' || n.status === 'SUBMITTED').map(n => (
-                        <SelectItem key={n.id} value={n.id}>{n.billingNoteNo} | {customers?.find(c => c.id === n.customerId)?.name}</SelectItem>
+                      {availableBillingNotes.map(n => (
+                        <SelectItem key={n.id} value={n.id}>
+                          {n.billingNoteNo} | {customers?.find(c => c.id === n.customerId)?.name} | {n.currency} {n.netAmount.toLocaleString()}
+                        </SelectItem>
                       ))}
+                      {availableBillingNotes.length === 0 && (
+                        <div className="py-3 px-4 text-sm text-muted-foreground italic">ไม่มีใบวางบิลที่พร้อมออกใบกำกับภาษี</div>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>

@@ -43,10 +43,9 @@ export async function listApprovedTimesheetsForPeriod(
 ): Promise<DailyTimesheet[]> {
   const tsRef = collection(db, 'daily_timesheets');
   
-  // Rule: Only client_approved items are included in financial summaries
   const q = query(
     tsRef,
-    where('status', '==', 'CLIENT_APPROVED'),
+    where('readyForBilling', '==', true),
     where('date', '>=', startDate),
     where('date', '<=', endDate)
   );
@@ -107,9 +106,7 @@ function reduceTimesheets(groupId: string, timesheets: DailyTimesheet[], label?:
  */
 export function aggregateTimesheetsByWorkerForPeriod(timesheets: DailyTimesheet[]): Record<string, TimesheetAggregationResult> {
   const groups: Record<string, DailyTimesheet[]> = {};
-  
-  // Safety filter: ensure we only aggregate approved items
-  const approvedOnly = timesheets.filter(ts => ts.status === 'CLIENT_APPROVED' || ts.status === 'LOCKED');
+  const approvedOnly = timesheets.filter(ts => ts.readyForBilling || ts.status === 'CLIENT_APPROVED' || ts.status === 'LOCKED');
 
   approvedOnly.forEach(ts => {
     if (!groups[ts.workerId]) groups[ts.workerId] = [];
@@ -130,7 +127,7 @@ export function aggregateTimesheetsByWorkerForPeriod(timesheets: DailyTimesheet[
  */
 export function aggregateTimesheetsByWaveForPeriod(timesheets: DailyTimesheet[]): Record<string, TimesheetAggregationResult> {
   const groups: Record<string, DailyTimesheet[]> = {};
-  const approvedOnly = timesheets.filter(ts => ts.status === 'CLIENT_APPROVED' || ts.status === 'LOCKED');
+  const approvedOnly = timesheets.filter(ts => ts.readyForBilling || ts.status === 'CLIENT_APPROVED' || ts.status === 'LOCKED');
 
   approvedOnly.forEach(ts => {
     if (!groups[ts.waveId]) groups[ts.waveId] = [];
@@ -151,7 +148,7 @@ export function aggregateTimesheetsByWaveForPeriod(timesheets: DailyTimesheet[])
  */
 export function aggregateTimesheetsByPOForPeriod(timesheets: DailyTimesheet[]): Record<string, TimesheetAggregationResult> {
   const groups: Record<string, DailyTimesheet[]> = {};
-  const approvedOnly = timesheets.filter(ts => ts.status === 'CLIENT_APPROVED' || ts.status === 'LOCKED');
+  const approvedOnly = timesheets.filter(ts => ts.readyForBilling || ts.status === 'CLIENT_APPROVED' || ts.status === 'LOCKED');
 
   approvedOnly.forEach(ts => {
     if (!groups[ts.purchaseOrderId]) groups[ts.purchaseOrderId] = [];
