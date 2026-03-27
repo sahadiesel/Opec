@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -12,15 +12,12 @@ import {
   Save, 
   Plus, 
   Trash2, 
-  Building2, 
-  Calendar, 
   FileText, 
   History,
   Info,
   Loader2,
   CheckCircle2,
   XCircle,
-  Clock,
   Briefcase,
   Printer,
   Edit2,
@@ -28,15 +25,13 @@ import {
   ArrowUp,
   ArrowDown,
   Tag,
-  SearchCheck,
   Send,
-  RefreshCw,
   Lock,
   ExternalLink
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
-import { Quotation, QuotationLine, QuotationStatus, User, Customer } from '@/lib/types';
+import { Quotation, QuotationLine, QuotationStatus, User } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -44,10 +39,13 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+
+import { QuotationPreviewTab } from './_components/quotation-preview-tab';
+import { QuotationHistoryTab } from './_components/quotation-history-tab';
+import { QuotationLineDialog } from './_components/quotation-line-dialog';
 
 type CompanyDocumentProfile = {
   companyNameTh?: string;
@@ -611,224 +609,28 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             </div>
           </TabsContent>
 
-          {/* Document Preview Tab - Printable Layout */}
           <TabsContent value="preview" className="mt-6">
-            <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-8 space-y-6 font-serif text-slate-900 overflow-hidden print-container print:shadow-none print:border-none">
-              <div className="flex justify-between items-start border-b-4 border-primary pb-4">
-                <div className="space-y-1">
-                  <h2 className="text-2xl font-black text-primary tracking-tight">
-                    {companyProfile?.companyNameEn || companyProfile?.companyNameTh || 'OPEC OpsFlow'}
-                  </h2>
-                  <p className="text-[10px] text-slate-500">
-                    {(companyProfile?.addressLine1 || '')} {(companyProfile?.addressLine2 || '')}
-                  </p>
-                  <p className="text-[10px] text-slate-500">
-                    Tax ID: {companyProfile?.taxId || '-'} | Tel: {companyProfile?.phone || '-'}
-                  </p>
-                </div>
-                <div className="text-right space-y-1">
-                  <h3 className="text-xl font-black uppercase text-slate-800">Quotation</h3>
-                  <p className="font-mono text-sm font-bold text-primary">{quotation.quotationNo}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-8 text-sm">
-                <div className="space-y-3">
-                  <p className="font-black text-xs uppercase tracking-widest text-slate-400 border-b pb-1">Issued To:</p>
-                  <div className="space-y-1">
-                    <p className="font-bold text-lg">{quotation.customerNameSnapshot}</p>
-                    <p className="text-slate-600 leading-relaxed text-xs">{quotation.billingAddressSnapshot || 'N/A'}</p>
-                    <p className="text-slate-600">Contact: {quotation.contactPerson || '-'}</p>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <p className="font-black text-xs uppercase tracking-widest text-slate-400 border-b pb-1">Document Dates:</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <span className="text-slate-500">Date Issued:</span>
-                    <span className="font-bold text-right">{editedHeader.issueDate || quotation.issueDate}</span>
-                    <span className="text-slate-500">Valid Until:</span>
-                    <span className="font-bold text-right text-red-600">{editedHeader.validUntilDate || quotation.validUntilDate}</span>
-                    <span className="text-slate-500">Currency:</span>
-                    <span className="font-bold text-right">{editedHeader.currency || quotation.currency}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 p-3 border rounded">
-                <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Subject / Project Title:</p>
-                <p className="font-bold text-base text-primary">{editedHeader.projectTitle || quotation.projectTitle}</p>
-              </div>
-
-              <div className="space-y-2">
-                <Table className="border-collapse">
-                  <TableHeader className="bg-slate-100 border-y-2 border-slate-300">
-                    <TableRow className="hover:bg-transparent border-none">
-                      <TableHead className="font-black text-slate-800 py-2 h-auto">Item Description</TableHead>
-                      <TableHead className="text-right font-black text-slate-800 w-[80px] h-auto">Qty</TableHead>
-                      <TableHead className="text-center font-black text-slate-800 w-[80px] h-auto">Unit</TableHead>
-                      <TableHead className="text-right font-black text-slate-800 w-[120px] h-auto">Unit Price</TableHead>
-                      <TableHead className="text-right font-black text-slate-800 w-[120px] h-auto">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {displayLines.map(line => (
-                      <TableRow key={line.id} className="border-b border-slate-100 hover:bg-transparent">
-                        <TableCell className="py-2">
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm">{line.description}</span>
-                            {line.remarks && <span className="text-[10px] text-slate-500 italic mt-0.5">{line.remarks}</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right font-bold">{line.quantity}</TableCell>
-                        <TableCell className="text-center text-[10px] uppercase font-bold text-slate-500">{line.unit}</TableCell>
-                        <TableCell className="text-right">฿{(line.unitPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right font-bold text-slate-800">฿{(line.lineTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="flex justify-end pt-3">
-                <div className="w-[300px] space-y-2 text-sm">
-                  <div className="flex justify-between text-slate-600">
-                    <span>Subtotal:</span>
-                    <span className="font-bold text-slate-800">฿{computeTotals(displayLines, editedHeader).subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                  </div>
-                  {(computeTotals(displayLines, editedHeader).discountAmount || 0) > 0 && (
-                    <div className="flex justify-between text-red-600 font-bold">
-                      <span>Discount:</span>
-                      <span>- ฿{computeTotals(displayLines, editedHeader).discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-slate-600">
-                    <span>VAT ({computeTotals(displayLines, editedHeader).taxPercent}%):</span>
-                    <span className="font-bold text-slate-800">฿{computeTotals(displayLines, editedHeader).taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                  </div>
-                  <div className="flex justify-between text-xl border-t-2 border-slate-800 pt-2">
-                    <span className="font-black text-primary">Grand Total:</span>
-                    <span className="font-black text-primary underline decoration-double">฿{computeTotals(displayLines, editedHeader).grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4 space-y-2">
-                <p className="text-xs font-black uppercase text-slate-400 border-b pb-1 tracking-widest">Notes & Conditions:</p>
-                <p className="text-xs text-slate-600 leading-relaxed italic whitespace-pre-line bg-slate-50 p-4 rounded border-l-4 border-slate-300">
-                  {editedHeader.notes || quotation.notes || 'No special conditions mentioned. This quotation is subject to standard manpower supply terms and conditions of OPEC.'}
-                </p>
-              </div>
-
-              <div className="pt-8 grid grid-cols-2 gap-16">
-                <div className="border-t border-slate-300 pt-4 text-center space-y-1">
-                  <p className="font-black text-[10px] uppercase text-slate-400 mb-12">Authorized Signature (Issuer)</p>
-                  <p className="font-bold text-sm text-slate-800">{quotation.createdBy}</p>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">OPEC Sales Management</p>
-                </div>
-                <div className="border-t border-slate-300 pt-4 text-center space-y-1">
-                  <p className="font-black text-[10px] uppercase text-slate-400 mb-12">Customer Acceptance</p>
-                  <div className="h-4" />
-                  <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Seal & Signature</p>
-                </div>
-              </div>
-            </div>
+            <QuotationPreviewTab
+              quotation={quotation}
+              companyProfile={companyProfile ?? null}
+              displayLines={displayLines}
+              editedHeader={editedHeader}
+              totals={computeTotals(displayLines, editedHeader)}
+            />
           </TabsContent>
 
           <TabsContent value="history" className="mt-6 print:hidden">
-            <Card className="shadow-sm border-none bg-white">
-              <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5 text-primary" /> ประวัติกิจกรรม (Audit Log)</CardTitle></CardHeader>
-              <CardContent className="space-y-6 py-10">
-                <div className="flex gap-4 border-l-2 border-primary/20 pl-4 relative pb-4">
-                  <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
-                  <div className="text-sm">
-                    <p className="font-bold uppercase text-primary">LATEST STATUS: {quotation.status.toUpperCase()}</p>
-                    <p className="text-xs text-muted-foreground">{new Date(quotation.updatedAt).toLocaleString('th-TH')}</p>
-                    <p className="text-xs mt-1 font-medium">Edited by {quotation.updatedBy || 'System'}</p>
-                  </div>
-                </div>
-                <div className="flex gap-4 border-l-2 border-primary/20 pl-4 relative">
-                  <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-slate-300" />
-                  <div className="text-sm">
-                    <p className="font-bold uppercase text-muted-foreground">DOCUMENT CREATED</p>
-                    <p className="text-xs text-muted-foreground">{new Date(quotation.createdAt).toLocaleString('th-TH')}</p>
-                    <p className="text-xs mt-1 font-medium">Initiated by {quotation.createdBy}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <QuotationHistoryTab quotation={quotation} />
           </TabsContent>
         </Tabs>
 
-        {/* Practical Line Item Editor Dialog */}
-        <Dialog open={isLineDialogOpen} onOpenChange={setIsLineDialogOpen}>
-          <DialogContent className="max-w-md border-t-8 border-t-primary">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-xl font-black text-primary">
-                {editingLine?.id ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
-                {editingLine?.id ? 'แก้ไขรายการบริการ' : 'เพิ่มรายการใหม่'}
-              </DialogTitle>
-              <DialogDescription>ระบุรายละเอียดสินค้าหรือบริการและราคาเสนอขาย</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label className="font-bold text-xs uppercase text-muted-foreground">รายละเอียดรายการ (Description) *</Label>
-                <Input 
-                  value={editingLine?.description || ''} 
-                  onChange={e => setEditingLine({...editingLine, description: e.target.value})} 
-                  placeholder="เช่น ค่าแรงช่างเชื่อม (Welder) ประจำเดือน..."
-                  className="h-11 font-medium"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="font-bold text-xs uppercase text-muted-foreground">จำนวน (Qty)</Label>
-                  <Input 
-                    type="number" 
-                    value={editingLine?.quantity || 0} 
-                    onChange={e => setEditingLine({...editingLine, quantity: parseFloat(e.target.value) || 0})} 
-                    className="h-11 text-center font-bold"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="font-bold text-xs uppercase text-muted-foreground">หน่วย (Unit)</Label>
-                  <Input 
-                    value={editingLine?.unit || ''} 
-                    onChange={e => setEditingLine({...editingLine, unit: e.target.value})} 
-                    placeholder="EA, Days, Hrs"
-                    className="h-11 text-center uppercase font-bold"
-                  />
-                </div>
-                <div className="space-y-2 col-span-2">
-                  <Label className="font-bold text-xs uppercase text-blue-700 tracking-wider">ราคาต่อหน่วย (Unit Price)</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-bold">฿</span>
-                    <Input 
-                      type="number" 
-                      className="h-12 pl-8 font-black text-xl text-primary border-2 border-blue-100 focus:border-blue-500"
-                      value={editingLine?.unitPrice || 0} 
-                      onChange={e => setEditingLine({...editingLine, unitPrice: parseFloat(e.target.value) || 0})} 
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className="font-bold text-xs uppercase text-muted-foreground">หมายเหตุรายการ (Item Remarks)</Label>
-                <Input 
-                  value={editingLine?.remarks || ''} 
-                  onChange={e => setEditingLine({...editingLine, remarks: e.target.value})} 
-                  placeholder="ระบุข้อมูลเพิ่มเติมเฉพาะรายการนี้..."
-                  className="h-10 text-xs"
-                />
-              </div>
-            </div>
-            <DialogFooter className="bg-muted/30 p-4 -mx-6 -mb-6 border-t mt-4">
-              <Button variant="outline" onClick={() => setIsLineDialogOpen(false)} className="h-11">ยกเลิก</Button>
-              <Button onClick={handleSaveLine} disabled={!editingLine?.description} className="bg-primary font-black h-11 px-8 shadow-lg">
-                <Save className="h-4 w-4 mr-2" /> บันทึกรายการ
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <QuotationLineDialog
+          open={isLineDialogOpen}
+          onOpenChange={setIsLineDialogOpen}
+          editingLine={editingLine}
+          setEditingLine={setEditingLine}
+          onSave={handleSaveLine}
+        />
       </div>
 
       <style jsx global>{`

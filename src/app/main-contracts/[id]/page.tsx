@@ -3,7 +3,7 @@
 import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
@@ -12,29 +12,17 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
-  Plus, 
   Trash2, 
   Save, 
   FileText, 
   ShoppingCart, 
   ArrowLeft,
   CircleDollarSign,
-  Briefcase,
   Building2,
-  ExternalLink,
   Loader2,
   ShieldAlert,
   History
 } from 'lucide-react';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogTrigger 
-} from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, query, where, addDoc, orderBy, getDocs } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -44,8 +32,12 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
-import { formatDateThaiBE, formatDateRangeThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+
+import { ContractPoTab } from './_components/contract-po-tab';
+import { ContractLogsTab } from './_components/contract-logs-tab';
+import { ContractAddRateDialog } from './_components/contract-add-rate-dialog';
+import { ContractSupplementDialog } from './_components/contract-supplement-dialog';
 
 type ContractChangeLog = {
   id: string;
@@ -637,75 +629,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     };
   })();
 
-  const formatDiffSummary = (raw?: string) => {
-    if (!raw) return '-';
-    try {
-      const parsed = JSON.parse(raw) as Record<string, any>;
-      const labels: Record<string, string> = {
-        title: 'ชื่อสัญญา',
-        startDate: 'วันที่เริ่ม',
-        endDate: 'วันที่สิ้นสุด',
-        billingTerms: 'Billing Terms',
-        paymentTerms: 'Payment Terms',
-        notes: 'หมายเหตุ',
-        positionId: 'ตำแหน่งงาน',
-        sellRate: 'ราคาขาย',
-        costBaseline: 'ราคาต้นทุน',
-        normalWorkHours: 'ชั่วโมงงานปกติ',
-      };
-      const rows = Object.entries(parsed).map(([key, value]) => {
-        const label = labels[key] || key;
-        const formattedValue =
-          (key === 'startDate' || key === 'endDate') && typeof value === 'number'
-            ? formatDateThaiBE(value)
-            : String(value ?? '-');
-        return `${label}: ${formattedValue}`;
-      });
-      return rows.join('\n');
-    } catch {
-      return raw;
-    }
-  };
-
-  const formatValueByKey = (key: string, value: any) => {
-    if (value === undefined || value === null || value === '') return '-';
-    if ((key === 'startDate' || key === 'endDate') && typeof value === 'number') {
-      return formatDateThaiBE(value);
-    }
-    if ((key === 'sellRate' || key === 'costBaseline') && typeof value === 'number') {
-      return value.toLocaleString();
-    }
-    return String(value);
-  };
-
-  const formatDiffPairs = (beforeRaw?: string, afterRaw?: string) => {
-    if (!beforeRaw && !afterRaw) return '-';
-    try {
-      const beforeObj = beforeRaw ? (JSON.parse(beforeRaw) as Record<string, any>) : {};
-      const afterObj = afterRaw ? (JSON.parse(afterRaw) as Record<string, any>) : {};
-      const labels: Record<string, string> = {
-        title: 'ชื่อสัญญา',
-        startDate: 'วันที่เริ่ม',
-        endDate: 'วันที่สิ้นสุด',
-        billingTerms: 'Billing Terms',
-        paymentTerms: 'Payment Terms',
-        notes: 'หมายเหตุ',
-        positionId: 'ตำแหน่งงาน',
-        sellRate: 'ราคาขาย',
-        costBaseline: 'ราคาต้นทุน',
-        normalWorkHours: 'ชั่วโมงงานปกติ',
-      };
-      const keys = Array.from(new Set([...Object.keys(beforeObj), ...Object.keys(afterObj)]));
-      const changedOnly = keys.filter((k) => JSON.stringify(beforeObj[k]) !== JSON.stringify(afterObj[k]));
-      if (changedOnly.length === 0) return '-';
-      return changedOnly
-        .map((k) => `${labels[k] || k}: ${formatValueByKey(k, beforeObj[k])} -> ${formatValueByKey(k, afterObj[k])}`)
-        .join('\n');
-    } catch {
-      return `${beforeRaw || '-'} -> ${afterRaw || '-'}`;
-    }
-  };
-
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6">
@@ -929,169 +852,33 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 </div>
                 {canModify && isPendingContract && (
                   <div className="flex items-center gap-2">
-                    <Dialog open={isAddSupplementOpen} onOpenChange={setIsAddSupplementOpen}>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" className="gap-2">
-                          <Plus className="h-4 w-4" /> เอกสารสัญญาเพิ่มเติม
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-md">
-                        <DialogHeader>
-                          <DialogTitle>สร้างสัญญาเพิ่มเติมตำแหน่ง</DialogTitle>
-                          <DialogDescription>
-                            จะสร้างเป็นเอกสารสัญญาอีกฉบับ (แสดงแยกในรายการสัญญาลูกค้า) และ inherit เงื่อนไขวันหยุด/OT เดิม
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="grid gap-3 py-2">
-                          <div className="grid gap-2">
-                            <Label>ชื่อสัญญาเพิ่มเติม</Label>
-                            <Input
-                              value={supplementTitle}
-                              onChange={(e) => setSupplementTitle(e.target.value)}
-                              placeholder={`เช่น เพิ่มตำแหน่งงาน - ${contract.title}`}
-                            />
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            สถานะเริ่มต้นเป็น Pending และต้องเปลี่ยนเป็น Active ก่อนใช้งาน downstream
-                          </p>
-                        </div>
-                        <DialogFooter>
-                          <Button variant="outline" onClick={() => setIsAddSupplementOpen(false)}>ยกเลิก</Button>
-                          <Button onClick={handleCreateSupplementContract} disabled={isCreatingSupplement || !supplementTitle.trim()}>
-                            {isCreatingSupplement ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                            สร้างเอกสารเพิ่มเติม
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
-                    <Dialog open={isAddRateOpen} onOpenChange={setIsAddRateOpen}>
-                      <DialogTrigger asChild>
-                        <Button className="gap-2" disabled={contract.status === 'active'}>
-                          <Plus className="h-4 w-4" /> เพิ่มอัตราราคา
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
-                      <DialogHeader>
-                        <DialogTitle>กำหนดอัตราราคาใหม่</DialogTitle>
-                        <DialogDescription>เลือกตำแหน่งและระบุราคาตามเงื่อนไขสัญญา</DialogDescription>
-                      </DialogHeader>
-                      <div className="grid gap-4 py-4">
-                        <div className="grid gap-2">
-                          <Label>ตำแหน่งงาน (Position)</Label>
-                          <Select onValueChange={v => setNewRate({...newRate, positionId: v})} value={newRate.positionId}>
-                            <SelectTrigger><SelectValue placeholder="เลือกตำแหน่ง..." /></SelectTrigger>
-                            <SelectContent>
-                              {allPositions?.map(p => (
-                                <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label>ราคาขาย (Sell Rate)</Label>
-                            <Input
-                              type="number"
-                              disabled={!canEditSellSide || isSupplementalContract}
-                              value={newRate.sellRate}
-                              onChange={e => setNewRate({...newRate, sellRate: parseFloat(e.target.value)})}
-                            />
-                          </div>
-                          {canViewCostFields && (
-                            <div className="grid gap-2">
-                              <Label>ต้นทุนอ้างอิง (Cost Baseline)</Label>
-                              <Input
-                                type="number"
-                                disabled={!canEditCostSide || isSupplementalContract}
-                                value={newRate.costBaseline}
-                                onChange={e => setNewRate({...newRate, costBaseline: parseFloat(e.target.value)})}
-                              />
-                            </div>
-                          )}
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>ชั่วโมงงานปกติ/วัน (Normal Hours)</Label>
-                          <Select disabled={isSupplementalContract} onValueChange={v => setNewRate({...newRate, normalWorkHours: Number(v) as 8 | 12})} value={String(newRate.normalWorkHours || 8)}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="8">8 ชั่วโมง</SelectItem>
-                              <SelectItem value="12">12 ชั่วโมง</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label>หน่วยการคิดเงิน</Label>
-                            <Select onValueChange={v => setNewRate({...newRate, billingUnit: v as any})} value={newRate.billingUnit}>
-                              <SelectTrigger><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="daily">Daily (รายวัน)</SelectItem>
-                                <SelectItem value="monthly">Monthly (รายเดือน)</SelectItem>
-                                <SelectItem value="hourly">Hourly (รายชั่วโมง)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="grid gap-2">
-                            <Label>กฎการคิดโอที (OT Rule)</Label>
-                            <Input value={newRate.overtimeRule} onChange={e => setNewRate({...newRate, overtimeRule: e.target.value})} />
-                          </div>
-                        </div>
-                        <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-2">
-                          <p className="font-semibold text-foreground">กฎตัวคูณ OT/วันหยุด ของสัญญาฉบับนี้จะถูกใช้กับเรทตำแหน่งอัตโนมัติ</p>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-muted-foreground">
-                            <div>
-                              <p>ฝั่งขาย: OT {Number(effectiveRatePolicy.sell.otAfterShift ?? 1.5)}x, วันหยุด {Number(effectiveRatePolicy.sell.holiday ?? 1)}x, นขต. {Number(effectiveRatePolicy.sell.publicHoliday ?? 1)}x, อาทิตย์ {Number(effectiveRatePolicy.sell.sunday ?? 1)}x, OT อาทิตย์ {Number(effectiveRatePolicy.sell.sundayOt ?? 1.5)}x</p>
-                            </div>
-                            {canViewCostFields && (
-                              <div>
-                                <p>ฝั่งต้นทุน: OT {Number(effectiveRatePolicy.cost.otAfterShift ?? 1.5)}x, วันหยุด {Number(effectiveRatePolicy.cost.holiday ?? 1)}x, นขต. {Number(effectiveRatePolicy.cost.publicHoliday ?? 1)}x, อาทิตย์ {Number(effectiveRatePolicy.cost.sunday ?? 1)}x, OT อาทิตย์ {Number(effectiveRatePolicy.cost.sundayOt ?? 1.5)}x</p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label>วันพิเศษฝั่งขาย (คั่นด้วย , หรือขึ้นบรรทัด)</Label>
-                            <Textarea
-                              disabled={!canEditSellSide || isSupplementalContract}
-                              value={sellSpecialDaysText}
-                              onChange={e => setSellSpecialDaysText(e.target.value)}
-                              placeholder="เช่น Sunday Off, Songkran Day 1"
-                            />
-                          </div>
-                          {canViewCostFields && (
-                            <div className="grid gap-2">
-                              <Label>วันพิเศษฝั่งต้นทุน</Label>
-                              <Textarea
-                                disabled={!canEditCostSide || isSupplementalContract}
-                                value={costSpecialDaysText}
-                                onChange={e => setCostSpecialDaysText(e.target.value)}
-                                placeholder="เช่น Sunday OT, Travel Day"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>หมายเหตุ</Label>
-                          <Input value={newRate.notes || ''} onChange={e => setNewRate({...newRate, notes: e.target.value})} />
-                        </div>
-                      </div>
-                      <DialogFooter className="sticky bottom-0 bg-background pt-3">
-                        <Button variant="outline" onClick={() => setIsAddRateOpen(false)}>ยกเลิก</Button>
-                        <Button
-                          onClick={handleAddRate}
-                          disabled={
-                            !newRate.positionId
-                            || (!canEditSellSide && !canEditCostSide)
-                            || (canEditSellSide && !newRate.sellRate)
-                            || (canEditCostSide && !newRate.costBaseline)
-                          }
-                        >
-                          บันทึกอัตราราคา
-                        </Button>
-                      </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
+                    <ContractSupplementDialog
+                      open={isAddSupplementOpen}
+                      onOpenChange={setIsAddSupplementOpen}
+                      supplementTitle={supplementTitle}
+                      setSupplementTitle={setSupplementTitle}
+                      contractTitle={contract.title}
+                      isCreating={isCreatingSupplement}
+                      onCreate={handleCreateSupplementContract}
+                    />
+                    <ContractAddRateDialog
+                      open={isAddRateOpen}
+                      onOpenChange={setIsAddRateOpen}
+                      newRate={newRate}
+                      setNewRate={setNewRate}
+                      sellSpecialDaysText={sellSpecialDaysText}
+                      setSellSpecialDaysText={setSellSpecialDaysText}
+                      costSpecialDaysText={costSpecialDaysText}
+                      setCostSpecialDaysText={setCostSpecialDaysText}
+                      allPositions={allPositions ?? null}
+                      effectiveRatePolicy={effectiveRatePolicy}
+                      canEditSellSide={canEditSellSide}
+                      canEditCostSide={canEditCostSide}
+                      canViewCostFields={canViewCostFields}
+                      isSupplementalContract={isSupplementalContract}
+                      contractStatusActive={contract.status === 'active'}
+                      onAddRate={handleAddRate}
+                    />
                   </div>
                 )}
               </CardHeader>
@@ -1150,120 +937,17 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           </TabsContent>
 
           <TabsContent value="pos" className="mt-6">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle>Customer POs ที่อ้างอิงสัญญานี้</CardTitle>
-                  <CardDescription>รายการใบสั่งซื้อบริการกำลังคนภายใต้สัญญาฉบับนี้</CardDescription>
-                </div>
-                {canModify && (
-                  <Button
-                    variant="outline"
-                    className="gap-2"
-                    asChild={contract.status === 'active'}
-                    disabled={contract.status !== 'active'}
-                  >
-                    {contract.status === 'active' ? (
-                      <Link href={`/purchase-orders?contractId=${id}&customerId=${contract.customerId}`}>
-                        <Plus className="h-4 w-4" /> สร้าง Customer PO ใหม่
-                      </Link>
-                    ) : (
-                      <span><Plus className="h-4 w-4 inline mr-1" /> สร้าง Customer PO ใหม่ (ต้อง Active ก่อน)</span>
-                    )}
-                  </Button>
-                )}
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>เลขที่ Customer PO</TableHead>
-                      <TableHead>หัวข้อ / โครงการ</TableHead>
-                      <TableHead>ระยะเวลา</TableHead>
-                      <TableHead>สถานะ</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {customerPOs?.map(po => (
-                      <TableRow key={po.id}>
-                        <TableCell className="font-mono font-bold">{po.poCode}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{po.title}</span>
-                            <span className="text-xs text-muted-foreground">{po.projectName || 'No Project Name'}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {formatDateRangeThaiBE(po.startDate, po.endDate)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" className="gap-2" onClick={() => router.push(`/purchase-orders/${po.id}`)}>
-                            <ExternalLink className="h-4 w-4" /> ดูรายละเอียด
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!customerPOs?.length && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบ Customer PO ที่อ้างอิงสัญญานี้</TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            <ContractPoTab
+              contract={contract}
+              contractId={id}
+              customerPOs={customerPOs ?? null}
+              canModify={canModify}
+              onNavigatePO={(poId) => router.push(`/purchase-orders/${poId}`)}
+            />
           </TabsContent>
 
           <TabsContent value="logs" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>ประวัติการแก้ไขสัญญา (Contract Change Logs)</CardTitle>
-                <CardDescription>บันทึกการแก้ไขราคา/วันสัญญา/การอนุมัติ พร้อมผู้ดำเนินการและค่าก่อน-หลัง</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>เวลา</TableHead>
-                      <TableHead>ผู้แก้ไข</TableHead>
-                      <TableHead>ประเภท</TableHead>
-                      <TableHead>ฟิลด์ที่เปลี่ยน</TableHead>
-                      <TableHead>ก่อนแก้</TableHead>
-                      <TableHead>หลังแก้</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {changeLogs?.map((log) => (
-                      <TableRow key={log.id}>
-                        <TableCell className="text-xs whitespace-nowrap">{formatDateTimeThaiBE(log.eventAt)}</TableCell>
-                        <TableCell className="text-sm font-medium">{log.actorName || '-'}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[10px]">{log.actionType}</Badge>
-                        </TableCell>
-                        <TableCell className="text-xs">{(log.changedFields || []).join(', ') || '-'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground max-w-[300px] whitespace-pre-wrap align-top">
-                          {formatDiffPairs(log.beforeSummary, log.afterSummary)}
-                        </TableCell>
-                        <TableCell className="text-xs max-w-[300px] whitespace-pre-wrap align-top">
-                          {formatDiffSummary(log.afterSummary)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!changeLogs?.length && (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">
-                          ยังไม่มีประวัติการแก้ไขสัญญา
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            <ContractLogsTab changeLogs={changeLogs ?? null} />
           </TabsContent>
         </Tabs>
       </div>
