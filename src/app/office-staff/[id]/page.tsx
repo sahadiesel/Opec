@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { 
   ArrowLeft, 
@@ -495,7 +495,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <CardContent className="pt-4 space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">สร้างเมื่อ (Created At):</span>
-                    <span>{staffData?.createdAt ? new Date(staffData.createdAt).toLocaleString('th-TH') : '-'}</span>
+                    <span>{staffData?.createdAt ? formatDateTimeThaiBE(staffData.createdAt) : '-'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">ลงบันทึกโดย (Created By):</span>
@@ -503,7 +503,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">แก้ไขล่าสุด (Last Update):</span>
-                    <span>{staffData?.updatedAt ? new Date(staffData.updatedAt).toLocaleString('th-TH') : '-'}</span>
+                    <span>{staffData?.updatedAt ? formatDateTimeThaiBE(staffData.updatedAt) : '-'}</span>
                   </div>
                 </CardContent>
               </Card>

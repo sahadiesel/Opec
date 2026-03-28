@@ -53,6 +53,13 @@ export function formatDateTimeThaiBE(input: Date | number | string | null | unde
   return `${formatDateThaiBE(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+/** เวลาเท่านั้น — HH:mm (local) ให้สอดคล้องกับ formatDateTimeThaiBE */
+export function formatTimeThaiBE(input: Date | number | string | null | undefined): string {
+  const d = toDate(input as Date | number | string);
+  if (!d) return '';
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 /** สำหรับผูก `<input type="date" />` (ค่าเป็น yyyy-mm-dd ตามมาตรฐาน HTML) */
 export function timestampToHtmlDateValue(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '';
@@ -62,6 +69,16 @@ export function timestampToHtmlDateValue(ms: number | null | undefined): string 
   const m = pad2(d.getMonth() + 1);
   const day = pad2(d.getDate());
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * แปลงสตริงวันที่แบบ yyyy-mm-dd (local) ที่เก็บใน Firestore/HTML date input
+ * → dd/mm/yyyy (พ.ศ.) สำหรับแสดงใน UI
+ */
+export function formatYmdLocalThaiBE(ymd: string | null | undefined, empty: string = '—'): string {
+  const ms = htmlDateValueToTimestampMs(ymd?.trim() || '');
+  if (ms == null) return empty;
+  return formatDateThaiBE(ms);
 }
 
 /** แปลง yyyy-mm-dd (local) → timestamp เที่ยงวัน — ใช้กับ DatePickerThaiBE โดยเก็บสตริงเดิมใน Firestore */

@@ -33,6 +33,7 @@ import {
   ModulePermission,
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { formatDateThaiBE } from '@/lib/date-thai';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -468,7 +469,7 @@ export default function PermissionAuditPage() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-[10px] text-muted-foreground">
-                          {new Date(p.updatedAt).toLocaleDateString()}
+                          {formatDateThaiBE(p.updatedAt)}
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" onClick={() => {

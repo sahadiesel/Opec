@@ -31,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -309,8 +310,8 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                     <History className="h-4 w-4 text-primary" /> ประวัติการทำรายการ
                   </div>
                   <div className="text-xs space-y-1">
-                    <p><span className="text-muted-foreground">สร้างเมื่อ:</span> {vendorData?.createdAt ? new Date(vendorData.createdAt).toLocaleString('th-TH') : '-'}</p>
-                    <p><span className="text-muted-foreground">อัปเดตล่าสุด:</span> {vendorData?.updatedAt ? new Date(vendorData.updatedAt).toLocaleString('th-TH') : '-'}</p>
+                    <p><span className="text-muted-foreground">สร้างเมื่อ:</span> {vendorData?.createdAt ? formatDateTimeThaiBE(vendorData.createdAt) : '-'}</p>
+                    <p><span className="text-muted-foreground">อัปเดตล่าสุด:</span> {vendorData?.updatedAt ? formatDateTimeThaiBE(vendorData.updatedAt) : '-'}</p>
                   </div>
                 </div>
               </CardContent>

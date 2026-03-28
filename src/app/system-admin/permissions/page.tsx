@@ -33,6 +33,7 @@ import {
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc, setDoc, query, orderBy } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
+import { formatDateThaiBE } from '@/lib/date-thai';
 import { 
   Dialog, 
   DialogContent, 
@@ -299,7 +300,7 @@ export default function PermissionProfilesPage() {
                           </TableCell>
                           <TableCell className="text-[10px] text-muted-foreground">
                             <div className="flex flex-col">
-                              <span>{new Date(p.updatedAt).toLocaleDateString()}</span>
+                              <span>{formatDateThaiBE(p.updatedAt)}</span>
                               <span>โดย {p.updatedBy}</span>
                             </div>
                           </TableCell>

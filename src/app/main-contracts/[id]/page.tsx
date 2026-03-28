@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -21,7 +21,8 @@ import {
   Building2,
   Loader2,
   ShieldAlert,
-  History
+  History,
+  Pencil,
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, query, where, addDoc, orderBy, getDocs } from 'firebase/firestore';
@@ -31,13 +32,50 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isSystemAdmin, isHrManager } from '@/lib/permission-core';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 
 import { ContractPoTab } from './_components/contract-po-tab';
 import { ContractLogsTab } from './_components/contract-logs-tab';
 import { ContractAddRateDialog } from './_components/contract-add-rate-dialog';
+import { ContractEditRateDialog } from './_components/contract-edit-rate-dialog';
 import { ContractSupplementDialog } from './_components/contract-supplement-dialog';
+import {
+  buildSpecialDaysStrings,
+  OVERTIME_RULE_OPTIONS,
+  resolveContractHolidaySchedule,
+} from '@/lib/contract-position-rate-extras';
+import type { CalendarHolidayEntry, OvertimeRuleKey, WeeklyRestPattern } from '@/lib/contract-position-rate-extras';
+import { ContractHolidayScheduleSection } from './_components/contract-holiday-schedule-section';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+const DEFAULT_OT_KEY: OvertimeRuleKey = 'MULT_1_5';
+const DEFAULT_OT_LABEL = OVERTIME_RULE_OPTIONS.find((o) => o.key === DEFAULT_OT_KEY)!;
+
+function createInitialNewRateForm(): Partial<PositionRate> {
+  return {
+    billingUnit: 'daily',
+    active: true,
+    sellRate: 0,
+    costBaseline: 0,
+    overtimeRuleKey: DEFAULT_OT_KEY,
+    overtimeRule: `${DEFAULT_OT_LABEL.label} — ${DEFAULT_OT_LABEL.description}`,
+    normalWorkHours: 8,
+    sellOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
+    costOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
+    sellSpecialDays: [],
+    costSpecialDays: [],
+  };
+}
 
 type ContractChangeLog = {
   id: string;
@@ -107,19 +145,61 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       || currentUser.roleId === 'hr_officer';
   }, [currentUser]);
   const canEditSellSide = useMemo(() => canModify && !isHRRole, [canModify, isHRRole]);
-  const canEditCostSide = useMemo(() => canModify && !isSalesRole, [canModify, isSalesRole]);
+  /** Labour cost baseline: System Admin or HR Manager only (not sales, not hr_officer, not operations). */
+  const canEditCostSide = useMemo(
+    () => canModify && (isSystemAdmin(currentUser) || isHrManager(currentUser)),
+    [canModify, currentUser],
+  );
   const canViewCostFields = useMemo(() => !isSalesRole, [isSalesRole]);
   const canApproveContract = useMemo(() => {
     if (!currentUser) return false;
     const level = (currentUser.accessLevel || currentUser.level || '').toLowerCase();
     return isSystemAdmin(currentUser) || level === 'manager' || level === 'admin';
   }, [currentUser]);
+  /** วันหยุดสัญญา: ผู้จัดการ (ทั้งสองฝั่ง) — ไม่ผูกแยกขาย/ต้นทุน */
+  const canEditContractHolidaySchedule = useMemo(() => {
+    if (!currentUser || !canModify) return false;
+    if (canApproveContract || isSystemAdmin(currentUser) || isHrManager(currentUser)) return true;
+    const rk = `${currentUser.assignedRoleKey || ''} ${currentUser.roleId || ''}`.toLowerCase();
+    return rk.includes('manager');
+  }, [currentUser, canModify, canApproveContract]);
+  /** กฎตัวคูณหลัง Active: Admin / HR Manager */
+  const canEditActiveContractMultipliers = useMemo(
+    () => canModify && (isSystemAdmin(currentUser) || isHrManager(currentUser)),
+    [canModify, currentUser],
+  );
 
   const mcRef = useMemoFirebase(() => (firestore && isAuthorized ? doc(firestore, 'main_contracts', id) : null), [firestore, id, isAuthorized]);
   const { data: contract, isLoading: isMCLoading } = useDoc<MainContract>(mcRef as any);
 
   const ratesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'main_contracts', id, 'position_rates') : null), [firestore, id, isAuthorized]);
   const { data: rates } = useCollection<PositionRate>(ratesQuery as any);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedMC, setEditedMC] = useState<Partial<MainContract>>({});
+
+  const [isAddRateOpen, setIsAddRateOpen] = useState(false);
+  const [editingRateId, setEditingRateId] = useState<string | null>(null);
+  const [addRatePositionDuplicate, setAddRatePositionDuplicate] = useState<PositionRate | null>(null);
+  const [newRate, setNewRate] = useState<Partial<PositionRate>>(() => createInitialNewRateForm());
+  const [activeHolidayDraft, setActiveHolidayDraft] = useState<{
+    sellWeekly: WeeklyRestPattern;
+    costWeekly: WeeklyRestPattern;
+    sellCal: CalendarHolidayEntry[];
+    costCal: CalendarHolidayEntry[];
+  } | null>(null);
+  const [activeMultDraft, setActiveMultDraft] = useState<NonNullable<MainContract['rateMultiplierPolicy']> | null>(null);
+  const [isAddSupplementOpen, setIsAddSupplementOpen] = useState(false);
+  const [isCreatingSupplement, setIsCreatingSupplement] = useState(false);
+  const [supplementTitle, setSupplementTitle] = useState('');
+  const [isCreatingRevision, setIsCreatingRevision] = useState(false);
+
+  const applyAddPositionId = useCallback((positionId: string) => {
+    setNewRate((prev) => ({ ...prev, positionId }));
+    const existing = rates?.find((r) => r.positionId === positionId);
+    if (existing) setAddRatePositionDuplicate(existing);
+    else setAddRatePositionDuplicate(null);
+  }, [rates]);
 
   const logsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -146,28 +226,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   }, [firestore, isAuthorized, contract]);
   const { data: inheritedPolicyContract } = useDoc<MainContract>(inheritedPolicyContractRef as any);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedMC, setEditedMC] = useState<Partial<MainContract>>({});
+  const duplicateAlertPositionLabel = useMemo(() => {
+    if (!addRatePositionDuplicate) return '';
+    const p = allPositions?.find((x) => x.id === addRatePositionDuplicate.positionId);
+    return (p?.positionName || p?.positionNameTh) || addRatePositionDuplicate.positionId;
+  }, [addRatePositionDuplicate, allPositions]);
 
-  const [isAddRateOpen, setIsAddRateOpen] = useState(false);
-  const [newRate, setNewRate] = useState<Partial<PositionRate>>({
-    billingUnit: 'daily',
-    active: true,
-    sellRate: 0,
-    costBaseline: 0,
-    overtimeRule: '1.5x of Hourly Rate',
-    normalWorkHours: 8,
-    sellOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
-    costOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
-    sellSpecialDays: [],
-    costSpecialDays: []
-  });
-  const [sellSpecialDaysText, setSellSpecialDaysText] = useState('');
-  const [costSpecialDaysText, setCostSpecialDaysText] = useState('');
-  const [isAddSupplementOpen, setIsAddSupplementOpen] = useState(false);
-  const [isCreatingSupplement, setIsCreatingSupplement] = useState(false);
-  const [supplementTitle, setSupplementTitle] = useState('');
-  const [isCreatingRevision, setIsCreatingRevision] = useState(false);
+  useEffect(() => {
+    if (!isAddRateOpen) setAddRatePositionDuplicate(null);
+  }, [isAddRateOpen]);
 
   useEffect(() => {
     // Sync form only when contract snapshot changes.
@@ -230,12 +297,56 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     return `${rootMasterNo}-${String(maxSeq + 1).padStart(2, '0')}`;
   };
 
+  const computedContractCosting = useMemo(() => {
+    const ratesWithSell = (rates || []).filter((r) => Number(r.sellRate || 0) > 0);
+    const missingCostCount = ratesWithSell.filter((r) => Number(r.costBaseline || 0) <= 0).length;
+    return {
+      costingStatus: missingCostCount === 0 ? 'COMPLETE' : 'INCOMPLETE',
+      costingMissingPositionsCount: missingCostCount,
+    };
+  }, [rates]);
+
   useEffect(() => {
-    if (!canModify || !contract) return;
-    if (!rates || !allPositions) return;
-    updateContractCostingStatus();
-    // keep costing readiness synced whenever rates/positions change
-  }, [rates, allPositions, canModify, contract]);
+    if (!canModify || !mcRef || !contract) return;
+    if (
+      contract.costingMissingPositionsCount === computedContractCosting.costingMissingPositionsCount &&
+      contract.costingStatus === computedContractCosting.costingStatus
+    ) {
+      return;
+    }
+    updateDocumentNonBlocking(mcRef, {
+      ...computedContractCosting,
+      costingUpdatedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  }, [computedContractCosting, contract, canModify, mcRef]);
+
+  useEffect(() => {
+    if (!contract) {
+      setActiveHolidayDraft(null);
+      setActiveMultDraft(null);
+      return;
+    }
+    const active = contract.status === 'active';
+    const supp = (contract.contractType || 'master') === 'supplemental';
+    if (!active || supp) {
+      setActiveHolidayDraft(null);
+      setActiveMultDraft(null);
+      return;
+    }
+    const r = resolveContractHolidaySchedule(contract);
+    setActiveHolidayDraft({
+      sellWeekly: r.sellWeekly,
+      costWeekly: r.costWeekly,
+      sellCal: [...r.sellHolidays],
+      costCal: [...r.costHolidays],
+    });
+    const pol = contract.rateMultiplierPolicy || DEFAULT_RATE_POLICY;
+    setActiveMultDraft({
+      sell: { ...DEFAULT_RATE_POLICY.sell, ...pol.sell },
+      cost: { ...DEFAULT_RATE_POLICY.cost, ...pol.cost },
+    });
+  }, [contract]);
 
   const handleSaveMaster = async () => {
     if (!mcRef || !canModify || !contract) return;
@@ -257,10 +368,40 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if (JSON.stringify(editedMC.rateMultiplierPolicy || null) !== JSON.stringify(contract.rateMultiplierPolicy || null)) {
       changedFields.push('rateMultiplierPolicy');
     }
+    const mergedH = { ...contract, ...editedMC } as MainContract;
+    const hSched = resolveContractHolidaySchedule(mergedH);
+    const sellW = mergedH.contractSellWeeklyRestPattern ?? hSched.sellWeekly;
+    const costW = mergedH.contractCostWeeklyRestPattern ?? hSched.costWeekly;
+    const sellCal = mergedH.contractSellCalendarHolidays ?? hSched.sellHolidays;
+    const costCal = mergedH.contractCostCalendarHolidays ?? hSched.costHolidays;
+    const contractSellSpecialDays = buildSpecialDaysStrings(sellW, sellCal);
+    const contractCostSpecialDays = buildSpecialDaysStrings(costW, costCal);
+    if (
+      JSON.stringify({
+        w: sellW,
+        c: costW,
+        sc: sellCal,
+        cc: costCal,
+      }) !==
+      JSON.stringify({
+        w: contract.contractSellWeeklyRestPattern ?? resolveContractHolidaySchedule(contract).sellWeekly,
+        c: contract.contractCostWeeklyRestPattern ?? resolveContractHolidaySchedule(contract).costWeekly,
+        sc: contract.contractSellCalendarHolidays ?? resolveContractHolidaySchedule(contract).sellHolidays,
+        cc: contract.contractCostCalendarHolidays ?? resolveContractHolidaySchedule(contract).costHolidays,
+      })
+    ) {
+      changedFields.push('contractHolidaySchedule');
+    }
 
     const nextStatus = 'pending';
     updateDocumentNonBlocking(mcRef, {
       ...editedMC,
+      contractSellWeeklyRestPattern: sellW,
+      contractCostWeeklyRestPattern: costW,
+      contractSellCalendarHolidays: sellCal,
+      contractCostCalendarHolidays: costCal,
+      contractSellSpecialDays,
+      contractCostSpecialDays,
       status: nextStatus,
       lastSubmittedAt: Date.now(),
       lastSubmittedBy: currentUser?.displayName || 'System',
@@ -299,8 +440,56 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     });
   };
 
+  const handleSaveActiveContractHolidays = () => {
+    if (!mcRef || !contract || !activeHolidayDraft || !canEditContractHolidaySchedule) return;
+    if (contract.status !== 'active' || (contract.contractType || 'master') === 'supplemental') return;
+    const contractSellSpecialDays = buildSpecialDaysStrings(activeHolidayDraft.sellWeekly, activeHolidayDraft.sellCal);
+    const contractCostSpecialDays = buildSpecialDaysStrings(activeHolidayDraft.costWeekly, activeHolidayDraft.costCal);
+    updateDocumentNonBlocking(mcRef, {
+      contractSellWeeklyRestPattern: activeHolidayDraft.sellWeekly,
+      contractCostWeeklyRestPattern: activeHolidayDraft.costWeekly,
+      contractSellCalendarHolidays: activeHolidayDraft.sellCal,
+      contractCostCalendarHolidays: activeHolidayDraft.costCal,
+      contractSellSpecialDays,
+      contractCostSpecialDays,
+      updatedAt: Date.now(),
+    });
+    addContractChangeLog({
+      actionType: 'UPDATE_CONTRACT_HOLIDAYS',
+      changedFields: ['contractHolidaySchedule'],
+      beforeSummary: 'active_contract',
+      afterSummary: contractSellSpecialDays.join(';'),
+    });
+    toast({ title: 'บันทึกวันหยุดสัญญาแล้ว' });
+  };
+
+  const handleSaveActiveContractMultipliers = () => {
+    if (!mcRef || !contract || !activeMultDraft || !canEditActiveContractMultipliers) return;
+    if (contract.status !== 'active' || (contract.contractType || 'master') === 'supplemental') return;
+    updateDocumentNonBlocking(mcRef, {
+      rateMultiplierPolicy: activeMultDraft,
+      updatedAt: Date.now(),
+    });
+    addContractChangeLog({
+      actionType: 'UPDATE_CONTRACT_MULTIPLIERS',
+      changedFields: ['rateMultiplierPolicy'],
+      beforeSummary: 'active_contract',
+      afterSummary: 'rateMultiplierPolicy',
+    });
+    toast({ title: 'บันทึกกฎตัวคูณสัญญาแล้ว' });
+  };
+
   const handleApproveContract = async () => {
     if (!mcRef || !canApproveContract || !contract) return;
+    if (computedContractCosting.costingStatus !== 'COMPLETE' || computedContractCosting.costingMissingPositionsCount > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'อนุมัติไม่ได้',
+        description:
+          'ยังมีตำแหน่งที่มีราคาขายแล้วแต่ไม่มีต้นทุน — กรุณากรอกต้นทุนให้ครบก่อนอนุมัติ',
+      });
+      return;
+    }
     updateDocumentNonBlocking(mcRef, {
       status: 'active',
       approvedAt: Date.now(),
@@ -336,6 +525,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               billingTerms: contract.billingTerms,
               paymentTerms: contract.paymentTerms,
               rateMultiplierPolicy: contract.rateMultiplierPolicy || DEFAULT_RATE_POLICY,
+              contractSellWeeklyRestPattern: contract.contractSellWeeklyRestPattern,
+              contractCostWeeklyRestPattern: contract.contractCostWeeklyRestPattern,
+              contractSellCalendarHolidays: contract.contractSellCalendarHolidays,
+              contractCostCalendarHolidays: contract.contractCostCalendarHolidays,
+              contractSellSpecialDays: contract.contractSellSpecialDays,
+              contractCostSpecialDays: contract.contractCostSpecialDays,
               inheritTermsFromContractId: contract.id,
               updatedAt: Date.now(),
             });
@@ -397,47 +592,31 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const updateContractCostingStatus = () => {
-    if (!mcRef) return;
-    const allPosIds = new Set((allPositions || []).map((p) => p.id));
-    const completeCostPosIds = new Set(
-      (rates || [])
-        .filter((r) => allPosIds.has(r.positionId) && Number(r.costBaseline || 0) > 0)
-        .map((r) => r.positionId)
-    );
-    const missingCount = Math.max(0, allPosIds.size - completeCostPosIds.size);
-    const costingStatus = missingCount === 0 ? 'COMPLETE' : 'INCOMPLETE';
-    updateDocumentNonBlocking(mcRef, {
-      costingStatus,
-      costingMissingPositionsCount: missingCount,
-      costingUpdatedAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-  };
-
   const handleAddRate = () => {
-    if (!ratesQuery || !canModify) return;
-    if (contract?.status !== 'pending') {
+    if (!ratesQuery || !canModify || !contract) return;
+    const canMutateRates =
+      contract.status === 'pending' ||
+      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
+    if (!canMutateRates) {
       toast({
         variant: 'destructive',
-        title: 'ไม่สามารถแก้ฉบับนี้ได้',
-        description: 'กรุณาแก้ไขเฉพาะสัญญาฉบับ Pending',
+        title: 'ไม่สามารถเพิ่มตำแหน่งในสัญญาหลักที่ Active',
+        description: 'เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น',
       });
       return;
     }
-    const parsedSellSpecialDays = sellSpecialDaysText
-      .split(/[\n,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const parsedCostSpecialDays = costSpecialDaysText
-      .split(/[\n,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const dupForPosition = rates?.find((r) => r.positionId === newRate.positionId);
+    if (dupForPosition) {
+      setAddRatePositionDuplicate(dupForPosition);
+      return;
+    }
+    const otKey = (newRate.overtimeRuleKey || DEFAULT_OT_KEY) as OvertimeRuleKey;
 
     const normalizedSellRate = canEditSellSide ? Number(newRate.sellRate) || 0 : 0;
     const normalizedCostBaseline = canEditCostSide ? Number(newRate.costBaseline) || 0 : 0;
     const policySell = effectiveRatePolicy.sell || {};
     const policyCost = effectiveRatePolicy.cost || {};
+    const otOpt = OVERTIME_RULE_OPTIONS.find((o) => o.key === otKey);
 
     addDocumentNonBlocking(ratesQuery, {
       ...newRate,
@@ -446,6 +625,8 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       costBaseline: normalizedCostBaseline,
       billingUnit: newRate.billingUnit || 'daily',
       normalWorkHours: newRate.normalWorkHours || 8,
+      overtimeRuleKey: otKey,
+      overtimeRule: newRate.overtimeRule?.trim() || (otOpt ? `${otOpt.label} — ${otOpt.description}` : otKey),
       sellOtRules: {
         afterShift: Number(policySell.otAfterShift ?? 1.5),
         holiday: Number(policySell.holiday ?? 1),
@@ -460,8 +641,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         sunday: Number(policyCost.sunday ?? 1),
         sundayOt: Number(policyCost.sundayOt ?? 1.5),
       },
-      sellSpecialDays: parsedSellSpecialDays,
-      costSpecialDays: parsedCostSpecialDays,
       active: true,
       notes: newRate.notes || ''
     });
@@ -477,31 +656,43 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       }),
     });
     setIsAddRateOpen(false);
-    setNewRate({
-      billingUnit: 'daily',
-      active: true,
-      sellRate: 0,
-      costBaseline: 0,
-      overtimeRule: '1.5x of Hourly Rate',
-      normalWorkHours: 8,
-      sellOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
-      costOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
-      sellSpecialDays: [],
-      costSpecialDays: [],
-    });
-    setSellSpecialDaysText('');
-    setCostSpecialDaysText('');
-    updateContractCostingStatus();
+    setNewRate(createInitialNewRateForm());
     toast({ title: "เพิ่มอัตราราคาสำเร็จ" });
   };
 
-  const deleteRate = (rateId: string) => {
-    if (!firestore || !canModify) return;
-    if (contract?.status !== 'pending') {
+  const handleUpdatePositionRate = (rateId: string, payload: Record<string, unknown>) => {
+    if (!firestore || !canModify || !contract) return;
+    const canMutateRates =
+      contract.status === 'pending' ||
+      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
+    if (!canMutateRates) {
       toast({
         variant: 'destructive',
-        title: 'ไม่สามารถแก้ฉบับนี้ได้',
-        description: 'กรุณาแก้ไขเฉพาะสัญญาฉบับ Pending',
+        title: 'ไม่สามารถแก้ราคาในสัญญาหลักที่ Active',
+        description: 'แก้รายละเอียดราคาตำแหน่งได้เฉพาะฉบับ Pending หรือสัญญาเพิ่มเติมที่ Active',
+      });
+      return;
+    }
+    updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rateId), payload);
+    addContractChangeLog({
+      actionType: 'UPDATE_POSITION_RATE',
+      changedFields: ['position_rates'],
+      beforeSummary: `rate_id=${rateId}`,
+      afterSummary: JSON.stringify(Object.keys(payload)),
+    });
+    toast({ title: 'บันทึกอัตราราคาแล้ว' });
+  };
+
+  const deleteRate = (rateId: string) => {
+    if (!firestore || !canModify || !contract) return;
+    const canMutateRates =
+      contract.status === 'pending' ||
+      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
+    if (!canMutateRates) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สามารถลบรายการในสัญญาหลักที่ Active',
+        description: 'ลบหรือปรับตำแหน่งผ่านสัญญาเพิ่มเติม / ฉบับแก้ไข Pending',
       });
       return;
     }
@@ -518,7 +709,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         }) : 'unknown_rate',
         afterSummary: 'deleted',
       });
-      updateContractCostingStatus();
       toast({ title: "ลบข้อมูลสำเร็จ" });
     }
   };
@@ -569,6 +759,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         billingTerms: contract.billingTerms,
         paymentTerms: contract.paymentTerms,
         rateMultiplierPolicy: contract.rateMultiplierPolicy || DEFAULT_RATE_POLICY,
+        contractSellWeeklyRestPattern: contract.contractSellWeeklyRestPattern,
+        contractCostWeeklyRestPattern: contract.contractCostWeeklyRestPattern,
+        contractSellCalendarHolidays: contract.contractSellCalendarHolidays,
+        contractCostCalendarHolidays: contract.contractCostCalendarHolidays,
+        contractSellSpecialDays: contract.contractSellSpecialDays,
+        contractCostSpecialDays: contract.contractCostSpecialDays,
         notes: `Supplemental contract inheriting holiday/OT terms from ${contract.contractNumber}`,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -629,6 +825,30 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     };
   })();
 
+  const editingRateRow =
+    editingRateId && rates ? (rates.find((r) => r.id === editingRateId) ?? null) : null;
+
+  const multSellDisabled =
+    isSupplementalContract ||
+    (isActiveContract ? !canEditActiveContractMultipliers : !isEditing || !isPendingContract);
+  const multCostDisabled =
+    isSupplementalContract ||
+    (isActiveContract ? !canEditActiveContractMultipliers : !isEditing || !isPendingContract || !canEditCostSide);
+  const policySellLive = isActiveContract && activeMultDraft ? activeMultDraft.sell : effectiveRatePolicy.sell;
+  const policyCostLive = isActiveContract && activeMultDraft ? activeMultDraft.cost : effectiveRatePolicy.cost;
+
+  const canMutatePositionRates =
+    isPendingContract ||
+    (isActiveContract && isSupplementalContract);
+  const masterActiveRatesLocked = isActiveContract && !isSupplementalContract;
+
+  const holidayScheduleSource = ((): MainContract => {
+    if (isSupplementalContract) return (inheritedPolicyContract || contract) as MainContract;
+    if (isPendingContract && isEditing) return { ...contract, ...editedMC } as MainContract;
+    return contract;
+  })();
+  const holidayResolved = resolveContractHolidaySchedule(holidayScheduleSource);
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6">
@@ -658,7 +878,28 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               </Button>
             ) : isPendingContract ? (
               <>
-                <Button variant="outline" disabled={!canModify} onClick={() => { setEditedMC(contract); setIsEditing(!isEditing); }}>
+                <Button
+                  variant="outline"
+                  disabled={!canModify}
+                  onClick={() => {
+                    if (isEditing) {
+                      setEditedMC(contract);
+                      setIsEditing(false);
+                    } else {
+                      const r = resolveContractHolidaySchedule(contract);
+                      setEditedMC({
+                        ...contract,
+                        contractSellWeeklyRestPattern: contract.contractSellWeeklyRestPattern ?? r.sellWeekly,
+                        contractCostWeeklyRestPattern: contract.contractCostWeeklyRestPattern ?? r.costWeekly,
+                        contractSellCalendarHolidays:
+                          contract.contractSellCalendarHolidays?.length ? contract.contractSellCalendarHolidays : [...r.sellHolidays],
+                        contractCostCalendarHolidays:
+                          contract.contractCostCalendarHolidays?.length ? contract.contractCostCalendarHolidays : [...r.costHolidays],
+                      });
+                      setIsEditing(true);
+                    }
+                  }}
+                >
                   {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
                 </Button>
                 {isSystemAdmin(currentUser) && (
@@ -673,7 +914,14 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               </Button>
             )}
             {isPendingContract && canApproveContract && (
-              <Button className="gap-2 bg-green-600 hover:bg-green-700" onClick={handleApproveContract}>
+              <Button
+                className="gap-2 bg-green-600 hover:bg-green-700"
+                disabled={
+                  computedContractCosting.costingStatus !== 'COMPLETE' ||
+                  computedContractCosting.costingMissingPositionsCount > 0
+                }
+                onClick={handleApproveContract}
+              >
                 อนุมัติสัญญา (Approve)
               </Button>
             )}
@@ -776,26 +1024,32 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                         สัญญาเพิ่มเติมจะ inherit กฎตัวคูณจากสัญญาหลักอัตโนมัติ
                       </p>
                     )}
+                    {isActiveContract && !isSupplementalContract && (
+                      <p className="text-xs text-amber-800 mt-1">
+                        สัญญา Active: แก้กฎตัวคูณได้เฉพาะ Admin / HR Manager แล้วกด &quot;บันทึกกฎตัวคูณ&quot; ด้านล่าง
+                      </p>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <Label>ฝั่งลูกค้า (Billing): OT / Holiday / Public Holiday / Sunday / Sunday OT</Label>
                       <div className="grid grid-cols-5 gap-2">
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.otAfterShift} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, otAfterShift: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.holiday} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, holiday: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.publicHoliday} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, publicHoliday: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.sunday} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, sunday: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.sundayOt} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, sundayOt: Number(e.target.value) || 0 } } })} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.otAfterShift} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, otAfterShift: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, otAfterShift: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.holiday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, holiday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, holiday: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.publicHoliday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, publicHoliday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, publicHoliday: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.sunday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, sunday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, sunday: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.sundayOt} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, sundayOt: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, sundayOt: v } } }); }} />
                       </div>
                     </div>
                     <div className="space-y-2">
                       <Label>ฝั่งลูกจ้าง (Payroll): OT / Holiday / Public Holiday / Sunday / Sunday OT</Label>
+                      <p className="text-[10px] text-muted-foreground">ฉบับ Pending: แก้ฝั่งนี้ได้เฉพาะ Admin / HR Manager — สัญญา Active: Admin / HR Manager แก้ได้ทั้งสองฝั่ง</p>
                       <div className="grid grid-cols-5 gap-2">
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.otAfterShift} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, otAfterShift: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.holiday} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, holiday: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.publicHoliday} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, publicHoliday: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.sunday} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, sunday: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.sundayOt} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, sundayOt: Number(e.target.value) || 0 } } })} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.otAfterShift} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, otAfterShift: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, otAfterShift: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.holiday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, holiday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, holiday: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.publicHoliday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, publicHoliday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, publicHoliday: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.sunday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, sunday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, sunday: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.sundayOt} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, sundayOt: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, sundayOt: v } } }); }} />
                       </div>
                     </div>
                   </div>
@@ -803,23 +1057,107 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     <div className="space-y-2">
                       <Label>Billing: Standby / Mob / Demob / Travel</Label>
                       <div className="grid grid-cols-4 gap-2">
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.standby} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, standby: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.mobilization} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, mobilization: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.demobilization} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, demobilization: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.sell.travel} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, travel: Number(e.target.value) || 0 } } })} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.standby} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, standby: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, standby: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.mobilization} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, mobilization: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, mobilization: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.demobilization} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, demobilization: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, demobilization: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multSellDisabled} value={policySellLive.travel} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, sell: { ...activeMultDraft.sell, travel: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, sell: { ...effectiveRatePolicy.sell, travel: v } } }); }} />
                       </div>
                     </div>
                     <div className="space-y-2">
                       <Label>Payroll: Standby / Mob / Demob / Travel</Label>
                       <div className="grid grid-cols-4 gap-2">
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.standby} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, standby: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.mobilization} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, mobilization: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.demobilization} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, demobilization: Number(e.target.value) || 0 } } })} />
-                        <Input type="number" step="0.1" disabled={!isEditing || !isPendingContract || isSupplementalContract} value={effectiveRatePolicy.cost.travel} onChange={e => setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, travel: Number(e.target.value) || 0 } } })} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.standby} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, standby: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, standby: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.mobilization} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, mobilization: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, mobilization: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.demobilization} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, demobilization: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, demobilization: v } } }); }} />
+                        <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.travel} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, travel: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, travel: v } } }); }} />
                       </div>
                     </div>
                   </div>
+                  {isActiveContract && !isSupplementalContract && canEditActiveContractMultipliers && (
+                    <Button type="button" variant="secondary" size="sm" onClick={handleSaveActiveContractMultipliers}>
+                      บันทึกกฎตัวคูณ (Active)
+                    </Button>
+                  )}
                 </div>
+
+                {isSupplementalContract ? (
+                  <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                    <Label className="text-base font-semibold">วันหยุด / วันพิเศษ (จากสัญญาหลัก)</Label>
+                    <p className="text-xs text-muted-foreground">
+                      สัญญาเพิ่มเติมใช้ชุดวันหยุดเดียวกับสัญญาที่ inherit — แก้ไขที่สัญญาหลักที่ Active / ฉบับแก้ไข Pending
+                    </p>
+                    <ContractHolidayScheduleSection
+                      disabled
+                      canViewCostFields={canViewCostFields}
+                      sellWeeklyPattern={holidayResolved.sellWeekly}
+                      setSellWeeklyPattern={() => {}}
+                      costWeeklyPattern={holidayResolved.costWeekly}
+                      setCostWeeklyPattern={() => {}}
+                      sellCalendarHolidays={holidayResolved.sellHolidays}
+                      setSellCalendarHolidays={(_fn) => {}}
+                      costCalendarHolidays={holidayResolved.costHolidays}
+                      setCostCalendarHolidays={(_fn) => {}}
+                    />
+                  </div>
+                ) : isActiveContract && activeHolidayDraft ? (
+                  <div className="space-y-3">
+                    <ContractHolidayScheduleSection
+                      disabled={!canEditContractHolidaySchedule}
+                      canViewCostFields={canViewCostFields}
+                      sellWeeklyPattern={activeHolidayDraft.sellWeekly}
+                      setSellWeeklyPattern={(v) => setActiveHolidayDraft((d) => (d ? { ...d, sellWeekly: v } : d))}
+                      costWeeklyPattern={activeHolidayDraft.costWeekly}
+                      setCostWeeklyPattern={(v) => setActiveHolidayDraft((d) => (d ? { ...d, costWeekly: v } : d))}
+                      sellCalendarHolidays={activeHolidayDraft.sellCal}
+                      setSellCalendarHolidays={(fn) =>
+                        setActiveHolidayDraft((d) => {
+                          if (!d) return d;
+                          const next = typeof fn === 'function' ? fn(d.sellCal) : d.sellCal;
+                          return { ...d, sellCal: next };
+                        })
+                      }
+                      costCalendarHolidays={activeHolidayDraft.costCal}
+                      setCostCalendarHolidays={(fn) =>
+                        setActiveHolidayDraft((d) => {
+                          if (!d) return d;
+                          const next = typeof fn === 'function' ? fn(d.costCal) : d.costCal;
+                          return { ...d, costCal: next };
+                        })
+                      }
+                    />
+                    {canEditContractHolidaySchedule && (
+                      <Button type="button" variant="secondary" size="sm" onClick={handleSaveActiveContractHolidays}>
+                        บันทึกวันหยุดสัญญา (Active)
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <ContractHolidayScheduleSection
+                      disabled={!isPendingContract || !isEditing || !canEditContractHolidaySchedule}
+                      canViewCostFields={canViewCostFields}
+                      sellWeeklyPattern={holidayResolved.sellWeekly}
+                      setSellWeeklyPattern={(v) => setEditedMC({ ...editedMC, contractSellWeeklyRestPattern: v })}
+                      costWeeklyPattern={holidayResolved.costWeekly}
+                      setCostWeeklyPattern={(v) => setEditedMC({ ...editedMC, contractCostWeeklyRestPattern: v })}
+                      sellCalendarHolidays={holidayResolved.sellHolidays}
+                      setSellCalendarHolidays={(fn) => {
+                        const base = holidayResolved.sellHolidays;
+                        const next = typeof fn === 'function' ? fn(base) : base;
+                        setEditedMC({ ...editedMC, contractSellCalendarHolidays: next });
+                      }}
+                      costCalendarHolidays={holidayResolved.costHolidays}
+                      setCostCalendarHolidays={(fn) => {
+                        const base = holidayResolved.costHolidays;
+                        const next = typeof fn === 'function' ? fn(base) : base;
+                        setEditedMC({ ...editedMC, contractCostCalendarHolidays: next });
+                      }}
+                    />
+                    {isPendingContract && !isEditing && (
+                      <p className="text-xs text-muted-foreground">กด &quot;แก้ไขข้อมูล&quot; เพื่อแก้วันหยุด (บันทึกรวมกับปุ่มบันทึกสัญญา)</p>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label>หมายเหตุสัญญา</Label>
@@ -834,7 +1172,17 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle>อัตราราคาตามตำแหน่ง (Position Rates Management)</CardTitle>
-                  <CardDescription>กำหนดราคาขายและฐานต้นทุนสำหรับตำแหน่งงานภายใต้สัญญานี้</CardDescription>
+                  <CardDescription>
+                    ราคาขาย/ต้นทุนเป็นของแต่ละสัญญา (สัญญา A กับ B ตำแหน่งเดียวกันอาจต่างกัน) — ฐานจ่าย payroll ผูกกับ PO/สัญญาที่คนงานถูก assign
+                    {masterActiveRatesLocked && (
+                      <span className="block mt-1 text-amber-800 font-medium">
+                        สัญญาหลัก Active: ล็อกจำนวนตำแหน่งและราคา — เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น (วันหยุด/กฎตัวคูณแก้ที่แท็บข้อมูลสัญญาหลัก)
+                      </span>
+                    )}
+                    {contract.commercialTermsOwner === 'sales' && canViewCostFields && (
+                      <span className="block mt-1 text-amber-700 font-medium">สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายได้ที่นี่ ต้นทุนค่าแรงให้ HR Manager / Admin กรอก</span>
+                    )}
+                  </CardDescription>
                   {(contract.contractType || 'master') === 'supplemental' && (
                     <div className="mt-2">
                       <Badge variant="outline">
@@ -842,43 +1190,59 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       </Badge>
                     </div>
                   )}
-                  {Number((contract as any).costingMissingPositionsCount || 0) > 0 && (
+                  {Number(contract.costingMissingPositionsCount || 0) > 0 && (
                     <div className="mt-2">
                       <Badge variant="destructive">
-                        ต้นทุนยังไม่ครบ {Number((contract as any).costingMissingPositionsCount || 0)} ตำแหน่ง
+                        มีราคาขายแล้วแต่ยังไม่มีต้นทุน {Number(contract.costingMissingPositionsCount || 0)} ตำแหน่ง (จำเป็นต่อ payroll)
                       </Badge>
                     </div>
                   )}
                 </div>
-                {canModify && isPendingContract && (
-                  <div className="flex items-center gap-2">
-                    <ContractSupplementDialog
-                      open={isAddSupplementOpen}
-                      onOpenChange={setIsAddSupplementOpen}
-                      supplementTitle={supplementTitle}
-                      setSupplementTitle={setSupplementTitle}
-                      contractTitle={contract.title}
-                      isCreating={isCreatingSupplement}
-                      onCreate={handleCreateSupplementContract}
-                    />
-                    <ContractAddRateDialog
-                      open={isAddRateOpen}
-                      onOpenChange={setIsAddRateOpen}
-                      newRate={newRate}
-                      setNewRate={setNewRate}
-                      sellSpecialDaysText={sellSpecialDaysText}
-                      setSellSpecialDaysText={setSellSpecialDaysText}
-                      costSpecialDaysText={costSpecialDaysText}
-                      setCostSpecialDaysText={setCostSpecialDaysText}
-                      allPositions={allPositions ?? null}
-                      effectiveRatePolicy={effectiveRatePolicy}
-                      canEditSellSide={canEditSellSide}
-                      canEditCostSide={canEditCostSide}
-                      canViewCostFields={canViewCostFields}
-                      isSupplementalContract={isSupplementalContract}
-                      contractStatusActive={contract.status === 'active'}
-                      onAddRate={handleAddRate}
-                    />
+                {canModify && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!isSupplementalContract && (
+                      <ContractSupplementDialog
+                        open={isAddSupplementOpen}
+                        onOpenChange={setIsAddSupplementOpen}
+                        supplementTitle={supplementTitle}
+                        setSupplementTitle={setSupplementTitle}
+                        contractTitle={contract.title}
+                        isCreating={isCreatingSupplement}
+                        onCreate={handleCreateSupplementContract}
+                      />
+                    )}
+                    {canMutatePositionRates && (
+                      <>
+                        <ContractAddRateDialog
+                          open={isAddRateOpen}
+                          onOpenChange={setIsAddRateOpen}
+                          newRate={newRate}
+                          setNewRate={setNewRate}
+                          onAddPositionIdChange={applyAddPositionId}
+                          allPositions={allPositions ?? null}
+                          canEditSellSide={canEditSellSide}
+                          canEditCostSide={canEditCostSide}
+                          canViewCostFields={canViewCostFields}
+                          isSupplementalContract={isSupplementalContract}
+                          contractStatusActive={masterActiveRatesLocked}
+                          onAddRate={handleAddRate}
+                        />
+                        <ContractEditRateDialog
+                          open={editingRateId !== null}
+                          onOpenChange={(open) => {
+                            if (!open) setEditingRateId(null);
+                          }}
+                          rate={editingRateRow}
+                          allPositions={allPositions ?? null}
+                          effectiveRatePolicy={effectiveRatePolicy}
+                          canEditSellSide={canEditSellSide}
+                          canEditCostSide={canEditCostSide}
+                          canViewCostFields={canViewCostFields}
+                          isSupplementalContract={isSupplementalContract}
+                          onSave={handleUpdatePositionRate}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
               </CardHeader>
@@ -892,17 +1256,73 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       <TableHead>ชม.ปกติ</TableHead>
                       <TableHead>หน่วย</TableHead>
                       <TableHead>สถานะ</TableHead>
-                      {canModify && <TableHead className="text-right">จัดการ</TableHead>}
+                      {canModify && canMutatePositionRates && <TableHead className="text-right">จัดการ</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {rates?.map(r => {
                       const pos = allPositions?.find(p => p.id === r.positionId);
+                      const sellMissingCost = Number(r.sellRate || 0) > 0 && Number(r.costBaseline || 0) <= 0;
                       return (
                         <TableRow key={r.id}>
-                          <TableCell className="font-semibold text-primary">{(pos?.positionName || pos?.positionNameTh) || r.positionId}</TableCell>
-                          <TableCell className="text-green-600 font-bold">{contract.currency} {r.sellRate.toLocaleString()}</TableCell>
-                          {canViewCostFields && <TableCell className="text-muted-foreground">{contract.currency} {r.costBaseline.toLocaleString()}</TableCell>}
+                          <TableCell className="font-semibold text-primary">
+                            <div className="flex flex-col gap-1">
+                              <span>{(pos?.positionName || pos?.positionNameTh) || r.positionId}</span>
+                              {sellMissingCost && canViewCostFields && (
+                                <Badge variant="outline" className="w-fit text-[10px] border-amber-500 text-amber-800">รอต้นทุน</Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-green-600 font-bold">
+                            {canMutatePositionRates && canEditSellSide && firestore ? (
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-muted-foreground">{contract.currency}</span>
+                                <Input
+                                  type="number"
+                                  className="h-8 w-24 font-bold text-green-600"
+                                  defaultValue={r.sellRate}
+                                  key={`${r.id}-sell-${r.sellRate}`}
+                                  disabled={isSupplementalContract}
+                                  onBlur={(e) => {
+                                    const v = Number(e.target.value) || 0;
+                                    if (v === Number(r.sellRate)) return;
+                                    updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', r.id), {
+                                      sellRate: v,
+                                      updatedAt: Date.now(),
+                                    });
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <>{contract.currency} {r.sellRate.toLocaleString()}</>
+                            )}
+                          </TableCell>
+                          {canViewCostFields && (
+                            <TableCell className="text-muted-foreground">
+                              {canMutatePositionRates && canEditCostSide && firestore ? (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs">{contract.currency}</span>
+                                  <Input
+                                    type="number"
+                                    className="h-8 w-24"
+                                    defaultValue={r.costBaseline}
+                                    key={`${r.id}-cost-${r.costBaseline}`}
+                                    disabled={isSupplementalContract}
+                                    onBlur={(e) => {
+                                      const v = Number(e.target.value) || 0;
+                                      if (v === Number(r.costBaseline)) return;
+                                      updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', r.id), {
+                                        costBaseline: v,
+                                        updatedAt: Date.now(),
+                                      });
+                                    }}
+                                  />
+                                </div>
+                              ) : (
+                                <>{contract.currency} {r.costBaseline.toLocaleString()}</>
+                              )}
+                            </TableCell>
+                          )}
                           <TableCell>{r.normalWorkHours || 8} ชม.</TableCell>
                           <TableCell className="capitalize">{r.billingUnit}</TableCell>
                           <TableCell>
@@ -910,8 +1330,18 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                               {r.active ? 'Active' : 'Inactive'}
                             </Badge>
                           </TableCell>
-                          {canModify && isPendingContract && (
+                          {canModify && canMutatePositionRates && (
                             <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-primary"
+                                title="แก้ไขรายละเอียด / วันหยุด"
+                                disabled={isSupplementalContract}
+                                onClick={() => setEditingRateId(r.id)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
                               <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteRate(r.id)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -923,7 +1353,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     {!rates?.length && (
                       <TableRow>
                         <TableCell
-                          colSpan={5 + (canViewCostFields ? 1 : 0) + (canModify ? 1 : 0)}
+                          colSpan={5 + (canViewCostFields ? 1 : 0) + (canModify && canMutatePositionRates ? 1 : 0)}
                           className="text-center py-10 text-muted-foreground italic"
                         >
                           ยังไม่มีการกำหนดอัตราราคาในสัญญานี้
@@ -951,6 +1381,55 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           </TabsContent>
         </Tabs>
       </div>
+
+      <AlertDialog
+        open={!!addRatePositionDuplicate}
+        onOpenChange={(open) => {
+          if (!open) {
+            if (addRatePositionDuplicate) {
+              setNewRate(createInitialNewRateForm());
+            }
+            setAddRatePositionDuplicate(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ตำแหน่งงานซ้ำกับรายการในสัญญา</AlertDialogTitle>
+            <AlertDialogDescription className="text-left space-y-2">
+              <span className="block">
+                ตำแหน่ง <strong>{duplicateAlertPositionLabel || 'ที่เลือก'}</strong> มีอัตราราคาในสัญญานี้แล้ว
+                ไม่สามารถเพิ่มซ้ำได้
+              </span>
+              <span className="block text-sm">
+                ต้องการเปิดแก้ไขรายการเดิม หรือล้างฟอร์มเพื่อเลือกตำแหน่งอื่น?
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel
+              className="mt-0"
+              onClick={() => {
+                setNewRate(createInitialNewRateForm());
+                setAddRatePositionDuplicate(null);
+              }}
+            >
+              ล้างฟอร์ม / เลือกใหม่
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const row = addRatePositionDuplicate;
+                setAddRatePositionDuplicate(null);
+                setIsAddRateOpen(false);
+                setNewRate(createInitialNewRateForm());
+                if (row) setEditingRateId(row.id);
+              }}
+            >
+              แก้ไขรายการเดิม
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

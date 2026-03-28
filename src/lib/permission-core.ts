@@ -419,6 +419,23 @@ export function isSystemAdmin(user: User | null): boolean {
 }
 
 /**
+ * True if user is HR Manager (labour cost / payroll baseline on contracts).
+ * Excludes hr_officer — cost baseline entry is manager + admin only in UI policy.
+ */
+export function isHrManager(user: User | null): boolean {
+  if (!user) return false;
+  if (getPrimaryLegacyRole(user) === 'hr_manager') return true;
+  const keys: string[] = [];
+  if (user.assignedRoleKey) keys.push(String(user.assignedRoleKey));
+  if (user.roleId) keys.push(String(user.roleId));
+  if (Array.isArray(user.assignedRoleKeys)) keys.push(...user.assignedRoleKeys.map(String));
+  if (Array.isArray(user.roleIds)) keys.push(...user.roleIds.map(String));
+  if (user.permissionProfileKey) keys.push(String(user.permissionProfileKey));
+  if (Array.isArray(user.permissionProfileKeys)) keys.push(...user.permissionProfileKeys.map(String));
+  return keys.some((k) => k === 'hr_manager');
+}
+
+/**
  * Whether the user belongs to the given access group (same as "department group" in the new model).
  */
 export function isDepartmentGroup(user: User | null, group: AccessGroup): boolean {

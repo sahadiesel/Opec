@@ -5,6 +5,7 @@ import type {
   PayrollBatchLine,
   PayrollLineD8Snapshot,
 } from '@/lib/types';
+import { formatDateThaiBE } from '@/lib/date-thai';
 
 export type PayslipViewModel = {
   employeeName: string;
@@ -41,11 +42,7 @@ export function formatPolicyVersionFromSnapshot(s?: PayrollLineD8Snapshot | null
 
 function formatPaymentDate(ts?: number | null): string {
   if (ts == null || !Number.isFinite(ts)) return '— (ยังไม่ระบุวันจ่าย)';
-  return new Date(ts).toLocaleDateString('th-TH', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+  return formatDateThaiBE(ts);
 }
 
 /** แยก base / OT / allowance จาก earningsBreakdown (คีย์ตาม event ของ timesheet) */

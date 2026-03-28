@@ -1,4 +1,5 @@
 import type { DrugTestPanelSubstance, WorkerDrugTest } from '@/lib/types';
+import { formatOptionalDateThaiBE } from '@/lib/date-thai';
 
 export const DRUG_TEST_PANEL_DOC_PATH = ['system', 'drug_test_panel'] as const;
 
@@ -120,7 +121,7 @@ export function computeDrugPanelWorkerFields(
 
 export function formatDrugTestRowLabel(t: WorkerDrugTest): string {
   const name = t.substanceLabelSnapshot || t.substanceKey || 'สาร';
-  const dateStr = t.testDate ? new Date(t.testDate).toLocaleDateString('th-TH') : '—';
+  const dateStr = t.testDate ? formatOptionalDateThaiBE(t.testDate, '—') : '—';
   const loc = displayLocation(t);
   const res =
     t.result === 'negative' ? 'NEGATIVE' : t.result === 'positive' ? 'POSITIVE' : 'NONE';

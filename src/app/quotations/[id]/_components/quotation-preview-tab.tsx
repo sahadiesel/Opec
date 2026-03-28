@@ -2,6 +2,7 @@
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { Quotation, QuotationLine } from '@/lib/types';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 
 type CompanyDocumentProfile = {
   companyNameTh?: string;
@@ -63,9 +64,9 @@ export function QuotationPreviewTab({ quotation, companyProfile, displayLines, e
           <p className="font-black text-xs uppercase tracking-widest text-slate-400 border-b pb-1">Document Dates:</p>
           <div className="grid grid-cols-2 gap-2">
             <span className="text-slate-500">Date Issued:</span>
-            <span className="font-bold text-right">{editedHeader.issueDate || quotation.issueDate}</span>
+            <span className="font-bold text-right">{formatYmdLocalThaiBE(editedHeader.issueDate || quotation.issueDate)}</span>
             <span className="text-slate-500">Valid Until:</span>
-            <span className="font-bold text-right text-red-600">{editedHeader.validUntilDate || quotation.validUntilDate}</span>
+            <span className="font-bold text-right text-red-600">{formatYmdLocalThaiBE(editedHeader.validUntilDate || quotation.validUntilDate)}</span>
             <span className="text-slate-500">Currency:</span>
             <span className="font-bold text-right">{editedHeader.currency || quotation.currency}</span>
           </div>

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Trash2, FileText } from 'lucide-react';
@@ -174,7 +174,7 @@ export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerD
                 <TableCell className="pl-6 font-medium text-primary">{c.certificateName}</TableCell>
                 <TableCell className="font-mono text-xs">{c.certificateNo || '-'}</TableCell>
                 <TableCell className={c.expiryDate > 0 && c.expiryDate < Date.now() ? 'text-destructive font-black' : 'font-medium'}>
-                  {c.expiryDate > 0 ? new Date(c.expiryDate).toLocaleDateString('th-TH') : '-'}
+                  {c.expiryDate > 0 ? formatOptionalDateThaiBE(c.expiryDate, '-') : '-'}
                 </TableCell>
                 <TableCell>
                   <Badge variant={c.status === 'valid' ? 'default' : 'destructive'} className={c.status === 'valid' ? 'bg-green-600' : ''}>

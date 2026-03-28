@@ -27,6 +27,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, query, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -408,7 +409,7 @@ function CustomerPOsPageContent() {
                         <TableCell className="text-xs font-medium text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
-                            {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
+                            {formatDateRangeThaiBE(po.startDate, po.endDate)}
                           </div>
                         </TableCell>
                         <TableCell>

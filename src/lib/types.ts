@@ -549,12 +549,26 @@ export interface MainContract {
       travel: number;
     };
   };
+  /** วันหยุดร่วมทั้งสัญญา (ทุกตำแหน่งใช้ชุดเดียวกัน) — ฝั่งวางบิล */
+  contractSellWeeklyRestPattern?: 'none' | 'sat_sun' | 'sunday_only';
+  contractSellCalendarHolidays?: { date: string; label: string }[];
+  contractSellSpecialDays?: string[];
+  /** วันหยุดร่วมทั้งสัญญา — ฝั่ง payroll */
+  contractCostWeeklyRestPattern?: 'none' | 'sat_sun' | 'sunday_only';
+  contractCostCalendarHolidays?: { date: string; label: string }[];
+  contractCostSpecialDays?: string[];
   notes?: string;
   approvedAt?: number;
   approvedBy?: string;
   supersededByContractId?: string;
   lastSubmittedAt?: number;
   lastSubmittedBy?: string;
+  /** Commercial terms started by sales (sell-side); cost baseline is filled by HR Manager / Admin only in UI */
+  commercialTermsOwner?: 'sales' | 'operations';
+  /** Denormalized: position_rates where sellRate > 0 but costBaseline <= 0 */
+  costingStatus?: string;
+  costingMissingPositionsCount?: number;
+  costingUpdatedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -567,6 +581,14 @@ export interface PositionRate {
   billingUnit: 'daily' | 'monthly' | 'hourly';
   active: boolean;
   overtimeRule: string;
+  /** Canonical OT policy for payroll/billing (UI + snapshots). */
+  overtimeRuleKey?: 'NONE' | 'MULT_1_0' | 'MULT_1_5' | 'MULT_2_0';
+  /** Weekly rest pattern for sell-side day classification */
+  sellWeeklyRestPattern?: 'none' | 'sat_sun' | 'sunday_only';
+  /** Weekly rest pattern for cost-side */
+  costWeeklyRestPattern?: 'none' | 'sat_sun' | 'sunday_only';
+  sellCalendarHolidays?: { date: string; label: string }[];
+  costCalendarHolidays?: { date: string; label: string }[];
   normalWorkHours?: 8 | 12;
   sellOtRules?: {
     afterShift?: number;

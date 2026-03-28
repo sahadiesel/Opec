@@ -42,6 +42,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { receiptCashDepositAmount } from '@/lib/receipt-utils';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 export default function ReceiptDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -412,7 +413,7 @@ export default function ReceiptDetailPage({ params }: { params: Promise<{ id: st
                 </div>
                 <div className="flex justify-between">
                   <span>สร้างเมื่อ:</span>
-                  <span>{new Date(receipt.createdAt).toLocaleString('th-TH')}</span>
+                  <span>{formatDateTimeThaiBE(receipt.createdAt)}</span>
                 </div>
               </CardContent>
             </Card>

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -653,7 +654,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                               <span className="font-bold text-primary">{(pos?.positionName || pos?.positionNameTh) || line.positionId}</span>
                               <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
                                 <Calendar className="h-2.5 w-2.5" />
-                                {new Date(line.startDate).toLocaleDateString('th-TH')} - {new Date(line.endDate).toLocaleDateString('th-TH')}
+                                {formatDateRangeThaiBE(line.startDate, line.endDate)}
                               </span>
                             </div>
                           </TableCell>

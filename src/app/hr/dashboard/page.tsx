@@ -187,16 +187,16 @@ export default function HRDashboardPage() {
       });
     });
 
-    // 4. Contracts with incomplete labor cost setup
+    // 4. Contracts: sell rate defined on a position line but cost baseline still missing (payroll cannot run)
     (mainContracts || [])
-      .filter((c: any) => Number(c.costingMissingPositionsCount || 0) > 0)
+      .filter((c: MainContract) => Number(c.costingMissingPositionsCount || 0) > 0)
       .slice(0, 10)
-      .forEach((c: any) => {
+      .forEach((c: MainContract) => {
         tasks.push({
           id: `contract-${c.id}`,
           type: 'Cost Setup',
-          label: `Contract ${c.contractNumber || c.id} missing labor cost`,
-          sub: `Missing ${Number(c.costingMissingPositionsCount || 0)} positions`,
+          label: `สัญญา ${c.contractNumber || c.id}: มีราคาขายแต่ยังไม่มีต้นทุนค่าแรง`,
+          sub: `${Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง — ให้ HR Manager / Admin ลงต้นทุนในสัญญา`,
           status: 'INCOMPLETE',
           link: `/main-contracts/${c.id}`,
           priority: 'high',
@@ -297,7 +297,7 @@ export default function HRDashboardPage() {
   }, [workers]);
 
   const contractsMissingCost = useMemo(() => {
-    return (mainContracts || []).filter((c: any) => Number(c.costingMissingPositionsCount || 0) > 0);
+    return (mainContracts || []).filter((c: MainContract) => Number(c.costingMissingPositionsCount || 0) > 0);
   }, [mainContracts]);
 
   if (isUserLoading || !currentUser) return null;
@@ -536,16 +536,16 @@ export default function HRDashboardPage() {
               </CardHeader>
               <CardContent className="space-y-2">
                 {contractsMissingCost.length === 0 ? (
-                  <p className="text-[10px] text-rose-700">ไม่มีสัญญาที่ค้างกำหนดต้นทุนตำแหน่ง</p>
+                  <p className="text-[10px] text-rose-700">ไม่มีสัญญาที่มีราคาขายแล้วแต่ยังขาดต้นทุน (ถ้ายังไม่ลงราคาขายในสัญญา จะไม่แจ้งเตือน)</p>
                 ) : (
-                  contractsMissingCost.slice(0, 6).map((c: any) =>
+                  contractsMissingCost.slice(0, 6).map((c: MainContract) =>
                     viewerOnly ? (
                       <p key={c.id} className="text-[10px] text-rose-700">
-                        {c.contractNumber || c.id}: ต้นทุนไม่ครบ {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                        {c.contractNumber || c.id}: มีขายแต่ยังไม่มีต้นทุน {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
                       </p>
                     ) : (
                       <Link key={c.id} href={`/main-contracts/${c.id}`} className="block text-[10px] text-rose-700 hover:underline">
-                        {c.contractNumber || c.id}: ต้นทุนไม่ครบ {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                        {c.contractNumber || c.id}: มีขายแต่ยังไม่มีต้นทุน {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
                       </Link>
                     )
                   )

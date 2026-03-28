@@ -49,7 +49,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
@@ -506,7 +506,7 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
                       <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
                       <div className="text-sm">
                         <p className="font-bold uppercase">Created</p>
-                        <p className="text-xs text-muted-foreground">{new Date(note.createdAt).toLocaleString('th-TH')}</p>
+                        <p className="text-xs text-muted-foreground">{formatDateTimeThaiBE(note.createdAt)}</p>
                         <p className="text-xs mt-1">Initiated by {note.createdBy}</p>
                       </div>
                     </div>

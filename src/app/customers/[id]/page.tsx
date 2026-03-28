@@ -19,20 +19,16 @@ import {
   ShoppingCart, 
   ArrowLeft,
   Building2,
-  Phone,
-  Mail,
   ExternalLink,
-  ShieldAlert,
   KeyRound,
   UserPlus,
-  UserMinus,
   Lock,
   Loader2,
   CheckCircle2,
   Info,
-  ChevronRight,
   XCircle,
-  FileSignature
+  FileSignature,
+  Pencil
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -45,8 +41,8 @@ import {
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { isSystemAdmin } from '@/lib/permission-core';
-import { doc, collection, query, where, addDoc, updateDoc } from 'firebase/firestore';
-import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { formatDateRangeThaiBE } from '@/lib/date-thai';
+import { doc, collection, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { 
   Customer, 
   ContactPerson, 
@@ -88,6 +84,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     isPrimary: false,
     contractId: '',
   });
+
+  const [editingContact, setEditingContact] = useState<(ContactPerson & { id: string }) | null>(null);
+  const [isEditContactOpen, setIsEditContactOpen] = useState(false);
 
   // Provisioning State
   const [isProvisioningOpen, setIsProvisioningOpen] = useState(false);
@@ -231,12 +230,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       return;
     }
     const targetContractId = (newContact.contractId || '').trim();
+    const cleanList = (v: string) => v.split(',').map(s => s.trim()).filter(Boolean).join(', ');
     const payload: Record<string, unknown> = {
       name: newContact.name || '',
       role: newContact.role || '',
       department: newContact.department || '',
-      phone: newContact.phone || '',
-      email: newContact.email || '',
+      phone: cleanList(newContact.phone || ''),
+      email: cleanList(newContact.email || ''),
       isPrimary: !!newContact.isPrimary,
       notes: newContact.notes || '',
     };
@@ -251,6 +251,91 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     } catch (err: any) {
       console.error('addContact error:', err);
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูลผู้ติดต่อ' });
+    }
+  };
+
+  const isAdmin = isSystemAdmin(currentUser);
+
+  const handleEditContact = async () => {
+    if (!firestore || !editingContact) return;
+    const { id: contactId, ...rest } = editingContact;
+    const cleanList = (v: string) => v.split(',').map(s => s.trim()).filter(Boolean).join(', ');
+    const payload: Record<string, unknown> = {
+      name: rest.name || '',
+      role: rest.role || '',
+      department: rest.department || '',
+      phone: cleanList(rest.phone || ''),
+      email: cleanList(rest.email || ''),
+      isPrimary: !!rest.isPrimary,
+      notes: rest.notes || '',
+    };
+    const cid = (rest.contractId || '').trim();
+    if (cid) payload.contractId = cid;
+    try {
+      await updateDoc(doc(firestore, 'customers', id, 'contact_persons', contactId), payload);
+      setIsEditContactOpen(false);
+      setEditingContact(null);
+      toast({ title: 'แก้ไขผู้ติดต่อสำเร็จ' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err?.message || 'ไม่สามารถแก้ไขผู้ติดต่อได้' });
+    }
+  };
+
+  const handleDeleteContact = async (contactId: string) => {
+    if (!firestore || !isAdmin) return;
+    if (!confirm('ยืนยันลบผู้ติดต่อนี้?')) return;
+    try {
+      await deleteDoc(doc(firestore, 'customers', id, 'contact_persons', contactId));
+      toast({ title: 'ลบผู้ติดต่อสำเร็จ' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: err?.message || 'ไม่สามารถลบผู้ติดต่อได้' });
+    }
+  };
+
+  const handleDeleteQuotation = async (quoId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!firestore || !isAdmin) return;
+    if (!confirm('ยืนยันลบใบเสนอราคานี้?')) return;
+    try {
+      await deleteDoc(doc(firestore, 'quotations', quoId));
+      toast({ title: 'ลบใบเสนอราคาสำเร็จ' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: err?.message || 'ไม่สามารถลบใบเสนอราคาได้' });
+    }
+  };
+
+  const handleDeleteContract = async (contractId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!firestore || !isAdmin) return;
+    if (!confirm('ยืนยันลบสัญญานี้? การลบสัญญาจะมีผลต่อข้อมูลที่อ้างอิงทั้งหมด')) return;
+    try {
+      await deleteDoc(doc(firestore, 'main_contracts', contractId));
+      toast({ title: 'ลบสัญญาสำเร็จ' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: err?.message || 'ไม่สามารถลบสัญญาได้' });
+    }
+  };
+
+  const handleDeletePO = async (poId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!firestore || !isAdmin) return;
+    if (!confirm('ยืนยันลบใบสั่งซื้อนี้?')) return;
+    try {
+      await deleteDoc(doc(firestore, 'purchase_orders', poId));
+      toast({ title: 'ลบใบสั่งซื้อสำเร็จ' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: err?.message || 'ไม่สามารถลบใบสั่งซื้อได้' });
+    }
+  };
+
+  const handleDeletePortalUser = async (userId: string) => {
+    if (!firestore || !isAdmin) return;
+    if (!confirm('ยืนยันลบบัญชีผู้ใช้นี้? ผู้ใช้จะไม่สามารถเข้าระบบได้อีก')) return;
+    try {
+      await deleteDoc(doc(firestore, 'users', userId));
+      toast({ title: 'ลบบัญชีสำเร็จ' });
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: err?.message || 'ไม่สามารถลบบัญชีได้' });
     }
   };
 
@@ -440,15 +525,47 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           <Input value={newContact.role || ''} onChange={(e) => setNewContact({ ...newContact, role: e.target.value })} />
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="grid gap-2">
-                          <Label>โทรศัพท์</Label>
-                          <Input value={newContact.phone || ''} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>อีเมล</Label>
-                          <Input value={newContact.email || ''} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} />
-                        </div>
+                      <div className="grid gap-2">
+                        <Label>โทรศัพท์</Label>
+                        {(newContact.phone || '').split(',').map((p, i, arr) => (
+                          <div key={i} className="flex gap-1">
+                            <Input value={p.trim()} placeholder="เบอร์โทรศัพท์" onChange={(e) => {
+                              const parts = (newContact.phone || '').split(',');
+                              parts[i] = e.target.value;
+                              setNewContact({ ...newContact, phone: parts.join(',') });
+                            }} />
+                            {arr.length > 1 && (
+                              <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-destructive" onClick={() => {
+                                const parts = (newContact.phone || '').split(',').filter((_, j) => j !== i);
+                                setNewContact({ ...newContact, phone: parts.join(',') });
+                              }}><XCircle className="h-4 w-4" /></Button>
+                            )}
+                          </div>
+                        ))}
+                        <Button type="button" variant="outline" size="sm" className="w-fit text-xs gap-1" onClick={() => setNewContact({ ...newContact, phone: (newContact.phone || '') + ',' })}>
+                          <Plus className="h-3 w-3" /> เพิ่มเบอร์
+                        </Button>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>อีเมล</Label>
+                        {(newContact.email || '').split(',').map((e, i, arr) => (
+                          <div key={i} className="flex gap-1">
+                            <Input value={e.trim()} placeholder="อีเมล" onChange={(ev) => {
+                              const parts = (newContact.email || '').split(',');
+                              parts[i] = ev.target.value;
+                              setNewContact({ ...newContact, email: parts.join(',') });
+                            }} />
+                            {arr.length > 1 && (
+                              <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-destructive" onClick={() => {
+                                const parts = (newContact.email || '').split(',').filter((_, j) => j !== i);
+                                setNewContact({ ...newContact, email: parts.join(',') });
+                              }}><XCircle className="h-4 w-4" /></Button>
+                            )}
+                          </div>
+                        ))}
+                        <Button type="button" variant="outline" size="sm" className="w-fit text-xs gap-1" onClick={() => setNewContact({ ...newContact, email: (newContact.email || '') + ',' })}>
+                          <Plus className="h-3 w-3" /> เพิ่มอีเมล
+                        </Button>
                       </div>
                       <div className="grid gap-2">
                         <Label>สัญญาที่ผูก (ถ้าเว้นว่าง = ใช้ได้ทุกสัญญา)</Label>
@@ -478,33 +595,141 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableHead>ตำแหน่ง/แผนก</TableHead>
                       <TableHead>เบอร์โทรศัพท์</TableHead>
                       <TableHead>อีเมล</TableHead>
-                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {contacts?.map(contact => (
                       <TableRow key={contact.id}>
                         <TableCell className="pl-6 font-bold text-primary">{contact.name}</TableCell>
-                        <TableCell className="text-xs">{contact.role} ({contact.department})</TableCell>
-                        <TableCell className="text-xs">{contact.phone}</TableCell>
-                        <TableCell className="text-xs">{contact.email}</TableCell>
-                        <TableCell className="text-right pr-6">
+                        <TableCell className="text-xs">{contact.role}{contact.department ? ` (${contact.department})` : ''}</TableCell>
+                        <TableCell className="text-xs">
+                          {(contact.phone || '').split(',').map(p => p.trim()).filter(Boolean).map((p, i) => (
+                            <div key={i}>{p}</div>
+                          ))}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {(contact.email || '').split(',').map(e => e.trim()).filter(Boolean).map((e, i) => (
+                            <div key={i}>{e}</div>
+                          ))}
+                        </TableCell>
+                        <TableCell>
                           {contact.contractId ? (
-                            <Badge variant="outline" className="mr-2 text-[10px]">เฉพาะสัญญา</Badge>
+                            <Badge variant="outline" className="mr-1 text-[10px]">เฉพาะสัญญา</Badge>
                           ) : null}
                           {contact.isPrimary && <Badge className="bg-blue-600 text-white border-none">Primary</Badge>}
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="แก้ไข"
+                              onClick={() => { setEditingContact(contact); setIsEditContactOpen(true); }}>
+                              <Pencil className="h-4 w-4 text-primary" />
+                            </Button>
+                            {isAdmin && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
+                                onClick={() => handleDeleteContact(contact.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                     {(!contacts || contacts.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ยังไม่มีข้อมูลผู้ติดต่อ</TableCell>
+                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ยังไม่มีข้อมูลผู้ติดต่อ</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
               </CardContent>
             </Card>
+            {/* Edit Contact Dialog */}
+            <Dialog open={isEditContactOpen} onOpenChange={(open) => { setIsEditContactOpen(open); if (!open) setEditingContact(null); }}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>แก้ไขผู้ติดต่อ</DialogTitle>
+                  <DialogDescription>แก้ไขข้อมูลผู้ติดต่อสำหรับลูกค้า</DialogDescription>
+                </DialogHeader>
+                {editingContact && (
+                  <div className="grid gap-3 py-2">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="grid gap-2">
+                        <Label>ชื่อผู้ติดต่อ</Label>
+                        <Input value={editingContact.name || ''} onChange={e => setEditingContact({ ...editingContact, name: e.target.value })} />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>ตำแหน่ง</Label>
+                        <Input value={editingContact.role || ''} onChange={e => setEditingContact({ ...editingContact, role: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>โทรศัพท์</Label>
+                      {(editingContact.phone || '').split(',').map((p, i, arr) => (
+                        <div key={i} className="flex gap-1">
+                          <Input value={p.trim()} placeholder="เบอร์โทรศัพท์" onChange={(ev) => {
+                            const parts = (editingContact.phone || '').split(',');
+                            parts[i] = ev.target.value;
+                            setEditingContact({ ...editingContact, phone: parts.join(',') });
+                          }} />
+                          {arr.length > 1 && (
+                            <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-destructive" onClick={() => {
+                              const parts = (editingContact.phone || '').split(',').filter((_, j) => j !== i);
+                              setEditingContact({ ...editingContact, phone: parts.join(',') });
+                            }}><XCircle className="h-4 w-4" /></Button>
+                          )}
+                        </div>
+                      ))}
+                      <Button type="button" variant="outline" size="sm" className="w-fit text-xs gap-1" onClick={() => setEditingContact({ ...editingContact, phone: (editingContact.phone || '') + ',' })}>
+                        <Plus className="h-3 w-3" /> เพิ่มเบอร์
+                      </Button>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>อีเมล</Label>
+                      {(editingContact.email || '').split(',').map((e, i, arr) => (
+                        <div key={i} className="flex gap-1">
+                          <Input value={e.trim()} placeholder="อีเมล" onChange={(ev) => {
+                            const parts = (editingContact.email || '').split(',');
+                            parts[i] = ev.target.value;
+                            setEditingContact({ ...editingContact, email: parts.join(',') });
+                          }} />
+                          {arr.length > 1 && (
+                            <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-destructive" onClick={() => {
+                              const parts = (editingContact.email || '').split(',').filter((_, j) => j !== i);
+                              setEditingContact({ ...editingContact, email: parts.join(',') });
+                            }}><XCircle className="h-4 w-4" /></Button>
+                          )}
+                        </div>
+                      ))}
+                      <Button type="button" variant="outline" size="sm" className="w-fit text-xs gap-1" onClick={() => setEditingContact({ ...editingContact, email: (editingContact.email || '') + ',' })}>
+                        <Plus className="h-3 w-3" /> เพิ่มอีเมล
+                      </Button>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>แผนก</Label>
+                      <Input value={editingContact.department || ''} onChange={e => setEditingContact({ ...editingContact, department: e.target.value })} />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>สัญญาที่ผูก</Label>
+                      <Select value={editingContact.contractId || 'all'} onValueChange={v => setEditingContact({ ...editingContact, contractId: v === 'all' ? '' : v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">ทุกสัญญา (Customer-level)</SelectItem>
+                          {customerContracts?.map(c => (
+                            <SelectItem key={c.id} value={c.id}>{c.contractNumber} - {c.title}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsEditContactOpen(false)}>ยกเลิก</Button>
+                  <Button onClick={handleEditContact}>บันทึกการแก้ไข</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </TabsContent>
 
           {/* Quotations Tab */}
@@ -525,7 +750,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableHead>หัวข้อโครงการ</TableHead>
                       <TableHead>วันที่ออก</TableHead>
                       <TableHead className="text-right">มูลค่ารวม</TableHead>
-                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -535,16 +761,30 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
                         <TableCell className="text-xs">{quo.issueDate}</TableCell>
                         <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                        <TableCell className="text-right pr-6">
+                        <TableCell>
                           <Badge variant={quo.status === 'accepted' ? 'default' : 'outline'} className={quo.status === 'accepted' ? 'bg-green-600 text-white border-none' : ''}>
                             {quo.status.toUpperCase()}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="แก้ไข"
+                              onClick={(e) => { e.stopPropagation(); router.push(`/quotations/${quo.id}`); }}>
+                              <Pencil className="h-4 w-4 text-primary" />
+                            </Button>
+                            {isAdmin && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
+                                onClick={(e) => handleDeleteQuotation(quo.id, e)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                     {(!customerQuos || customerQuos.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบประวัติใบเสนอราคา</TableCell>
+                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบประวัติใบเสนอราคา</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -571,32 +811,60 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableHead>หัวข้อสัญญา</TableHead>
                       <TableHead>ระยะเวลา</TableHead>
                       <TableHead>สกุลเงิน</TableHead>
-                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customerContracts?.map(contract => (
-                      <TableRow key={contract.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/main-contracts/${contract.id}`)}>
-                        <TableCell className="pl-6 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
-                        <TableCell className="font-medium text-sm">
-                          <div className="flex flex-col gap-1">
-                            <span>{contract.title}</span>
-                            {(contract.contractType || 'master') === 'supplemental' && (
-                              <Badge variant="outline" className="w-fit text-[10px]">
-                                Supplemental Contract
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-[10px]">
-                          {new Date(contract.startDate).toLocaleDateString('th-TH')} - {new Date(contract.endDate).toLocaleDateString('th-TH')}
-                        </TableCell>
-                        <TableCell>{contract.currency}</TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Badge variant={contract.status === 'active' ? 'default' : 'secondary'} className={contract.status === 'active' ? 'bg-green-600 text-white border-none' : ''}>{contract.status.toUpperCase()}</Badge>
-                        </TableCell>
+                    {customerContracts?.map(contract => {
+                      const isLocked = contract.status === 'revised' || contract.status === 'closed' || contract.status === 'expired';
+                      return (
+                        <TableRow key={contract.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/main-contracts/${contract.id}`)}>
+                          <TableCell className="pl-6 font-mono font-bold text-primary">{contract.contractNumber}</TableCell>
+                          <TableCell className="font-medium text-sm">
+                            <div className="flex flex-col gap-1">
+                              <span>{contract.title}</span>
+                              {(contract.contractType || 'master') === 'supplemental' && (
+                                <Badge variant="outline" className="w-fit text-[10px]">Supplemental</Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-[10px]">
+                            {formatDateRangeThaiBE(contract.startDate, contract.endDate)}
+                          </TableCell>
+                          <TableCell>{contract.currency}</TableCell>
+                          <TableCell>
+                            <Badge variant={contract.status === 'active' ? 'default' : 'secondary'} className={contract.status === 'active' ? 'bg-green-600 text-white border-none' : ''}>{contract.status.toUpperCase()}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right pr-6">
+                            <div className="flex justify-end gap-1">
+                              {isLocked ? (
+                                <Button variant="ghost" size="icon" className="h-8 w-8" title="ล็อกแล้ว — ไปสร้างสัญญาเพิ่มเติม"
+                                  onClick={(e) => { e.stopPropagation(); router.push(`/main-contracts/${contract.id}`); }}>
+                                  <Lock className="h-4 w-4 text-muted-foreground" />
+                                </Button>
+                              ) : (
+                                <Button variant="ghost" size="icon" className="h-8 w-8" title="แก้ไข"
+                                  onClick={(e) => { e.stopPropagation(); router.push(`/main-contracts/${contract.id}`); }}>
+                                  <Pencil className="h-4 w-4 text-primary" />
+                                </Button>
+                              )}
+                              {isAdmin && !isLocked && contract.status !== 'active' && (
+                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
+                                  onClick={(e) => handleDeleteContract(contract.id, e)}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {(!customerContracts || customerContracts.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบสัญญาหลัก</TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -620,7 +888,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableHead className="pl-6">รหัส PO</TableHead>
                       <TableHead>โครงการ</TableHead>
                       <TableHead>ระยะเวลา</TableHead>
-                      <TableHead className="text-right pr-6">สถานะ</TableHead>
+                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="text-right pr-6">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -634,13 +903,32 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           </div>
                         </TableCell>
                         <TableCell className="text-[10px]">
-                          {new Date(po.startDate).toLocaleDateString('th-TH')} - {new Date(po.endDate).toLocaleDateString('th-TH')}
+                          {formatDateRangeThaiBE(po.startDate, po.endDate)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600 text-white border-none' : ''}>{po.status.toUpperCase()}</Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600 text-white border-none' : ''}>{po.status.toUpperCase()}</Badge>
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="แก้ไข"
+                              onClick={(e) => { e.stopPropagation(); router.push(`/purchase-orders/${po.id}`); }}>
+                              <Pencil className="h-4 w-4 text-primary" />
+                            </Button>
+                            {isAdmin && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
+                                onClick={(e) => handleDeletePO(po.id, e)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
+                    {(!customerPOs || customerPOs.length === 0) && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบใบสั่งซื้อ</TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -756,18 +1044,25 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="icon" title="Reset Password">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Reset Password">
                               <KeyRound className="h-4 w-4 text-primary" />
                             </Button>
                             <Button 
                               variant="ghost" 
-                              size="icon" 
-                              className={user.isActive ? "text-destructive" : "text-green-600"}
+                              size="icon"
+                              className={`h-8 w-8 ${user.isActive ? "text-destructive" : "text-green-600"}`}
                               onClick={() => handleToggleActive(user)}
+                              title={user.isActive ? 'ระงับการใช้งาน' : 'เปิดการใช้งาน'}
                             >
                               {user.isActive ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                             </Button>
+                            {isAdmin && (
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบบัญชี"
+                                onClick={() => handleDeletePortalUser(user.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>

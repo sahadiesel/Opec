@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { History } from 'lucide-react';
 import type { Quotation } from '@/lib/types';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 interface QuotationHistoryTabProps {
   quotation: Quotation;
@@ -17,7 +18,7 @@ export function QuotationHistoryTab({ quotation }: QuotationHistoryTabProps) {
           <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
           <div className="text-sm">
             <p className="font-bold uppercase text-primary">LATEST STATUS: {quotation.status.toUpperCase()}</p>
-            <p className="text-xs text-muted-foreground">{new Date(quotation.updatedAt).toLocaleString('th-TH')}</p>
+            <p className="text-xs text-muted-foreground">{formatDateTimeThaiBE(quotation.updatedAt)}</p>
             <p className="text-xs mt-1 font-medium">Edited by {quotation.updatedBy || 'System'}</p>
           </div>
         </div>
@@ -25,7 +26,7 @@ export function QuotationHistoryTab({ quotation }: QuotationHistoryTabProps) {
           <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-slate-300" />
           <div className="text-sm">
             <p className="font-bold uppercase text-muted-foreground">DOCUMENT CREATED</p>
-            <p className="text-xs text-muted-foreground">{new Date(quotation.createdAt).toLocaleString('th-TH')}</p>
+            <p className="text-xs text-muted-foreground">{formatDateTimeThaiBE(quotation.createdAt)}</p>
             <p className="text-xs mt-1 font-medium">Initiated by {quotation.createdBy}</p>
           </div>
         </div>

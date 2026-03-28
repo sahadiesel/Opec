@@ -41,6 +41,7 @@ import {
   PayrollRunStatus,
   OfficeStaff
 } from '@/lib/types';
+import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -265,7 +266,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <span>งวดเดือน: {new Date(run.payrollMonth + '-01').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}</span>
+                <span>งวดเดือน: {formatDateThaiBE(run.payrollMonth + '-01')}</span>
               </div>
             </div>
           </div>
@@ -461,7 +462,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
                     {isLocked ? <Lock className="text-primary h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{isLocked ? `Locked on ${new Date(run.lockedAt!).toLocaleDateString()}` : 'รอล็อกงวดถาวร'}</span>
+                    <span className="text-sm">{isLocked ? `ล็อกเมื่อ ${formatDateThaiBE(run.lockedAt!)}` : 'รอล็อกงวดถาวร'}</span>
                   </div>
                   <Button 
                     className="w-full bg-primary" 
@@ -486,7 +487,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">ประจำเดือน:</Label>
-                    <p className="font-bold">{new Date(run.payrollMonth + '-01').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}</p>
+                    <p className="font-bold">{formatDateThaiBE(run.payrollMonth + '-01')}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">วันที่เริ่มงวด:</Label>
@@ -515,7 +516,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                     <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
                     <div>
                       <p className="font-bold uppercase">STATUS: {run.status}</p>
-                      <p className="text-xs text-muted-foreground">{new Date(run.updatedAt).toLocaleString('th-TH')}</p>
+                      <p className="text-xs text-muted-foreground">{formatDateTimeThaiBE(run.updatedAt)}</p>
                       <p className="text-xs mt-1">Current processing stage</p>
                     </div>
                   </div>
@@ -523,7 +524,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                     <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-slate-300" />
                     <div>
                       <p className="font-bold uppercase text-muted-foreground">RUN CREATED</p>
-                      <p className="text-xs text-muted-foreground">{new Date(run.createdAt).toLocaleString('th-TH')}</p>
+                      <p className="text-xs text-muted-foreground">{formatDateTimeThaiBE(run.createdAt)}</p>
                       <p className="text-xs mt-1">Initial draft established</p>
                     </div>
                   </div>

@@ -33,6 +33,7 @@ import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod } from '@/lib/types
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -223,7 +224,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                   </div>
                   <div className="flex justify-between text-sm border-b pb-2">
                     <span className="text-muted-foreground">Generated At:</span>
-                    <span className="font-bold">{new Date(batch.createdAt).toLocaleString()}</span>
+                    <span className="font-bold">{formatDateTimeThaiBE(batch.createdAt)}</span>
                   </div>
                 </CardContent>
               </Card>

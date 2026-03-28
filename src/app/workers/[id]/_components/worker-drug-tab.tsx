@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Plus, Trash2, AlertCircle } from 'lucide-react';
@@ -88,7 +88,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                   <TableRow key={s.id}>
                     <TableCell className="pl-6 font-bold text-primary">{s.label}</TableCell>
                     <TableCell className="text-sm">
-                      {latest?.testDate != null && latest.testDate > 0 ? new Date(latest.testDate).toLocaleDateString('th-TH') : '—'}
+                      {latest?.testDate != null && latest.testDate > 0 ? formatDateThaiBE(latest.testDate) : '—'}
                     </TableCell>
                     <TableCell className="text-sm">{latest ? displayLocation(latest) : '—'}</TableCell>
                     <TableCell>
@@ -125,7 +125,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
               <TableBody>
                 {(drugTests || []).filter((d) => !d.substanceKey).map((d) => (
                   <TableRow key={d.id}>
-                    <TableCell className="pl-6">{d.testDate != null && d.testDate > 0 ? new Date(d.testDate).toLocaleDateString('th-TH') : '—'}</TableCell>
+                    <TableCell className="pl-6">{d.testDate != null && d.testDate > 0 ? formatOptionalDateThaiBE(d.testDate, '—') : '—'}</TableCell>
                     <TableCell className="text-xs">{d.laboratory || '—'}</TableCell>
                     <TableCell>
                       <Badge variant={d.result === 'negative' ? 'default' : 'destructive'}>{(d.result || '').toUpperCase()}</Badge>

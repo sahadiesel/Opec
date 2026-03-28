@@ -29,6 +29,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import { formatDateThaiBE, formatTimeThaiBE } from '@/lib/date-thai';
 
 export default function AuditLogExplorerPage() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -200,10 +201,10 @@ export default function AuditLogExplorerPage() {
                       <TableCell className="pl-6 py-4">
                         <div className="flex flex-col text-[10px]">
                           <span className="font-bold text-primary flex items-center gap-1">
-                            <Calendar className="h-2.5 w-2.5" /> {new Date(log.eventAt).toLocaleDateString('th-TH')}
+                            <Calendar className="h-2.5 w-2.5" /> {formatDateThaiBE(log.eventAt)}
                           </span>
                           <span className="text-muted-foreground flex items-center gap-1">
-                            <Zap className="h-2.5 w-2.5" /> {new Date(log.eventAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                            <Zap className="h-2.5 w-2.5" /> {formatTimeThaiBE(log.eventAt)}
                           </span>
                         </div>
                       </TableCell>

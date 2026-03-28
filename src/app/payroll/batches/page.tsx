@@ -44,6 +44,7 @@ import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payr
 import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { formatDateThaiBE } from '@/lib/date-thai';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
@@ -255,7 +256,7 @@ export default function PayrollBatchesPage() {
                       <TableCell className="text-center font-bold">{b.totalWorkers} คน</TableCell>
                       <TableCell className="text-right font-black text-primary text-lg">฿ {b.netAmount.toLocaleString()}</TableCell>
                       <TableCell>{getStatusBadge(b.status)}</TableCell>
-                      <TableCell className="text-[10px] text-muted-foreground">{new Date(b.createdAt).toLocaleDateString('th-TH')}</TableCell>
+                      <TableCell className="text-[10px] text-muted-foreground">{formatDateThaiBE(b.createdAt)}</TableCell>
                       <TableCell className="text-right pr-6">
                         <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
                       </TableCell>

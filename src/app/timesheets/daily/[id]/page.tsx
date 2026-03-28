@@ -36,6 +36,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ExceptionRequestService } from '@/lib/services/exception-request-service';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 export default function TimesheetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -197,7 +198,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
                         <p className="text-sm italic text-slate-700">"{req.reason}"</p>
                         <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
                           <User className="h-3 w-3" /> โดย {req.requestedBy}
-                          <Clock className="h-3 w-3" /> เมื่อ {new Date(req.requestedAt).toLocaleString('th-TH')}
+                          <Clock className="h-3 w-3" /> เมื่อ {formatDateTimeThaiBE(req.requestedAt)}
                         </div>
                       </div>
 
@@ -279,7 +280,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
                 <Separator />
                 <div className="pt-1">
                   <p className="text-muted-foreground mb-1">Created At:</p>
-                  <p className="font-medium">{new Date(ts.createdAt).toLocaleString('th-TH')}</p>
+                  <p className="font-medium">{formatDateTimeThaiBE(ts.createdAt)}</p>
                 </div>
               </CardContent>
             </Card>

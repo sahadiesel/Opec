@@ -32,6 +32,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 export default function CustomerPortalAdminPage() {
   const router = useRouter();
@@ -193,7 +194,7 @@ export default function CustomerPortalAdminPage() {
                         <TableCell className="text-[10px] text-muted-foreground">
                           <div className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
-                            {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('th-TH') : 'ไม่เคยเข้าใช้งาน'}
+                            {u.lastLoginAt ? formatDateTimeThaiBE(u.lastLoginAt) : 'ไม่เคยเข้าใช้งาน'}
                           </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">

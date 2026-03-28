@@ -34,6 +34,7 @@ import {
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, collection, getDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { 
   Assignment, 
   Worker, 
@@ -297,7 +298,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             <div className="p-2 bg-blue-100 rounded text-blue-700"><FileText className="h-4 w-4" /></div>
                             <div>
                               <p className="text-sm font-bold">{cert.certificateName}</p>
-                              <p className="text-[10px] text-muted-foreground">Expires: {new Date(cert.expiryDate).toLocaleDateString('th-TH')}</p>
+                              <p className="text-[10px] text-muted-foreground">หมดอายุ: {formatDateThaiBE(cert.expiryDate)}</p>
                             </div>
                           </div>
                           <Badge variant={cert.status === 'valid' ? 'outline' : 'destructive'} className={cert.status === 'valid' ? 'text-green-600 border-green-200' : ''}>
@@ -349,7 +350,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         <div className="absolute -left-[9px] top-0 h-4 w-4 rounded-full bg-primary" />
                         <div>
                           <p className="font-bold">MOBILIZATION PIPELINE START</p>
-                          <p className="text-xs text-muted-foreground">{new Date(assignment.updatedAt).toLocaleString('th-TH')}</p>
+                          <p className="text-xs text-muted-foreground">{formatDateTimeThaiBE(assignment.updatedAt)}</p>
                           <p className="text-xs mt-1">Personnel entered mobilization queue</p>
                         </div>
                       </div>

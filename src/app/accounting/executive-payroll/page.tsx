@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -252,7 +252,7 @@ export default function ExecutivePayrollPage() {
                       onClick={() => router.push(`/accounting/executive-payroll/${run.id}`)}
                     >
                       <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
-                      <TableCell className="font-medium">{new Date(run.payrollMonth + '-01').toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}</TableCell>
+                      <TableCell className="font-medium">{formatDateThaiBE(run.payrollMonth + '-01')}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{run.payrollPeriodStart} ถึง {run.payrollPeriodEnd}</TableCell>
                       <TableCell className="text-center font-bold">{run.staffCount} คน</TableCell>
                       <TableCell className="text-right font-black text-primary">

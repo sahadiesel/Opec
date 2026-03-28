@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CreditCard, User, Phone, History, AlertTriangle } from 'lucide-react';
 import type { Worker, Position } from '@/lib/types';
+import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -175,11 +176,11 @@ export function WorkerInfoTab({ worker, isEditing, editedWorker, setEditedWorker
           <CardContent className="pt-4 space-y-2 text-xs">
             <div className="flex justify-between">
               <span className="text-muted-foreground">ลงทะเบียนเมื่อ:</span>
-              <span className="font-medium">{new Date(worker.createdAt).toLocaleDateString('th-TH')}</span>
+              <span className="font-medium">{formatDateThaiBE(worker.createdAt)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">อัปเดตล่าสุด:</span>
-              <span className="font-medium">{new Date(worker.updatedAt).toLocaleString('th-TH')}</span>
+              <span className="font-medium">{formatDateTimeThaiBE(worker.updatedAt)}</span>
             </div>
             <div className="flex justify-between border-t pt-2 mt-2">
               <span className="text-muted-foreground">สถานะงาน (Job Status):</span>

@@ -25,6 +25,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { isAdminUser } from '@/lib/auth-mapping';
 import { getBaselineProfiles, getProfileDepartmentGroup } from '@/lib/permissions';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 export default function PermissionMatrixPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -265,7 +266,7 @@ export default function PermissionMatrixPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-[10px] text-muted-foreground leading-tight">
-                        {new Date(p.updatedAt).toLocaleString()}
+                        {formatDateTimeThaiBE(p.updatedAt)}
                         <br />
                         โดย {p.updatedBy}
                       </TableCell>

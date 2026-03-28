@@ -42,7 +42,7 @@ import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { usePermissions } from '@/hooks/use-permissions';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
@@ -275,7 +275,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">วันที่สร้าง:</span>
-                      <span>{new Date(term.createdAt).toLocaleDateString()}</span>
+                      <span>{formatDateThaiBE(term.createdAt)}</span>
                     </div>
                   </CardContent>
                 </Card>

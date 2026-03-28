@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Trash2, FileSearch } from 'lucide-react';
@@ -143,7 +143,7 @@ export function WorkerDocsTab({ workerId, firestore, workerDocs, docsQuery, work
               <TableRow key={d.id}>
                 <TableCell className="pl-6 font-bold text-primary capitalize">{d.documentType.replace('_', ' ')}</TableCell>
                 <TableCell className="font-mono text-xs">{d.documentNo}</TableCell>
-                <TableCell className="text-xs">{d.expiryDate > 0 ? new Date(d.expiryDate).toLocaleDateString('th-TH') : '-'}</TableCell>
+                <TableCell className="text-xs">{d.expiryDate > 0 ? formatOptionalDateThaiBE(d.expiryDate, '-') : '-'}</TableCell>
                 <TableCell className="text-right pr-6">
                   <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => {
                     if (!firestore) return;

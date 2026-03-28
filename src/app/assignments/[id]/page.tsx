@@ -37,6 +37,7 @@ import {
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, getDoc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { 
   Assignment, 
   Worker, 
@@ -195,7 +196,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                       <div className="p-4 bg-white rounded-lg border border-amber-200">
                         <Label className="text-[10px] uppercase font-black text-amber-800 mb-2 block">เหตุผลการขอเปลี่ยนตัว (Reason):</Label>
                         <p className="text-sm italic text-slate-700">"{req.reason}"</p>
-                        <div className="mt-2 text-[10px] text-muted-foreground">โดย {req.requestedBy} เมื่อ {new Date(req.requestedAt).toLocaleString()}</div>
+                        <div className="mt-2 text-[10px] text-muted-foreground">โดย {req.requestedBy} เมื่อ {formatDateTimeThaiBE(req.requestedAt)}</div>
                       </div>
 
                       {isOpsOrSalesManager ? (

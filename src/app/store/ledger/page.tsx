@@ -38,6 +38,7 @@ import { collection, query, orderBy, limit } from 'firebase/firestore';
 import Link from 'next/link';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { formatYmdLocalThaiBE, formatTimeThaiBE } from '@/lib/date-thai';
 
 export default function InventoryLedgerPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -225,10 +226,10 @@ export default function InventoryLedgerPage() {
                         <TableCell className="pl-6 py-4">
                           <div className="flex flex-col text-[10px]">
                             <span className="font-bold text-primary flex items-center gap-1">
-                              <Calendar className="h-2.5 w-2.5" /> {tx.transactionDate}
+                              <Calendar className="h-2.5 w-2.5" /> {formatYmdLocalThaiBE(tx.transactionDate, tx.transactionDate || '—')}
                             </span>
                             <span className="text-muted-foreground">
-                              {new Date(tx.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}
+                              {formatTimeThaiBE(tx.createdAt)}
                             </span>
                           </div>
                         </TableCell>

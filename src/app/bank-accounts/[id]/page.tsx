@@ -28,6 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
 export default function BankAccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -246,11 +247,11 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
               <CardContent className="space-y-2 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">สร้างเมื่อ:</span>
-                  <span>{accData?.createdAt ? new Date(accData.createdAt).toLocaleString('th-TH') : '-'}</span>
+                  <span>{accData?.createdAt ? formatDateTimeThaiBE(accData.createdAt) : '-'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">อัปเดตล่าสุด:</span>
-                  <span>{accData?.updatedAt ? new Date(accData.updatedAt).toLocaleString('th-TH') : '-'}</span>
+                  <span>{accData?.updatedAt ? formatDateTimeThaiBE(accData.updatedAt) : '-'}</span>
                 </div>
               </CardContent>
             </Card>

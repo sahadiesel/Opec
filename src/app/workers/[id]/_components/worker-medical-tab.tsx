@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Trash2, Stethoscope } from 'lucide-react';
@@ -131,9 +131,9 @@ export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery 
             {medicals?.map(m => (
               <TableRow key={m.id}>
                 <TableCell className="pl-6 font-medium text-primary">{m.medicalType}</TableCell>
-                <TableCell className="text-xs">{new Date(m.examDate).toLocaleDateString('th-TH')}</TableCell>
+                <TableCell className="text-xs">{formatDateThaiBE(m.examDate)}</TableCell>
                 <TableCell className={m.expiryDate < Date.now() ? 'text-destructive font-black' : 'font-medium'}>
-                  {new Date(m.expiryDate).toLocaleDateString('th-TH')}
+                  {formatDateThaiBE(m.expiryDate)}
                 </TableCell>
                 <TableCell>
                   <Badge variant={m.fitStatus === 'fit' ? 'default' : 'destructive'} className={m.fitStatus === 'fit' ? 'bg-green-600' : ''}>

@@ -60,9 +60,11 @@ service cloud.firestore {
         : (u.assignedRoleKey == 'accounting_manager' || u.assignedRoleKey == 'accounting_officer') ? 'accounting'
         : (u.assignedRoleKey == 'store_manager' || u.assignedRoleKey == 'store_officer') ? 'operation'
         : (u.assignedRoleKey == 'hr_manager' || u.assignedRoleKey == 'hr_officer') ? 'operation'
-        : (u.assignedRoleKey == 'operations_manager' || u.assignedRoleKey == 'operations_officer') ? 'operation'
+        : (u.assignedRoleKey == 'operations_manager' || u.assignedRoleKey == 'operation_manager'
+          || u.assignedRoleKey == 'operations_officer' || u.assignedRoleKey == 'operation_officer') ? 'operation'
         : (u.assignedRoleKey == 'sales_manager' || u.assignedRoleKey == 'sales_officer') ? 'operation'
         : u.assignedRoleKey == 'payroll_officer' ? 'operation'
+        : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager'])) ? 'operation'
         : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['system_admin'])) ? 'admin'
         : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['client_user'])) ? 'client'
         : u.roleId == 'system_admin' ? 'admin'
@@ -305,7 +307,8 @@ service cloud.firestore {
 
     function canManagePositions() {
       return canManageSystem()
-        || (isEligibleInternalUser() && !isStoreOfficer()
+        || (isEligibleInternalUser()
+          && (!isStoreOfficer() || hasOperationHrPayrollRole())
           && hasAnyAssignedRole([
             'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
           ]))
@@ -817,8 +820,23 @@ service cloud.firestore {
         || (canAccessOperations() && isOperationsSequenceId(id));
     }
 
+    /** อ่านโปรไฟล์ของตนเองตาม id เอกสาร — ใช้ใน hasAnyAssignedRole / RBAC โดยไม่บังคับฟิลด์ profileKey ในเอกสาร */
+    function canReadPermissionProfileByDocId(profileDocId) {
+      let u = userData();
+      return u != null && isEligibleInternalUser()
+        && (
+          profileDocId == resolvedPermissionProfileKey()
+          || (u.permissionProfileKey != null && u.permissionProfileKey == profileDocId)
+          || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny([profileDocId]))
+        );
+    }
+
     match /permission_profiles/{id} {
-      allow get: if isSignedIn() && (canManageSystem() || canReadOwnPermissionProfile(resource.data));
+      allow get: if isSignedIn() && (
+        canManageSystem()
+        || canReadOwnPermissionProfile(resource.data)
+        || canReadPermissionProfileByDocId(id)
+      );
       allow list: if canManageSystem();
       allow write: if canManageSystem();
     }

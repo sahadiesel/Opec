@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -98,15 +99,23 @@ export default function MainContractsPage() {
         actor: currentUser.displayName 
       });
 
+      const isSalesCreator =
+        currentUser.department === 'sales'
+        || currentUser.assignedRoleKey === 'sales_manager'
+        || currentUser.assignedRoleKey === 'sales_officer'
+        || currentUser.roleId === 'sales_manager'
+        || currentUser.roleId === 'sales_officer';
+
       // 2. Create the document using explicit awaited addDoc to catch errors
       const colRef = collection(firestore, 'main_contracts');
       const docRef = await addDoc(colRef, {
         ...newContract,
         status: 'pending',
         contractNumber: finalNo, // Use official sequential number
-        costingStatus: 'INCOMPLETE',
-        // Initial warning flag; exact gap count is recalculated in contract detail after rates are managed.
-        costingMissingPositionsCount: 1,
+        commercialTermsOwner: isSalesCreator ? 'sales' : 'operations',
+        // No position sell lines yet → no HR "missing cost" alert until sell rates exist
+        costingStatus: 'COMPLETE',
+        costingMissingPositionsCount: 0,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -132,7 +141,28 @@ export default function MainContractsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center gap-4 bg-background p-6 text-center">
+        <ShieldAlert className="h-12 w-12 text-muted-foreground" />
+        <div>
+          <h2 className="text-lg font-bold">ยังไม่ได้เข้าสู่ระบบ</h2>
+          <p className="text-sm text-muted-foreground">กรุณาเข้าสู่ระบบแล้วเปิดหน้านี้อีกครั้ง</p>
+        </div>
+        <Button asChild>
+          <Link href="/">ไปหน้าแรก</Link>
+        </Button>
+      </div>
+    );
+  }
 
   // If not staff, don't render the content (redirect handled by useEffect)
   if (!isStaff && !isClientUser) {
