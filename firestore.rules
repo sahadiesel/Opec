@@ -161,6 +161,32 @@ service cloud.firestore {
       return hasAnyAssignedRole([role]);
     }
 
+    /**
+     * รู้จักพนักงานคลังจากฟิลด์ใน users/{uid} เท่านั้น — ห้ามเรียก get(permission_profiles)
+     * (hasAnyAssignedRole ท้ายสุดอาจ get โปรไฟล์แล้วทำให้ทั้ง expression ล้ม แม้มี department/permissionProfileKey บน user)
+     */
+    function storeStaffIndicatorsOnUserDoc() {
+      let u = userData();
+      return u != null && (
+        u.department == 'store'
+        || u.departmentGroup == 'store'
+        || u.accessGroup == 'store'
+        || u.assignedRoleKey == 'store_officer'
+        || u.assignedRoleKey == 'store_manager'
+        || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
+          && u.assignedRoleKeys.hasAny(['store_officer', 'store_manager']))
+        || u.roleId == 'store_officer'
+        || u.roleId == 'store_manager'
+        || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager']))
+        || u.permissionProfileKey == 'store_officer'
+        || u.permissionProfileKey == 'store_manager'
+        || (u.permissionProfileKeys != null && u.permissionProfileKeys is list
+          && u.permissionProfileKeys.hasAny(['store_officer', 'store_manager']))
+        || ('primaryRoleTemplateKey' in u && u.primaryRoleTemplateKey == 'store_officer')
+        || ('primaryRoleTemplateKey' in u && u.primaryRoleTemplateKey == 'store_manager')
+      );
+    }
+
     /** HR + payroll + ทะเบียนคนงาน — รวมผู้จัดการปฏิบัติการที่คุมแผนกบุคคลร่วม */
     function hasOperationHrPayrollRole() {
       return hasAnyAssignedRole([
@@ -171,6 +197,11 @@ service cloud.firestore {
 
     function isEligibleInternalUser() {
       return isSignedIn() && userExists() && isActiveUser() && isInternalUser();
+    }
+
+    /** คลัง/จัดซื้อ — อ่านเฉพาะ users/{uid} ไม่ get permission_profiles */
+    function isStoreActorByUserDocFields() {
+      return isEligibleInternalUser() && storeStaffIndicatorsOnUserDoc();
     }
 
     function isSystemAdmin() {
@@ -201,9 +232,11 @@ service cloud.firestore {
     }
 
     function isStoreUser() {
-      let u = userData();
       return isEligibleInternalUser()
-        && (u.department == 'store' || hasAnyAssignedRole(['store_officer', 'store_manager']));
+        && (
+          storeStaffIndicatorsOnUserDoc()
+          || hasAnyAssignedRole(['store_officer', 'store_manager'])
+        );
     }
 
     function isStoreOfficer() {
@@ -211,7 +244,10 @@ service cloud.firestore {
       return isEligibleInternalUser()
         && userDepartmentGroup() == 'operation'
         && userAccessLevel() == 'officer'
-        && (hasAnyAssignedRole(['store_officer']) || u.department == 'store');
+        && (
+          storeStaffIndicatorsOnUserDoc()
+          || hasAnyAssignedRole(['store_officer'])
+        );
     }
 
     function isAccountingUser() {
@@ -270,28 +306,6 @@ service cloud.firestore {
       return canManageSystem()
         || (isEligibleInternalUser() && !isStoreOfficer()
           && (isOperationsUser() || isAccountingUser() || isHrUser() || isSalesUser()));
-    }
-
-    /**
-     * คลัง/จัดซื้อ — อ่านเฉพาะฟิลด์ใน users/{uid} ไม่เรียก get(permission_profiles)
-     * เพื่อกัน permission-denied ทั้ง transaction (เช่น number_sequences/vendor) เมื่อโปรไฟล์อ่านไม่ได้
-     */
-    function isStoreActorByUserDocFields() {
-      let u = userData();
-      return isEligibleInternalUser()
-        && u != null
-        && (
-          u.department == 'store'
-          || u.departmentGroup == 'store'
-          || u.accessGroup == 'store'
-          || u.assignedRoleKey == 'store_officer'
-          || u.assignedRoleKey == 'store_manager'
-          || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
-            && u.assignedRoleKeys.hasAny(['store_officer', 'store_manager']))
-          || u.roleId == 'store_officer'
-          || u.roleId == 'store_manager'
-          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager']))
-        );
     }
 
     function isStoreDomainUser() {
