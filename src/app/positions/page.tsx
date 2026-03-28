@@ -95,13 +95,18 @@ export default function PositionsPage() {
         description: `รหัสตำแหน่ง: ${finalNo}`,
       });
       router.push(`/positions/${docRef.id}`);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(error);
+      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: string }).code) : '';
       const msg = error instanceof Error ? error.message : 'ไม่สามารถสร้างตำแหน่งงานได้';
+      const hint =
+        code === 'permission-denied'
+          ? 'สิทธิ์ไม่พอสำหรับสร้างตำแหน่งงาน — ให้แอดมิน deploy firestore.rules ล่าสุด และตรวจ users/{uid} ของผู้ใช้ (operation manager)'
+          : msg;
       toast({
         variant: 'destructive',
         title: 'เกิดข้อผิดพลาด',
-        description: msg,
+        description: hint,
       });
     } finally {
       setIsCreating(false);

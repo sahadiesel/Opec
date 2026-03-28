@@ -101,6 +101,21 @@ service cloud.firestore {
       return u != null ? u.assignedRoleKey : null;
     }
 
+    /** Infer canonical legacy role when old user docs only have department + level/accessLevel. */
+    function inferredLegacyRoleFromUserDoc() {
+      let u = userData();
+      let lv = userAccessLevel();
+      return u == null ? null
+        : u.department == 'admin' ? 'system_admin'
+        : u.department == 'client' ? 'client_user'
+        : u.department == 'operations' ? (lv == 'manager' ? 'operations_manager' : 'operations_officer')
+        : u.department == 'hr' ? (lv == 'manager' ? 'hr_manager' : 'hr_officer')
+        : u.department == 'sales' ? (lv == 'manager' ? 'sales_manager' : 'sales_officer')
+        : u.department == 'accounting' ? (lv == 'manager' ? 'accounting_manager' : 'accounting_officer')
+        : u.department == 'store' ? (lv == 'manager' ? 'store_manager' : 'store_officer')
+        : null;
+    }
+
     function roleIds() {
       let u = userData();
       return u != null && u.roleIds != null && u.roleIds is list ? u.roleIds : [];
@@ -155,6 +170,7 @@ service cloud.firestore {
         || (u.permissionProfileKey != null && roles.hasAny([u.permissionProfileKey]))
         || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny(roles))
         || ('primaryRoleTemplateKey' in u && roles.hasAny([u.primaryRoleTemplateKey]))
+        || (inferredLegacyRoleFromUserDoc() != null && roles.hasAny([inferredLegacyRoleFromUserDoc()]))
       );
     }
 
