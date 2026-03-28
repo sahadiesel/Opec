@@ -914,7 +914,9 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /audit_logs/{id} {
       allow read: if canManageSystem() || internalReadNonStoreOfficer();
-      allow create: if isSignedIn() && userExists();
+      // อนุญาต create ถ้า login แล้ว — ไม่บังคับ users/{uid} เพราะ transaction เลขที่เอกสาร (number_sequences)
+      // เขียน audit คู่กัน; ถ้าบังคับ userExists แต่ยังไม่มีเอกสาร user ใน Firestore ทั้ง batch จะล้ม
+      allow create: if isSignedIn();
       allow update, delete: if false;
     }
 
