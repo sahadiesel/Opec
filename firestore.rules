@@ -144,7 +144,8 @@ service cloud.firestore {
         );
     }
 
-    function hasAnyAssignedRole(roles) {
+    /** บทบาทจากฟิลด์ใน users/{uid} เท่านั้น — ไม่ get permission_profiles (กัน permission-denied ทั้ง rule) */
+    function userDocRoleFieldsMatchAny(roles) {
       let u = userData();
       return u != null && (
         (assignedRoleKey() != null && roles.hasAny([assignedRoleKey()]))
@@ -153,8 +154,17 @@ service cloud.firestore {
         || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(roles))
         || (u.permissionProfileKey != null && roles.hasAny([u.permissionProfileKey]))
         || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny(roles))
-        || permissionProfileDocHasAnyRole(roles)
+        || ('primaryRoleTemplateKey' in u && roles.hasAny([u.primaryRoleTemplateKey]))
       );
+    }
+
+    /**
+     * ลำดับสำคัญ: จับคู่จาก user doc ก่อน แล้วค่อยโปรไฟล์เอกสาร
+     * (อย่ารวม get(permission_profiles) ไว้ใน OR เดียวกับฟิลด์ user — อาจทำให้ทั้งนิพจน์ล้มแม้ user doc จะบอกบทบาทชัดแล้ว)
+     */
+    function hasAnyAssignedRole(roles) {
+      return userDocRoleFieldsMatchAny(roles)
+        || permissionProfileDocHasAnyRole(roles);
     }
 
     function hasAssignedRole(role) {
