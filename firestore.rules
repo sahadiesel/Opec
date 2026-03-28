@@ -73,15 +73,21 @@ service cloud.firestore {
         : u.department == 'client' ? 'client'
         : u.department == 'accounting' ? 'accounting'
         : u.department == 'store' ? 'operation'
+        : u.departmentGroup == 'store' ? 'operation'
+        : u.accessGroup == 'store' ? 'operation'
         : (u.department == 'hr' || u.department == 'sales' || u.department == 'operations') ? 'operation'
         : null;
     }
 
     function userDepartmentGroup() {
       let u = userData();
+      // แผนกคลังมักใช้ departmentGroup/accessGroup = 'store' — ต้องถือเป็น operation pillar
+      // เพื่อให้ canWriteStore / isOperationsUser ทำงาน (เดิม 'store' ไม่อยู่ใน whitelist ทำให้ได้ null)
       return u == null ? null
-        : (u.accessGroup == 'admin' || u.accessGroup == 'operation' || u.accessGroup == 'accounting' || u.accessGroup == 'client') ? u.accessGroup
-        : (u.departmentGroup == 'admin' || u.departmentGroup == 'operation' || u.departmentGroup == 'accounting' || u.departmentGroup == 'client') ? u.departmentGroup
+        : (u.accessGroup == 'admin' || u.accessGroup == 'operation' || u.accessGroup == 'accounting' || u.accessGroup == 'client' || u.accessGroup == 'store')
+          ? (u.accessGroup == 'store' ? 'operation' : u.accessGroup)
+        : (u.departmentGroup == 'admin' || u.departmentGroup == 'operation' || u.departmentGroup == 'accounting' || u.departmentGroup == 'client' || u.departmentGroup == 'store')
+          ? (u.departmentGroup == 'store' ? 'operation' : u.departmentGroup)
         : legacyResolvedGroup();
     }
 
@@ -276,6 +282,8 @@ service cloud.firestore {
         && u != null
         && (
           u.department == 'store'
+          || u.departmentGroup == 'store'
+          || u.accessGroup == 'store'
           || u.assignedRoleKey == 'store_officer'
           || u.assignedRoleKey == 'store_manager'
           || (u.assignedRoleKeys != null && u.assignedRoleKeys is list

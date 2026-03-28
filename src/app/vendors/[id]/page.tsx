@@ -124,9 +124,15 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
         router.back();
       }
-    } catch (e) {
+    } catch (e: unknown) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
+      const code = e && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';
+      const msg = e && typeof e === 'object' && 'message' in e ? String((e as { message?: string }).message) : '';
+      const hint =
+        code === 'permission-denied'
+          ? 'สิทธิ์ Firestore ไม่พอ — ให้แอดมิน deploy firestore.rules ล่าสุด หรือตรวจ users/{uid} (แผนกคลัง / store_officer)'
+          : msg || 'ไม่สามารถบันทึกข้อมูลได้';
+      toast({ variant: "destructive", title: "ไม่สามารถบันทึกข้อมูลได้", description: hint });
     } finally {
       setIsSubmitting(false);
     }
