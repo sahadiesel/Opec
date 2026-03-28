@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -40,7 +40,17 @@ import {
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { Position, PositionCertificateRequirement, PositionPPERequirement, PositionToolRequirement, User, JobMode, WorkerDocumentCatalogItem } from '@/lib/types';
+import {
+  Position,
+  PositionCertificateRequirement,
+  PositionPPERequirement,
+  PositionToolRequirement,
+  User,
+  JobMode,
+  WorkerDocumentCatalogItem,
+  StoreItem,
+  STORE_ITEM_CATEGORIES,
+} from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
@@ -65,6 +75,8 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const toolsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions', id, 'tool_requirements') : null), [firestore, id]);
   const { data: tools } = useCollection<PositionToolRequirement>(toolsQuery as any);
+  const storeItemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const { data: storeItems } = useCollection<StoreItem>(storeItemsQuery as any);
   const workerDocCatalogQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'worker_document_catalog') : null), [firestore]);
   const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
 
@@ -82,6 +94,17 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   });
   const [newPPE, setNewPPE] = useState<Partial<PositionPPERequirement>>({ required: true, quantityDefault: 1 });
   const [newTool, setNewTool] = useState<Partial<PositionToolRequirement>>({ allowed: true, quantityDefault: 1, itemType: 'tool' });
+  const [toolStoreCategory, setToolStoreCategory] = useState<string>('PPE');
+
+  const toolsInSelectedStoreCategory = useMemo(() => {
+    if (!storeItems?.length) return [];
+    return storeItems.filter((i) => (i.category || '') === toolStoreCategory && i.active !== false);
+  }, [storeItems, toolStoreCategory]);
+
+  const resetAddToolDialog = useCallback(() => {
+    setToolStoreCategory('PPE');
+    setNewTool({ allowed: true, quantityDefault: 1, itemType: 'tool' });
+  }, []);
 
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('master');
@@ -143,18 +166,42 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     setNewPPE({ required: true, quantityDefault: 1 });
   };
 
+  const storeItemToToolItemType = (si: StoreItem): PositionToolRequirement['itemType'] => {
+    if (si.isTool) return 'tool';
+    if (si.isPPE) return 'equipment';
+    return 'consumable';
+  };
+
   const handleAddTool = () => {
-    if (!toolsQuery) return;
+    if (!toolsQuery || !newTool.storeItemId) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้เลือกอุปกรณ์',
+        description: 'เลือกหมวดหมู่จากคลังอุปกรณ์ แล้วเลือกรายการจากทะเบียน store',
+      });
+      return;
+    }
+    const si = storeItems?.find((s) => s.id === newTool.storeItemId);
+    if (!si) {
+      toast({ variant: 'destructive', title: 'ไม่พบรายการ', description: 'รีเฟรชหน้าแล้วลองใหม่' });
+      return;
+    }
+    if (tools?.some((t) => t.storeItemId === newTool.storeItemId)) {
+      toast({ variant: 'destructive', title: 'รายการซ้ำ', description: 'ตำแหน่งนี้มีอุปกรณ์นี้ในลิสต์แล้ว' });
+      return;
+    }
     addDocumentNonBlocking(toolsQuery, {
-      itemName: newTool.itemName || '',
-      itemCode: newTool.itemCode || '',
-      itemType: newTool.itemType || 'tool',
+      storeItemId: si.id,
+      storeCategory: si.category,
+      itemName: si.itemName,
+      itemCode: si.itemCode,
+      itemType: storeItemToToolItemType(si),
       quantityDefault: newTool.quantityDefault ?? 1,
       allowed: newTool.allowed ?? true,
-      notes: newTool.notes || ''
+      notes: newTool.notes || '',
     });
     setIsAddToolOpen(false);
-    setNewTool({ allowed: true, quantityDefault: 1, itemType: 'tool' });
+    resetAddToolDialog();
   };
 
   const deleteReq = (sub: string, reqId: string) => {
@@ -512,33 +559,90 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     {isGenerating === 'tool' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                     แนะนำโดย AI
                   </Button>
-                  <Dialog open={isAddToolOpen} onOpenChange={setIsAddToolOpen}>
+                  <Dialog
+                    open={isAddToolOpen}
+                    onOpenChange={(open) => {
+                      setIsAddToolOpen(open);
+                      if (open) resetAddToolDialog();
+                    }}
+                  >
                     <DialogTrigger asChild>
                       <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add)</Button>
                     </DialogTrigger>
                     <DialogContent>
-                      <DialogHeader><DialogTitle>เพิ่มรายการเครื่องมือ/อุปกรณ์</DialogTitle></DialogHeader>
+                      <DialogHeader>
+                        <DialogTitle>เพิ่มรายการเครื่องมือ/อุปกรณ์</DialogTitle>
+                        <DialogDescription>
+                          เลือกจากทะเบียนคลังอุปกรณ์ (Store) ตามหมวดหมู่ — ใช้ผูกสิทธิ์เบิกของลูกจ้างตามตำแหน่ง
+                        </DialogDescription>
+                      </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label className="font-bold">ชื่ออุปกรณ์ *</Label>
-                          <Input value={newTool.itemName || ''} onChange={e => setNewTool({...newTool, itemName: e.target.value})} />
+                          <Label className="font-bold">หมวดหมู่ (คลังอุปกรณ์) *</Label>
+                          <Select
+                            value={toolStoreCategory}
+                            onValueChange={(v) => {
+                              setToolStoreCategory(v);
+                              setNewTool((prev) => ({
+                                ...prev,
+                                storeItemId: undefined,
+                                itemCode: undefined,
+                                itemName: undefined,
+                                itemType: 'tool',
+                              }));
+                            }}
+                          >
+                            <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {STORE_ITEM_CATEGORIES.map((c) => (
+                                <SelectItem key={c} value={c}>{c}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label className="font-bold">ประเภท</Label>
-                            <Select onValueChange={v => setNewTool({...newTool, itemType: v as any})} value={newTool.itemType}>
-                              <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="tool">Tool (เครื่องมือ)</SelectItem>
-                                <SelectItem value="equipment">Equipment (เครื่องใช้)</SelectItem>
-                                <SelectItem value="consumable">Consumable (วัสดุสิ้นเปลือง)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="grid gap-2">
-                            <Label className="font-bold">จำนวนเบิก</Label>
-                            <Input type="number" value={newTool.quantityDefault || 1} onChange={e => setNewTool({...newTool, quantityDefault: parseInt(e.target.value)})} />
-                          </div>
+                        <div className="grid gap-2">
+                          <Label className="font-bold">อุปกรณ์จากคลัง *</Label>
+                          <Select
+                            key={toolStoreCategory}
+                            value={newTool.storeItemId ?? undefined}
+                            onValueChange={(storeItemId) => {
+                              const si = toolsInSelectedStoreCategory.find((x) => x.id === storeItemId);
+                              if (!si) return;
+                              setNewTool((prev) => ({
+                                ...prev,
+                                storeItemId: si.id,
+                                itemCode: si.itemCode,
+                                itemName: si.itemName,
+                                itemType: storeItemToToolItemType(si),
+                              }));
+                            }}
+                          >
+                            <SelectTrigger className="h-10">
+                              <SelectValue placeholder={toolsInSelectedStoreCategory.length ? 'เลือกรายการ…' : 'ไม่มีรายการในหมวดนี้'} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {toolsInSelectedStoreCategory.map((si) => (
+                                <SelectItem key={si.id} value={si.id}>
+                                  {si.itemCode} — {si.itemName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {newTool.storeItemId && (
+                            <p className="text-xs text-muted-foreground">
+                              ประเภทเบิก (อ้างอิงคลัง):{' '}
+                              <span className="font-medium capitalize">{newTool.itemType}</span>
+                            </p>
+                          )}
+                        </div>
+                        <div className="grid gap-2">
+                          <Label className="font-bold">จำนวนเบิกต่อครั้งสูงสุด</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={newTool.quantityDefault || 1}
+                            onChange={(e) => setNewTool({ ...newTool, quantityDefault: parseInt(e.target.value, 10) || 1 })}
+                          />
                         </div>
                       </div>
                       <DialogFooter>
@@ -554,6 +658,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   <TableHeader className="bg-muted/50">
                     <TableRow>
                       <TableHead className="pl-6 font-bold">เครื่องมือ (Tools & Equipments)</TableHead>
+                      <TableHead className="font-bold">หมวดคลัง</TableHead>
                       <TableHead className="font-bold">ประเภท</TableHead>
                       <TableHead className="font-bold">จำนวนเบิก</TableHead>
                       <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -562,7 +667,21 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   <TableBody>
                     {tools?.map(t => (
                       <TableRow key={t.id}>
-                        <TableCell className="pl-6 font-bold text-primary">{t.itemName}</TableCell>
+                        <TableCell className="pl-6 font-bold text-primary">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{t.itemName}</span>
+                            {t.itemCode ? (
+                              <span className="text-[10px] font-mono text-muted-foreground font-normal">{t.itemCode}</span>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {t.storeCategory ? (
+                            <Badge variant="outline" className="text-xs">{t.storeCategory}</Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="capitalize text-xs font-medium text-muted-foreground">{t.itemType}</TableCell>
                         <TableCell className="text-sm font-bold">{t.quantityDefault} EA</TableCell>
                         <TableCell className="text-right pr-6">
@@ -572,7 +691,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     ))}
                     {tools?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการเครื่องมือที่กำหนด</TableCell>
+                        <TableCell colSpan={5} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการเครื่องมือที่กำหนด</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

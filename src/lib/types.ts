@@ -404,7 +404,15 @@ export interface PositionToolRequirement {
   quantityDefault: number;
   allowed: boolean;
   notes?: string;
+  /** Firestore id of `store_items` — primary link when issuing from store catalog */
+  storeItemId?: string;
+  /** Denormalized from `store_items.category` at save time */
+  storeCategory?: string;
 }
+
+/** Store catalog categories — keep in sync with `src/app/store/items/page.tsx` */
+export const STORE_ITEM_CATEGORIES = ['PPE', 'Safety', 'Mechanical', 'Electrical', 'General'] as const;
+export type StoreItemCatalogCategory = (typeof STORE_ITEM_CATEGORIES)[number];
 
 export interface OfficeStaff {
   id: string;

@@ -60,6 +60,21 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 
+function issueItemMatchesPositionReq(
+  item: StoreItem,
+  posPPE: PositionPPERequirement[],
+  posTools: PositionToolRequirement[],
+): { matchPPE?: PositionPPERequirement; matchTool?: PositionToolRequirement } {
+  const matchPPE = posPPE.find((p) => p.itemCode === item.itemCode || p.itemName === item.itemName);
+  const matchTool = posTools.find(
+    (t) =>
+      (t.storeItemId && t.storeItemId === item.id) ||
+      t.itemCode === item.itemCode ||
+      t.itemName === item.itemName,
+  );
+  return { matchPPE, matchTool };
+}
+
 export default function IssueItemsPage() {
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -198,11 +213,16 @@ export default function IssueItemsPage() {
       return;
     }
 
-    const matchPPE = posPPE.find((p) => p.itemCode === item.itemCode || p.itemName === item.itemName);
-    const matchTool = posTools.find((t) => t.itemCode === item.itemCode || t.itemName === item.itemName);
+    const { matchPPE, matchTool } = issueItemMatchesPositionReq(item, posPPE, posTools);
     const allowed = !!(matchPPE || matchTool);
 
     if (!allowed) {
+      toast({
+        variant: 'destructive',
+        title: 'ตำแหน่งคุณไม่สามารถเบิกได้',
+        description:
+          'รายการนี้ไม่อยู่ในลิสต์ PPE/เครื่องมือที่กำหนดไว้ในตำแหน่งงาน — ติดต่อ HR เพื่อเพิ่มจากทะเบียนคลังที่ตำแหน่งงาน (แท็บอุปกรณ์)',
+      });
       setPositionEditReason('not_listed');
       setPositionEditDialogOpen(true);
       return;
@@ -274,6 +294,22 @@ export default function IssueItemsPage() {
         description: 'กรุณาระบุคนงาน งาน และรายการที่ต้องการเบิกให้ครบถ้วน',
       });
       return;
+    }
+
+    if (issueMode === 'field' && storeItems?.length) {
+      for (const line of issueList) {
+        const master = storeItems.find((i) => i.id === line.itemId);
+        if (!master) continue;
+        const { matchPPE, matchTool } = issueItemMatchesPositionReq(master, posPPE, posTools);
+        if (!matchPPE && !matchTool) {
+          toast({
+            variant: 'destructive',
+            title: 'ตำแหน่งคุณไม่สามารถเบิกได้',
+            description: 'มีรายการในใบเบิกที่ไม่อยู่ในลิสต์ตำแหน่ง — ลบออกหรือให้ HR ปรับตำแหน่ง',
+          });
+          return;
+        }
+      }
     }
 
     setIsSubmitting(true);
@@ -502,10 +538,9 @@ export default function IssueItemsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {storeItems?.filter(i => {
-                          const isPPE = posPPE.some(p => p.itemCode === i.itemCode || p.itemName === i.itemName);
-                          const isTool = posTools.some(t => t.itemCode === i.itemCode || t.itemName === i.itemName);
-                          return isPPE || isTool;
+                        {storeItems?.filter((i) => {
+                          const { matchPPE, matchTool } = issueItemMatchesPositionReq(i, posPPE, posTools);
+                          return !!(matchPPE || matchTool);
                         }).map(item => (
                           <TableRow key={item.id} className="hover:bg-muted/30 transition-colors">
                             <TableCell className="font-mono text-xs font-bold text-primary">{item.itemCode}</TableCell>
@@ -532,10 +567,9 @@ export default function IssueItemsPage() {
                             </TableCell>
                           </TableRow>
                         ))}
-                        {storeItems?.filter(i => {
-                          const isPPE = posPPE.some(p => p.itemCode === i.itemCode || p.itemName === i.itemName);
-                          const isTool = posTools.some(t => t.itemCode === i.itemCode || t.itemName === i.itemName);
-                          return isPPE || isTool;
+                        {storeItems?.filter((i) => {
+                          const { matchPPE, matchTool } = issueItemMatchesPositionReq(i, posPPE, posTools);
+                          return !!(matchPPE || matchTool);
                         }).length === 0 && (
                           <TableRow>
                             <TableCell colSpan={4} className="py-10 text-center text-muted-foreground italic">ไม่พบรายการที่ตรงกับความต้องการของตำแหน่งงาน</TableCell>
@@ -786,10 +820,14 @@ export default function IssueItemsPage() {
       <AlertDialog open={positionEditDialogOpen} onOpenChange={setPositionEditDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>จะไปแก้ไขรายการเครื่องมือ/อุปกรณ์ในตำแหน่งนี้หรือไม่?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {positionEditReason === 'not_listed'
+                ? 'ตำแหน่งคุณไม่สามารถเบิกได้'
+                : 'จำนวนเกินที่กำหนดในตำแหน่ง'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {positionEditReason === 'not_listed'
-                ? 'รายการนี้ไม่อยู่ในเกณฑ์ PPE/เครื่องมือที่กำหนดไว้ในตำแหน่ง — กรุณาเพิ่มรายการที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) ก่อนเบิก'
+                ? 'รายการนี้ไม่อยู่ในลิสต์ PPE/เครื่องมือของตำแหน่ง — ให้เพิ่มจากทะเบียนคลังที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) ก่อนเบิก'
                 : 'จำนวนที่ต้องการเบิกเกินกว่าที่กำหนดในรายการตำแหน่ง — กรุณาปรับเกณฑ์ที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) หรือลดจำนวนในใบเบิก'}
             </AlertDialogDescription>
           </AlertDialogHeader>

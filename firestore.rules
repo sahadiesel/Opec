@@ -266,6 +266,26 @@ service cloud.firestore {
           && (isOperationsUser() || isAccountingUser() || isHrUser() || isSalesUser()));
     }
 
+    /**
+     * คลัง/จัดซื้อ — อ่านเฉพาะฟิลด์ใน users/{uid} ไม่เรียก get(permission_profiles)
+     * เพื่อกัน permission-denied ทั้ง transaction (เช่น number_sequences/vendor) เมื่อโปรไฟล์อ่านไม่ได้
+     */
+    function isStoreActorByUserDocFields() {
+      let u = userData();
+      return isEligibleInternalUser()
+        && u != null
+        && (
+          u.department == 'store'
+          || u.assignedRoleKey == 'store_officer'
+          || u.assignedRoleKey == 'store_manager'
+          || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
+            && u.assignedRoleKeys.hasAny(['store_officer', 'store_manager']))
+          || u.roleId == 'store_officer'
+          || u.roleId == 'store_manager'
+          || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager']))
+        );
+    }
+
     function isStoreDomainUser() {
       let u = userData();
       return isEligibleInternalUser()
@@ -278,11 +298,13 @@ service cloud.firestore {
     function canAccessStore() {
       return canManageSystem()
         || (isEligibleInternalUser() && (isOperationsUser() || isAccountingUser()))
+        || isStoreActorByUserDocFields()
         || isStoreDomainUser();
     }
 
     function canWriteStore() {
       return canManageSystem()
+        || isStoreActorByUserDocFields()
         || (isEligibleInternalUser() && isOperationsUser())
         || isStoreDomainUser();
     }
@@ -720,7 +742,8 @@ service cloud.firestore {
     }
 
     match /store_items/{id} {
-      allow read: if canAccessStore();
+      // HR/ops who manage job positions need read-only catalog to link tool_requirements to store rows
+      allow read: if canAccessStore() || canManagePositions();
       allow write: if canWriteStore();
     }
 
