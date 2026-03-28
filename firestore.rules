@@ -357,7 +357,8 @@ service cloud.firestore {
 
     function canDeleteWorkers() {
       return canManageSystem()
-        || (isEligibleInternalUser() && !isStoreOfficer() && hasAnyAssignedRole(['hr_manager']));
+        || (isEligibleInternalUser() && !isStoreOfficer()
+          && hasAnyAssignedRole(['hr_manager', 'operations_manager', 'operation_manager']));
     }
 
     function canManagePayrollOperational() {

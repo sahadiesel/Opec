@@ -326,6 +326,7 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
     legacyRole === 'hr_manager' ||
     legacyRole === 'sales_manager' ||
     legacyRole === 'operations_manager' ||
+    legacyRole === 'operation_manager' ||
     legacyRole === 'accounting_manager' ||
     legacyRole === 'store_manager'
   ) {
