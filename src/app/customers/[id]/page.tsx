@@ -45,8 +45,8 @@ import {
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { isSystemAdmin } from '@/lib/permission-core';
-import { doc, collection, query, where } from 'firebase/firestore';
-import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { doc, collection, query, where, addDoc, updateDoc } from 'firebase/firestore';
+import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   Customer, 
   ContactPerson, 
@@ -164,16 +164,22 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   // --- Actions ---
 
-  const handleSaveMaster = () => {
+  const handleSaveMaster = async () => {
     if (!custRef) return;
     const normalizedBranchNo = editedCust.branchType === 'branch' ? (editedCust.branchNo || '').trim() : '00000';
     if (editedCust.branchType === 'branch' && !normalizedBranchNo) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุเลขสาขา' });
       return;
     }
-    updateDocumentNonBlocking(custRef, { ...editedCust, branchNo: normalizedBranchNo, updatedAt: Date.now() });
-    setIsEditing(false);
-    toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลลูกค้าถูกอัปเดตเรียบร้อยแล้ว" });
+    const { id: _docId, ...dataWithoutId } = editedCust as Record<string, unknown>;
+    try {
+      await updateDoc(custRef, { ...dataWithoutId, branchNo: normalizedBranchNo, updatedAt: Date.now() });
+      setIsEditing(false);
+      toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลลูกค้าถูกอัปเดตเรียบร้อยแล้ว" });
+    } catch (err: any) {
+      console.error('saveMaster error:', err);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูลลูกค้า' });
+    }
   };
 
   const handleProvisionPortalUser = async () => {
@@ -219,26 +225,33 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  const handleAddContact = () => {
+  const handleAddContact = async () => {
     if (!firestore || !newContact.name) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อผู้ติดต่อ' });
       return;
     }
-    const targetContractId = newContact.contractId || '';
-    const payload: Partial<ContactPerson> = {
+    const targetContractId = (newContact.contractId || '').trim();
+    const payload: Record<string, unknown> = {
       name: newContact.name || '',
       role: newContact.role || '',
       department: newContact.department || '',
       phone: newContact.phone || '',
       email: newContact.email || '',
       isPrimary: !!newContact.isPrimary,
-      contractId: targetContractId || undefined,
       notes: newContact.notes || '',
     };
-    addDocumentNonBlocking(collection(firestore, 'customers', id, 'contact_persons'), payload);
-    setIsAddContactOpen(false);
-    setNewContact({ name: '', role: '', department: '', phone: '', email: '', isPrimary: false, contractId: '' });
-    toast({ title: 'เพิ่มผู้ติดต่อสำเร็จ' });
+    if (targetContractId) {
+      payload.contractId = targetContractId;
+    }
+    try {
+      await addDoc(collection(firestore, 'customers', id, 'contact_persons'), payload);
+      setIsAddContactOpen(false);
+      setNewContact({ name: '', role: '', department: '', phone: '', email: '', isPrimary: false, contractId: '' });
+      toast({ title: 'เพิ่มผู้ติดต่อสำเร็จ' });
+    } catch (err: any) {
+      console.error('addContact error:', err);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err?.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูลผู้ติดต่อ' });
+    }
   };
 
   if (isCustLoading || !customer || !currentUser) {
