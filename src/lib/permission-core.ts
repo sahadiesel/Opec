@@ -216,7 +216,8 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
     return user.level === 'manager' ? 'store_manager' : 'store_officer';
   }
 
-  if (user.department === 'operations') {
+  const dep = String(user.department || '');
+  if (dep === 'operations' || dep === 'operation') {
     return user.level === 'manager' ? 'operations_manager' : 'operations_officer';
   }
 
@@ -265,6 +266,7 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
 /** Effective access group: explicit User.accessGroup wins, else legacy-derived. */
 export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (!user) return null;
+  const dep = String(user.department || '');
 
   if (isFutureAccessGroup(user.accessGroup)) {
     return user.accessGroup;
@@ -302,7 +304,7 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (user.department === 'admin') return 'admin';
   if (user.department === 'accounting') return 'accounting';
   if (user.department === 'client') return 'client';
-  if (user.department === 'hr' || user.department === 'sales' || user.department === 'operations' || user.department === 'store') {
+  if (dep === 'hr' || dep === 'sales' || dep === 'operations' || dep === 'operation' || dep === 'store') {
     return 'operation';
   }
 

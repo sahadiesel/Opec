@@ -75,7 +75,7 @@ service cloud.firestore {
         : u.department == 'store' ? 'operation'
         : u.departmentGroup == 'store' ? 'operation'
         : u.accessGroup == 'store' ? 'operation'
-        : (u.department == 'hr' || u.department == 'sales' || u.department == 'operations') ? 'operation'
+        : (u.department == 'hr' || u.department == 'sales' || u.department == 'operations' || u.department == 'operation') ? 'operation'
         : null;
     }
 
@@ -84,10 +84,10 @@ service cloud.firestore {
       // แผนกคลังมักใช้ departmentGroup/accessGroup = 'store' — ต้องถือเป็น operation pillar
       // เพื่อให้ canWriteStore / isOperationsUser ทำงาน (เดิม 'store' ไม่อยู่ใน whitelist ทำให้ได้ null)
       return u == null ? null
-        : (u.accessGroup == 'admin' || u.accessGroup == 'operation' || u.accessGroup == 'accounting' || u.accessGroup == 'client' || u.accessGroup == 'store')
-          ? (u.accessGroup == 'store' ? 'operation' : u.accessGroup)
-        : (u.departmentGroup == 'admin' || u.departmentGroup == 'operation' || u.departmentGroup == 'accounting' || u.departmentGroup == 'client' || u.departmentGroup == 'store')
-          ? (u.departmentGroup == 'store' ? 'operation' : u.departmentGroup)
+        : (u.accessGroup == 'admin' || u.accessGroup == 'operation' || u.accessGroup == 'operations' || u.accessGroup == 'accounting' || u.accessGroup == 'client' || u.accessGroup == 'store')
+          ? ((u.accessGroup == 'store' || u.accessGroup == 'operations') ? 'operation' : u.accessGroup)
+        : (u.departmentGroup == 'admin' || u.departmentGroup == 'operation' || u.departmentGroup == 'operations' || u.departmentGroup == 'accounting' || u.departmentGroup == 'client' || u.departmentGroup == 'store')
+          ? ((u.departmentGroup == 'store' || u.departmentGroup == 'operations') ? 'operation' : u.departmentGroup)
         : legacyResolvedGroup();
     }
 
@@ -108,7 +108,7 @@ service cloud.firestore {
       return u == null ? null
         : u.department == 'admin' ? 'system_admin'
         : u.department == 'client' ? 'client_user'
-        : u.department == 'operations' ? (lv == 'manager' ? 'operations_manager' : 'operations_officer')
+        : (u.department == 'operations' || u.department == 'operation') ? (lv == 'manager' ? 'operations_manager' : 'operations_officer')
         : u.department == 'hr' ? (lv == 'manager' ? 'hr_manager' : 'hr_officer')
         : u.department == 'sales' ? (lv == 'manager' ? 'sales_manager' : 'sales_officer')
         : u.department == 'accounting' ? (lv == 'manager' ? 'accounting_manager' : 'accounting_officer')
