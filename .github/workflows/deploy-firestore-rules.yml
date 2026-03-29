@@ -39,5 +39,24 @@ jobs:
           printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/firebase-service-account.json"
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
 
-      - name: Deploy Firestore rules
-        run: firebase deploy --only firestore:rules --project studio-9554558161-dc547
+      - name: Deploy Firestore rules (with retry)
+        shell: bash
+        run: |
+          set -euo pipefail
+          attempts=0
+          max_attempts=5
+          delay_sec=20
+          until [ "$attempts" -ge "$max_attempts" ]
+          do
+            if firebase deploy --only firestore:rules --project studio-9554558161-dc547; then
+              echo "Firestore rules deployed successfully."
+              exit 0
+            fi
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge "$max_attempts" ]; then
+              echo "Deploy failed after $attempts attempts."
+              exit 1
+            fi
+            echo "Deploy failed (attempt $attempts/$max_attempts). Retrying in ${delay_sec}s..."
+            sleep "$delay_sec"
+          done
