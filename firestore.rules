@@ -25,7 +25,11 @@ service cloud.firestore {
 
     function isActiveUser() {
       let u = userData();
-      return u != null && u.isActive == true && u.approvalStatus == 'ACTIVE';
+      // Legacy-compat: old users may miss isActive / approvalStatus fields.
+      // Treat missing flags as active to avoid mass lockout after RBAC migrations.
+      return u != null
+        && ((('isActive' in u) && u.isActive == true) || !('isActive' in u))
+        && ((('approvalStatus' in u) && u.approvalStatus == 'ACTIVE') || !('approvalStatus' in u));
     }
 
     function isInternalUser() {
