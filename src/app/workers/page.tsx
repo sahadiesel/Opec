@@ -57,6 +57,7 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { hasMinimumLevel, isSystemAdmin } from '@/lib/permissions';
 import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/services/worker-delete-service';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { useAppUser } from '@/hooks/use-app-user';
 
 function getInitialNewWorker(): Partial<Worker> {
   return {
@@ -74,21 +75,10 @@ function getInitialNewWorker(): Partial<Worker> {
 
 export default function WorkersPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse stored user', e);
-      }
-    }
-  }, []);
 
   const { can, check, payroll, isLoading: isPermLoading } = usePermissions(currentUser);
 
@@ -285,7 +275,7 @@ export default function WorkersPage() {
     }
   };
 
-  if (isUserLoading || isPermLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || isPermLoading || !currentUser) return null;
 
   if (!can('workers').view) {
     return (

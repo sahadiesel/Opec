@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { 
@@ -32,7 +32,7 @@ import {
   Position,
   ExceptionRequest
 } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,16 +41,11 @@ import { Separator } from '@/components/ui/separator';
 import { canSeeOperationsPillarUi } from '@/lib/permissions';
 import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function OperationsDashboardPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const isOperationsAuthorized = useMemo(() => {
     return isSystemAdmin(currentUser) || canSeeOperationsPillarUi(currentUser, null);
@@ -153,7 +148,7 @@ export default function OperationsDashboardPage() {
     };
   }, [assignments, waves, pendingExceptions, allWorkers]);
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
 
   if (!isOperationsAuthorized) {
     return (

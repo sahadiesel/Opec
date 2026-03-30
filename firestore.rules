@@ -243,6 +243,304 @@ service cloud.firestore {
       return isSystemAdmin();
     }
 
+    // -------------------------------------------------------------------------
+    // Explicit role-based access (owner-confirmed matrix; keep module scope narrow)
+    // -------------------------------------------------------------------------
+    function hasAnyRole(roles) {
+      return isEligibleInternalUser() && hasAnyAssignedRole(roles);
+    }
+
+    function isOpsManagerRole() {
+      return hasAnyRole(['operations_manager', 'operation_manager']);
+    }
+
+    function canViewPositionsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'hr_officer',
+        'store_officer', 'accounting_manager',
+      ]);
+    }
+    function canCreatePositionsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditPositionsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canDeletePositionsByRole() {
+      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager']);
+    }
+
+    function canViewVendorsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'store_officer', 'accounting_manager',
+      ]);
+    }
+    function canCreateVendorsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'store_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditVendorsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'hr_manager', 'store_officer', 'accounting_manager',
+      ]);
+    }
+    function canDeleteVendorsByRole() {
+      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'accounting_manager']);
+    }
+
+    function canViewCustomersByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canCreateCustomersByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'accounting_manager',
+      ]);
+    }
+    function canEditCustomersByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'sales_manager', 'hr_manager', 'accounting_manager',
+      ]);
+    }
+    function canDeleteCustomersByRole() {
+      return hasAnyRole(['sales_manager', 'hr_manager']);
+    }
+
+    function canViewCommercialCoreByRole() {
+      return hasAnyRole([
+        'sales_manager', 'hr_manager', 'hr_officer',
+        'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateCommercialCoreByRole() {
+      return hasAnyRole(['sales_manager', 'hr_manager', 'accounting_manager']);
+    }
+    function canEditCommercialCoreByRole() {
+      return hasAnyRole(['sales_manager', 'hr_manager', 'accounting_manager']);
+    }
+    function canDeleteCommercialCoreByRole() {
+      return hasAnyRole(['sales_manager', 'hr_manager', 'accounting_manager']);
+    }
+
+    function canViewQuotationsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateQuotationsByRole() {
+      return isOpsManagerRole() || hasAnyRole(['hr_manager']);
+    }
+    function canEditQuotationsByRole() {
+      return isOpsManagerRole() || hasAnyRole(['hr_manager']);
+    }
+    function canDeleteQuotationsByRole() {
+      return hasAnyRole(['hr_manager']);
+    }
+
+    function canViewOpsExecutionByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer', 'store_officer',
+      ]);
+    }
+    function canCreateOpsExecutionByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditOpsExecutionByRole() {
+      return canCreateOpsExecutionByRole();
+    }
+    function canDeleteOpsExecutionByRole() {
+      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'accounting_manager']);
+    }
+
+    function canViewWorkersByRoleMatrix() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateWorkersByRoleMatrix() {
+      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'hr_officer', 'accounting_manager']);
+    }
+    function canEditWorkersByRoleMatrix() {
+      return canCreateWorkersByRoleMatrix();
+    }
+    function canDeleteWorkersByRoleMatrix() {
+      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'hr_officer']);
+    }
+
+    function canViewOfficeStaffByRoleMatrix() {
+      return hasAnyRole(['hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer']);
+    }
+    function canCreateOfficeStaffByRoleMatrix() {
+      return hasAnyRole(['hr_manager', 'hr_officer', 'accounting_manager']);
+    }
+    function canEditOfficeStaffByRoleMatrix() {
+      return canCreateOfficeStaffByRoleMatrix();
+    }
+    function canDeleteOfficeStaffByRoleMatrix() {
+      return hasAnyRole(['hr_manager', 'accounting_manager']);
+    }
+
+    function canViewWorkerPayrollByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateWorkerPayrollByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditWorkerPayrollByRole() {
+      return canCreateWorkerPayrollByRole();
+    }
+    function canDeleteWorkerPayrollByRole() {
+      return hasAnyRole(['hr_manager', 'accounting_manager']);
+    }
+
+    function canViewOfficePayrollByRole() {
+      return hasAnyRole(['hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer']);
+    }
+    function canCreateOfficePayrollByRole() {
+      return hasAnyRole(['hr_manager', 'hr_officer', 'accounting_manager']);
+    }
+    function canEditOfficePayrollByRole() {
+      return canCreateOfficePayrollByRole();
+    }
+    function canDeleteOfficePayrollByRole() {
+      return hasAnyRole(['hr_manager', 'accounting_manager']);
+    }
+
+    function canViewPaymentExportsByRole() {
+      return hasAnyRole(['hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer', 'operations_manager', 'operation_manager']);
+    }
+    function canCreatePaymentExportsByRole() {
+      return hasAnyRole(['hr_manager', 'hr_officer', 'accounting_manager', 'operations_manager', 'operation_manager']);
+    }
+    function canEditPaymentExportsByRole() {
+      return canCreatePaymentExportsByRole();
+    }
+    function canDeletePaymentExportsByRole() {
+      return hasAnyRole(['hr_manager', 'accounting_manager']);
+    }
+
+    function canViewLaborCostTermsByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateLaborCostTermsByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditLaborCostTermsByRole() {
+      return canCreateLaborCostTermsByRole();
+    }
+    function canDeleteLaborCostTermsByRole() {
+      return hasAnyRole(['sales_manager', 'hr_manager', 'accounting_manager']);
+    }
+
+    function canViewTimesheetsByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateTimesheetsByRole() {
+      return hasAnyRole([
+        'sales_manager', 'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditTimesheetsByRole() {
+      return canCreateTimesheetsByRole();
+    }
+
+    function canViewWorkerDocumentsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer',
+        'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateWorkerDocumentsByRole() {
+      return hasAnyRole([
+        'operations_manager', 'operation_manager',
+        'hr_manager', 'hr_officer', 'accounting_manager',
+      ]);
+    }
+    function canEditWorkerDocumentsByRole() {
+      return canCreateWorkerDocumentsByRole();
+    }
+    function canDeleteWorkerDocumentsByRole() {
+      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'accounting_manager']);
+    }
+
+    function canViewPurchasesByRole() {
+      return hasAnyRole([
+        'hr_manager', 'hr_officer', 'store_officer',
+        'operations_manager', 'operation_manager',
+        'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreatePurchasesByRole() {
+      return hasAnyRole([
+        'hr_manager', 'hr_officer', 'store_officer',
+        'operations_manager', 'operation_manager', 'accounting_manager',
+      ]);
+    }
+    function canEditPurchasesByRole() {
+      return canCreatePurchasesByRole();
+    }
+    function canDeletePurchasesByRole() {
+      return hasAnyRole(['hr_manager', 'operations_manager', 'operation_manager', 'accounting_manager']);
+    }
+
+    function canViewStoreInventoryByRole() {
+      return hasAnyRole([
+        'hr_manager', 'hr_officer', 'store_officer',
+        'operations_manager', 'operation_manager',
+        'accounting_manager', 'accounting_officer',
+      ]);
+    }
+    function canCreateStoreInventoryByRole() {
+      return hasAnyRole([
+        'hr_manager', 'hr_officer', 'store_officer',
+        'operations_manager', 'operation_manager', 'accounting_manager',
+      ]);
+    }
+    function canEditStoreInventoryByRole() {
+      return canCreateStoreInventoryByRole();
+    }
+    function canDeleteStoreInventoryByRole() {
+      return hasAnyRole(['hr_manager', 'store_officer', 'operations_manager', 'operation_manager', 'accounting_manager']);
+    }
+
     function isHrUser() {
       return isEligibleInternalUser()
         && hasAnyAssignedRole(['hr_manager', 'hr_officer', 'payroll_officer']);
@@ -621,108 +919,131 @@ service cloud.firestore {
     // Sales domain
     // -------------------------------------------------------------------------
     match /customers/{id} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(id);
-      allow write: if canAccessSales();
+      allow read: if canViewCustomersByRole() || sameCustomerId(id);
+      allow create: if canCreateCustomersByRole();
+      allow update: if canEditCustomersByRole();
+      allow delete: if canDeleteCustomersByRole();
     }
 
     match /quotations/{id} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow write: if canAccessSales();
+      allow read: if canViewQuotationsByRole() || sameCustomerId(resource.data.customerId);
+      allow create: if canCreateQuotationsByRole();
+      allow update: if canEditQuotationsByRole();
+      allow delete: if canDeleteQuotationsByRole();
     }
 
     match /main_contracts/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow create: if internalReadNonStoreOfficer();
-      allow update: if internalReadNonStoreOfficer()
+      allow read: if canViewCommercialCoreByRole();
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole()
         && (resource.data.status != 'active' || mainContractUpdateWhenActiveAllowed());
-      allow delete: if internalReadNonStoreOfficer() && resource.data.status != 'active';
+      allow delete: if canDeleteCommercialCoreByRole() && resource.data.status != 'active';
     }
 
     match /sales_contract_terms/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessSales();
+      allow read: if canViewCommercialCoreByRole();
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole();
+      allow delete: if canDeleteCommercialCoreByRole();
     }
 
     match /purchase_orders/{id} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow write: if canAccessSales();
+      allow read: if canViewCommercialCoreByRole() || sameCustomerId(resource.data.customerId);
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole();
+      allow delete: if canDeleteCommercialCoreByRole();
     }
 
     match /rate_conditions/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessSales();
+      allow read: if canViewCommercialCoreByRole();
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole();
+      allow delete: if canDeleteCommercialCoreByRole();
     }
 
     match /profit_estimates/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessSales();
+      allow read: if canViewCommercialCoreByRole();
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole();
+      allow delete: if canDeleteCommercialCoreByRole();
     }
 
     // -------------------------------------------------------------------------
     // Operations domain
     // -------------------------------------------------------------------------
     match /waves/{id} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow create: if canAccessOperations() || canAccessSales();
-      allow update, delete: if canAccessOperations();
+      allow read: if canViewOpsExecutionByRole() || sameCustomerId(resource.data.customerId);
+      allow create: if canCreateOpsExecutionByRole();
+      allow update: if canEditOpsExecutionByRole();
+      allow delete: if canDeleteOpsExecutionByRole();
     }
 
     match /mobilizations/{id} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(resource.data.customerId);
-      allow create: if canAccessOperations()
+      allow read: if canViewOpsExecutionByRole() || sameCustomerId(resource.data.customerId);
+      allow create: if canCreateOpsExecutionByRole()
         && mobilizationCreateHasValidSalesTerm()
         && mobilizationOverlapFieldValid();
-      allow update, delete: if canAccessOperations();
+      allow update: if canEditOpsExecutionByRole();
+      allow delete: if canDeleteOpsExecutionByRole();
     }
 
     // -------------------------------------------------------------------------
     // HR domain
     // -------------------------------------------------------------------------
     match /workers/{id} {
-      allow read: if canReadWorkers();
-      allow create, update: if canManageWorkers();
-      allow delete: if canDeleteWorkers();
+      allow read: if canViewWorkersByRoleMatrix();
+      allow create: if canCreateWorkersByRoleMatrix();
+      allow update: if canEditWorkersByRoleMatrix();
+      allow delete: if canDeleteWorkersByRoleMatrix();
     }
 
     match /positions/{id} {
-      allow read: if canReadPositions();
-      allow create, update: if canManagePositions();
-      allow delete: if canDeletePositions();
+      allow read: if canViewPositionsByRole();
+      allow create: if canCreatePositionsByRole();
+      allow update: if canEditPositionsByRole();
+      allow delete: if canDeletePositionsByRole();
     }
 
     match /labor_cost_contract_terms/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow read: if canViewLaborCostTermsByRole();
+      allow create: if canCreateLaborCostTermsByRole();
+      allow update: if canEditLaborCostTermsByRole();
+      allow delete: if canDeleteLaborCostTermsByRole();
     }
 
     match /office_staff/{id} {
-      allow read: if canReadInternalData();
-      allow create, update: if canManageWorkers();
-      allow delete: if canDeleteWorkers();
+      allow read: if canViewOfficeStaffByRoleMatrix();
+      allow create: if canCreateOfficeStaffByRoleMatrix();
+      allow update: if canEditOfficeStaffByRoleMatrix();
+      allow delete: if canDeleteOfficeStaffByRoleMatrix();
     }
 
     match /worker_document_catalog/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow read: if canViewWorkerDocumentsByRole();
+      allow create: if canCreateWorkerDocumentsByRole();
+      allow update: if canEditWorkerDocumentsByRole();
+      allow delete: if canDeleteWorkerDocumentsByRole();
     }
 
     match /payroll_runs/{id} {
-      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
-      allow write: if canManagePayrollOperational() || canManagePayrollFinancial();
+      allow read: if canViewWorkerPayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateWorkerPayrollByRole();
+      allow update: if canEditWorkerPayrollByRole();
+      allow delete: if canDeleteWorkerPayrollByRole();
     }
 
     match /payroll_batches/{id} {
-      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
-      allow create: if canManagePayrollOperational();
-      allow update: if canManageSystem()
-        || (canManagePayrollOperational() && !payrollBatchFinanciallyLocked(resource.data))
-        || (canManagePayrollFinancial() && accountingPayrollBatchSafeUpdate());
-      allow delete: if canManageSystem();
+      allow read: if canViewWorkerPayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateWorkerPayrollByRole();
+      allow update: if canEditWorkerPayrollByRole() && !payrollBatchFinanciallyLocked(resource.data);
+      allow delete: if canDeleteWorkerPayrollByRole();
     }
 
     match /payroll_periods/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow read: if canViewWorkerPayrollByRole();
+      allow create: if canCreateWorkerPayrollByRole();
+      allow update: if canEditWorkerPayrollByRole();
+      allow delete: if canDeleteWorkerPayrollByRole();
     }
 
     /** D8 — นโยบาย payroll แบบ versioned (SSO / tax / allowance) */
@@ -740,12 +1061,10 @@ service cloud.firestore {
     }
 
     match /office_payroll_runs/{id} {
-      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
-      allow create: if canManagePayrollOperational() || canManageSystem();
-      allow update: if canManageSystem()
-        || (canManagePayrollOperational() && !officePayrollRunFrozen(resource.data))
-        || (canManagePayrollFinancial() && accountingOfficePayrollSafeUpdate());
-      allow delete: if canManageSystem();
+      allow read: if canViewOfficePayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateOfficePayrollByRole() || canManageSystem();
+      allow update: if canEditOfficePayrollByRole() && !officePayrollRunFrozen(resource.data);
+      allow delete: if canDeleteOfficePayrollByRole();
     }
 
     match /executive_payroll_runs/{id} {
@@ -754,16 +1073,17 @@ service cloud.firestore {
     }
 
     match /payment_export_batches/{id} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if canAccessHR();
+      allow read: if canViewPaymentExportsByRole();
+      allow create: if canCreatePaymentExportsByRole();
+      allow update: if canEditPaymentExportsByRole();
+      allow delete: if canDeletePaymentExportsByRole();
     }
 
     match /daily_timesheets/{id} {
-      allow read: if canReadInternalData() || sameCustomerId(resource.data.customerId);
-      allow create: if canManagePayrollOperational();
-      allow update: if canManagePayrollOperational()
-        && (canManageSystem() || !dailyTimesheetFinalized(resource.data));
-      allow delete: if canManageSystem();
+      allow read: if canViewTimesheetsByRole() || sameCustomerId(resource.data.customerId);
+      allow create: if canCreateTimesheetsByRole();
+      allow update: if canEditTimesheetsByRole() && !dailyTimesheetFinalized(resource.data);
+      allow delete: if canDeleteOpsExecutionByRole();
     }
 
     match /exception_requests/{id} {
@@ -780,49 +1100,66 @@ service cloud.firestore {
     // Store domain
     // -------------------------------------------------------------------------
     match /vendors/{id} {
-      allow read: if internalRead();
-      allow write: if canWriteStore();
+      allow read: if canViewVendorsByRole();
+      allow create: if canCreateVendorsByRole();
+      allow update: if canEditVendorsByRole();
+      allow delete: if canDeleteVendorsByRole();
     }
 
     match /purchases/{purchaseId} {
-      allow read: if internalRead();
-      allow write: if canWriteStore();
+      allow read: if canViewPurchasesByRole();
+      allow create: if canCreatePurchasesByRole();
+      allow update: if canEditPurchasesByRole();
+      allow delete: if canDeletePurchasesByRole();
     }
 
     match /purchases/{purchaseId}/{document=**} {
-      allow read: if internalRead();
-      allow write: if canWriteStore();
+      allow read: if canViewPurchasesByRole();
+      allow create: if canCreatePurchasesByRole();
+      allow update: if canEditPurchasesByRole();
+      allow delete: if canDeletePurchasesByRole();
     }
 
     match /store_items/{id} {
-      // HR/ops who manage job positions need read-only catalog to link tool_requirements to store rows
-      allow read: if canAccessStore() || canManagePositions();
-      allow write: if canWriteStore();
+      allow read: if canViewStoreInventoryByRole() || canViewPositionsByRole();
+      allow create: if canCreateStoreInventoryByRole();
+      allow update: if canEditStoreInventoryByRole();
+      allow delete: if canDeleteStoreInventoryByRole();
     }
 
     match /store_transactions/{id} {
-      allow read: if canAccessStore();
-      allow write: if canWriteStore();
+      allow read: if canViewStoreInventoryByRole();
+      allow create: if canCreateStoreInventoryByRole();
+      allow update: if canEditStoreInventoryByRole();
+      allow delete: if canDeleteStoreInventoryByRole();
     }
 
     match /store_receipts/{id} {
-      allow read: if canAccessStore();
-      allow write: if canWriteStore();
+      allow read: if canViewStoreInventoryByRole();
+      allow create: if canCreateStoreInventoryByRole();
+      allow update: if canEditStoreInventoryByRole();
+      allow delete: if canDeleteStoreInventoryByRole();
     }
 
     match /store_issue_slips/{id} {
-      allow read: if canAccessStore();
-      allow write: if canWriteStore();
+      allow read: if canViewStoreInventoryByRole();
+      allow create: if canCreateStoreInventoryByRole();
+      allow update: if canEditStoreInventoryByRole();
+      allow delete: if canDeleteStoreInventoryByRole();
     }
 
     match /store_return_slips/{id} {
-      allow read: if canAccessStore();
-      allow write: if canWriteStore();
+      allow read: if canViewStoreInventoryByRole();
+      allow create: if canCreateStoreInventoryByRole();
+      allow update: if canEditStoreInventoryByRole();
+      allow delete: if canDeleteStoreInventoryByRole();
     }
 
     match /store_writeoffs/{id} {
-      allow read: if canAccessStore();
-      allow write: if canWriteStore();
+      allow read: if canViewStoreInventoryByRole();
+      allow create: if canCreateStoreInventoryByRole();
+      allow update: if canEditStoreInventoryByRole();
+      allow delete: if canDeleteStoreInventoryByRole();
     }
 
     // -------------------------------------------------------------------------
@@ -884,16 +1221,21 @@ service cloud.firestore {
       // Admin manages all sequences.
       // Scoped read/write for generateNextDocumentCode: sales / HR / accounting / ops / store.
       allow read, write: if canManageSystem()
-        || (internalReadNonStoreOfficer() && id == 'main_contract')
-        || (canWriteStore() && id in ['vendor', 'purchase', 'store_receive', 'store_issue', 'store_return', 'store_writeoff'])
-        || (canAccessAccounting() && isAccountingSequenceId(id))
-        || (isHrSequenceId(id) && (
-            canManagePayrollOperational()
-            || canManagePayrollFinancial()
-            || (id == 'position' && canManagePositions())
-          ))
-        || (canAccessSales() && isSalesSequenceId(id))
-        || (canAccessOperations() && isOperationsSequenceId(id));
+        || (id == 'position' && canCreatePositionsByRole())
+        || (id == 'vendor' && canCreateVendorsByRole())
+        || (id == 'customer' && canCreateCustomersByRole())
+        || (id == 'quotation' && canCreateQuotationsByRole())
+        || (id == 'main_contract' && canCreateCommercialCoreByRole())
+        || (id == 'customer_po' && canCreateCommercialCoreByRole())
+        || (id == 'sales_term' && canCreateCommercialCoreByRole())
+        || (id == 'rate_condition' && canCreateCommercialCoreByRole())
+        || (id == 'profit_estimate' && canCreateCommercialCoreByRole())
+        || (id == 'wave' && canCreateOpsExecutionByRole())
+        || (id == 'assignment' && canCreateOpsExecutionByRole())
+        || (id == 'purchase' && canCreatePurchasesByRole())
+        || ((id == 'store_receive' || id == 'store_issue' || id == 'store_return' || id == 'store_writeoff')
+            && canCreateStoreInventoryByRole())
+        || (isAccountingSequenceId(id) && hasAnyRole(['accounting_manager']));
     }
 
     /** อ่านโปรไฟล์ของตนเองตาม id เอกสาร — ใช้ใน hasAnyAssignedRole / RBAC โดยไม่บังคับฟิลด์ profileKey ในเอกสาร */
@@ -954,41 +1296,51 @@ service cloud.firestore {
     // Subcollections
     // -------------------------------------------------------------------------
     match /workers/{workerId}/{document=**} {
-      allow read: if canReadWorkers();
-      allow create, update: if canManageWorkers();
-      allow delete: if canDeleteWorkers();
+      allow read: if canViewWorkersByRoleMatrix();
+      allow create: if canCreateWorkersByRoleMatrix();
+      allow update: if canEditWorkersByRoleMatrix();
+      allow delete: if canDeleteWorkersByRoleMatrix();
     }
 
     match /positions/{positionId}/{document=**} {
-      allow read: if canReadPositions();
-      allow create, update: if canManagePositions();
-      allow delete: if canDeletePositions();
+      allow read: if canViewPositionsByRole();
+      allow create: if canCreatePositionsByRole();
+      allow update: if canEditPositionsByRole();
+      allow delete: if canDeletePositionsByRole();
     }
 
     match /customers/{customerId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer() || sameCustomerId(customerId);
-      allow write: if canAccessSales();
+      allow read: if canViewCustomersByRole() || sameCustomerId(customerId);
+      allow create: if canCreateCustomersByRole();
+      allow update: if canEditCustomersByRole();
+      allow delete: if canDeleteCustomersByRole();
     }
 
     match /main_contracts/{contractId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer();
-      allow write: if internalReadNonStoreOfficer();
+      allow read: if canViewCommercialCoreByRole();
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole();
+      allow delete: if canDeleteCommercialCoreByRole();
     }
 
     match /quotations/{quotationId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer() || (
+      allow read: if canViewQuotationsByRole() || (
         isClientUser()
         && get(/databases/$(database)/documents/quotations/$(quotationId)).data.customerId == userCustomerId()
       );
-      allow write: if canAccessSales();
+      allow create: if canCreateQuotationsByRole();
+      allow update: if canEditQuotationsByRole();
+      allow delete: if canDeleteQuotationsByRole();
     }
 
     match /purchase_orders/{purchaseOrderId}/{document=**} {
-      allow read: if internalReadOrStoreOfficer() || (
+      allow read: if canViewCommercialCoreByRole() || (
         isClientUser()
         && get(/databases/$(database)/documents/purchase_orders/$(purchaseOrderId)).data.customerId == userCustomerId()
       );
-      allow write: if canAccessSales();
+      allow create: if canCreateCommercialCoreByRole();
+      allow update: if canEditCommercialCoreByRole();
+      allow delete: if canDeleteCommercialCoreByRole();
     }
 
     match /billing_notes/{billingNoteId}/{document=**} {
@@ -1020,21 +1372,19 @@ service cloud.firestore {
      * (recursive {document=**} ใต้ batch/run บางกรณีไม่ครอบคลุม list แบบ collection group)
      */
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read: if canReadInternalData() || canManagePayrollFinancial() || canReadPayrollLinesForSlips();
-      allow write: if canManageSystem()
-        || (canManagePayrollOperational()
-            && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
-        || (canManagePayrollFinancial()
-            && payrollBatchSnapshot(batchId).status in ['HR_APPROVED', 'FINANCE_PREPARED']);
+      allow read: if canViewWorkerPayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateWorkerPayrollByRole();
+      allow update: if canEditWorkerPayrollByRole()
+        && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId));
+      allow delete: if canDeleteWorkerPayrollByRole();
     }
 
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if canReadInternalData() || canManagePayrollFinancial() || canReadPayrollLinesForSlips();
-      allow write: if canManageSystem()
-        || (canManagePayrollOperational()
-            && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
-        || (canManagePayrollFinancial()
-            && get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data.status == 'HR_APPROVED');
+      allow read: if canViewOfficePayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateOfficePayrollByRole();
+      allow update: if canEditOfficePayrollByRole()
+        && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data);
+      allow delete: if canDeleteOfficePayrollByRole();
     }
 
     match /executive_payroll_runs/{runId}/lines/{lineId} {
@@ -1043,21 +1393,19 @@ service cloud.firestore {
     }
 
     match /payroll_batches/{batchId}/{document=**} {
-      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
-      allow write: if canManageSystem()
-        || (canManagePayrollOperational()
-            && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId)))
-        || (canManagePayrollFinancial()
-            && payrollBatchSnapshot(batchId).status in ['HR_APPROVED', 'FINANCE_PREPARED']);
+      allow read: if canViewWorkerPayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateWorkerPayrollByRole();
+      allow update: if canEditWorkerPayrollByRole()
+        && !payrollBatchFinanciallyLocked(payrollBatchSnapshot(batchId));
+      allow delete: if canDeleteWorkerPayrollByRole();
     }
 
     match /office_payroll_runs/{runId}/{document=**} {
-      allow read: if canReadInternalData() || canReadPayrollLinesForSlips();
-      allow write: if canManageSystem()
-        || (canManagePayrollOperational()
-            && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data))
-        || (canManagePayrollFinancial()
-            && get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data.status == 'HR_APPROVED');
+      allow read: if canViewOfficePayrollByRole() || canReadPayrollLinesForSlips();
+      allow create: if canCreateOfficePayrollByRole();
+      allow update: if canEditOfficePayrollByRole()
+        && !officePayrollRunFrozen(get(/databases/$(database)/documents/office_payroll_runs/$(runId)).data);
+      allow delete: if canDeleteOfficePayrollByRole();
     }
 
     match /executive_payroll_runs/{runId}/{document=**} {

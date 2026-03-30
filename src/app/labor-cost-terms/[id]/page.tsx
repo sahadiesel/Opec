@@ -24,7 +24,7 @@ import {
   Briefcase,
   CheckCircle2
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
@@ -48,18 +48,14 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { hasMinimumLevel } from '@/lib/permission-core';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function LaborCostTermDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
 
@@ -128,7 +124,7 @@ export default function LaborCostTermDetailPage({ params }: { params: Promise<{ 
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 
-  if (isTermLoading || isPermLoading || !term || !currentUser) {
+  if (userLoading || isTermLoading || isPermLoading || !term || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 

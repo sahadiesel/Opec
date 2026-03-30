@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -25,7 +25,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { PayrollBatch, PayrollPeriod, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -45,29 +45,27 @@ import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateThaiBE } from '@/lib/date-thai';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate } from '@/lib/permissions';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const canViewWorkerPayroll = useMemo(() => canView(currentUser, 'worker_payroll'), [currentUser]);
+  const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
 
   const batchQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewWorkerPayroll) return null;
     return query(collection(firestore, 'payroll_batches'), orderBy('createdAt', 'desc'), limit(50));
-  }, [firestore]);
+  }, [firestore, canViewWorkerPayroll]);
   const { data: batches, isLoading: isBatchesLoading } = useCollection<PayrollBatch>(batchQuery as any);
 
   const periodsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewWorkerPayroll) return null;
     return query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc'));
-  }, [firestore]);
+  }, [firestore, canViewWorkerPayroll]);
   const { data: periods } = useCollection<PayrollPeriod>(periodsQuery as any);
 
   const [isGenerateOpen, setIsGenerateOpen] = useState(false);
@@ -96,6 +94,10 @@ export default function PayrollBatchesPage() {
   };
 
   const handleGenerate = async () => {
+    if (!canCreateWorkerPayroll) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้าง payroll batch' });
+      return;
+    }
     if (!firestore || !currentUser || !targetPeriodId) return;
     
     setIsGenerating(true);
@@ -125,7 +127,14 @@ export default function PayrollBatchesPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
+  if (!canViewWorkerPayroll) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -143,7 +152,7 @@ export default function PayrollBatchesPage() {
           
           <Dialog open={isGenerateOpen} onOpenChange={setIsGenerateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold" disabled={!canCreateWorkerPayroll}>
                 <Calculator className="h-5 w-5" /> สร้างรายการจ่ายใหม่ (Generate Batch)
               </Button>
             </DialogTrigger>

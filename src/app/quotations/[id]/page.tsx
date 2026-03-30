@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -29,7 +29,7 @@ import {
   Lock,
   ExternalLink
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
 import { Quotation, QuotationLine, QuotationStatus, User } from '@/lib/types';
 import Link from 'next/link';
@@ -42,6 +42,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit } from '@/lib/permissions';
 
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
 import { QuotationHistoryTab } from './_components/quotation-history-tab';
@@ -60,31 +62,27 @@ type CompanyDocumentProfile = {
 export default function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const canViewQuotations = useMemo(() => canView(currentUser, 'quotations'), [currentUser]);
+  const canEditQuotations = useMemo(() => canEdit(currentUser, 'quotations'), [currentUser]);
 
   // --- Data Subscription ---
   const quotationRef = useMemoFirebase(
-    () => (firestore && firebaseUser ? doc(firestore, 'quotations', id) : null),
-    [firestore, firebaseUser, id]
+    () => (firestore && canViewQuotations ? doc(firestore, 'quotations', id) : null),
+    [firestore, canViewQuotations, id]
   );
   const { data: quotation, isLoading: isQuoLoading } = useDoc<Quotation>(quotationRef as any);
 
   const linesQuery = useMemoFirebase(
-    () => (firestore && firebaseUser ? collection(firestore, 'quotations', id, 'lines') : null),
-    [firestore, firebaseUser, id]
+    () => (firestore && canViewQuotations ? collection(firestore, 'quotations', id, 'lines') : null),
+    [firestore, canViewQuotations, id]
   );
   const { data: lines, isLoading: isLinesLoading } = useCollection<QuotationLine>(linesQuery as any);
   const companyProfileRef = useMemoFirebase(
-    () => (firestore && firebaseUser ? doc(firestore, 'system', 'company_profile') : null),
-    [firestore, firebaseUser]
+    () => (firestore && canViewQuotations ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore, canViewQuotations]
   );
   const { data: companyProfile } = useDoc<CompanyDocumentProfile>(companyProfileRef as any);
 
@@ -106,10 +104,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   }, [lines, isEditMode]);
 
   useEffect(() => {
-    if (!isUserLoading && !firebaseUser) {
-      router.replace('/');
-    }
-  }, [isUserLoading, firebaseUser, router]);
+    if (!userLoading && !currentUser) router.replace('/');
+  }, [userLoading, currentUser, router]);
 
   // --- Workflow Logic ---
   const isDraft = quotation?.status === 'draft';
@@ -131,6 +127,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleUpdateStatus = (newStatus: QuotationStatus) => {
+    if (!canEditQuotations) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขสถานะใบเสนอราคา' });
+      return;
+    }
     if (!quotationRef) return;
     updateDoc(quotationRef, { status: newStatus, updatedAt: Date.now() });
     
@@ -143,6 +143,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleCreateRevision = async () => {
+    if (!canEditQuotations) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขใบเสนอราคา' });
+      return;
+    }
     if (!firestore || !quotation || !quotationRef || !currentUser) return;
     if (quotation.status === 'revised') {
       toast({ variant: 'destructive', title: 'เอกสารถูกแก้ไขแล้ว', description: 'ฉบับนี้เปิดแก้ไขต่อไม่ได้ ให้เปิดที่ฉบับล่าสุดแทน' });
@@ -200,6 +204,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleStartEdit = () => {
+    if (!canEditQuotations) return;
     if (!quotation) return;
     setEditedHeader(quotation);
     setDraftLines([...(lines || [])].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)));
@@ -291,7 +296,17 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     });
   };
 
-  if (isUserLoading || !firebaseUser || isQuoLoading || !quotation || !currentUser) {
+  if (userLoading || !currentUser) return null;
+
+  if (!canViewQuotations) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+
+  if (isQuoLoading || !quotation) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 

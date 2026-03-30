@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { WorkerPayslipHistory } from '@/components/payroll/worker-payslip-history';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { sanitizeFirestorePayload } from '@/lib/utils';
@@ -46,6 +46,7 @@ import {
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useAppUser } from '@/hooks/use-app-user';
 
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import { WorkerCertsTab } from './_components/worker-certs-tab';
@@ -58,8 +59,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default function WorkerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const { user: firebaseUser, isUserLoading: isAuthLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -131,12 +131,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   const totalWorkedHours = useMemo(() => {
     return workLogRows.reduce((sum, row) => sum + Number(row.totalHours || 0), 0);
   }, [workLogRows]);
-
-  // --- Auth ---
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const { payroll } = usePermissions(currentUser);
   const canEditWorker = payroll('worker', 'edit');
@@ -296,7 +290,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   ]);
 
   // --- Render ---
-  if (isWorkerLoading || !worker || !currentUser) {
+  if (userLoading || isWorkerLoading || !worker || !currentUser) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">

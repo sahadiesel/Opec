@@ -27,7 +27,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canView, canCreate, canDelete } from '@/lib/permissions';
 
 export default function VendorsPage() {
   const router = useRouter();
@@ -41,6 +41,8 @@ export default function VendorsPage() {
   const [statusFilter, setStatusFilter] = useState('ALL');
 
   const canAccessVendors = canView(currentUser, 'vendors');
+  const canCreateVendors = canCreate(currentUser, 'vendors');
+  const canDeleteVendors = canDelete(currentUser, 'vendors');
 
   const vendorsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || userLoading || !firebaseUser || !canAccessVendors) return null;
@@ -66,6 +68,10 @@ export default function VendorsPage() {
     e.preventDefault();
     e.stopPropagation();
     if (!firestore) return;
+    if (!canDeleteVendors) {
+      toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์ลบคู่ค้า" });
+      return;
+    }
     if (confirm('ยืนยันการลบข้อมูลคู่ค้า? ข้อมูลย่อยทั้งหมดจะถูกลบด้วย')) {
       deleteDocumentNonBlocking(doc(firestore, 'vendors', id));
       toast({ title: "ลบข้อมูลสำเร็จ" });
@@ -137,14 +143,20 @@ export default function VendorsPage() {
             </Select>
           </div>
           
-          <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" onClick={() => router.push('/vendors/new')}>
+          <Button
+            className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
+            onClick={() => router.push('/vendors/new')}
+            disabled={!canCreateVendors}
+          >
             <Plus className="h-5 w-5" /> เพิ่มคู่ค้าใหม่ (Add Vendor)
           </Button>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
-            {isLoading ? (
+            {!canAccessVendors ? (
+              <div className="py-20 text-center text-muted-foreground italic">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+            ) : isLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลคู่ค้า...</div>
             ) : (
               <Table>
@@ -187,9 +199,9 @@ export default function VendorsPage() {
                       </TableCell>
                       <TableCell className="text-right pr-6">
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={(e) => handleDelete(vendor.id, e)}>
+                          {canDeleteVendors ? <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={(e) => handleDelete(vendor.id, e)}>
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </Button> : null}
                           <ChevronRight className="h-5 w-5 text-muted-foreground" />
                         </div>
                       </TableCell>

@@ -31,7 +31,7 @@ import {
   AlertTriangle,
   Building2
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, getDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
@@ -54,24 +54,17 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit } from '@/lib/permissions';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setCurrentUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
+  const canViewMobilization = canView(currentUser, 'mobilization');
+  const canEditMobilization = canEdit(currentUser, 'mobilization');
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,7 +72,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   // Standardized fetch from 'mobilizations' top-level collection
   useEffect(() => {
     async function fetchMobilization() {
-      if (!firestore) return;
+      if (!firestore || !canViewMobilization) return;
       try {
         const mobRef = doc(firestore, 'mobilizations', id);
         const snap = await getDoc(mobRef);
@@ -93,7 +86,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       }
     }
     fetchMobilization();
-  }, [firestore, id]);
+  }, [firestore, id, canViewMobilization]);
 
   const workerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId]);
   const { data: worker } = useDoc<Worker>(workerRef as any);
@@ -117,6 +110,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const { data: contract } = useDoc<MainContract>(contractRef as any);
 
   const handleUpdateMobStatus = (newStatus: MobilizationStatus, deploymentStatus?: DeploymentStatus) => {
+    if (!canEditMobilization) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขสถานะ Mobilization' });
+      return;
+    }
     if (!firestore) return;
     const updateData: any = { 
       mobilizationStatus: newStatus, 
@@ -131,7 +128,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus} เรียบร้อยแล้ว` });
   };
 
-  if (isLoading || !currentUser) {
+  if (userLoading || !currentUser) return null;
+  if (!canViewMobilization) {
+    return (
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (isLoading) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 

@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import {
   Assignment,
   Customer,
@@ -27,6 +27,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { canView } from '@/lib/permissions';
+import { canEdit } from '@/lib/permissions';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
@@ -52,6 +53,7 @@ import {
   Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAppUser } from '@/hooks/use-app-user';
 
 const ROW_VISUAL_CLASS: Record<string, string> = {
   green: 'bg-emerald-50/90 dark:bg-emerald-950/30 border-l-4 border-l-emerald-500',
@@ -63,8 +65,7 @@ const ROW_VISUAL_CLASS: Record<string, string> = {
 export default function WaveExcelEntryPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
-  const { isUserLoading } = useUser();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
 
   const [periodId, setPeriodId] = useState('');
   const [customerId, setCustomerId] = useState('');
@@ -93,12 +94,8 @@ export default function WaveExcelEntryPage() {
 
   const tableRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const raw = localStorage.getItem('opsflow_user');
-    if (raw) setCurrentUser(JSON.parse(raw));
-  }, []);
-
   const canTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
+  const canEditTimesheets = useMemo(() => canEdit(currentUser, 'timesheets'), [currentUser]);
 
   const periodsQuery = useMemoFirebase(
     () => (firestore && canTimesheets ? query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc')) : null),
@@ -277,6 +274,12 @@ export default function WaveExcelEntryPage() {
 
   const persistRows = useCallback(
     async (silent: boolean) => {
+      if (!canEditTimesheets) {
+        if (!silent) {
+          toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+        }
+        return;
+      }
       if (!firestore || !currentUser || !gridLoaded || !loadedContext || !selectedWave || !selectedPo) return;
       const service = new TimesheetService(firestore);
       const payloads: Partial<DailyTimesheet>[] = [];
@@ -332,6 +335,7 @@ export default function WaveExcelEntryPage() {
       rowsByWorker,
       workers,
       toast,
+      canEditTimesheets,
     ]
   );
 
@@ -350,6 +354,10 @@ export default function WaveExcelEntryPage() {
   }, [rowsByWorker, gridLoaded, loadedContext, loadKey]);
 
   const handleClonePrev = async () => {
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
     if (!firestore || !currentUser || !waveId || !dateInPeriod) return;
     setIsCloning(true);
     try {
@@ -451,7 +459,7 @@ export default function WaveExcelEntryPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [gridLoaded, workerIdsSorted, focusedIdx, rowsByWorker]);
 
-  if (isUserLoading || !currentUser) {
+  if (userLoading || !currentUser) {
     return <div className="flex min-h-[30vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>;
   }
 
@@ -481,11 +489,11 @@ export default function WaveExcelEntryPage() {
             <Button variant="outline" asChild>
               <Link href="/timesheets/wave-board">Wave Board เดิม</Link>
             </Button>
-            <Button variant="outline" onClick={handleClonePrev} disabled={!waveId || isCloning || !dateInPeriod}>
+            <Button variant="outline" onClick={handleClonePrev} disabled={!waveId || isCloning || !dateInPeriod || !canEditTimesheets}>
               {isCloning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
               คัดลอกจากวันก่อนหน้า
             </Button>
-            <Button onClick={() => void persistRows(false)} disabled={!gridLoaded || isSaving}>
+            <Button onClick={() => void persistRows(false)} disabled={!gridLoaded || isSaving || !canEditTimesheets}>
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               บันทึกทั้งหมด
             </Button>

@@ -28,7 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { PurchaseOrder, Wave, Assignment, Worker, DailyTimesheet, RateConditionEventType, User, DailyTimesheetStatus } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
@@ -38,6 +38,8 @@ import { TimesheetService } from '@/lib/services/timesheet-service';
 import Link from 'next/link';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit } from '@/lib/permissions';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -49,10 +51,11 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
 ];
 
 export default function WaveTimesheetBoardPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
+  const canEditTimesheets = useMemo(() => canEdit(currentUser, 'timesheets'), [currentUser]);
 
   const [selectedPoId, setSelectedPoId] = useState('');
   const [selectedWaveId, setSelectedWaveId] = useState('');
@@ -64,11 +67,6 @@ export default function WaveTimesheetBoardPage() {
   const [rosterData, setRosterData] = useState<Record<string, Partial<DailyTimesheet>>>({});
 
   useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
     const po = params.get('poId');
@@ -77,26 +75,26 @@ export default function WaveTimesheetBoardPage() {
     if (wv) setSelectedWaveId(wv);
   }, []);
 
-  const poQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null), [firestore]);
+  const poQuery = useMemoFirebase(() => (firestore && canViewTimesheets ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null), [firestore, canViewTimesheets]);
   const { data: pos } = useCollection<PurchaseOrder>(poQuery as any);
 
   const waveQuery = useMemoFirebase(() => {
-    if (!firestore || !selectedPoId) return null;
+    if (!firestore || !selectedPoId || !canViewTimesheets) return null;
     return query(collection(firestore, 'waves'), where('poId', '==', selectedPoId || ''));
-  }, [firestore, selectedPoId]);
+  }, [firestore, selectedPoId, canViewTimesheets]);
   const { data: waves } = useCollection<Wave>(waveQuery as any);
 
   const asgnQuery = useMemoFirebase(() => {
-    if (!firestore || !selectedWaveId) return null;
+    if (!firestore || !selectedWaveId || !canViewTimesheets) return null;
     return query(
       collection(firestore, 'mobilizations'),
       where('waveId', '==', selectedWaveId),
       where('deploymentStatus', 'in', WAVE_TIMESHEET_DEPLOYMENT_STATUSES)
     );
-  }, [firestore, selectedWaveId]);
+  }, [firestore, selectedWaveId, canViewTimesheets]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(asgnQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const workersQuery = useMemoFirebase(() => (firestore && canViewTimesheets ? collection(firestore, 'workers') : null), [firestore, canViewTimesheets]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
   // Load existing data for board
@@ -153,6 +151,10 @@ export default function WaveTimesheetBoardPage() {
   };
 
   const handleClonePrevious = async () => {
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
     if (!firestore || !currentUser || !selectedWaveId) return;
     setIsCloning(true);
     try {
@@ -167,6 +169,10 @@ export default function WaveTimesheetBoardPage() {
   };
 
   const handleSaveAll = async (finalize: boolean = false) => {
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
     if (!firestore || !currentUser || !selectedWaveId) return;
     setIsSaving(true);
     try {
@@ -217,7 +223,14 @@ export default function WaveTimesheetBoardPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
+  if (!canViewTimesheets) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -234,14 +247,14 @@ export default function WaveTimesheetBoardPage() {
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
-            <Button variant="outline" className="gap-2 h-11" onClick={handleClonePrevious} disabled={!selectedWaveId || isCloning}>
+            <Button variant="outline" className="gap-2 h-11" onClick={handleClonePrevious} disabled={!selectedWaveId || isCloning || !canEditTimesheets}>
               <Copy className="h-4 w-4" /> ดึงข้อมูลจากเมื่อวาน (Clone Prev)
             </Button>
-            <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold shadow-sm" onClick={() => handleSaveAll(false)} disabled={!selectedWaveId || isSaving}>
+            <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold shadow-sm" onClick={() => handleSaveAll(false)} disabled={!selectedWaveId || isSaving || !canEditTimesheets}>
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               บันทึกร่าง (Save Draft)
             </Button>
-            <Button className="gap-2 h-11 px-8 bg-blue-600 font-black shadow-lg" onClick={() => handleSaveAll(true)} disabled={!selectedWaveId || isSaving}>
+            <Button className="gap-2 h-11 px-8 bg-blue-600 font-black shadow-lg" onClick={() => handleSaveAll(true)} disabled={!selectedWaveId || isSaving || !canEditTimesheets}>
               {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
               ยืนยันและส่งตรวจ (Finalize & Submit)
             </Button>

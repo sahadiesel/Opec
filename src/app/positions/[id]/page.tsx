@@ -37,7 +37,7 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
@@ -56,28 +56,35 @@ import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { positionDetailHeadline, type PositionDoc } from '@/lib/position-display';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit, canDelete } from '@/lib/permissions';
 
 export default function PositionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading: isAuthLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewPositions = useMemo(() => canView(currentUser, 'positions'), [currentUser]);
+  const canEditPositions = useMemo(() => canEdit(currentUser, 'positions'), [currentUser]);
+  const canDeletePositions = useMemo(() => canDelete(currentUser, 'positions'), [currentUser]);
 
-  const posRef = useMemoFirebase(() => (firestore ? doc(firestore, 'positions', id) : null), [firestore, id]);
+  const posRef = useMemoFirebase(
+    () => (firestore && canViewPositions ? doc(firestore, 'positions', id) : null),
+    [firestore, id, canViewPositions]
+  );
   const { data: position, isLoading: isPosLoading } = useDoc<Position>(posRef as any);
 
-  const certsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions', id, 'certificate_requirements') : null), [firestore, id]);
+  const certsQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'positions', id, 'certificate_requirements') : null), [firestore, id, canViewPositions]);
   const { data: certs } = useCollection<PositionCertificateRequirement>(certsQuery as any);
 
-  const ppeQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions', id, 'ppe_requirements') : null), [firestore, id]);
+  const ppeQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'positions', id, 'ppe_requirements') : null), [firestore, id, canViewPositions]);
   const { data: ppe } = useCollection<PositionPPERequirement>(ppeQuery as any);
 
-  const toolsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions', id, 'tool_requirements') : null), [firestore, id]);
+  const toolsQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'positions', id, 'tool_requirements') : null), [firestore, id, canViewPositions]);
   const { data: tools } = useCollection<PositionToolRequirement>(toolsQuery as any);
-  const storeItemsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'store_items') : null), [firestore]);
+  const storeItemsQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'store_items') : null), [firestore, canViewPositions]);
   const { data: storeItems } = useCollection<StoreItem>(storeItemsQuery as any);
-  const workerDocCatalogQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'worker_document_catalog') : null), [firestore]);
+  const workerDocCatalogQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'worker_document_catalog') : null), [firestore, canViewPositions]);
   const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -121,12 +128,11 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     [workerDocCatalog, newCert.templateId]
   );
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
   const handleSaveMaster = () => {
+    if (!canEditPositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขตำแหน่งงาน' });
+      return;
+    }
     if (!posRef) return;
     updateDocumentNonBlocking(posRef, { ...editedPos, updatedAt: Date.now() });
     setIsEditing(false);
@@ -134,6 +140,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleAddCert = () => {
+    if (!canEditPositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลตำแหน่งงาน' });
+      return;
+    }
     if (!certsQuery) return;
     if (!selectedCatalogItem) {
       toast({ variant: 'destructive', title: 'ยังไม่ได้เลือกเอกสารกลาง', description: 'กรุณาเลือกรายการจากเมนูรายการเอกสารกลางก่อนบันทึก' });
@@ -154,6 +164,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleAddPPE = () => {
+    if (!canEditPositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลตำแหน่งงาน' });
+      return;
+    }
     if (!ppeQuery) return;
     addDocumentNonBlocking(ppeQuery, {
       itemName: newPPE.itemName || '',
@@ -173,6 +187,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleAddTool = () => {
+    if (!canEditPositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลตำแหน่งงาน' });
+      return;
+    }
     if (!toolsQuery || !newTool.storeItemId) {
       toast({
         variant: 'destructive',
@@ -205,6 +223,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const deleteReq = (sub: string, reqId: string) => {
+    if (!canDeletePositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบรายการในตำแหน่งงาน' });
+      return;
+    }
     if (!firestore) return;
     if (confirm('ยืนยันการลบรายการนี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'positions', id, sub, reqId));
@@ -236,9 +258,17 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  if (isPosLoading || !position || !currentUser) {
+  if (userLoading || !currentUser) return null;
+  if (!canViewPositions) {
     return (
-      <AppShell user={currentUser} onLogout={() => {}}>
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (isPosLoading || !position) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
           <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูล (Loading Positions Matrix)...</div>
         </div>
@@ -247,7 +277,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   }
 
   return (
-    <AppShell user={currentUser} onLogout={() => {}}>
+    <AppShell user={currentUser as User} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1400px] mx-auto">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>

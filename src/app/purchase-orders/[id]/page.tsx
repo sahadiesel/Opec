@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useMemo, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -46,7 +46,7 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, updateDoc, addDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
@@ -71,48 +71,48 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { Separator } from '@/components/ui/separator';
 import { ProfitAnalysisTab } from '@/components/commercial/profit-analysis-tab';
 import { writeAuditLog } from '@/lib/services/audit-service';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit, canDelete } from '@/lib/permissions';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewPo = useMemo(() => canView(currentUser, 'customer_pos'), [currentUser]);
+  const canEditPo = useMemo(() => canEdit(currentUser, 'customer_pos'), [currentUser]);
+  const canDeletePo = useMemo(() => canDelete(currentUser, 'customer_pos'), [currentUser]);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const poRef = useMemoFirebase(() => (firestore ? doc(firestore, 'purchase_orders', id) : null), [firestore, id]);
+  const poRef = useMemoFirebase(() => (firestore && canViewPo ? doc(firestore, 'purchase_orders', id) : null), [firestore, id, canViewPo]);
   const { data: po, isLoading: isPOLoading } = useDoc<PurchaseOrder>(poRef as any);
 
-  const poLinesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchase_orders', id, 'po_lines') : null), [firestore, id]);
+  const poLinesQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'purchase_orders', id, 'po_lines') : null), [firestore, id, canViewPo]);
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
 
   // Linkage: Sales Terms (Revenue Side)
-  const salesTermsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'sales_contract_terms'), where('purchaseOrderId', '==', id)) : null), [firestore, id]);
+  const salesTermsQuery = useMemoFirebase(() => (firestore && canViewPo ? query(collection(firestore, 'sales_contract_terms'), where('purchaseOrderId', '==', id)) : null), [firestore, id, canViewPo]);
   const { data: salesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
 
   // Linkage: Cost Terms (Expense Side)
-  const costTermsQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'labor_cost_contract_terms'), where('relatedPurchaseOrderId', '==', id)) : null), [firestore, id]);
+  const costTermsQuery = useMemoFirebase(() => (firestore && canViewPo ? query(collection(firestore, 'labor_cost_contract_terms'), where('relatedPurchaseOrderId', '==', id)) : null), [firestore, id, canViewPo]);
   const { data: costTerms } = useCollection<LaborCostContractTerm>(costTermsQuery as any);
 
   const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewPo) return null;
     return query(collection(firestore, 'mobilizations'), where('poId', '==', id));
-  }, [firestore, id]);
+  }, [firestore, id, canViewPo]);
   const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
 
-  const customersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers') : null), [firestore]);
+  const customersQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'customers') : null), [firestore, canViewPo]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const contractRef = useMemoFirebase(() => (firestore && po?.contractId ? doc(firestore, 'main_contracts', po.contractId) : null), [firestore, po?.contractId]);
+  const contractRef = useMemoFirebase(() => (firestore && canViewPo && po?.contractId ? doc(firestore, 'main_contracts', po.contractId) : null), [firestore, po?.contractId, canViewPo]);
   const { data: contract } = useDoc<MainContract>(contractRef as any);
 
-  const ratesQuery = useMemoFirebase(() => (firestore && po?.contractId ? collection(firestore, 'main_contracts', po.contractId, 'position_rates') : null), [firestore, po?.contractId]);
+  const ratesQuery = useMemoFirebase(() => (firestore && canViewPo && po?.contractId ? collection(firestore, 'main_contracts', po.contractId, 'position_rates') : null), [firestore, po?.contractId, canViewPo]);
   const { data: rates } = useCollection<PositionRate>(ratesQuery as any);
 
-  const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
+  const positionsQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'positions') : null), [firestore, canViewPo]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
   const quotationRef = useMemoFirebase(
@@ -121,10 +121,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   );
   const { data: quotation } = useDoc<Quotation>(quotationRef as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const workersQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'workers') : null), [firestore, canViewPo]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
-  const conditionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'rate_conditions') : null), [firestore]);
+  const conditionsQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'rate_conditions') : null), [firestore, canViewPo]);
   const { data: allConditions } = useCollection<RateCondition>(conditionsQuery as any);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -166,6 +166,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const isLinkedSourceReady = isContractBasedPO ? isLinkedContractActive : isQuotationAccepted;
 
   const handleSaveMaster = () => {
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข Customer PO' });
+      return;
+    }
     if (!poRef || !currentUser || !po) return;
     updateDocumentNonBlocking(poRef, { ...editedPO, updatedAt: Date.now() });
     setIsEditing(false);
@@ -186,6 +190,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   };
 
   const handleAddLine = async () => {
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เพิ่มรายการใน Customer PO' });
+      return;
+    }
     if (!poLinesQuery || !newLine.positionId || !currentUser || !firestore) return;
 
     if (!isLinkedSourceReady) {
@@ -314,6 +322,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   };
 
   const handleCreateSalesTerm = async () => {
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างเงื่อนไขการขายจาก PO นี้' });
+      return;
+    }
     if (!firestore || !currentUser || !po) return;
     if (!isLinkedSourceReady) {
       toast({
@@ -380,6 +392,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   };
 
   const deleteLine = (lineId: string) => {
+    if (!canDeletePo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบรายการ PO' });
+      return;
+    }
     if (!firestore || !currentUser) return;
     if (confirm('ยืนยันการลบรายการนี้? รายการมอบหมายที่เชื่อมโยงอยู่จะยังคงอยู่แต่จะเสียการอ้างอิง')) {
       deleteDocumentNonBlocking(doc(firestore, 'purchase_orders', id, 'po_lines', lineId));
@@ -395,7 +411,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  if (isPOLoading || !po || !currentUser) {
+  if (userLoading || !currentUser) return null;
+  if (!canViewPo) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (isPOLoading || !po) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">

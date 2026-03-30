@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { PayrollPeriod, PayrollPeriodStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -42,22 +42,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate } from '@/lib/permissions';
 
 export default function PayrollPeriodsPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const canViewWorkerPayroll = useMemo(() => canView(currentUser, 'worker_payroll'), [currentUser]);
+  const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
 
   const periodsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewWorkerPayroll) return null;
     return query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc'), limit(50));
-  }, [firestore]);
+  }, [firestore, canViewWorkerPayroll]);
   const { data: periods, isLoading } = useCollection<PayrollPeriod>(periodsQuery as any);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -70,6 +68,10 @@ export default function PayrollPeriodsPage() {
   });
 
   const handleCreate = async () => {
+    if (!canCreateWorkerPayroll) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างรอบจ่ายเงิน' });
+      return;
+    }
     if (!firestore || !currentUser) return;
     try {
       await addDocumentNonBlocking(collection(firestore, 'payroll_periods'), {
@@ -95,7 +97,14 @@ export default function PayrollPeriodsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
+  if (!canViewWorkerPayroll) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -113,7 +122,7 @@ export default function PayrollPeriodsPage() {
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold" disabled={!canCreateWorkerPayroll}>
                 <Plus className="h-5 w-5" /> สร้างรอบใหม่ (New Period)
               </Button>
             </DialogTrigger>
@@ -159,7 +168,7 @@ export default function PayrollPeriodsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button onClick={handleCreate} className="bg-primary font-bold">ยืนยันสร้างรอบ (Confirm)</Button>
+                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={!canCreateWorkerPayroll}>ยืนยันสร้างรอบ (Confirm)</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

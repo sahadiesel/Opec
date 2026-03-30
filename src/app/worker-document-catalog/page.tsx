@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { addDocumentNonBlocking, updateDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { collection, doc } from 'firebase/firestore';
 import { User, WorkerDocumentCatalogItem } from '@/lib/types';
@@ -20,6 +20,7 @@ import { FileText, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { useAppUser } from '@/hooks/use-app-user';
 
 type CatalogForm = Partial<WorkerDocumentCatalogItem>;
 
@@ -32,8 +33,7 @@ function toCatalogCode(name: string) {
 }
 
 export default function WorkerDocumentCatalogPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
@@ -49,15 +49,14 @@ export default function WorkerDocumentCatalogPage() {
     blockBeforeExpiryDays: 90,
   });
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
+  const canViewWorkers = can('workers').view;
+  const canCreateWorkers = can('workers').create;
+  const canEditWorkers = can('workers').edit;
+  const canDeleteWorkers = can('workers').delete;
   const catalogQuery = useMemoFirebase(() => {
-    if (isUserLoading || !firebaseUser || !firestore || !can('workers').view) return null;
+    if (userLoading || !currentUser || !firestore || !canViewWorkers) return null;
     return collection(firestore, 'worker_document_catalog');
-  }, [isUserLoading, firebaseUser, firestore, can('workers').view]);
+  }, [userLoading, currentUser, firestore, canViewWorkers]);
   const { data: catalogItems, isLoading } = useCollection<WorkerDocumentCatalogItem>(catalogQuery as any);
 
   const sortedItems = useMemo(() => {
@@ -65,6 +64,10 @@ export default function WorkerDocumentCatalogPage() {
   }, [catalogItems]);
 
   const handleCreate = () => {
+    if (!canCreateWorkers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เพิ่มรายการเอกสารกลาง' });
+      return;
+    }
     if (!catalogQuery) return;
     if (!form.itemName) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อเอกสารกลาง' });
@@ -95,6 +98,10 @@ export default function WorkerDocumentCatalogPage() {
   };
 
   const handleSaveEdit = () => {
+    if (!canEditWorkers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขรายการเอกสารกลาง' });
+      return;
+    }
     if (!firestore || !editingItem) return;
     if (!form.itemName) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อเอกสารกลาง' });
@@ -119,6 +126,10 @@ export default function WorkerDocumentCatalogPage() {
   };
 
   const handleToggleActive = (item: WorkerDocumentCatalogItem) => {
+    if (!canEditWorkers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขสถานะรายการเอกสารกลาง' });
+      return;
+    }
     if (!firestore) return;
     updateDocumentNonBlocking(doc(firestore, 'worker_document_catalog', item.id), {
       active: !item.active,
@@ -126,7 +137,14 @@ export default function WorkerDocumentCatalogPage() {
     });
   };
 
-  if (!currentUser || isPermLoading || isUserLoading) return null;
+  if (!currentUser || isPermLoading || userLoading) return null;
+  if (!canViewWorkers) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -144,7 +162,7 @@ export default function WorkerDocumentCatalogPage() {
         <Card>
           <CardHeader className="border-b bg-primary/5 flex flex-row items-center justify-between">
             <CardTitle className="text-primary flex items-center gap-2"><FileText className="h-5 w-5" /> เอกสารกลาง</CardTitle>
-            {can('workers').create && (
+            {canCreateWorkers && (
               <Dialog open={isOpen} onOpenChange={setIsOpen}>
                 <DialogTrigger asChild>
                   <Button className="bg-primary font-bold"><Plus className="h-4 w-4 mr-2" />เพิ่มรายการกลาง</Button>
@@ -231,7 +249,7 @@ export default function WorkerDocumentCatalogPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                      {can('workers').edit && (
+                      {canEditWorkers && (
                         <div className="flex items-center justify-end gap-2">
                           <Button
                             variant="outline"
@@ -253,13 +271,15 @@ export default function WorkerDocumentCatalogPage() {
                           >
                             <Pencil className="h-3 w-3 mr-1" /> แก้ไข
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleToggleActive(item)}>
+                          <Button variant="outline" size="sm" disabled={!canEditWorkers} onClick={() => handleToggleActive(item)}>
                             {item.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
                           </Button>
                           <Button
                             variant="destructive"
                             size="sm"
+                            disabled={!canDeleteWorkers}
                             onClick={() => {
+                              if (!canDeleteWorkers) return;
                               if (!firestore) return;
                               if (confirm(`ยืนยันลบรายการ "${item.itemName}" ?`)) {
                                 deleteDocumentNonBlocking(doc(firestore, 'worker_document_catalog', item.id));

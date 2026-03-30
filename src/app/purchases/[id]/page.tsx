@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -48,26 +48,26 @@ import {
   DialogTrigger,
   DialogFooter
 } from '@/components/ui/dialog';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit, canDelete } from '@/lib/permissions';
 
 export default function PurchaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewPurchases = useMemo(() => canView(currentUser, 'purchases'), [currentUser]);
+  const canEditPurchases = useMemo(() => canEdit(currentUser, 'purchases'), [currentUser]);
+  const canDeletePurchases = useMemo(() => canDelete(currentUser, 'purchases'), [currentUser]);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const purchaseRef = useMemoFirebase(() => (firestore ? doc(firestore, 'purchases', id) : null), [firestore, id]);
+  const purchaseRef = useMemoFirebase(() => (firestore && canViewPurchases ? doc(firestore, 'purchases', id) : null), [firestore, id, canViewPurchases]);
   const { data: purchase, isLoading: isPurchaseLoading } = useDoc<Purchase>(purchaseRef as any);
 
-  const linesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'purchases', id, 'lines') : null), [firestore, id]);
+  const linesQuery = useMemoFirebase(() => (firestore && canViewPurchases ? collection(firestore, 'purchases', id, 'lines') : null), [firestore, id, canViewPurchases]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<PurchaseLine>(linesQuery as any);
 
-  const vendorsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'vendors') : null), [firestore]);
+  const vendorsQuery = useMemoFirebase(() => (firestore && canViewPurchases ? collection(firestore, 'vendors') : null), [firestore, canViewPurchases]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const vendor = vendors?.find(v => v.id === purchase?.vendorId);
@@ -80,6 +80,10 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   });
 
   const handleAddLine = async () => {
+    if (!canEditPurchases) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เพิ่มรายการสั่งซื้อ' });
+      return;
+    }
     if (!firestore || !newLine.itemDescription || !newLine.quantity || !newLine.unitPrice) return;
     
     const lineRef = collection(firestore, 'purchases', id, 'lines');
@@ -99,6 +103,10 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleDeleteLine = async (lineId: string) => {
+    if (!canDeletePurchases) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบรายการสั่งซื้อ' });
+      return;
+    }
     if (!firestore) return;
     await deleteDocumentNonBlocking(doc(firestore, 'purchases', id, 'lines', lineId));
     recalculateTotals(lines?.filter(l => l.id !== lineId) || []);
@@ -120,12 +128,24 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleUpdateStatus = (newStatus: PurchaseStatus) => {
+    if (!canEditPurchases) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เปลี่ยนสถานะเอกสาร' });
+      return;
+    }
     if (!purchaseRef) return;
     updateDocumentNonBlocking(purchaseRef, { status: newStatus, updatedAt: Date.now() });
     toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 
-  if (isPurchaseLoading || !purchase || !currentUser) {
+  if (userLoading || !currentUser) return null;
+  if (!canViewPurchases) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (isPurchaseLoading || !purchase) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 
@@ -161,7 +181,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <CardTitle className="text-lg">รายการสินค้า/บริการ (Purchase Items)</CardTitle>
                   <CardDescription>ระบุรายการพัสดุ PPE หรือเครื่องมือที่สั่งซื้อ</CardDescription>
                 </div>
-                {purchase.status === 'DRAFT' && (
+                {purchase.status === 'DRAFT' && canEditPurchases && (
                   <Dialog open={isAddingLine} onOpenChange={setIsAddingLine}>
                     <DialogTrigger asChild>
                       <Button className="bg-primary font-bold"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ</Button>
@@ -213,9 +233,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                           ฿ {line.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDeleteLine(line.id)}>
+                          {canDeletePurchases ? <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDeleteLine(line.id)}>
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </Button> : null}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -256,7 +276,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ (Actions)</CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-3">
-                {purchase.status === 'DRAFT' && (
+                {purchase.status === 'DRAFT' && canEditPurchases && (
                   <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('ISSUED')}>
                     <CheckCircle2 className="h-4 w-4 mr-2" /> ยืนยันรายการซื้อ
                   </Button>

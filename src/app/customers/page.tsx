@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -28,14 +28,18 @@ import { deleteDocumentNonBlocking, addDocumentNonBlocking } from '@/firebase/no
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { isInternalStaff } from '@/lib/permissions';
+import { canView, canCreate, canDelete } from '@/lib/permissions';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function CustomersPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewCustomers = useMemo(() => canView(currentUser, 'customers'), [currentUser]);
+  const canCreateCustomers = useMemo(() => canCreate(currentUser, 'customers'), [currentUser]);
+  const canDeleteCustomers = useMemo(() => canDelete(currentUser, 'customers'), [currentUser]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -55,31 +59,19 @@ export default function CustomersPage() {
     notes: ''
   });
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse user session', e);
-      }
-    }
-  }, []);
-
-  // Guard for list queries
-  const isStaff = useMemo(() => {
-    return isInternalStaff(user);
-  }, [user]);
-
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isStaff) return null;
+    if (!firestore || isUserLoading || !firebaseUser || !canViewCustomers) return null;
     return collection(firestore, 'customers');
-  }, [firestore, isUserLoading, firebaseUser, isStaff]);
+  }, [firestore, isUserLoading, firebaseUser, canViewCustomers]);
 
   const { data: customers, isLoading } = useCollection<Customer>(customersQuery as any);
 
   const handleCreate = async () => {
-    if (!firestore || !user) return;
+    if (!canCreateCustomers) {
+      toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์สร้างลูกค้า" });
+      return;
+    }
+    if (!firestore || !currentUser) return;
     
     if (!newCustomer.name) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบริษัท" });
@@ -96,7 +88,7 @@ export default function CustomersPage() {
       }
       // 1. Generate unique customer code atomically
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'customer', { 
-        actor: user.displayName 
+        actor: currentUser.displayName 
       });
 
       // 2. Create the document
@@ -134,16 +126,21 @@ export default function CustomersPage() {
     e.preventDefault();
     e.stopPropagation();
     if (!firestore) return;
+    if (!canDeleteCustomers) {
+      toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์ลบลูกค้า" });
+      return;
+    }
     if (confirm('ยืนยันการลบข้อมูลลูกค้า? ข้อมูลย่อยทั้งหมดจะถูกลบด้วย')) {
       deleteDocumentNonBlocking(doc(firestore, 'customers', id));
       toast({ title: "ลบข้อมูลสำเร็จ" });
     }
   };
 
-  if (isUserLoading || !user) return null;
+  if (isUserLoading || userLoading) return null;
+  if (!currentUser) return null;
 
   return (
-    <AppShell user={user} onLogout={() => {}}>
+    <AppShell user={currentUser as User} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-1">
@@ -174,9 +171,9 @@ export default function CustomersPage() {
             <Button variant="outline" className="h-11 px-4 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={canCreateCustomers && isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!isStaff}>
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canCreateCustomers}>
                 <Plus className="h-5 w-5" /> ลงทะเบียนลูกค้าใหม่ (New Registration)
               </Button>
             </DialogTrigger>
@@ -253,7 +250,9 @@ export default function CustomersPage() {
         {/* 4. Data Content */}
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
-            {isLoading ? (
+            {!canViewCustomers ? (
+              <div className="py-20 text-center text-muted-foreground italic">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+            ) : isLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลลูกค้า (Loading Customers)...</div>
             ) : (
               <Table>
@@ -283,9 +282,9 @@ export default function CustomersPage() {
                       </TableCell>
                       <TableCell className="text-right pr-6">
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={(e) => handleDelete(customer.id, e)}>
+                          {canDeleteCustomers ? <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={(e) => handleDelete(customer.id, e)}>
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </Button> : null}
                           <ChevronRight className="h-5 w-5 text-muted-foreground" />
                         </div>
                       </TableCell>

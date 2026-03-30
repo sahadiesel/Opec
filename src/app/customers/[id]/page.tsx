@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -39,7 +39,7 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { doc, collection, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
@@ -63,14 +63,18 @@ import { CustomerProvisioningService } from '@/lib/services/customer-provisionin
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canEdit, canDelete } from '@/lib/permissions';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewCustomers = useMemo(() => canView(currentUser, 'customers'), [currentUser]);
+  const canEditCustomers = useMemo(() => canEdit(currentUser, 'customers'), [currentUser]);
+  const canDeleteCustomers = useMemo(() => canDelete(currentUser, 'customers'), [currentUser]);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedCust, setEditedCust] = useState<Partial<Customer>>({});
@@ -97,82 +101,84 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     portalRole: 'viewer' as PortalRole
   });
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
   // --- Data Queries ---
 
-  const custRef = useMemoFirebase(() => (firestore ? doc(firestore, 'customers', id) : null), [firestore, id]);
+  const custRef = useMemoFirebase(
+    () => (firestore && canViewCustomers ? doc(firestore, 'customers', id) : null),
+    [firestore, id, canViewCustomers]
+  );
   const { data: customer, isLoading: isCustLoading } = useDoc<Customer>(custRef as any);
 
-  const contactsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'customers', id, 'contact_persons') : null), [firestore, id]);
+  const contactsQuery = useMemoFirebase(() => (firestore && canViewCustomers ? collection(firestore, 'customers', id, 'contact_persons') : null), [firestore, id, canViewCustomers]);
   const { data: contacts } = useCollection<ContactPerson>(contactsQuery as any);
 
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'main_contracts'), where('customerId', '==', id));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: customerContracts } = useCollection<MainContract>(contractsQuery as any);
 
   const poQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'purchase_orders'), where('customerId', '==', id));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
   // users list: Firestore rules allow list only for canManageSystem (admin)
   const portalUsersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser || !isSystemAdmin(currentUser)) return null;
+    if (!firestore || !currentUser || !isSystemAdmin(currentUser) || !canViewCustomers) return null;
     return query(collection(firestore, 'users'), where('customerId', '==', id), where('userType', '==', 'customer_portal'));
   }, [firestore, id, currentUser]);
   const { data: portalUsers } = useCollection<User>(portalUsersQuery as any);
 
   const quosQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'quotations'), where('customerId', '==', id));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: customerQuos } = useCollection<Quotation>(quosQuery as any);
 
   // --- Operational Queries for Summary ---
 
   const asgnQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'mobilizations'), where('customerId', '==', id), where('deploymentStatus', '==', 'ACTIVE'));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: activeAssignments } = useCollection<Assignment>(asgnQuery as any);
 
   const wavesQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'waves'), where('customerId', '==', id), where('status', '==', 'ACTIVE'));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: activeWaves } = useCollection<Wave>(wavesQuery as any);
 
   const acceptQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'worker_wave_acceptances'), where('customerId', '==', id), where('status', '==', 'pending'));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: pendingAcceptances } = useCollection<WorkerWaveAcceptance>(acceptQuery as any);
 
   const tsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewCustomers) return null;
     return query(collection(firestore, 'daily_timesheets'), where('customerId', '==', id), where('status', '==', 'OPS_REVIEWED'));
-  }, [firestore, id]);
+  }, [firestore, id, canViewCustomers]);
   const { data: pendingTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
 
   // --- Actions ---
 
   const handleSaveMaster = async () => {
+    if (!canEditCustomers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลลูกค้า' });
+      return;
+    }
     if (!custRef) return;
     const normalizedBranchNo = editedCust.branchType === 'branch' ? (editedCust.branchNo || '').trim() : '00000';
     if (editedCust.branchType === 'branch' && !normalizedBranchNo) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุเลขสาขา' });
       return;
     }
-    const { id: _docId, ...dataWithoutId } = editedCust as Record<string, unknown>;
+    const { id: _docId, ...dataWithoutId } = editedCust as Partial<Customer> & { id?: string };
     try {
-      await updateDoc(custRef, { ...dataWithoutId, branchNo: normalizedBranchNo, updatedAt: Date.now() });
+      await updateDoc(custRef, { ...dataWithoutId, branchNo: normalizedBranchNo, updatedAt: Date.now() } as Partial<Customer>);
       setIsEditing(false);
       toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลลูกค้าถูกอัปเดตเรียบร้อยแล้ว" });
     } catch (err: any) {
@@ -225,6 +231,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleAddContact = async () => {
+    if (!canEditCustomers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เพิ่มผู้ติดต่อ' });
+      return;
+    }
     if (!firestore || !newContact.name) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อผู้ติดต่อ' });
       return;
@@ -257,6 +267,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const isAdmin = isSystemAdmin(currentUser);
 
   const handleEditContact = async () => {
+    if (!canEditCustomers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขผู้ติดต่อ' });
+      return;
+    }
     if (!firestore || !editingContact) return;
     const { id: contactId, ...rest } = editingContact;
     const cleanList = (v: string) => v.split(',').map(s => s.trim()).filter(Boolean).join(', ');
@@ -272,7 +286,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     const cid = (rest.contractId || '').trim();
     if (cid) payload.contractId = cid;
     try {
-      await updateDoc(doc(firestore, 'customers', id, 'contact_persons', contactId), payload);
+      await updateDoc(
+        doc(firestore, 'customers', id, 'contact_persons', contactId),
+        payload as Partial<ContactPerson>
+      );
       setIsEditContactOpen(false);
       setEditingContact(null);
       toast({ title: 'แก้ไขผู้ติดต่อสำเร็จ' });
@@ -282,7 +299,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleDeleteContact = async (contactId: string) => {
-    if (!firestore || !isAdmin) return;
+    if (!firestore || !isAdmin || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบผู้ติดต่อนี้?')) return;
     try {
       await deleteDoc(doc(firestore, 'customers', id, 'contact_persons', contactId));
@@ -294,7 +311,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeleteQuotation = async (quoId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isAdmin) return;
+    if (!firestore || !isAdmin || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบใบเสนอราคานี้?')) return;
     try {
       await deleteDoc(doc(firestore, 'quotations', quoId));
@@ -306,7 +323,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeleteContract = async (contractId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isAdmin) return;
+    if (!firestore || !isAdmin || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบสัญญานี้? การลบสัญญาจะมีผลต่อข้อมูลที่อ้างอิงทั้งหมด')) return;
     try {
       await deleteDoc(doc(firestore, 'main_contracts', contractId));
@@ -318,7 +335,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeletePO = async (poId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isAdmin) return;
+    if (!firestore || !isAdmin || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบใบสั่งซื้อนี้?')) return;
     try {
       await deleteDoc(doc(firestore, 'purchase_orders', poId));
@@ -339,7 +356,15 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  if (isCustLoading || !customer || !currentUser) {
+  if (userLoading || !currentUser) return null;
+  if (!canViewCustomers) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (isCustLoading || !customer) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">

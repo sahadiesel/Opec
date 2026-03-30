@@ -28,7 +28,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, isClient } from '@/lib/permissions';
+import { canView, canCreate, isClient } from '@/lib/permissions';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 
@@ -40,6 +40,7 @@ export default function MainContractsPage() {
   const { toast } = useToast();
 
   const isStaff = useMemo(() => canView(currentUser, 'main_contracts'), [currentUser]);
+  const canCreateContracts = useMemo(() => canCreate(currentUser, 'main_contracts'), [currentUser]);
   const isClientUser = useMemo(() => isClient(currentUser), [currentUser]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -85,6 +86,10 @@ export default function MainContractsPage() {
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const handleCreate = async () => {
+    if (!canCreateContracts) {
+      toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์สร้างสัญญาหลัก" });
+      return;
+    }
     if (!firestore || !currentUser) return;
     
     if (!newContract.title || !newContract.customerId) {
@@ -216,7 +221,7 @@ export default function MainContractsPage() {
             setIsCreateOpen(open);
           }}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!isStaff}>
+              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!canCreateContracts}>
                 <Plus className="h-5 w-5" /> สร้างสัญญาหลักใหม่ (New Main Contract)
               </Button>
             </DialogTrigger>

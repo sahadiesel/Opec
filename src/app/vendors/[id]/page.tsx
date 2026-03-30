@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -32,14 +32,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate, canEdit } from '@/lib/permissions';
 
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const isNew = id === 'new';
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewVendors = useMemo(() => canView(currentUser, 'vendors'), [currentUser]);
+  const canCreateVendors = useMemo(() => canCreate(currentUser, 'vendors'), [currentUser]);
+  const canEditVendors = useMemo(() => canEdit(currentUser, 'vendors'), [currentUser]);
 
   const vendorRef = useMemoFirebase(() => (firestore && !isNew ? doc(firestore, 'vendors', id) : null), [firestore, id, isNew]);
   const { data: vendorData, isLoading: isVendorLoading } = useDoc<Vendor>(vendorRef as any);
@@ -68,11 +73,6 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  useEffect(() => {
     if (vendorData) {
       setFormData({
         ...vendorData,
@@ -84,6 +84,10 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
+    if ((isNew && !canCreateVendors) || (!isNew && !canEditVendors)) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์บันทึกข้อมูลคู่ค้า' });
+      return;
+    }
     if (!formData.vendorName) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบริษัท" });
       return;
@@ -138,12 +142,22 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     }
   };
 
+  if (userLoading) return null;
+  if (!currentUser) return null;
+  if (!canViewVendors) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+
   if (!isNew && isVendorLoading) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="animate-spin h-12 w-12 text-primary" /></div>;
   }
 
   return (
-    <AppShell user={currentUser} onLogout={() => {}}>
+    <AppShell user={currentUser as User} onLogout={() => {}}>
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -157,7 +171,11 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <p className="text-sm text-muted-foreground">ทะเบียนประวัติคู่ค้าและผู้ขายเพื่อระบบจัดซื้อและคลังสินค้า</p>
             </div>
           </div>
-          <Button className="gap-2 px-8 font-bold shadow-lg bg-primary" onClick={handleSave} disabled={isSubmitting}>
+          <Button
+            className="gap-2 px-8 font-bold shadow-lg bg-primary"
+            onClick={handleSave}
+            disabled={isSubmitting || (isNew ? !canCreateVendors : !canEditVendors)}
+          >
             {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {isNew ? 'บันทึกคู่ค้าใหม่' : 'บันทึกการเปลี่ยนแปลง'}
           </Button>

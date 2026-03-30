@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input';
 import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, doc, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
@@ -42,21 +42,18 @@ import { Label } from '@/components/ui/label';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { canView } from '@/lib/permissions';
+import { canView, canCreate } from '@/lib/permissions';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function OfficePayrollPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+  const canCreateOfficePayroll = useMemo(() => canCreate(currentUser, 'office_payroll'), [currentUser]);
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -76,6 +73,10 @@ export default function OfficePayrollPage() {
   });
 
   const handleCreateRun = async () => {
+    if (!canCreateOfficePayroll) {
+      toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์สร้างงวดเงินเดือนออฟฟิศ" });
+      return;
+    }
     if (!firestore || !currentUser) return;
     if (!newRun.payrollMonth || !newRun.payrollPeriodStart || !newRun.payrollPeriodEnd) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเดือนและช่วงเวลาการจ่ายเงิน" });
@@ -124,7 +125,7 @@ export default function OfficePayrollPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || !currentUser) return null;
 
   if (!isAuthorized) {
     return (
@@ -181,7 +182,7 @@ export default function OfficePayrollPage() {
           
           <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
+              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canCreateOfficePayroll}>
                 <Plus className="h-5 w-5" /> สร้างงวดเงินเดือน (New Office Payroll)
               </Button>
             </DialogTrigger>
@@ -222,7 +223,7 @@ export default function OfficePayrollPage() {
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                <Button onClick={handleCreateRun} className="bg-primary font-bold" disabled={isCreating}>
+                <Button onClick={handleCreateRun} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll}>
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   สร้างงวดเงินเดือน (Confirm)
                 </Button>

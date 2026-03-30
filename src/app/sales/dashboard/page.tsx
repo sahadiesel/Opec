@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { 
@@ -30,7 +30,7 @@ import {
   Worker,
   Quotation
 } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,16 +40,11 @@ import { Separator } from '@/components/ui/separator';
 import { canSeeSalesPillarUi } from '@/lib/permissions';
 import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function SalesDashboardPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const isSalesAuthorized = useMemo(() => {
     return isSystemAdmin(currentUser) || canSeeSalesPillarUi(currentUser, null);
@@ -167,7 +162,7 @@ export default function SalesDashboardPage() {
     return actions;
   }, [pendingApprovals, activeContracts, allWorkers]);
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
 
   if (!isSalesAuthorized) {
     return (

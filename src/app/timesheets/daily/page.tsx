@@ -51,7 +51,7 @@ import {
   DeploymentStatus,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -72,6 +72,8 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate, canEdit } from '@/lib/permissions';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work Day)',
@@ -85,35 +87,32 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 
 export default function DailyTimesheetsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const canViewTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
+  const canCreateTimesheets = useMemo(() => canCreate(currentUser, 'timesheets'), [currentUser]);
+  const canEditTimesheets = useMemo(() => canEdit(currentUser, 'timesheets'), [currentUser]);
 
   const tsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !canViewTimesheets) return null;
     return query(collection(firestore, 'daily_timesheets'), orderBy('date', 'desc'), limit(100));
-  }, [firestore]);
+  }, [firestore, canViewTimesheets]);
   const { data: timesheets, isLoading: isTsLoading } = useCollection<DailyTimesheet>(tsQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
+  const workersQuery = useMemoFirebase(() => (firestore && canViewTimesheets ? collection(firestore, 'workers') : null), [firestore, canViewTimesheets]);
   const { data: workers } = useCollection<Worker>(workersQuery as any);
 
-  const mobQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'mobilizations') : null), [firestore]);
+  const mobQuery = useMemoFirebase(() => (firestore && canViewTimesheets ? collection(firestore, 'mobilizations') : null), [firestore, canViewTimesheets]);
   const { data: assignments } = useCollection<Assignment>(mobQuery as any);
 
   const poQuery = useMemoFirebase(
-    () => (firestore ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null),
-    [firestore]
+    () => (firestore && canViewTimesheets ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null),
+    [firestore, canViewTimesheets]
   );
   const { data: purchaseOrders } = useCollection<PurchaseOrder>(poQuery as any);
 
-  const wavesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'waves') : null), [firestore]);
+  const wavesQuery = useMemoFirebase(() => (firestore && canViewTimesheets ? collection(firestore, 'waves') : null), [firestore, canViewTimesheets]);
   const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
   const waveTimesheetOverview = useMemo(() => {
@@ -191,6 +190,10 @@ export default function DailyTimesheetsPage() {
   }, [newTs.workerId, assignmentsInSelectedWave]);
 
   const handleCreate = async () => {
+    if (!canCreateTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้าง timesheet' });
+      return;
+    }
     if (!firestore || !currentUser || !manualWaveId) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกใบสั่งซื้อ เวฟ และคนงานในเวฟนั้น" });
       return;
@@ -256,6 +259,10 @@ export default function DailyTimesheetsPage() {
   };
 
   const handleSubmitReview = async (tsId: string) => {
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
     if (!firestore || !currentUser) return;
     try {
       const service = new TimesheetService(firestore);
@@ -267,6 +274,10 @@ export default function DailyTimesheetsPage() {
   };
 
   const handleVerifyPaper = async (tsId: string) => {
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
     if (!firestore || !currentUser) return;
     if (!confirm('ยืนยันว่าได้รับเอกสารที่มีลายเซ็นลูกค้าแล้วใช่หรือไม่?')) return;
     
@@ -280,6 +291,10 @@ export default function DailyTimesheetsPage() {
   };
 
   const handleRequestCorrection = async (tsId: string) => {
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
     if (!firestore || !currentUser) return;
     const reason = prompt('กรุณาระบุเหตุผลที่ต้องแก้ไข (Reason for correction):');
     if (!reason) return;
@@ -307,7 +322,14 @@ export default function DailyTimesheetsPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
+  if (!canViewTimesheets) {
+    return (
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -548,7 +570,7 @@ export default function DailyTimesheetsPage() {
                 </div>
                 <DialogFooter className="bg-muted/30 -mx-6 -mb-6 p-4 mt-2 border-t">
                   <Button variant="outline" onClick={() => setIsCreateOpen(false)}>ยกเลิก</Button>
-                  <Button onClick={handleCreate} className="bg-primary font-bold px-8 shadow-md" disabled={isCreating}>
+                  <Button onClick={handleCreate} className="bg-primary font-bold px-8 shadow-md" disabled={isCreating || !canCreateTimesheets}>
                     {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                     บันทึกข้อมูล (Confirm Entry)
                   </Button>

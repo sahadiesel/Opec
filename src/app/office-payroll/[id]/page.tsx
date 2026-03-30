@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
@@ -58,18 +58,14 @@ import {
   runStatusToD8Lifecycle,
 } from '@/lib/payroll/d8';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
   const { check } = usePermissions(currentUser);
@@ -223,7 +219,8 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     }
   };
 
-  if (isRunLoading || !currentUser) {
+  if (userLoading || !currentUser) return null;
+  if (isRunLoading) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 

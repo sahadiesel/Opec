@@ -277,6 +277,213 @@ const VIEWER_NO_APPROVE: ModulePermission = {
   approve: false,
 };
 
+type RoleMatrixKey =
+  | 'sales_manager'
+  | 'operation_manager'
+  | 'operations_manager'
+  | 'hr_manager'
+  | 'hr_officer'
+  | 'store_officer'
+  | 'accounting_manager'
+  | 'accounting_officer';
+
+const P_VIEW: ModulePermission = { view: true, create: false, edit: false, delete: false, approve: false };
+const P_VCE: ModulePermission = { view: true, create: true, edit: true, delete: false, approve: false };
+const P_FULL_NO_APPROVE: ModulePermission = { view: true, create: true, edit: true, delete: true, approve: false };
+const P_NONE: ModulePermission = { view: false, create: false, edit: false, delete: false, approve: false };
+
+const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, ModulePermission>>> = {
+  sales_manager: {
+    overview_dashboard: P_VIEW,
+    positions: { view: true, create: true, edit: false, delete: false, approve: false },
+    vendors: { view: true, create: true, edit: false, delete: false, approve: false },
+    customers: P_VCE,
+    main_contracts: P_FULL_NO_APPROVE,
+    customer_pos: P_FULL_NO_APPROVE,
+    sales_contract_terms: P_FULL_NO_APPROVE,
+    rate_conditions: P_FULL_NO_APPROVE,
+    profit_estimates: P_FULL_NO_APPROVE,
+    waves: P_VCE,
+    assignments: P_VCE,
+    mobilization: P_VCE,
+    hr_hub: P_VCE,
+    timesheets: P_VCE,
+    workers: P_VIEW,
+    worker_payroll: P_VIEW,
+    purchases: P_NONE,
+    store_inventory: P_NONE,
+    labor_cost_contract_terms: P_FULL_NO_APPROVE,
+    quotations: P_NONE,
+    payment_export_batches: P_NONE,
+    office_payroll: P_NONE,
+    office_staff: P_NONE,
+  },
+  operation_manager: {
+    overview_dashboard: P_VIEW,
+    positions: P_FULL_NO_APPROVE,
+    vendors: P_FULL_NO_APPROVE,
+    customers: P_VCE,
+    main_contracts: P_NONE,
+    customer_pos: P_NONE,
+    sales_contract_terms: P_NONE,
+    rate_conditions: P_NONE,
+    profit_estimates: P_NONE,
+    waves: P_FULL_NO_APPROVE,
+    assignments: P_FULL_NO_APPROVE,
+    mobilization: P_FULL_NO_APPROVE,
+    hr_hub: P_VCE,
+    timesheets: P_FULL_NO_APPROVE,
+    workers: P_FULL_NO_APPROVE,
+    worker_payroll: P_VCE,
+    purchases: P_FULL_NO_APPROVE,
+    store_inventory: P_FULL_NO_APPROVE,
+    labor_cost_contract_terms: P_VCE,
+    quotations: P_VCE,
+    payment_export_batches: P_VCE,
+    office_payroll: P_NONE,
+    office_staff: P_NONE,
+  },
+  operations_manager: {
+    overview_dashboard: P_VIEW,
+    positions: P_FULL_NO_APPROVE,
+    vendors: P_FULL_NO_APPROVE,
+    customers: P_VCE,
+    main_contracts: P_NONE,
+    customer_pos: P_NONE,
+    sales_contract_terms: P_NONE,
+    rate_conditions: P_NONE,
+    profit_estimates: P_NONE,
+    waves: P_FULL_NO_APPROVE,
+    assignments: P_FULL_NO_APPROVE,
+    mobilization: P_FULL_NO_APPROVE,
+    hr_hub: P_VCE,
+    timesheets: P_FULL_NO_APPROVE,
+    workers: P_FULL_NO_APPROVE,
+    worker_payroll: P_VCE,
+    purchases: P_FULL_NO_APPROVE,
+    store_inventory: P_FULL_NO_APPROVE,
+    labor_cost_contract_terms: P_VCE,
+    quotations: P_VCE,
+    payment_export_batches: P_VCE,
+    office_payroll: P_NONE,
+    office_staff: P_NONE,
+  },
+  hr_manager: {
+    overview_dashboard: P_VIEW,
+    positions: P_FULL_NO_APPROVE,
+    vendors: P_FULL_NO_APPROVE,
+    customers: P_FULL_NO_APPROVE,
+    main_contracts: P_FULL_NO_APPROVE,
+    customer_pos: P_FULL_NO_APPROVE,
+    sales_contract_terms: P_FULL_NO_APPROVE,
+    rate_conditions: P_FULL_NO_APPROVE,
+    profit_estimates: P_FULL_NO_APPROVE,
+    waves: P_FULL_NO_APPROVE,
+    assignments: P_FULL_NO_APPROVE,
+    mobilization: P_FULL_NO_APPROVE,
+    timesheets: P_FULL_NO_APPROVE,
+    worker_payroll: P_FULL_NO_APPROVE,
+    office_payroll: P_FULL_NO_APPROVE,
+    office_staff: P_FULL_NO_APPROVE,
+    purchases: P_FULL_NO_APPROVE,
+    store_inventory: P_FULL_NO_APPROVE,
+    labor_cost_contract_terms: P_FULL_NO_APPROVE,
+    quotations: P_FULL_NO_APPROVE,
+    payment_export_batches: P_FULL_NO_APPROVE,
+    workers: P_FULL_NO_APPROVE,
+    hr_hub: P_FULL_NO_APPROVE,
+  },
+  hr_officer: {
+    overview_dashboard: P_VIEW,
+    positions: P_VCE,
+    vendors: P_NONE,
+    customers: P_VIEW,
+    main_contracts: P_VIEW,
+    customer_pos: P_VIEW,
+    sales_contract_terms: P_VIEW,
+    rate_conditions: P_VIEW,
+    profit_estimates: P_VIEW,
+    waves: P_VCE,
+    assignments: P_VCE,
+    mobilization: P_VCE,
+    hr_hub: P_VCE,
+    timesheets: P_VCE,
+    workers: P_FULL_NO_APPROVE,
+    worker_payroll: P_VCE,
+    office_payroll: P_VCE,
+    office_staff: P_VCE,
+    purchases: P_VCE,
+    store_inventory: P_VCE,
+    labor_cost_contract_terms: P_VCE,
+    quotations: P_VIEW,
+    payment_export_batches: P_VCE,
+  },
+  store_officer: {
+    positions: P_VIEW,
+    vendors: P_VCE,
+    waves: P_VIEW,
+    assignments: P_VIEW,
+    mobilization: P_VIEW,
+    purchases: P_VCE,
+    store_inventory: P_FULL_NO_APPROVE,
+    office_payroll: P_NONE,
+    office_staff: P_NONE,
+    workers: P_NONE,
+    customers: P_NONE,
+    main_contracts: P_NONE,
+    customer_pos: P_NONE,
+    quotations: P_NONE,
+  },
+  accounting_manager: {
+    positions: P_VCE,
+    vendors: P_FULL_NO_APPROVE,
+    customers: P_VCE,
+    main_contracts: P_FULL_NO_APPROVE,
+    customer_pos: P_FULL_NO_APPROVE,
+    sales_contract_terms: P_FULL_NO_APPROVE,
+    rate_conditions: P_FULL_NO_APPROVE,
+    profit_estimates: P_FULL_NO_APPROVE,
+    waves: P_FULL_NO_APPROVE,
+    assignments: P_FULL_NO_APPROVE,
+    mobilization: P_FULL_NO_APPROVE,
+    hr_hub: P_FULL_NO_APPROVE,
+    timesheets: P_FULL_NO_APPROVE,
+    workers: P_VCE,
+    worker_payroll: P_FULL_NO_APPROVE,
+    office_payroll: P_FULL_NO_APPROVE,
+    office_staff: P_FULL_NO_APPROVE,
+    purchases: P_FULL_NO_APPROVE,
+    store_inventory: P_FULL_NO_APPROVE,
+    labor_cost_contract_terms: P_FULL_NO_APPROVE,
+    quotations: P_VIEW,
+    payment_export_batches: P_FULL_NO_APPROVE,
+  },
+  accounting_officer: {
+    positions: P_NONE,
+    vendors: P_NONE,
+    customers: P_NONE,
+    main_contracts: P_VIEW,
+    customer_pos: P_VIEW,
+    sales_contract_terms: P_VIEW,
+    rate_conditions: P_VIEW,
+    profit_estimates: P_VIEW,
+    waves: P_VIEW,
+    assignments: P_VIEW,
+    mobilization: P_VIEW,
+    hr_hub: P_VIEW,
+    timesheets: P_VIEW,
+    workers: P_VIEW,
+    worker_payroll: P_VIEW,
+    office_payroll: P_VIEW,
+    office_staff: P_VIEW,
+    purchases: P_VIEW,
+    store_inventory: P_VIEW,
+    labor_cost_contract_terms: P_VIEW,
+    quotations: P_VIEW,
+    payment_export_batches: P_VIEW,
+  },
+};
+
 /**
  * ชุดเมนูตามบทบาท (กลุ่ม Operation — แผนกขาย / บุคคล / ปฏิบัติการ / คลัง)
  * hr_manager = ทุกแผนก; sales_manager = ขาย+ปฏิบัติการ; operation(s)_manager = ปฏิบัติการ+บุคคล;
@@ -568,8 +775,11 @@ export function getPermissions(
     return clonePermission(NO_ACCESS);
   }
 
-  if (moduleKey === 'overview_dashboard') {
-    return clonePermission(READ_ONLY);
+  const primaryRole = getPrimaryLegacyRole(u) as RoleMatrixKey | null;
+  if (primaryRole && primaryRole in ROLE_PERMISSION_MATRIX) {
+    const explicit = ROLE_PERMISSION_MATRIX[primaryRole][moduleKey];
+    // For roles in the approved matrix, anything unspecified is intentionally denied.
+    return clonePermission(explicit ?? NO_ACCESS);
   }
 
   const group = getEffectiveAccessGroup(u);

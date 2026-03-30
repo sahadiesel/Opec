@@ -50,29 +50,34 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate, canEdit } from '@/lib/permissions';
 
 export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const isNew = id === 'new';
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewOfficeStaff = useMemo(() => canView(currentUser, 'office_staff'), [currentUser]);
+  const canCreateOfficeStaff = useMemo(() => canCreate(currentUser, 'office_staff'), [currentUser]);
+  const canEditOfficeStaff = useMemo(() => canEdit(currentUser, 'office_staff'), [currentUser]);
 
-  const staffRef = useMemoFirebase(() => (firestore && !isNew ? doc(firestore, 'office_staff', id) : null), [firestore, id, isNew]);
+  const staffRef = useMemoFirebase(() => (firestore && !isNew && canViewOfficeStaff ? doc(firestore, 'office_staff', id) : null), [firestore, id, isNew, canViewOfficeStaff]);
   const { data: staffData, isLoading: isStaffLoading } = useDoc<OfficeStaff>(staffRef as any);
 
   // users list: Firestore rules allow list only for canManageSystem (admin)
   const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser || !isSystemAdmin(currentUser)) return null;
+    if (!firestore || !currentUser || !isSystemAdmin(currentUser) || !canViewOfficeStaff) return null;
     return collection(firestore, 'users');
-  }, [firestore, currentUser]);
+  }, [firestore, currentUser, canViewOfficeStaff]);
   const { data: allUsers } = useCollection<User>(usersQuery as any);
 
-  const staffQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'office_staff') : null), [firestore]);
+  const staffQuery = useMemoFirebase(() => (firestore && canViewOfficeStaff ? collection(firestore, 'office_staff') : null), [firestore, canViewOfficeStaff]);
   const { data: allOfficeStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
-  const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
+  const positionsQuery = useMemoFirebase(() => (firestore && canViewOfficeStaff ? collection(firestore, 'positions') : null), [firestore, canViewOfficeStaff]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
   const officeCategoryPositions = useMemo(
@@ -122,17 +127,16 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     STANDARD_OFFICE_DEPARTMENTS.find((x) => x.value === value)?.label ?? value;
 
   useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  useEffect(() => {
     if (staffData) {
       setFormData(staffData);
     }
   }, [staffData]);
 
   const handleSave = async () => {
+    if ((isNew && !canCreateOfficeStaff) || (!isNew && !canEditOfficeStaff)) {
+      toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์บันทึกข้อมูลพนักงานออฟฟิศ" });
+      return;
+    }
     if (!firestore || !currentUser) return;
     if (!formData.fullName?.trim() || !formData.department?.trim()) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อ และแผนก" });
@@ -199,6 +203,14 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     }
   };
 
+  if (userLoading || !currentUser) return null;
+  if (!canViewOfficeStaff) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
   if (!isNew && isStaffLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -225,7 +237,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
               </p>
             </div>
           </div>
-          <Button className="gap-2 px-8 font-bold shadow-lg bg-primary h-11" onClick={handleSave} disabled={isSubmitting}>
+          <Button
+            className="gap-2 px-8 font-bold shadow-lg bg-primary h-11"
+            onClick={handleSave}
+            disabled={isSubmitting || (isNew ? !canCreateOfficeStaff : !canEditOfficeStaff)}
+          >
             {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {isNew ? 'บันทึกพนักงาน (Save New)' : 'บันทึกการเปลี่ยนแปลง (Save)'}
           </Button>

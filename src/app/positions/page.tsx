@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
@@ -31,18 +31,23 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { positionListPrimaryName, positionListSecondaryName, type PositionDoc } from '@/lib/position-display';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canView, canCreate, canDelete } from '@/lib/permissions';
 
 export default function PositionsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const canViewPositions = useMemo(() => canView(currentUser, 'positions'), [currentUser]);
+  const canCreatePositions = useMemo(() => canCreate(currentUser, 'positions'), [currentUser]);
+  const canDeletePositions = useMemo(() => canDelete(currentUser, 'positions'), [currentUser]);
 
   const positionsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser) return null;
+    if (!firestore || !firebaseUser || !canViewPositions) return null;
     return collection(firestore, 'positions');
-  }, [firestore, firebaseUser]);
+  }, [firestore, firebaseUser, canViewPositions]);
 
   const { data: positions, isLoading } = useCollection<Position>(positionsQuery as any);
 
@@ -58,13 +63,12 @@ export default function PositionsPage() {
     payrollBasis: 'DAILY',
   });
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setUser(JSON.parse(stored));
-  }, []);
-
   const handleCreate = async () => {
-    if (!firestore || !user || !firebaseUser) {
+    if (!canCreatePositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างตำแหน่งงาน' });
+      return;
+    }
+    if (!firestore || !currentUser || !firebaseUser) {
       toast({
         variant: 'destructive',
         title: 'ยังไม่พร้อมบันทึก',
@@ -76,7 +80,7 @@ export default function PositionsPage() {
     setIsCreating(true);
     try {
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'position', {
-        actor: user.displayName,
+        actor: currentUser.displayName,
         userId: firebaseUser.uid,
       });
 
@@ -117,6 +121,10 @@ export default function PositionsPage() {
     e.preventDefault();
     e.stopPropagation();
     if (!firestore) return;
+    if (!canDeletePositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบตำแหน่งงาน' });
+      return;
+    }
     if (
       !confirm(
         'ลบตำแหน่งนี้จากมาสเตอร์?\n\nสัญญา/PO ที่บันทึกแล้วใช้ข้อมูล snapshot — เอกสารเก่าไม่เปลี่ยน แต่จะไม่สามารถเลือกตำแหน่งนี้ในสัญญาใหม่ได้'
@@ -128,10 +136,11 @@ export default function PositionsPage() {
     toast({ title: 'ลบตำแหน่งงานจากมาสเตอร์แล้ว' });
   };
 
-  if (isUserLoading || !user) return null;
+  if (isUserLoading || userLoading) return null;
+  if (!currentUser) return null;
 
   return (
-    <AppShell user={user} onLogout={() => {}}>
+    <AppShell user={currentUser as User} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         {/* 1. Page Header & Description */}
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -167,7 +176,10 @@ export default function PositionsPage() {
           
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-semibold">
+              <Button
+                className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-semibold"
+                disabled={!canCreatePositions}
+              >
                 <Plus className="h-5 w-5" /> เพิ่มตำแหน่งงานมาตรฐาน (New Position)
               </Button>
             </DialogTrigger>
@@ -231,7 +243,9 @@ export default function PositionsPage() {
         {/* 4. Data Content */}
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
-            {isLoading ? (
+            {!canViewPositions ? (
+              <div className="py-20 text-center text-muted-foreground italic">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+            ) : isLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลเมทริกซ์ตำแหน่ง (Loading Matrix)...</div>
             ) : (
               <Table>
@@ -273,7 +287,7 @@ export default function PositionsPage() {
                       </TableCell>
                       <TableCell className="text-right pr-6">
                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button 
+                          {canDeletePositions ? <Button 
                             variant="ghost" 
                             size="icon" 
                             className="text-destructive h-8 w-8" 
@@ -283,7 +297,7 @@ export default function PositionsPage() {
                             }}
                           >
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </Button> : null}
                           <ChevronRight className="h-5 w-5 text-muted-foreground" />
                         </div>
                       </TableCell>

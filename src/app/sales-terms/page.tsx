@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { SalesContractTerm, User, Customer, PurchaseOrder, SalesContractStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -43,18 +43,13 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { ContractTermsService } from '@/lib/services/contract-terms-service';
 import { usePermissions } from '@/hooks/use-permissions';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function SalesTermsPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const { can, isLoading: isPermLoading } = usePermissions(currentUser);
 
@@ -133,7 +128,7 @@ export default function SalesTermsPage() {
     }
   };
 
-  if (isUserLoading || isPermLoading || !currentUser) return null;
+  if (userLoading || isPermLoading || !currentUser) return null;
 
   if (!can('sales_contract_terms').view) {
     return (

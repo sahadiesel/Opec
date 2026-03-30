@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo, useCallback } from 'react';
+import { useState, use, useMemo, useCallback, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -34,6 +34,7 @@ import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
 import { isSystemAdmin, isHrManager } from '@/lib/permission-core';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { useAppUser } from '@/hooks/use-app-user';
 
 import { ContractPoTab } from './_components/contract-po-tab';
 import { ContractLogsTab } from './_components/contract-logs-tab';
@@ -116,15 +117,10 @@ const DEFAULT_RATE_POLICY: NonNullable<MainContract['rateMultiplierPolicy']> = {
 export default function MainContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const isAuthorized = useMemo(() => !!currentUser && canView(currentUser, 'main_contracts'), [currentUser]);
   const canModify = useMemo(() => !!currentUser && canEdit(currentUser, 'main_contracts'), [currentUser]);
@@ -788,7 +784,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   if (!isAuthorized) {
     return (

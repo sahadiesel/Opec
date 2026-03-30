@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { 
@@ -32,7 +32,7 @@ import {
   PayrollRun, 
   BankAccount
 } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -40,16 +40,11 @@ import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
 import { canSeeAccountingPillarUi } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
+import { useAppUser } from '@/hooks/use-app-user';
 
 export default function AccountingDashboardPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   const isAccountingAuthorized = useMemo(() => {
     return isSystemAdmin(currentUser) || canSeeAccountingPillarUi(currentUser, null);
@@ -149,7 +144,7 @@ export default function AccountingDashboardPage() {
     return tasks;
   }, [pendingPayroll, arItems, draftInvoices]);
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser) return null;
 
   if (!isAccountingAuthorized) {
     return (
