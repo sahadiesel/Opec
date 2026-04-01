@@ -43,14 +43,25 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate } from '@/lib/permissions';
+import { canAccess, canCreate, canPreparePayroll, canView, isMatrixControlledRole } from '@/lib/permissions';
 
 export default function PayrollPeriodsPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const canViewWorkerPayroll = useMemo(() => canView(currentUser, 'worker_payroll'), [currentUser]);
-  const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewWorkerPayroll = useMemo(() => {
+    if (useMatrixGuards) {
+      return canAccess(currentUser, 'worker_payroll', 'view') || canAccess(currentUser, 'payroll_runs', 'view');
+    }
+    return canView(currentUser, 'worker_payroll');
+  }, [currentUser, useMatrixGuards]);
+  const canCreateWorkerPayroll = useMemo(() => {
+    if (useMatrixGuards) {
+      return canPreparePayroll(currentUser);
+    }
+    return canCreate(currentUser, 'worker_payroll');
+  }, [currentUser, useMatrixGuards]);
 
   const periodsQuery = useMemoFirebase(() => {
     if (!firestore || !canViewWorkerPayroll) return null;

@@ -46,14 +46,24 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate, canPreparePayroll } from '@/lib/permissions';
+import { canAccess, canCreate, canPreparePayroll, canView, isMatrixControlledRole } from '@/lib/permissions';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const canViewWorkerPayroll = useMemo(() => canView(currentUser, 'worker_payroll'), [currentUser]);
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewWorkerPayroll = useMemo(() => {
+    if (useMatrixGuards) {
+      return (
+        canAccess(currentUser, 'worker_payroll', 'view') ||
+        canAccess(currentUser, 'payroll_runs', 'view') ||
+        canAccess(currentUser, 'payslips', 'view')
+      );
+    }
+    return canView(currentUser, 'worker_payroll');
+  }, [currentUser, useMatrixGuards]);
   const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
   const canPrepareWorkerPayroll = useMemo(() => canPreparePayroll(currentUser), [currentUser]);
 

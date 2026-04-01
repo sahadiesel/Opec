@@ -55,7 +55,7 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canEdit } from '@/lib/permissions';
+import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -63,8 +63,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const canViewMobilization = canView(currentUser, 'mobilization');
-  const canEditMobilization = canEdit(currentUser, 'mobilization');
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewMobilization = useMatrixGuards ? canAccess(currentUser, 'mobilization', 'view') : canView(currentUser, 'mobilization');
+  const canEditMobilization = useMatrixGuards ? canAccess(currentUser, 'mobilization', 'edit') : canEdit(currentUser, 'mobilization');
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -268,7 +269,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   <CardHeader><CardTitle className="text-lg">การดำเนินการสุดท้าย (Final Clearance)</CardTitle></CardHeader>
                   <CardContent className="flex flex-wrap gap-3">
                     <Button 
-                      disabled={!isFullyReady || assignment.mobilizationStatus === 'MOBILIZING'}
+                      disabled={!canEditMobilization || !isFullyReady || assignment.mobilizationStatus === 'MOBILIZING'}
                       onClick={() => handleUpdateMobStatus('READY_TO_MOBILIZE', 'READY_TO_MOB')}
                       className="bg-green-600 hover:bg-green-700 font-bold"
                     >
@@ -277,12 +278,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     <Button 
                       variant="outline"
                       className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                      disabled={!canEditMobilization}
                       onClick={() => handleUpdateMobStatus('MOBILIZING', 'MOBILIZING')}
                     >
                       <Truck className="h-4 w-4 mr-2" /> เริ่มระดมพล (Start Mobilizing)
                     </Button>
                     <Button 
-                      disabled={assignment.mobilizationStatus !== 'MOBILIZING'}
+                      disabled={!canEditMobilization || assignment.mobilizationStatus !== 'MOBILIZING'}
                       className="bg-blue-900"
                       onClick={() => handleUpdateMobStatus('ACTIVE', 'ACTIVE')}
                     >

@@ -73,7 +73,7 @@ import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate, canEdit } from '@/lib/permissions';
+import { canAccess, canCreate, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   work_day: 'วันทำงาน (Work Day)',
@@ -90,9 +90,19 @@ export default function DailyTimesheetsPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const canViewTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
-  const canCreateTimesheets = useMemo(() => canCreate(currentUser, 'timesheets'), [currentUser]);
-  const canEditTimesheets = useMemo(() => canEdit(currentUser, 'timesheets'), [currentUser]);
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'view') : canView(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
+  const canCreateTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'create') : canCreate(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
+  const canEditTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'edit') : canEdit(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
 
   const tsQuery = useMemoFirebase(() => {
     if (!firestore || !canViewTimesheets) return null;
@@ -377,7 +387,7 @@ export default function DailyTimesheetsPage() {
               }}
             >
               <DialogTrigger asChild>
-                <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold">
+                <Button variant="outline" className="gap-2 h-11 px-6 border-primary text-primary font-bold" disabled={!canCreateTimesheets}>
                   <Plus className="h-5 w-5" /> บันทึกรายบุคคล (Manual Entry)
                 </Button>
               </DialogTrigger>
@@ -712,17 +722,17 @@ export default function DailyTimesheetsPage() {
                         <TableCell>{getStatusBadge(ts.status)}</TableCell>
                         <TableCell className="text-right pr-6">
                           <div className="flex justify-end gap-2">
-                            {canSubmit && (
+                            {canEditTimesheets && canSubmit && (
                               <Button size="sm" variant="outline" className="h-8 gap-1 text-blue-700 border-blue-200 bg-blue-50 font-bold" onClick={() => handleSubmitReview(ts.id)}>
                                 <Send className="h-3 w-3" /> ส่งตรวจ
                               </Button>
                             )}
-                            {canVerifyPaper && (
+                            {canEditTimesheets && canVerifyPaper && (
                               <Button size="sm" variant="outline" className="h-8 gap-1 text-green-700 border-blue-200 bg-blue-50 font-bold" onClick={() => handleVerifyPaper(ts.id)}>
                                 <FileCheck className="h-3 w-3" /> ยืนยันกระดาษ
                               </Button>
                             )}
-                            {canRequestCorrection && (
+                            {canEditTimesheets && canRequestCorrection && (
                               <Button size="sm" variant="ghost" className="h-8 gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 font-bold" onClick={() => handleRequestCorrection(ts.id)}>
                                 <RotateCcw className="h-3 w-3" /> Flag Correction
                               </Button>

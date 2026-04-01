@@ -3,6 +3,7 @@
 import { useState, use, useMemo } from 'react';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain, hasMinimumLevel, isSystemAdmin } from '@/lib/permission-core';
+import { canAccess, canActAsHrManager, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -44,6 +45,9 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewTimesheet = useMatrixGuards ? canAccess(currentUser, 'timesheets', 'view') : canView(currentUser, 'timesheets');
+  const canEditTimesheet = useMatrixGuards ? canAccess(currentUser, 'timesheets', 'edit') : canEdit(currentUser, 'timesheets');
 
   const tsRef = useMemoFirebase(() => (firestore ? doc(firestore, 'daily_timesheets', id) : null), [firestore, id]);
   const { data: ts, isLoading: isTsLoading } = useDoc<DailyTimesheet>(tsRef as any);
@@ -70,6 +74,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
 
   const isHRManager = useMemo(() => {
     if (!currentUser) return false;
+    if (canActAsHrManager(currentUser)) return true;
     return (
       isSystemAdmin(currentUser) ||
       (canAccessDomain(currentUser, 'hr') && hasMinimumLevel(currentUser, 'manager'))
@@ -77,7 +82,7 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
   }, [currentUser]);
 
   const handleProcessRequest = async (requestId: string, status: 'APPROVED' | 'REJECTED') => {
-    if (!firestore || !currentUser || !isHRManager) return;
+    if (!firestore || !currentUser || !isHRManager || !canEditTimesheet) return;
     setIsProcessing(true);
 
     try {
@@ -99,6 +104,13 @@ export default function TimesheetDetailPage({ params }: { params: Promise<{ id: 
 
   if (isTsLoading || userLoading || !ts || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
+  }
+  if (!canViewTimesheet) {
+    return (
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
   }
 
   const isLocked = ts.status === 'LOCKED';

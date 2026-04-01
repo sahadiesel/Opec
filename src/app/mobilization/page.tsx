@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Assignment, Worker, User, Position, Wave } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -34,8 +34,10 @@ export default function MobilizationPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewMobilization = useMatrixGuards ? canAccess(currentUser, 'mobilization', 'view') : canView(currentUser, 'mobilization');
 
-  const isAuthorized = useMemo(() => canView(currentUser, 'mobilization'), [currentUser]);
+  const isAuthorized = useMemo(() => canViewMobilization, [canViewMobilization]);
 
   // Standardized to 'mobilizations' collection
   const mobilizationQuery = useMemoFirebase(() => {

@@ -21,6 +21,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
+import { canAccess, isMatrixControlledRole } from '@/lib/permissions';
 
 type CatalogForm = Partial<WorkerDocumentCatalogItem>;
 
@@ -49,10 +50,11 @@ export default function WorkerDocumentCatalogPage() {
     blockBeforeExpiryDays: 90,
   });
 
-  const canViewWorkers = can('workers').view;
-  const canCreateWorkers = can('workers').create;
-  const canEditWorkers = can('workers').edit;
-  const canDeleteWorkers = can('workers').delete;
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewWorkers = useMatrixGuards ? canAccess(currentUser, 'worker_documents', 'view') : can('workers').view;
+  const canCreateWorkers = useMatrixGuards ? canAccess(currentUser, 'worker_documents', 'create') : can('workers').create;
+  const canEditWorkers = useMatrixGuards ? canAccess(currentUser, 'worker_documents', 'edit') : can('workers').edit;
+  const canDeleteWorkers = useMatrixGuards ? canAccess(currentUser, 'worker_documents', 'delete') : can('workers').delete;
   const catalogQuery = useMemoFirebase(() => {
     if (userLoading || !currentUser || !firestore || !canViewWorkers) return null;
     return collection(firestore, 'worker_document_catalog');

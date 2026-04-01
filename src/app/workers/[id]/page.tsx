@@ -47,6 +47,7 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAppUser } from '@/hooks/use-app-user';
+import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
 
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import { WorkerCertsTab } from './_components/worker-certs-tab';
@@ -62,6 +63,8 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewWorkerProfile = useMatrixGuards ? canAccess(currentUser, 'workers', 'view') : canView(currentUser, 'workers');
 
   // --- Data queries (unchanged) ---
   const workerRef = useMemoFirebase(() => (firestore ? doc(firestore, 'workers', id) : null), [firestore, id]);
@@ -133,7 +136,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   }, [workLogRows]);
 
   const { payroll } = usePermissions(currentUser);
-  const canEditWorker = payroll('worker', 'edit');
+  const canEditWorker = useMatrixGuards ? canAccess(currentUser, 'workers', 'edit') : payroll('worker', 'edit');
 
   // --- Business logic: save master (unchanged) ---
   const handleSaveMaster = () => {
@@ -296,6 +299,13 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         <div className="flex items-center justify-center min-h-[50vh]">
           <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลคนงาน (Loading Worker Data)...</div>
         </div>
+      </AppShell>
+    );
+  }
+  if (!canViewWorkerProfile) {
+    return (
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
       </AppShell>
     );
   }

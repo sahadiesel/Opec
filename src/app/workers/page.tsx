@@ -54,7 +54,7 @@ import { deleteDocumentNonBlocking, addDocumentNonBlocking, updateDocumentNonBlo
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { hasMinimumLevel, isSystemAdmin } from '@/lib/permissions';
+import { canAccess, hasMinimumLevel, isMatrixControlledRole, isSystemAdmin } from '@/lib/permissions';
 import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/services/worker-delete-service';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -81,11 +81,14 @@ export default function WorkersPage() {
   const { toast } = useToast();
 
   const { can, check, payroll, isLoading: isPermLoading } = usePermissions(currentUser);
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewWorkers = useMatrixGuards ? canAccess(currentUser, 'workers', 'view') : can('workers').view;
+  const canCreateWorkers = useMatrixGuards ? canAccess(currentUser, 'workers', 'create') : can('workers').create;
 
   const workersQuery = useMemoFirebase(() => {
-    if (isUserLoading || !firebaseUser || !firestore || !currentUser || !can('workers').view) return null;
+    if (isUserLoading || !firebaseUser || !firestore || !currentUser || !canViewWorkers) return null;
     return collection(firestore, 'workers');
-  }, [firestore, firebaseUser, isUserLoading, currentUser, can('workers').view]);
+  }, [firestore, firebaseUser, isUserLoading, currentUser, canViewWorkers]);
 
   const { data: workers, isLoading: isCollectionLoading } = useCollection<Worker>(workersQuery as any);
 
@@ -95,9 +98,9 @@ export default function WorkersPage() {
   }, [firestore, firebaseUser, can('positions').view]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
   const timesheetsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !can('workers').view) return null;
+    if (!firestore || !firebaseUser || !canViewWorkers) return null;
     return collection(firestore, 'daily_timesheets');
-  }, [firestore, firebaseUser, can('workers').view]);
+  }, [firestore, firebaseUser, canViewWorkers]);
   const { data: allTimesheets } = useCollection<DailyTimesheet>(timesheetsQuery as any);
 
   const canDeleteWorkerRecord = useMemo(() => {
@@ -181,6 +184,10 @@ export default function WorkersPage() {
   }, [sortedWorkers, positionFilter]);
 
   const handleCreate = async () => {
+    if (!canCreateWorkers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างทะเบียนลูกจ้าง' });
+      return;
+    }
     if (!firestore || !currentUser) return;
     
     if (!newWorker.firstName || !newWorker.lastName || !newWorker.thaiNationalId) {
@@ -277,7 +284,7 @@ export default function WorkersPage() {
 
   if (isUserLoading || userLoading || isPermLoading || !currentUser) return null;
 
-  if (!can('workers').view) {
+  if (!canViewWorkers) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
@@ -334,7 +341,7 @@ export default function WorkersPage() {
             </Select>
           </div>
           <div className="flex items-center gap-2">
-            {can('workers').create && payroll('worker', 'create') && (
+            {canCreateWorkers && payroll('worker', 'create') && (
               <Dialog
                 open={isCreateOpen}
                 onOpenChange={(open) => {

@@ -4,6 +4,7 @@
 import { useState, use, useEffect, useMemo } from 'react';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessOpsSchedulingModules, hasMinimumLevel } from '@/lib/permission-core';
+import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -66,13 +67,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewAssignments = useMatrixGuards ? canAccess(currentUser, 'assignments', 'view') : canView(currentUser, 'assignments');
 
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     async function fetchAssignment() {
-      if (!firestore) {
+      if (!firestore || !canViewAssignments) {
         setIsLoading(false);
         return;
       }
@@ -89,7 +92,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       }
     }
     fetchAssignment();
-  }, [firestore, id]);
+  }, [firestore, id, canViewAssignments]);
 
   const workerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId]);
   const { data: worker } = useDoc<Worker>(workerRef as any);
@@ -146,6 +149,13 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 
+  if (!canViewAssignments) {
+    return (
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
   if (!assignment) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>

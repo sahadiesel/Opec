@@ -1,21 +1,20 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
-import { User } from '@/lib/types';
-import { isHRStaff } from '@/lib/permissions';
+import { canAccess, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
 import { PayrollApprovalCenterD6 } from '@/components/hr/payroll-approval-center';
+import { useAppUser } from '@/hooks/use-app-user';
 
 /**
  * HR-D6: ศูนย์อนุมัติ Payroll — Worker / Office แยกแท็บ, ต่อ batch/run มี Summary, Validation, Actions, Audit preview
  */
 export default function HrPayrollApprovalPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-
-  useEffect(() => {
-    const raw = localStorage.getItem('opsflow_user');
-    if (raw) setCurrentUser(JSON.parse(raw));
-  }, []);
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewApprovalPage = useMatrixGuards
+    ? canAccess(currentUser, 'payroll_runs', 'view') || canAccess(currentUser, 'worker_payroll', 'view')
+    : isHRStaff(currentUser);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -27,13 +26,13 @@ export default function HrPayrollApprovalPage() {
     }
   }, []);
 
-  if (!currentUser) {
+  if (userLoading || !currentUser) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
     );
   }
 
-  if (!isHRStaff(currentUser)) {
+  if (!canViewApprovalPage) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="mx-auto max-w-lg py-20 text-center text-muted-foreground">ไม่มีสิทธิ์เข้าหน้านี้</div>

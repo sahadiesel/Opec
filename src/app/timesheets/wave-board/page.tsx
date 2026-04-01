@@ -39,7 +39,7 @@ import Link from 'next/link';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canEdit } from '@/lib/permissions';
+import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -54,8 +54,15 @@ export default function WaveTimesheetBoardPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const canViewTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
-  const canEditTimesheets = useMemo(() => canEdit(currentUser, 'timesheets'), [currentUser]);
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'view') : canView(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
+  const canEditTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'edit') : canEdit(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
 
   const [selectedPoId, setSelectedPoId] = useState('');
   const [selectedWaveId, setSelectedWaveId] = useState('');

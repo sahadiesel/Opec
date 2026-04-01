@@ -28,6 +28,7 @@ import { useToast } from '@/hooks/use-toast';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { canView } from '@/lib/permissions';
 import { canEdit } from '@/lib/permissions';
+import { canAccess, isMatrixControlledRole } from '@/lib/permissions';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
@@ -66,6 +67,7 @@ export default function WaveExcelEntryPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const { currentUser, isLoading: userLoading } = useAppUser();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
 
   const [periodId, setPeriodId] = useState('');
   const [customerId, setCustomerId] = useState('');
@@ -94,8 +96,14 @@ export default function WaveExcelEntryPage() {
 
   const tableRef = useRef<HTMLDivElement>(null);
 
-  const canTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
-  const canEditTimesheets = useMemo(() => canEdit(currentUser, 'timesheets'), [currentUser]);
+  const canTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'view') : canView(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
+  const canEditTimesheets = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'timesheets', 'edit') : canEdit(currentUser, 'timesheets')),
+    [currentUser, useMatrixGuards]
+  );
 
   const periodsQuery = useMemoFirebase(
     () => (firestore && canTimesheets ? query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc')) : null),

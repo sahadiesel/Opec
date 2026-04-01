@@ -30,7 +30,7 @@ import { resolveActiveSalesContractTerm } from '@/lib/services/contract-resolver
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { collection, doc, increment, updateDoc, collectionGroup } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
@@ -55,10 +55,13 @@ export default function AssignmentsPage() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewAssignments = useMatrixGuards ? canAccess(currentUser, 'assignments', 'view') : canView(currentUser, 'assignments');
+  const canCreateAssignments = useMatrixGuards ? canAccess(currentUser, 'assignments', 'create') : canViewAssignments;
 
   const isAuthorized = useMemo(
-    () => !!currentUser && canView(currentUser, 'assignments'),
-    [currentUser]
+    () => !!currentUser && canViewAssignments,
+    [currentUser, canViewAssignments]
   );
 
   // Standardized to 'mobilizations' top-level collection
@@ -116,6 +119,10 @@ export default function AssignmentsPage() {
   const [notes, setNotes] = useState('');
 
   const handleCreateAssignment = async () => {
+    if (!canCreateAssignments) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างการมอบหมายงาน' });
+      return;
+    }
     if (!firestore || !currentUser || !selectedWorkerId || !selectedWaveId || !startDate || !endDate) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุข้อมูลที่จำเป็นให้ครบถ้วน" });
       return;
@@ -323,13 +330,14 @@ export default function AssignmentsPage() {
                 </div>
                 <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
-                    <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (Field Assignment)
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl">
+              {canCreateAssignments && (
+                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
+                      <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (Field Assignment)
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl">
                   <DialogHeader>
                     <DialogTitle>มอบหมายงาน (Field Crew Assignment)</DialogTitle>
                     <DialogDescription>เลือกคนงานหน้างานและเชื่อมต่อเข้ากับรอบการทำงาน (Wave) ของโครงการ</DialogDescription>
@@ -375,15 +383,16 @@ export default function AssignmentsPage() {
                       />
                     </div>
                   </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                    <Button onClick={handleCreateAssignment} className="bg-primary font-bold" disabled={isCreating}>
-                      {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                      ยืนยันการมอบหมาย (Confirm)
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                      <Button onClick={handleCreateAssignment} className="bg-primary font-bold" disabled={isCreating}>
+                        {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                        ยืนยันการมอบหมาย (Confirm)
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
             </div>
 
             <Card className="shadow-lg border-none overflow-hidden">

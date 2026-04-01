@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { use, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -34,7 +34,8 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
-import { canGeneratePayslips } from '@/lib/permissions';
+import { canAccess, canGeneratePayslips, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { useAppUser } from '@/hooks/use-app-user';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -43,25 +44,45 @@ function lineDeductionsTotal(line: PayrollBatchLine): number {
 export default function PayrollBatchDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canViewBatch = useMemo(() => {
+    if (useMatrixGuards) {
+      return (
+        canAccess(currentUser, 'worker_payroll', 'view') ||
+        canAccess(currentUser, 'payroll_runs', 'view') ||
+        canAccess(currentUser, 'payslips', 'view')
+      );
+    }
+    return canView(currentUser, 'worker_payroll');
+  }, [currentUser, useMatrixGuards]);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
-  const batchRef = useMemoFirebase(() => (firestore ? doc(firestore, 'payroll_batches', id) : null), [firestore, id]);
+  const batchRef = useMemoFirebase(() => (firestore && canViewBatch ? doc(firestore, 'payroll_batches', id) : null), [firestore, id, canViewBatch]);
   const { data: batch, isLoading: isBatchLoading } = useDoc<PayrollBatch>(batchRef as any);
 
-  const linesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id]);
+  const linesQuery = useMemoFirebase(() => (firestore && canViewBatch ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id, canViewBatch]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<PayrollBatchLine>(linesQuery as any);
 
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
 
-  if (isBatchLoading || !batch || !currentUser) {
+  if (userLoading || isBatchLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
+  }
+  if (!canViewBatch) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (!batch) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">ไม่พบข้อมูลงวดจ่าย</div>
+      </AppShell>
+    );
   }
 
   const isLocked = batch.status === 'LOCKED' || batch.status === 'PAID';

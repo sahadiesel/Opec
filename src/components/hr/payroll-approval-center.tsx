@@ -7,7 +7,7 @@ import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
-import { canView, canApprovePayroll, canGeneratePayslips, isHRStaff } from '@/lib/permissions';
+import { canAccess, canApprovePayroll, canGeneratePayslips, canView, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
 import type {
   OfficePayrollLine,
   OfficePayrollRun,
@@ -99,12 +99,17 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
   const firestore = useFirestore();
   const { toast } = useToast();
   const { payroll } = usePermissions(currentUser);
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
 
-  const canWorker = canView(currentUser, 'worker_payroll');
+  const canWorker = useMatrixGuards
+    ? canAccess(currentUser, 'worker_payroll', 'view') || canAccess(currentUser, 'payroll_runs', 'view')
+    : canView(currentUser, 'worker_payroll');
   const canOffice = canView(currentUser, 'office_payroll');
 
   const canWorkerApprove = payroll('payroll_worker', 'approve');
-  const canApproveWorkerFlow = canApprovePayroll(currentUser) && canWorkerApprove;
+  const canApproveWorkerFlow = useMatrixGuards
+    ? canApprovePayroll(currentUser)
+    : canApprovePayroll(currentUser) && canWorkerApprove;
   const canWorkerEditBatch = payroll('payroll_worker', 'edit_batch');
   const canOfficeApprove = payroll('payroll_office', 'approve');
   const canOfficeEdit = payroll('payroll_office', 'edit') || payroll('payroll_office', 'submit');
@@ -318,7 +323,10 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
     }
   };
 
-  if (!isHRStaff(currentUser)) {
+  const canOpenCenter = useMatrixGuards
+    ? canAccess(currentUser, 'payroll_runs', 'view') || canAccess(currentUser, 'worker_payroll', 'view')
+    : isHRStaff(currentUser);
+  if (!canOpenCenter) {
     return (
       <div className="mx-auto max-w-lg py-20 text-center text-muted-foreground">ไม่มีสิทธิ์เข้าหน้านี้</div>
     );

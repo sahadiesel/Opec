@@ -238,6 +238,11 @@ export function canAccess(
   return Boolean((modulePerm as Partial<Record<BasePermissionAction, boolean>>)[action]);
 }
 
+export function isMatrixControlledRole(user: Pick<User, 'assignedRoleKey'> | null | undefined): boolean {
+  if (!user?.assignedRoleKey) return false;
+  return Object.prototype.hasOwnProperty.call(PERMISSION_MATRIX, user.assignedRoleKey);
+}
+
 const PAYROLL_PREPARED_STATUSES = new Set([
   'GENERATED',
   'HR_REVIEWED',
