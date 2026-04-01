@@ -8,7 +8,6 @@
 import type { User } from './types';
 import {
   getEffectiveAccessGroup,
-  getEffectiveAccessLevel,
   getPrimaryLegacyRole,
   isSystemAdmin,
 } from './permission-core';
@@ -44,7 +43,9 @@ function isActiveInternal(u: User): boolean {
   return Boolean(u?.isActive && u.approvalStatus === 'ACTIVE' && getEffectiveAccessGroup(u) !== 'client');
 }
 
-function resolvePersona(u: User | null): 'admin' | 'hr_manager' | 'hr_officer' | 'accounting' | 'other' {
+function resolvePersona(
+  u: User | null
+): 'admin' | 'hr_manager' | 'hr_officer' | 'payroll_officer' | 'accounting' | 'other' {
   if (!u || !isActiveInternal(u)) return 'other';
   if (isSystemAdmin(u)) return 'admin';
 
@@ -52,14 +53,11 @@ function resolvePersona(u: User | null): 'admin' | 'hr_manager' | 'hr_officer' |
   if (group === 'accounting') return 'accounting';
 
   const role = getPrimaryLegacyRole(u);
-  const level = getEffectiveAccessLevel(u);
-  const dept = u.department;
 
   if (role === 'hr_manager') return 'hr_manager';
-  if (role === 'hr_officer' || role === 'payroll_officer') return 'hr_officer';
+  if (role === 'hr_officer') return 'hr_officer';
+  if (role === 'payroll_officer') return 'payroll_officer';
   if (role === 'operations_manager' || role === 'operation_manager') return 'hr_manager';
-  if (dept === 'hr' && level === 'manager') return 'hr_manager';
-  if (dept === 'hr' && (level === 'officer' || level === 'viewer')) return 'hr_officer';
 
   return 'other';
 }
@@ -114,6 +112,23 @@ export function resolvePayrollMatrixDecision(
     if (resource === 'policy') return action === 'view' ? 'allow' : 'deny';
     if (resource === 'worker' || resource === 'office_staff') return action === 'view' ? 'allow' : 'deny';
     if (resource === 'rate_term_cost') return action === 'view' ? 'allow' : 'deny';
+    return 'inherit';
+  }
+
+  if (persona === 'payroll_officer') {
+    if (resource === 'timesheet') return action === 'view' ? 'allow' : 'deny';
+    if (resource === 'payroll_worker') {
+      if (action === 'view' || action === 'create_batch' || action === 'edit_batch') return 'allow';
+      if (action === 'approve' || action === 'lock' || action === 'finance_approve') return 'deny';
+      return 'deny';
+    }
+    if (resource === 'payroll_office') {
+      if (action === 'view' || action === 'create' || action === 'edit' || action === 'submit') return 'allow';
+      if (action === 'approve' || action === 'lock' || action === 'finance_approve') return 'deny';
+      return 'deny';
+    }
+    if (resource === 'policy') return action === 'view' ? 'allow' : 'deny';
+    if (resource === 'worker' || resource === 'office_staff' || resource === 'rate_term_cost') return 'deny';
     return 'inherit';
   }
 

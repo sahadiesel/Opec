@@ -14,6 +14,7 @@ export type JobMode = 'ONSHORE' | 'OFFSHORE';
 
 export type RoleType = 
   | 'system_admin'
+  | 'payroll_officer'
   | 'accounting_officer'
   | 'accounting_manager'
   | 'sales_officer'
@@ -29,6 +30,7 @@ export type RoleType =
 export type BusinessRoleKey = 
   | 'system_admin'
   | 'admin_admin'
+  | 'payroll_officer'
   | 'sales_manager'
   | 'sales_officer'
   | 'hr_manager'

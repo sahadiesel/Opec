@@ -4,7 +4,7 @@
  * See docs/permissions-architecture.md.
  */
 
-import type { BusinessRoleKey, DeptType, RoleType, User } from './types';
+import type { BusinessRoleKey, DeptType, User } from './types';
 
 // ---------------------------------------------------------------------------
 // Canonical types
@@ -82,7 +82,6 @@ const LEVEL_RANK: Record<CoreAccessLevel, number> = {
 
 const LEGACY_ROLE_ALIASES: Record<string, string> = {
   finance_officer: 'accounting_officer',
-  payroll_officer: 'hr_officer',
   safety_officer: 'operations_officer',
   client: 'client_user',
   client_viewer: 'client_user',
@@ -96,6 +95,34 @@ function aliasLegacyRole(roleKey?: string | null): string | null {
   return LEGACY_ROLE_ALIASES[roleKey] || roleKey;
 }
 
+const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
+  'system_admin',
+  'hr_manager',
+  'hr_officer',
+  'payroll_officer',
+  'sales_officer',
+  'sales_manager',
+  'store_officer',
+  'store_manager',
+  'operation_manager',
+  'operation_officer',
+  'operations_manager',
+  'operations_officer',
+  'accounting_officer',
+  'accounting_manager',
+  'client_user',
+  'admin_admin',
+]);
+
+function normalizeAssignedPrimaryRole(roleKey?: string | null): string | null {
+  const aliased = aliasLegacyRole(roleKey);
+  if (!aliased) return null;
+  if (aliased === 'admin_admin') return 'system_admin';
+  if (aliased === 'operations_manager') return 'operation_manager';
+  if (aliased === 'operations_officer') return 'operation_officer';
+  return PRIMARY_ASSIGNED_ROLE_KEYS.has(aliased) ? aliased : null;
+}
+
 /** Maps legacy BusinessRoleKey to canonical core primary key + group + level (best-effort). */
 export const LEGACY_BUSINESS_ROLE_TO_CORE: Record<
   BusinessRoleKey,
@@ -104,6 +131,7 @@ export const LEGACY_BUSINESS_ROLE_TO_CORE: Record<
   system_admin: { group: 'admin', level: 'admin', primaryKey: 'admin_admin' },
   hr_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
   hr_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
+  payroll_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
   operations_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
   operations_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
   sales_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
@@ -161,106 +189,7 @@ function isFutureAccessLevel(value: unknown): value is CoreAccessLevel {
 /** Resolves a stable legacy role string (aligned with normalizeCurrentUserPermissions merges). */
 export function getPrimaryLegacyRole(user: Partial<User> | null): string | null {
   if (!user) return null;
-
-  const roleIds = Array.isArray(user.roleIds) ? [...user.roleIds] : [];
-  if (user.roleId && !roleIds.includes(user.roleId as RoleType)) {
-    roleIds.unshift(user.roleId as RoleType);
-  }
-
-  const assigned = Array.isArray(user.assignedRoleKeys) ? [...user.assignedRoleKeys] : [];
-  if (user.assignedRoleKey && !assigned.includes(user.assignedRoleKey as BusinessRoleKey)) {
-    assigned.unshift(user.assignedRoleKey as BusinessRoleKey);
-  }
-
-  if (
-    user.roleId === 'system_admin' ||
-    user.assignedRoleKey === 'system_admin' ||
-    user.assignedRoleKey === 'admin_admin'
-  ) {
-    return 'system_admin';
-  }
-
-  if (
-    roleIds.includes('system_admin' as RoleType) ||
-    assigned.includes('system_admin' as BusinessRoleKey) ||
-    assigned.includes('admin_admin' as BusinessRoleKey)
-  ) {
-    return 'system_admin';
-  }
-
-  const directAssigned = aliasLegacyRole(user.assignedRoleKey);
-  if (directAssigned) return directAssigned;
-
-  const directRoleId = aliasLegacyRole(user.roleId);
-  if (directRoleId) return directRoleId;
-
-  const firstAssigned = aliasLegacyRole(assigned[0]);
-  if (firstAssigned) return firstAssigned;
-
-  const firstRoleId = aliasLegacyRole(roleIds[0] as string);
-  if (firstRoleId) return firstRoleId;
-
-  if (user.userType === 'customer_portal' || user.department === 'client') {
-    return 'client_user';
-  }
-
-  if (user.department === 'admin') {
-    return 'system_admin';
-  }
-
-  if (user.department === 'accounting') {
-    return user.level === 'manager' ? 'accounting_manager' : 'accounting_officer';
-  }
-
-  if (user.department === 'store') {
-    return user.level === 'manager' ? 'store_manager' : 'store_officer';
-  }
-
-  const dep = String(user.department || '');
-  if (dep === 'operations' || dep === 'operation') {
-    return user.level === 'manager' ? 'operations_manager' : 'operations_officer';
-  }
-
-  if (user.department === 'sales') {
-    return user.level === 'manager' ? 'sales_manager' : 'sales_officer';
-  }
-
-  if (user.department === 'hr') {
-    return user.level === 'manager' ? 'hr_manager' : 'hr_officer';
-  }
-
-  /**
-   * โปรไฟล์หลักมักใช้ document id = profileKey เช่น hr_manager — ถ้า assignedRoleKey ว่าง
-   * แต่ผูก permissionProfileKey ไว้ ให้ถือเป็นบทบาทเดียวกับ Firestore hasAnyAssignedRole
-   */
-  const pk =
-    user.permissionProfileKey ??
-    (Array.isArray(user.permissionProfileKeys) && user.permissionProfileKeys.length > 0
-      ? user.permissionProfileKeys[0]
-      : null);
-  if (typeof pk === 'string' && pk.length > 0) {
-    if (pk === 'admin_admin') return 'system_admin';
-    if (pk === 'payroll_officer') return 'hr_officer';
-    const known: readonly string[] = [
-      'system_admin',
-      'hr_manager',
-      'hr_officer',
-      'sales_manager',
-      'sales_officer',
-      'operations_manager',
-      'operations_officer',
-      'operation_manager',
-      'operation_officer',
-      'accounting_manager',
-      'accounting_officer',
-      'store_manager',
-      'store_officer',
-      'client_user',
-    ];
-    if (known.includes(pk)) return pk;
-  }
-
-  return null;
+  return normalizeAssignedPrimaryRole(user.assignedRoleKey);
 }
 
 /** Effective access group: explicit User.accessGroup wins, else legacy-derived. */
@@ -288,6 +217,7 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (
     legacyRole === 'hr_manager' ||
     legacyRole === 'hr_officer' ||
+    legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_manager' ||
     legacyRole === 'sales_officer' ||
     legacyRole === 'operations_manager' ||
@@ -337,6 +267,7 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
 
   if (
     legacyRole === 'hr_officer' ||
+    legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_officer' ||
     legacyRole === 'operations_officer' ||
     legacyRole === 'accounting_officer' ||
@@ -417,7 +348,6 @@ export function getUserAccessContext(user: User | null): UserAccessContext | nul
 /** System administrator: explicit admin group or legacy system_admin role. */
 export function isSystemAdmin(user: User | null): boolean {
   if (!user) return false;
-  if (user.accessGroup === 'admin') return true;
   return getPrimaryLegacyRole(user) === 'system_admin';
 }
 
@@ -427,15 +357,22 @@ export function isSystemAdmin(user: User | null): boolean {
  */
 export function isHrManager(user: User | null): boolean {
   if (!user) return false;
-  if (getPrimaryLegacyRole(user) === 'hr_manager') return true;
-  const keys: string[] = [];
-  if (user.assignedRoleKey) keys.push(String(user.assignedRoleKey));
-  if (user.roleId) keys.push(String(user.roleId));
-  if (Array.isArray(user.assignedRoleKeys)) keys.push(...user.assignedRoleKeys.map(String));
-  if (Array.isArray(user.roleIds)) keys.push(...user.roleIds.map(String));
-  if (user.permissionProfileKey) keys.push(String(user.permissionProfileKey));
-  if (Array.isArray(user.permissionProfileKeys)) keys.push(...user.permissionProfileKeys.map(String));
-  return keys.some((k) => k === 'hr_manager');
+  return getPrimaryLegacyRole(user) === 'hr_manager';
+}
+
+export function isOperationManager(user: User | null): boolean {
+  if (!user) return false;
+  return getPrimaryLegacyRole(user) === 'operation_manager';
+}
+
+export function isPayrollOfficer(user: User | null): boolean {
+  if (!user) return false;
+  return getPrimaryLegacyRole(user) === 'payroll_officer';
+}
+
+export function canActAsHrManager(user: User | null): boolean {
+  const role = getPrimaryLegacyRole(user);
+  return role === 'hr_manager' || role === 'operation_manager' || isSystemAdmin(user);
 }
 
 /**

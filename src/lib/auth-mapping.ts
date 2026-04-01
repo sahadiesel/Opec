@@ -55,6 +55,15 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
     canonicalRole: 'hr_officer',
     descriptionTh: 'บันทึกข้อมูลคนงาน เอกสาร และเวลาทำงาน',
   },
+  payroll_officer: {
+    key: 'payroll_officer',
+    labelTh: 'เจ้าหน้าที่เงินเดือน',
+    labelEn: 'Payroll Officer',
+    dept: 'hr',
+    level: 'officer',
+    canonicalRole: 'payroll_officer',
+    descriptionTh: 'ดำเนินงานเงินเดือนและงานส่งออกจ่ายเงิน',
+  },
   operations_manager: {
     key: 'operations_manager',
     labelTh: 'ผู้จัดการฝ่ายปฏิบัติการ',
@@ -167,7 +176,6 @@ export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
 
 export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
   finance_officer: 'accounting_officer',
-  payroll_officer: 'hr_officer',
   client: 'client_user',
   client_viewer: 'client_user',
   client_approver: 'client_user',
@@ -263,42 +271,11 @@ function inferPortalRole(user: Partial<User>): PortalRole {
 function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | null {
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return null;
-
-  if (u.accessGroup === 'admin') return 'system_admin';
-  if (u.accessGroup === 'client') return 'client_user';
-
-  const directAssigned = canonicalizeRoleKey(u.assignedRoleKey);
-  if (directAssigned) return directAssigned;
-
-  const directRoleId = canonicalizeRoleKey(u.roleId);
-  if (directRoleId) return directRoleId;
-
-  const firstAssigned = canonicalizeRoleKey(u.assignedRoleKeys?.[0]);
-  if (firstAssigned) return firstAssigned;
-
-  const firstRoleId = canonicalizeRoleKey(u.roleIds?.[0]);
-  if (firstRoleId) return firstRoleId;
-
-  if (u.userType === 'customer_portal' || u.department === 'client') {
-    return 'client_user';
-  }
-
-  if (u.accessGroup === 'operation') {
-    return u.accessLevel === 'manager' ? 'operations_manager' : 'operations_officer';
-  }
-
-  if (u.accessGroup === 'accounting') {
-    return u.accessLevel === 'manager' ? 'accounting_manager' : 'accounting_officer';
-  }
-
-  if (u.department === 'admin') return 'system_admin';
-  if (u.department === 'accounting') return u.level === 'manager' ? 'accounting_manager' : 'accounting_officer';
-  if (u.department === 'store') return u.level === 'manager' ? 'store_manager' : 'store_officer';
-  if (u.department === 'operations') return u.level === 'manager' ? 'operations_manager' : 'operations_officer';
-  if (u.department === 'sales') return u.level === 'manager' ? 'sales_manager' : 'sales_officer';
-  if (u.department === 'hr') return u.level === 'manager' ? 'hr_manager' : 'hr_officer';
-
-  return 'hr_officer';
+  const resolved = canonicalizeRoleKey(u.assignedRoleKey);
+  if (resolved === 'admin_admin') return 'system_admin';
+  if (resolved === 'operations_manager') return 'operation_manager';
+  if (resolved === 'operations_officer') return 'operation_officer';
+  return resolved;
 }
 
 function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'operation' | 'accounting' | 'client' {
