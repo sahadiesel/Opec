@@ -540,9 +540,9 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
   store_officer: {
     positions: P_VIEW,
     vendors: P_VCE,
-    waves: P_VIEW,
-    assignments: P_VIEW,
-    mobilization: P_VIEW,
+    waves: P_NONE,
+    assignments: P_NONE,
+    mobilization: P_NONE,
     purchases: P_VCE,
     store_inventory: P_FULL_NO_APPROVE,
     office_payroll: P_NONE,

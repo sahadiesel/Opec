@@ -145,6 +145,22 @@ export default function WavesPage() {
   };
 
   if (isUserLoading || userLoading || !currentUser) return null;
+  if (!isStaff) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="p-6">
+          <Card className="max-w-xl mx-auto mt-8">
+            <CardHeader>
+              <CardTitle>Access Pending (รอนุมัติสิทธิ์)</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              บัญชีของคุณยังไม่ได้รับสิทธิ์เข้าใช้งานโมดูล Waves กรุณาติดต่อผู้ดูแลระบบ
+            </CardContent>
+          </Card>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
