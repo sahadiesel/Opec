@@ -19,6 +19,7 @@ import {
   getEffectiveAccessGroup,
   getEffectiveAccessLevel,
   getPrimaryLegacyRole,
+  canActAsHrManager,
   isOperationGroupMember,
   isAccountingGroupMember,
 } from './permission-core';
@@ -235,6 +236,58 @@ export function canAccess(
   if (!modulePerm) return false;
 
   return Boolean((modulePerm as Partial<Record<BasePermissionAction, boolean>>)[action]);
+}
+
+const PAYROLL_PREPARED_STATUSES = new Set([
+  'GENERATED',
+  'HR_REVIEWED',
+  'HR_APPROVED',
+  'FINANCE_PREPARED',
+  'FINANCE_APPROVED',
+  'PAYMENT_EXPORTED',
+  'PAID',
+  'LOCKED',
+  'prepared',
+  'payslips_generated',
+  'approved',
+  'exported',
+]);
+
+const PAYROLL_APPROVED_STATUSES = new Set([
+  'HR_APPROVED',
+  'FINANCE_PREPARED',
+  'FINANCE_APPROVED',
+  'PAYMENT_EXPORTED',
+  'PAID',
+  'LOCKED',
+  'approved',
+  'exported',
+]);
+
+export function canPreparePayroll(user: User | null): boolean {
+  if (!user) return false;
+  if (canAccess(user, 'worker_payroll', 'create') || canAccess(user, 'worker_payroll', 'edit')) return true;
+  return false;
+}
+
+export function canGeneratePayslips(user: User | null, payrollStatus?: string | null): boolean {
+  if (!user) return false;
+  if (payrollStatus && !PAYROLL_PREPARED_STATUSES.has(payrollStatus)) return false;
+  if (canAccess(user, 'payslips', 'create')) return true;
+  return canAccess(user, 'worker_payroll', 'view');
+}
+
+export function canApprovePayroll(user: User | null): boolean {
+  if (!user) return false;
+  if (canAccess(user, 'payroll_runs', 'approve')) return true;
+  return canActAsHrManager(user);
+}
+
+export function canExportPayroll(user: User | null, payrollStatus?: string | null): boolean {
+  if (!user) return false;
+  if (!payrollStatus || !PAYROLL_APPROVED_STATUSES.has(payrollStatus)) return false;
+  if (canAccess(user, 'payment_export_batches', 'create')) return true;
+  return canAccess(user, 'payment_export_batches', 'edit');
 }
 
 /**

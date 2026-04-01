@@ -46,7 +46,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate } from '@/lib/permissions';
+import { canView, canCreate, canPreparePayroll } from '@/lib/permissions';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
@@ -55,6 +55,7 @@ export default function PayrollBatchesPage() {
   const { toast } = useToast();
   const canViewWorkerPayroll = useMemo(() => canView(currentUser, 'worker_payroll'), [currentUser]);
   const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
+  const canPrepareWorkerPayroll = useMemo(() => canPreparePayroll(currentUser), [currentUser]);
 
   const batchQuery = useMemoFirebase(() => {
     if (!firestore || !canViewWorkerPayroll) return null;
@@ -96,6 +97,10 @@ export default function PayrollBatchesPage() {
   const handleGenerate = async () => {
     if (!canCreateWorkerPayroll) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้าง payroll batch' });
+      return;
+    }
+    if (!canPrepareWorkerPayroll) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เตรียมงวดจ่ายเงินเดือน' });
       return;
     }
     if (!firestore || !currentUser || !targetPeriodId) return;
@@ -152,7 +157,10 @@ export default function PayrollBatchesPage() {
           
           <Dialog open={isGenerateOpen} onOpenChange={setIsGenerateOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md font-bold" disabled={!canCreateWorkerPayroll}>
+              <Button
+                className="gap-2 h-11 px-6 bg-primary shadow-md font-bold"
+                disabled={!canCreateWorkerPayroll || !canPrepareWorkerPayroll}
+              >
                 <Calculator className="h-5 w-5" /> สร้างรายการจ่ายใหม่ (Generate Batch)
               </Button>
             </DialogTrigger>

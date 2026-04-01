@@ -7,7 +7,7 @@ import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
-import { canView, isHRStaff } from '@/lib/permissions';
+import { canView, canApprovePayroll, canGeneratePayslips, isHRStaff } from '@/lib/permissions';
 import type {
   OfficePayrollLine,
   OfficePayrollRun,
@@ -61,7 +61,9 @@ const WORKER_D6_STATUSES = new Set([
 ]);
 const OFFICE_D6_STATUSES = new Set(['CALCULATED', 'HR_APPROVED', 'FINANCE_APPROVED', 'PAID', 'LOCKED']);
 
-const WORKER_PAYSLIP_AFTER_APPROVAL = new Set([
+const WORKER_PAYSLIP_VISIBLE_STATUSES = new Set([
+  'GENERATED',
+  'HR_REVIEWED',
   'HR_APPROVED',
   'FINANCE_PREPARED',
   'PAYMENT_EXPORTED',
@@ -102,6 +104,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
   const canOffice = canView(currentUser, 'office_payroll');
 
   const canWorkerApprove = payroll('payroll_worker', 'approve');
+  const canApproveWorkerFlow = canApprovePayroll(currentUser) && canWorkerApprove;
   const canWorkerEditBatch = payroll('payroll_worker', 'edit_batch');
   const canOfficeApprove = payroll('payroll_office', 'approve');
   const canOfficeEdit = payroll('payroll_office', 'edit') || payroll('payroll_office', 'submit');
@@ -228,7 +231,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
   const officeBlocking = hasBlockingRed(officeChecks);
 
   const handleWorkerApprove = async () => {
-    if (!firestore || !selectedBatch || workerBlocking || !canWorkerApprove) return;
+    if (!firestore || !selectedBatch || workerBlocking || !canApproveWorkerFlow) return;
     setBusy(true);
     try {
       const svc = new PayrollService(firestore);
@@ -260,7 +263,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
   };
 
   const handleWorkerHandoff = async () => {
-    if (!firestore || !selectedBatch || !canWorkerApprove) return;
+    if (!firestore || !selectedBatch || !canApproveWorkerFlow) return;
     setBusy(true);
     try {
       const svc = new PayrollService(firestore);
@@ -483,7 +486,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                       <Button
                         disabled={
                           busy ||
-                          !canWorkerApprove ||
+                          !canApproveWorkerFlow ||
                           workerBlocking ||
                           !['GENERATED', 'HR_REVIEWED'].includes(selectedBatch.status)
                         }
@@ -500,7 +503,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                       </Button>
                       <Button
                         variant="outline"
-                        disabled={busy || !canWorkerApprove || selectedBatch.status !== 'HR_APPROVED'}
+                        disabled={busy || !canApproveWorkerFlow || selectedBatch.status !== 'HR_APPROVED'}
                         onClick={() => void handleWorkerHandoff()}
                       >
                         ล็อก / ส่งต่อบัญชี (FINANCE_PREPARED)
@@ -535,7 +538,8 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                     </CardContent>
                   </Card>
 
-                  {WORKER_PAYSLIP_AFTER_APPROVAL.has(selectedBatch.status) &&
+                  {WORKER_PAYSLIP_VISIBLE_STATUSES.has(selectedBatch.status) &&
+                    canGeneratePayslips(currentUser, selectedBatch.status) &&
                     workerLines &&
                     workerLines.length > 0 && (
                       <Card>

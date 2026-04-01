@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -34,8 +34,7 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
-import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canGeneratePayslips } from '@/lib/permissions';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -44,32 +43,29 @@ function lineDeductionsTotal(line: PayrollBatchLine): number {
 export default function PayrollBatchDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const firestore = useFirestore();
-  const canViewWorkerPayroll = canView(currentUser, 'worker_payroll');
 
-  const batchRef = useMemoFirebase(() => (firestore && canViewWorkerPayroll ? doc(firestore, 'payroll_batches', id) : null), [firestore, id, canViewWorkerPayroll]);
+  useEffect(() => {
+    const stored = localStorage.getItem('opsflow_user');
+    if (stored) setCurrentUser(JSON.parse(stored));
+  }, []);
+
+  const batchRef = useMemoFirebase(() => (firestore ? doc(firestore, 'payroll_batches', id) : null), [firestore, id]);
   const { data: batch, isLoading: isBatchLoading } = useDoc<PayrollBatch>(batchRef as any);
 
-  const linesQuery = useMemoFirebase(() => (firestore && canViewWorkerPayroll ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id, canViewWorkerPayroll]);
+  const linesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<PayrollBatchLine>(linesQuery as any);
 
-  const periodRef = useMemoFirebase(() => (firestore && canViewWorkerPayroll && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId, canViewWorkerPayroll]);
+  const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
 
-  if (userLoading || !currentUser) return null;
-  if (!canViewWorkerPayroll) {
-    return (
-      <AppShell user={currentUser as User} onLogout={() => {}}>
-        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
-      </AppShell>
-    );
-  }
-  if (isBatchLoading || !batch) {
+  if (isBatchLoading || !batch || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 
   const isLocked = batch.status === 'LOCKED' || batch.status === 'PAID';
+  const canGenerateWorkerPayslips = canGeneratePayslips(currentUser, batch.status);
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -184,7 +180,11 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                         </TableCell>
                         <TableCell className="text-right font-black text-primary">฿{line.netAmount.toLocaleString()}</TableCell>
                         <TableCell className="text-right pr-2">
-                          <PayslipDialog model={slipModel} />
+                          {canGenerateWorkerPayslips ? (
+                            <PayslipDialog model={slipModel} />
+                          ) : (
+                            <Badge variant="outline" className="text-[9px]">รอเตรียม/อนุมัติ</Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <Badge variant="outline" className="text-[9px] uppercase font-bold">{line.exportStatus}</Badge>

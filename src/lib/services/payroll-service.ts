@@ -28,7 +28,7 @@ import {
 } from '@/lib/types';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
-import { assertPayrollPermission } from '@/lib/permissions';
+import { assertPayrollPermission, canApprovePayroll, canPreparePayroll } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
 import {
   batchStatusToD8Lifecycle,
@@ -220,6 +220,9 @@ export class PayrollService {
     user: User, 
     filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed' }
   ): Promise<string> {
+    if (!canPreparePayroll(user)) {
+      throw new Error('Permission denied: prepare payroll');
+    }
     assertPayrollPermission(user, 'payroll_worker', 'create_batch');
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
@@ -456,6 +459,9 @@ export class PayrollService {
   }
 
   async approveBatch(id: string, user: User) {
+    if (!canApprovePayroll(user)) {
+      throw new Error('Permission denied: approve payroll');
+    }
     assertPayrollPermission(user, 'payroll_worker', 'approve');
     const docRef = doc(this.getBatchCollection(), id);
     const snap = await getDoc(docRef);

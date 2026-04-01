@@ -19,6 +19,7 @@ import {
 } from '@/lib/types';
 import { PaymentExportBatchSchema } from '@/lib/validations/payment-export-schemas';
 import { writeAuditLog } from './audit-service';
+import { canExportPayroll } from '@/lib/permissions';
 
 /**
  * Service for managing official bank payment file batches.
@@ -61,8 +62,7 @@ export class PaymentExportService {
       if (!pbSnap.exists()) throw new Error('Payroll Batch not found');
       
       const payrollBatch = pbSnap.data() as PayrollBatch;
-      const validStatuses = ['HR_APPROVED', 'FINANCE_APPROVED', 'LOCKED', 'PAID'];
-      if (!validStatuses.includes(payrollBatch.status)) {
+      if (!canExportPayroll(user, payrollBatch.status)) {
         throw new Error(`Cannot export: Payroll Batch is in status ${payrollBatch.status}`);
       }
 
