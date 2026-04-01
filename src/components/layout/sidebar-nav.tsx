@@ -64,7 +64,7 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView, canSeeHrPillarUi, isClient } from '@/lib/permissions';
+import { ModuleKey, canView, canSeeHrPillarUi, isClient, canAccess } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { UI_LABELS } from '@/lib/constants/labels';
 
@@ -169,6 +169,38 @@ function pathMatches(pathname: string, href: string): boolean {
   return false;
 }
 
+function resolveMatrixModuleForSidebarItem(item: NavItem): string | null {
+  if (item.href === '/workers') return 'workers';
+  if (item.href === '/worker-document-catalog') return 'worker_documents';
+  if (item.href === '/assignments') return 'assignments';
+  if (item.href === '/mobilization') return 'mobilization';
+  if (
+    item.href === '/timesheets/wave-board' ||
+    item.href === '/timesheets/wave-excel' ||
+    item.href === '/timesheets/daily'
+  ) {
+    return 'timesheets';
+  }
+  if (item.href === '/payroll/batches') return 'worker_payroll';
+  if (item.href === '/payroll/periods') return 'payroll_runs';
+  return null;
+}
+
+function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
+  const role = user.assignedRoleKey;
+  if (!role) return null;
+
+  // Incremental rollout: only enforce matrix visibility for these roles.
+  if (!['system_admin', 'hr_officer', 'payroll_officer', 'operation_manager'].includes(role)) {
+    return null;
+  }
+
+  const module = resolveMatrixModuleForSidebarItem(item);
+  if (!module) return null; // keep legacy behavior for menus not mapped yet
+
+  return canAccess(user, module, 'view');
+}
+
 /** หน้า /hr/* เฉพาะผู้ที่มีโมดูลแผนกบุคคลอย่างน้อยหนึ่งรายการ (ไม่โชว์ให้ store / sales ล้วน) */
 function canViewHrHubItem(
   user: User,
@@ -177,6 +209,8 @@ function canViewHrHubItem(
   item: NavItem
 ): boolean {
   if (admin) return true;
+  const byMatrix = sidebarMatrixVisibility(user, item);
+  if (byMatrix !== null) return byMatrix;
   if (canView(user, item.key, profile)) return true;
   if (item.href.startsWith('/hr/')) {
     return canSeeHrPillarUi(user, profile);
@@ -291,10 +325,20 @@ export function SidebarNav({
           if (!canSeeGroup(group, user, admin)) return null;
 
           if (group.accountingStructured) {
-            const visibleMain = group.items.filter((item) => admin || canView(user, item.key, profile));
+            const visibleMain = group.items.filter((item) => {
+              if (admin) return true;
+              const byMatrix = sidebarMatrixVisibility(user, item);
+              if (byMatrix !== null) return byMatrix;
+              return canView(user, item.key, profile);
+            });
             const payrollSubs = ACCOUNTING_PAYROLL_SUBSECTIONS.map((sub) => ({
               ...sub,
-              visibleItems: sub.items.filter((item) => admin || canView(user, item.key, profile)),
+              visibleItems: sub.items.filter((item) => {
+                if (admin) return true;
+                const byMatrix = sidebarMatrixVisibility(user, item);
+                if (byMatrix !== null) return byMatrix;
+                return canView(user, item.key, profile);
+              }),
             })).filter((s) => s.visibleItems.length > 0);
 
             if (visibleMain.length === 0 && payrollSubs.length === 0) return null;
@@ -434,7 +478,12 @@ export function SidebarNav({
             );
           }
 
-          const visibleItems = group.items.filter((item) => admin || canView(user, item.key, profile));
+          const visibleItems = group.items.filter((item) => {
+            if (admin) return true;
+            const byMatrix = sidebarMatrixVisibility(user, item);
+            if (byMatrix !== null) return byMatrix;
+            return canView(user, item.key, profile);
+          });
 
           if (visibleItems.length === 0) return null;
 

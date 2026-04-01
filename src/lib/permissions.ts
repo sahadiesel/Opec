@@ -180,6 +180,63 @@ export const NO_ACCESS: ModulePermission = {
   approve: false,
 };
 
+type BasePermissionAction = 'view' | 'create' | 'edit' | 'delete' | 'approve';
+type BasePermissionModule = { all?: true } | Partial<Record<BasePermissionAction, boolean>>;
+type BasePermissionRoleMap = Record<string, BasePermissionModule>;
+
+/**
+ * Minimal base matrix (incremental adoption).
+ * This does not replace the legacy permission engine yet.
+ */
+export const PERMISSION_MATRIX: Record<string, BasePermissionRoleMap | { all: true }> = {
+  system_admin: {
+    all: true,
+  },
+
+  hr_officer: {
+    workers: { view: true, create: true, edit: true },
+    worker_documents: { view: true, create: true, edit: true },
+    assignments: { view: true, create: true, edit: true },
+    mobilization: { view: true, create: true, edit: true },
+    timesheets: { view: true, create: true, edit: true },
+  },
+
+  payroll_officer: {
+    worker_payroll: { view: true, create: true, edit: true },
+    payroll_runs: { view: true, create: true },
+    payslips: { view: true, create: true },
+    payment_export_batches: { view: true, create: true },
+    workers: { view: true },
+    timesheets: { view: true },
+  },
+
+  operation_manager: {
+    workers: { view: true },
+    payroll_runs: { view: true, approve: true },
+    payslips: { view: true, approve: true },
+  },
+};
+
+export function canAccess(
+  user: Pick<User, 'assignedRoleKey'> | null | undefined,
+  module: string,
+  action: BasePermissionAction = 'view'
+): boolean {
+  if (!user || !user.assignedRoleKey) return false;
+
+  const role = user.assignedRoleKey;
+  if (role === 'system_admin') return true;
+
+  const rolePerm = PERMISSION_MATRIX[role];
+  if (!rolePerm) return false;
+  if ('all' in rolePerm && rolePerm.all) return true;
+
+  const modulePerm = (rolePerm as BasePermissionRoleMap)[module];
+  if (!modulePerm) return false;
+
+  return Boolean((modulePerm as Partial<Record<BasePermissionAction, boolean>>)[action]);
+}
+
 /**
  * Modules restricted to Managers and Admins only.
  * Officers and Viewers will be denied access regardless of group allowedModules.
