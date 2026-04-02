@@ -68,6 +68,7 @@ service cloud.firestore {
         : role == 'admin_admin' ? 'system_admin'
         : role == 'operations_manager' ? 'operation_manager'
         : role == 'operations_officer' ? 'operation_officer'
+        : role == 'store_manager' ? 'store_officer'
         : role;
     }
 
@@ -108,12 +109,12 @@ service cloud.firestore {
         : role == 'system_admin' ? 'admin'
         : role == 'client_user' ? 'client'
         : (role == 'accounting_manager' || role == 'accounting_officer') ? 'accounting'
-        : (role == 'store_manager' || role == 'store_officer') ? 'operation'
+        : role == 'store_officer' ? 'operation'
         : (role == 'hr_manager' || role == 'hr_officer') ? 'operation'
         : (role == 'operation_manager' || role == 'operation_officer') ? 'operation'
         : (role == 'sales_manager' || role == 'sales_officer') ? 'operation'
         : role == 'payroll_officer' ? 'operation'
-        : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager'])) ? 'operation'
+        : (u.roleIds != null && u.roleIds is list && listHasAnyNormalizedRole(['store_officer'], u.roleIds)) ? 'operation'
         : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['system_admin'])) ? 'admin'
         : (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['client_user'])) ? 'client'
         : u.roleId == 'system_admin' ? 'admin'
@@ -161,7 +162,7 @@ service cloud.firestore {
         : u.department == 'hr' ? (lv == 'manager' ? 'hr_manager' : 'hr_officer')
         : u.department == 'sales' ? (lv == 'manager' ? 'sales_manager' : 'sales_officer')
         : u.department == 'accounting' ? (lv == 'manager' ? 'accounting_manager' : 'accounting_officer')
-        : u.department == 'store' ? (lv == 'manager' ? 'store_manager' : 'store_officer')
+        : u.department == 'store' ? 'store_officer'
         : null;
     }
 
@@ -258,19 +259,15 @@ service cloud.firestore {
         u.department == 'store'
         || u.departmentGroup == 'store'
         || u.accessGroup == 'store'
-        || u.assignedRoleKey == 'store_officer'
-        || u.assignedRoleKey == 'store_manager'
+        || matchesBusinessRole(['store_officer'], u.assignedRoleKey)
         || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
-          && u.assignedRoleKeys.hasAny(['store_officer', 'store_manager']))
-        || u.roleId == 'store_officer'
-        || u.roleId == 'store_manager'
-        || (u.roleIds != null && u.roleIds is list && u.roleIds.hasAny(['store_officer', 'store_manager']))
-        || u.permissionProfileKey == 'store_officer'
-        || u.permissionProfileKey == 'store_manager'
+          && listHasAnyNormalizedRole(['store_officer'], u.assignedRoleKeys))
+        || matchesBusinessRole(['store_officer'], u.roleId)
+        || (u.roleIds != null && u.roleIds is list && listHasAnyNormalizedRole(['store_officer'], u.roleIds))
+        || matchesBusinessRole(['store_officer'], u.permissionProfileKey)
         || (u.permissionProfileKeys != null && u.permissionProfileKeys is list
-          && u.permissionProfileKeys.hasAny(['store_officer', 'store_manager']))
-        || ('primaryRoleTemplateKey' in u && u.primaryRoleTemplateKey == 'store_officer')
-        || ('primaryRoleTemplateKey' in u && u.primaryRoleTemplateKey == 'store_manager')
+          && listHasAnyNormalizedRole(['store_officer'], u.permissionProfileKeys))
+        || ('primaryRoleTemplateKey' in u && matchesBusinessRole(['store_officer'], u.primaryRoleTemplateKey))
       );
     }
 
@@ -325,7 +322,7 @@ service cloud.firestore {
       return ['operation_manager', 'hr_manager', 'hr_officer', 'payroll_officer'];
     }
     function roleGroupStoreRoles() {
-      return ['store_officer', 'store_manager'];
+      return ['store_officer'];
     }
     function roleGroupCommercialReadRoles() {
       return ['sales_manager', 'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer'];
@@ -646,7 +643,7 @@ service cloud.firestore {
       return isEligibleInternalUser()
         && (
           storeStaffIndicatorsOnUserDoc()
-          || hasAnyAssignedRole(['store_officer', 'store_manager'])
+          || hasAnyAssignedRole(['store_officer'])
         );
     }
 
@@ -728,7 +725,7 @@ service cloud.firestore {
       return isEligibleInternalUser()
         && (
           u.department == 'store'
-          || hasAnyAssignedRole(['store_officer', 'store_manager'])
+          || hasAnyAssignedRole(['store_officer'])
         );
     }
 
