@@ -5,6 +5,7 @@
  */
 
 import type { BusinessRoleKey, DeptType, User } from './types';
+import { normalizeBusinessRoleKey } from './role-key-normalizer';
 
 // ---------------------------------------------------------------------------
 // Canonical types
@@ -80,19 +81,8 @@ const LEVEL_RANK: Record<CoreAccessLevel, number> = {
 // Legacy → core (compatibility: prefer union / conservative upgrades, never drop access)
 // ---------------------------------------------------------------------------
 
-const LEGACY_ROLE_ALIASES: Record<string, string> = {
-  finance_officer: 'accounting_officer',
-  safety_officer: 'operations_officer',
-  client: 'client_user',
-  client_viewer: 'client_user',
-  client_approver: 'client_user',
-  customer_viewer: 'client_user',
-  customer_approver: 'client_user',
-};
-
 function aliasLegacyRole(roleKey?: string | null): string | null {
-  if (!roleKey) return null;
-  return LEGACY_ROLE_ALIASES[roleKey] || roleKey;
+  return normalizeBusinessRoleKey(roleKey);
 }
 
 const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
@@ -106,8 +96,6 @@ const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'store_manager',
   'operation_manager',
   'operation_officer',
-  'operations_manager',
-  'operations_officer',
   'accounting_officer',
   'accounting_manager',
   'client_user',
@@ -118,8 +106,6 @@ function normalizeAssignedPrimaryRole(roleKey?: string | null): string | null {
   const aliased = aliasLegacyRole(roleKey);
   if (!aliased) return null;
   if (aliased === 'admin_admin') return 'system_admin';
-  if (aliased === 'operations_manager') return 'operation_manager';
-  if (aliased === 'operations_officer') return 'operation_officer';
   return PRIMARY_ASSIGNED_ROLE_KEYS.has(aliased) ? aliased : null;
 }
 
@@ -132,8 +118,6 @@ export const LEGACY_BUSINESS_ROLE_TO_CORE: Record<
   hr_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
   hr_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
   payroll_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
-  operations_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
-  operations_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
   sales_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
   sales_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
   accounting_manager: { group: 'accounting', level: 'manager', primaryKey: 'accounting_manager' },
@@ -220,8 +204,6 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
     legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_manager' ||
     legacyRole === 'sales_officer' ||
-    legacyRole === 'operations_manager' ||
-    legacyRole === 'operations_officer' ||
     legacyRole === 'operation_officer' ||
     legacyRole === 'operation_manager' ||
     legacyRole === 'store_manager' ||
@@ -257,7 +239,6 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
   if (
     legacyRole === 'hr_manager' ||
     legacyRole === 'sales_manager' ||
-    legacyRole === 'operations_manager' ||
     legacyRole === 'operation_manager' ||
     legacyRole === 'accounting_manager' ||
     legacyRole === 'store_manager'
@@ -269,7 +250,6 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
     legacyRole === 'hr_officer' ||
     legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_officer' ||
-    legacyRole === 'operations_officer' ||
     legacyRole === 'accounting_officer' ||
     legacyRole === 'store_officer' ||
     legacyRole === 'finance_officer'

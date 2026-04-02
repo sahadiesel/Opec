@@ -17,7 +17,6 @@ import {
   Clock,
   Mail,
   AlertTriangle,
-  RefreshCw,
   Building2,
   ShieldAlert,
 } from 'lucide-react';
@@ -52,16 +51,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, writeBatch } from 'firebase/firestore';
+import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { 
-  BUSINESS_ROLES, 
   isAdminUser, 
   getFieldsForBusinessRole,
   deriveBusinessRoleKey,
-  getMigratedUserFields,
   normalizeUserAuthorizationFields,
   assertAtLeastOneOperationalAdminAfterChange,
   isOperationalSystemAdmin,
@@ -78,6 +75,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ACTIVE_BUSINESS_ROLE_KEYS, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 
 /** แปลง baseline partial → โปรไฟล์สำหรับกรองสิทธิ์ / บันทึก user เมื่อยังไม่มี doc ใน Firestore */
 function permissionProfileFromBaseline(p: Partial<PermissionProfile>): PermissionProfile {
@@ -112,6 +110,15 @@ function resolvePermissionProfileForKey(
   return permissionProfileFromBaseline(raw);
 }
 
+function resolvePreferredProfileKeyForUser(user: Partial<User>): string {
+  const roleKey = deriveBusinessRoleKey(user);
+  const current = user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? '';
+  if (roleKey === 'payroll_officer' && (current === '' || current === 'hr_officer')) {
+    return 'payroll_officer';
+  }
+  return current;
+}
+
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
@@ -128,7 +135,6 @@ export default function UsersPage() {
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [isRepairing, setIsRepairing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [listTab, setListTab] = useState<'all' | 'pending'>('pending');
 
@@ -206,8 +212,7 @@ export default function UsersPage() {
     const initialRole = deriveBusinessRoleKey(selectedUser);
     const initialStatus = selectedUser.approvalStatus || (selectedUser.isActive ? 'ACTIVE' : 'PENDING');
     const initialNotes = selectedUser.notes || '';
-    const initialProfileKey =
-      selectedUser.permissionProfileKey ?? selectedUser.permissionProfileKeys?.[0] ?? '';
+    const initialProfileKey = resolvePreferredProfileKeyForUser(selectedUser);
 
     const rolesChanged = editedRole !== initialRole;
     const statusChanged = editedStatus !== initialStatus;
@@ -220,7 +225,7 @@ export default function UsersPage() {
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
     setEditedRole(deriveBusinessRoleKey(user));
-    setEditedProfileKey(user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? '');
+    setEditedProfileKey(resolvePreferredProfileKeyForUser(user));
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
@@ -333,51 +338,6 @@ export default function UsersPage() {
     }
   };
 
-  const handleAutoRepair = async () => {
-    if (!firestore || !users || !currentUser) return;
-    setIsRepairing(true);
-    
-    const batch = writeBatch(firestore);
-    let repairedCount = 0;
-    
-    const baselineProfiles = getBaselineProfiles();
-    const existingProfileKeys = new Set(profiles?.map(p => p.profileKey) || []);
-
-    try {
-      for (const user of users) {
-        const migratedFields = getMigratedUserFields(user);
-        const targetProfileKeys = migratedFields.permissionProfileKeys || [];
-
-        for (const pk of targetProfileKeys) {
-          if (!existingProfileKeys.has(pk)) {
-            const baseline = baselineProfiles.find(p => p.profileKey === pk);
-            if (baseline) {
-              const profileRef = doc(firestore, 'permission_profiles', pk);
-              batch.set(profileRef, {
-                ...baseline,
-                id: pk,
-                updatedAt: Date.now(),
-                updatedBy: currentUser.displayName + ' (Auto-Repair)'
-              }, { merge: true });
-              existingProfileKeys.add(pk);
-            }
-          }
-        }
-
-        const userRef = doc(firestore, 'users', user.id);
-        batch.update(userRef, sanitizeFirestorePayload(migratedFields));
-        repairedCount++;
-      }
-
-      await batch.commit();
-      toast({ title: "Access Repair Complete", description: `Updated ${repairedCount} users.` });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Repair Failed", description: err.message });
-    } finally {
-      setIsRepairing(false);
-    }
-  };
-
   const handleDelete = (id: string) => {
     if (!firestore || !isUserAdmin || !users) return;
     const victim = users.find((u) => u.id === id);
@@ -423,10 +383,6 @@ export default function UsersPage() {
               กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — ผู้ลงทะเบียนผ่านหน้าแรกจะอยู่สถานะ PENDING จนกว่าแอดมินจะอนุมัติที่แท็บ <b>รออนุมัติ</b>
             </p>
           </div>
-          <Button variant="outline" className="gap-2 h-11 border-primary text-primary" onClick={handleAutoRepair} disabled={isRepairing}>
-            {isRepairing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            ซ่อมสิทธิ์อัตโนมัติ (Full Access Repair)
-          </Button>
         </div>
 
         <Tabs value={listTab} onValueChange={(v) => setListTab(v as 'all' | 'pending')} className="space-y-4">
@@ -452,7 +408,7 @@ export default function UsersPage() {
             <AlertTriangle className="h-4 w-4 text-amber-700" />
             <AlertTitle className="text-amber-950">คิวอนุมัติผู้ใช้ใหม่</AlertTitle>
             <AlertDescription className="text-sm">
-              บัญชีสถานะ <b>PENDING</b> (รวมผู้ลงทะเบียนจากหน้าแรก) — กดเมนู ⋮ แล้วเลือก <b>อนุมัติ / กำหนดสิทธิ์</b> จากนั้นเลือกโปรไฟล์หรือบทบาท และตั้งสถานะเป็น <b>ACTIVE</b>
+              บัญชีสถานะ <b>PENDING</b> (รวมผู้ลงทะเบียนจากหน้าแรก) — กดเมนู ⋮ แล้วเลือก <b>แก้ไขสิทธิ์ (Edit Access)</b> จากนั้นเลือกโปรไฟล์หรือบทบาท และตั้งสถานะเป็น <b>ACTIVE</b>
             </AlertDescription>
           </Alert>
         )}
@@ -488,8 +444,9 @@ export default function UsersPage() {
                 <TableBody>
                   {filteredUsers.map((u) => {
                     const rk = deriveBusinessRoleKey(u);
-                    const dept = BUSINESS_ROLES[rk]?.dept;
-                    const pk = u.permissionProfileKey ?? u.permissionProfileKeys?.[0];
+                    const roleMeta = getRoleCatalogEntry(rk);
+                    const dept = roleMeta?.department;
+                    const pk = resolvePreferredProfileKeyForUser(u);
                     
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
@@ -516,7 +473,7 @@ export default function UsersPage() {
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary max-w-[280px] truncate">
-                              {BUSINESS_ROLES[rk]?.labelTh || rk}
+                              {roleMeta ? `${roleMeta.displayNameTh} (${roleMeta.displayNameEn})` : rk}
                             </Badge>
                           )}
                         </TableCell>
@@ -547,7 +504,7 @@ export default function UsersPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => handleEditUser(u)}>
-                                {(u.approvalStatus || 'PENDING') === 'PENDING' ? 'อนุมัติ / กำหนดสิทธิ์' : 'แก้ไขสิทธิ์ (Edit Access)'}
+                                แก้ไขสิทธิ์ (Edit Access)
                               </DropdownMenuItem>
                               {isUserAdmin && (
                                 <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(u.id)}>ลบผู้ใช้ (Delete User)</DropdownMenuItem>
@@ -633,7 +590,7 @@ export default function UsersPage() {
                   </Select>
                   {selectedUser && eligibleProfilesForSelected.length === 0 && (
                     <p className="text-[10px] text-amber-700">
-                      ไม่มีโปรไฟล์ในกลุ่มของผู้ใช้ — สร้างโปรไฟล์ในเมนู Permission Profiles หรือใช้บทบาทด้านล่าง
+                      ไม่มีโปรไฟล์ในกลุ่มของผู้ใช้ — ใช้บทบาทด้านล่าง หรือให้ System Admin เปิดหน้า maintenance เพื่อจัดการโปรไฟล์
                     </p>
                   )}
                 </div>
@@ -654,12 +611,16 @@ export default function UsersPage() {
                       <SelectValue placeholder="เลือกบทบาทหนึ่งรายการ" />
                     </SelectTrigger>
                     <SelectContent className="max-h-[280px]">
-                      {Object.values(BUSINESS_ROLES).map((role) => (
+                      {ACTIVE_BUSINESS_ROLE_KEYS.map((roleKey) => {
+                        const role = getRoleCatalogEntry(roleKey);
+                        if (!role) return null;
+                        return (
                         <SelectItem key={role.key} value={role.key}>
-                          <span className="font-medium">{role.labelTh}</span>
-                          <span className="text-muted-foreground text-xs ml-2">({role.labelEn})</span>
+                          <span className="font-medium">{role.displayNameTh}</span>
+                          <span className="text-muted-foreground text-xs ml-2">({role.displayNameEn})</span>
                         </SelectItem>
-                      ))}
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -681,14 +642,19 @@ export default function UsersPage() {
                       )}
                       <div className="space-y-2">
                         <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">แผนก / ระดับ (จากบทบาทที่เลือก)</p>
+                        {(() => {
+                          const selectedMeta = getRoleCatalogEntry(editedRole || null);
+                          return (
                         <div className="flex flex-wrap gap-1">
                           <Badge variant="outline" className="bg-white capitalize text-[10px] font-black border-blue-200 text-blue-700">
-                            <Building2 className="h-2.5 w-2.5 mr-1" /> {BUSINESS_ROLES[editedRole as BusinessRoleKey]?.dept}
+                            <Building2 className="h-2.5 w-2.5 mr-1" /> {selectedMeta?.department || '—'}
                           </Badge>
                           <Badge variant="secondary" className="text-[10px]">
-                            {BUSINESS_ROLES[editedRole as BusinessRoleKey]?.level}
+                            {selectedMeta?.accessLevel || '—'}
                           </Badge>
                         </div>
+                          );
+                        })()}
                       </div>
                       <Separator className="bg-primary/10" />
                       {!isUserAdmin && (

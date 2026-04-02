@@ -40,7 +40,8 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { isAdminUser, inferDeptAndLevel } from '@/lib/auth-mapping';
+import { deriveBusinessRoleKey, inferDeptAndLevel, isAdminUser } from '@/lib/auth-mapping';
+import { getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
   getPermissions,
   SYSTEM_MODULES,
@@ -103,6 +104,8 @@ export default function PermissionAuditPage() {
     
     return users.map(user => {
       const { dept, level } = inferDeptAndLevel(user);
+      const roleKey = deriveBusinessRoleKey(user);
+      const roleMeta = getRoleCatalogEntry(roleKey);
       const effectiveKey = getEffectivePermissionProfileKey(user);
       const matchedProfiles = effectiveKey
         ? profiles.filter((p) => p.profileKey === effectiveKey)
@@ -114,6 +117,8 @@ export default function PermissionAuditPage() {
           ...user,
           derivedDept: dept,
           derivedLevel: level,
+          roleKey,
+          roleMeta,
           accessGroup,
           effectiveSummary: 'Admin (Bypass)',
           status: 'ok' as const,
@@ -131,7 +136,7 @@ export default function PermissionAuditPage() {
       let effectiveSummary = 'Profile bound';
 
       const criticalBinding = binding.issues.some((i) =>
-        ['no_profile_key', 'profile_not_found', 'group_mismatch', 'role_field_conflict'].includes(i)
+        ['no_profile_key', 'profile_not_found', 'group_mismatch', 'role_field_conflict', 'role_profile_mismatch'].includes(i)
       );
       if (criticalBinding) {
         status = 'error';
@@ -170,6 +175,8 @@ export default function PermissionAuditPage() {
         ...user,
         derivedDept: dept,
         derivedLevel: level,
+        roleKey,
+        roleMeta,
         accessGroup,
         effectiveSummary,
         status,
@@ -314,6 +321,7 @@ export default function PermissionAuditPage() {
                     <TableHeader className="bg-muted/50">
                       <TableRow>
                         <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
+                        <TableHead>บทบาท (Role)</TableHead>
                         <TableHead>กลุ่ม / ระดับ</TableHead>
                         <TableHead>Profile</TableHead>
                         <TableHead>สิทธิ์การเข้าถึงจริง (Effective Access)</TableHead>
@@ -328,6 +336,11 @@ export default function PermissionAuditPage() {
                               <span className="font-bold text-sm text-primary">{u.displayName}</span>
                               <span className="text-[10px] text-muted-foreground">{u.email}</span>
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-[9px] bg-white border-primary/20 text-primary max-w-[280px] truncate">
+                              {u.roleMeta ? `${u.roleMeta.displayNameTh} (${u.roleMeta.displayNameEn})` : u.roleKey}
+                            </Badge>
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-1 items-start">
@@ -514,7 +527,15 @@ export default function PermissionAuditPage() {
                       </SelectTrigger>
                       <SelectContent>
                         {explorerType === 'user' ? (
-                          users?.map(u => <SelectItem key={u.id} value={u.id}>{u.displayName} ({u.email})</SelectItem>)
+                          users?.map(u => {
+                            const roleMeta = getRoleCatalogEntry(deriveBusinessRoleKey(u));
+                            const roleLabel = roleMeta ? roleMeta.displayNameEn : deriveBusinessRoleKey(u);
+                            return (
+                              <SelectItem key={u.id} value={u.id}>
+                                {u.displayName} ({roleLabel})
+                              </SelectItem>
+                            );
+                          })
                         ) : (
                           profiles?.map(p => <SelectItem key={p.id} value={p.id}>{p.profileKey} ({p.profileNameEn})</SelectItem>)
                         )}

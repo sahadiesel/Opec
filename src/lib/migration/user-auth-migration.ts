@@ -21,6 +21,7 @@ import {
 import {
   getBaselineProfiles,
 } from '../permissions';
+import { normalizeBusinessRoleKey } from '../role-key-normalizer';
 import { sanitizeFirestorePayload } from '../utils';
 
 export type CanonicalRoleKey =
@@ -41,8 +42,8 @@ const ADMIN_ROLE_CANDIDATES = [
 const OPERATION_ROLE_CANDIDATES = [
   'hr_manager',
   'hr_officer',
-  'operations_manager',
-  'operations_officer',
+  'operation_manager',
+  'operation_officer',
   'sales_manager',
   'sales_officer',
   'store_manager',
@@ -74,7 +75,7 @@ function hasAnyRole(user: Partial<User>, candidates: readonly string[]): string 
     ...(Array.isArray(user.assignedRoleKeys) ? user.assignedRoleKeys : []),
   ]
     .filter(Boolean)
-    .map((v) => String(v));
+    .map((v) => normalizeBusinessRoleKey(String(v)) || String(v));
 
   for (const c of candidates) {
     if (values.includes(c)) return c;

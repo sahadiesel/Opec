@@ -15,7 +15,9 @@ import {
   PortalRole,
 } from './types';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
+import { normalizeBusinessRoleKey } from './role-key-normalizer';
 import { sanitizeFirestorePayload } from './utils';
+import { ROLE_CATALOG } from './roles/role-catalog';
 
 export interface BusinessRole {
   key: BusinessRoleKey;
@@ -27,164 +29,20 @@ export interface BusinessRole {
   descriptionTh: string;
 }
 
-export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = {
-  system_admin: {
-    key: 'system_admin',
-    labelTh: 'ผู้ดูแลระบบสูงสุด',
-    labelEn: 'System Administrator',
-    dept: 'admin',
-    level: 'admin',
-    canonicalRole: 'system_admin',
-    descriptionTh: 'เข้าถึงและจัดการได้ทุกส่วนของระบบ รวมถึงการตั้งค่าสิทธิ์และความปลอดภัย',
-  },
-  hr_manager: {
-    key: 'hr_manager',
-    labelTh: 'ผู้จัดการฝ่ายบุคคล',
-    labelEn: 'HR Manager',
-    dept: 'hr',
-    level: 'manager',
-    canonicalRole: 'hr_manager',
-    descriptionTh: 'จัดการข้อมูลคนงาน ตำแหน่งงาน และอนุมัติการจ่ายเงินเดือน',
-  },
-  hr_officer: {
-    key: 'hr_officer',
-    labelTh: 'เจ้าหน้าที่ฝ่ายบุคคล',
-    labelEn: 'HR Officer',
-    dept: 'hr',
-    level: 'officer',
-    canonicalRole: 'hr_officer',
-    descriptionTh: 'บันทึกข้อมูลคนงาน เอกสาร และเวลาทำงาน',
-  },
-  payroll_officer: {
-    key: 'payroll_officer',
-    labelTh: 'เจ้าหน้าที่เงินเดือน',
-    labelEn: 'Payroll Officer',
-    dept: 'hr',
-    level: 'officer',
-    canonicalRole: 'payroll_officer',
-    descriptionTh: 'ดำเนินงานเงินเดือนและงานส่งออกจ่ายเงิน',
-  },
-  operations_manager: {
-    key: 'operations_manager',
-    labelTh: 'ผู้จัดการฝ่ายปฏิบัติการ',
-    labelEn: 'Operations Manager',
-    dept: 'operations',
-    level: 'manager',
-    canonicalRole: 'operations_manager',
-    descriptionTh: 'จัดการ waves, assignments และ mobilization',
-  },
-  operations_officer: {
-    key: 'operations_officer',
-    labelTh: 'เจ้าหน้าที่ฝ่ายปฏิบัติการ',
-    labelEn: 'Operations Officer',
-    dept: 'operations',
-    level: 'officer',
-    canonicalRole: 'operations_officer',
-    descriptionTh: 'ดูแลงานปฏิบัติการและการส่งตัว',
-  },
-  accounting_manager: {
-    key: 'accounting_manager',
-    labelTh: 'ผู้จัดการฝ่ายบัญชี',
-    labelEn: 'Accounting Manager',
-    dept: 'accounting',
-    level: 'manager',
-    canonicalRole: 'accounting_manager',
-    descriptionTh: 'จัดการการเงิน บัญชี และอนุมัติการจ่ายเงิน',
-  },
-  accounting_officer: {
-    key: 'accounting_officer',
-    labelTh: 'เจ้าหน้าที่ฝ่ายบัญชี',
-    labelEn: 'Accounting Officer',
-    dept: 'accounting',
-    level: 'officer',
-    canonicalRole: 'accounting_officer',
-    descriptionTh: 'บันทึกรายการบัญชี รับจ่าย และเอกสารการเงิน',
-  },
-  sales_manager: {
-    key: 'sales_manager',
-    labelTh: 'ผู้จัดการฝ่ายขาย',
-    labelEn: 'Sales Manager',
-    dept: 'sales',
-    level: 'manager',
-    canonicalRole: 'sales_manager',
-    descriptionTh: 'บริหารลูกค้า สัญญา และใบเสนอราคา',
-  },
-  sales_officer: {
-    key: 'sales_officer',
-    labelTh: 'เจ้าหน้าที่ฝ่ายขาย',
-    labelEn: 'Sales Officer',
-    dept: 'sales',
-    level: 'officer',
-    canonicalRole: 'sales_officer',
-    descriptionTh: 'ดูแลข้อมูลลูกค้า เอกสารขาย และสัญญาเบื้องต้น',
-  },
-  store_manager: {
-    key: 'store_manager',
-    labelTh: 'ผู้จัดการคลังสินค้า',
-    labelEn: 'Store Manager',
-    dept: 'store',
-    level: 'manager',
-    canonicalRole: 'store_manager',
-    descriptionTh: 'ดูแลคลังอุปกรณ์และการจัดซื้อ',
-  },
-  store_officer: {
-    key: 'store_officer',
-    labelTh: 'เจ้าหน้าที่คลังสินค้า',
-    labelEn: 'Store Officer',
-    dept: 'store',
-    level: 'officer',
-    canonicalRole: 'store_officer',
-    descriptionTh: 'ทำรายการคลังสินค้าและจัดซื้อ',
-  },
-  client_user: {
-    key: 'client_user',
-    labelTh: 'ลูกค้า / ผู้ใช้งานภายนอก',
-    labelEn: 'Client User',
-    dept: 'client',
-    level: 'viewer',
-    canonicalRole: 'client_user',
-    descriptionTh: 'เข้าดูข้อมูลลูกค้าของตนเองและทำรายการใน client portal',
-  },
-  operation_officer: {
-    key: 'operation_officer',
-    labelTh: 'เจ้าหน้าที่ปฏิบัติการ',
-    labelEn: 'Operations Officer',
-    dept: 'operations',
-    level: 'officer',
-    canonicalRole: 'operations_officer',
-    descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
-  },
-  operation_manager: {
-    key: 'operation_manager',
-    labelTh: 'ผู้จัดการปฏิบัติการ',
-    labelEn: 'Operations Manager',
-    dept: 'operations',
-    level: 'manager',
-    canonicalRole: 'operations_manager',
-    descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
-  },
-  admin_admin: {
-    key: 'admin_admin',
-    labelTh: 'ผู้ดูแลระบบ',
-    labelEn: 'System Administrator',
-    dept: 'admin',
-    level: 'admin',
-    canonicalRole: 'system_admin',
-    descriptionTh: 'สิทธิ์สูงสุด',
-  },
-};
-
-export const LEGACY_TO_CANONICAL_MAP: Record<string, BusinessRoleKey> = {
-  finance_officer: 'accounting_officer',
-  client: 'client_user',
-  client_viewer: 'client_user',
-  client_approver: 'client_user',
-  customer_viewer: 'client_user',
-  customer_approver: 'client_user',
-  safety_officer: 'operations_officer',
-  super_admin: 'system_admin',
-  admin: 'system_admin',
-};
+export const BUSINESS_ROLES: Record<BusinessRoleKey, BusinessRole> = Object.fromEntries(
+  Object.entries(ROLE_CATALOG).map(([key, entry]) => [
+    key,
+    {
+      key: entry.key,
+      labelTh: entry.displayNameTh,
+      labelEn: entry.displayNameEn,
+      dept: entry.department,
+      level: entry.accessLevel,
+      canonicalRole: entry.canonicalRole,
+      descriptionTh: entry.descriptionTh,
+    } satisfies BusinessRole,
+  ])
+) as Record<BusinessRoleKey, BusinessRole>;
 
 export const OPERATION_DEFAULT_MODULES = [
   'customers',
@@ -238,8 +96,8 @@ export const ACCOUNTING_DEFAULT_MODULES = [
 ] as const;
 
 function canonicalizeRoleKey(roleKey?: string | null): BusinessRoleKey | null {
-  if (!roleKey) return null;
-  const mapped = LEGACY_TO_CANONICAL_MAP[roleKey] || roleKey;
+  const mapped = normalizeBusinessRoleKey(roleKey);
+  if (!mapped) return null;
   return mapped in BUSINESS_ROLES ? (mapped as BusinessRoleKey) : null;
 }
 
@@ -273,27 +131,15 @@ function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | nul
   if (!u) return null;
   const resolved = canonicalizeRoleKey(u.assignedRoleKey);
   if (resolved === 'admin_admin') return 'system_admin';
-  if (resolved === 'operations_manager') return 'operation_manager';
-  if (resolved === 'operations_officer') return 'operation_officer';
   return resolved;
 }
 
 function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'operation' | 'accounting' | 'client' {
-  if (roleKey === 'system_admin' || roleKey === 'admin_admin') return 'admin';
-  if (roleKey === 'client_user') return 'client';
-
-  if (roleKey === 'accounting_manager' || roleKey === 'accounting_officer') {
-    return 'accounting';
-  }
-
-  return 'operation';
+  return ROLE_CATALOG[roleKey]?.accessGroup ?? 'operation';
 }
 
 function mapBusinessRoleToAccessLevel(roleKey: BusinessRoleKey): 'admin' | 'manager' | 'officer' | 'viewer' {
-  if (roleKey === 'system_admin' || roleKey === 'admin_admin') return 'admin';
-  if (roleKey === 'client_user') return 'viewer';
-  const br = BUSINESS_ROLES[roleKey];
-  return br?.level ?? (roleKey.endsWith('_manager') ? 'manager' : 'officer');
+  return ROLE_CATALOG[roleKey]?.accessLevel ?? 'officer';
 }
 
 function getDefaultAllowedModules(
@@ -373,11 +219,7 @@ export function deriveDataAccess(roleKeys: BusinessRoleKey[]): DataAccessClass {
 }
 
 function getProfileKeyForRole(roleKey: BusinessRoleKey): string {
-  if (roleKey === 'client_user') return 'client_user';
-  if (roleKey === 'admin_admin' || roleKey === 'system_admin') return 'admin_admin';
-  if (roleKey === 'operation_officer' || roleKey === 'operation_manager') return roleKey;
-  const role = BUSINESS_ROLES[roleKey];
-  return role ? `${role.dept}_${role.level}` : roleKey;
+  return ROLE_CATALOG[roleKey]?.permissionProfileKey ?? roleKey;
 }
 
 /**
@@ -415,7 +257,7 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
 
 /** Map repair UI / legacy strings to a canonical BusinessRoleKey. */
 export function resolveRepairRoleKey(raw: string): BusinessRoleKey {
-  const mapped = LEGACY_TO_CANONICAL_MAP[raw] ?? raw;
+  const mapped = normalizeBusinessRoleKey(raw) ?? raw;
   if (mapped in BUSINESS_ROLES) return mapped as BusinessRoleKey;
   return 'hr_officer';
 }

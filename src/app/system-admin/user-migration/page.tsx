@@ -7,65 +7,61 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Database,
-  RefreshCw,
   Play,
-  FileText,
   ShieldAlert,
-  CheckCircle2,
   AlertTriangle,
-  UserX,
   Loader2,
   ArrowLeft,
-  Download,
+  FileText,
 } from 'lucide-react';
 import { useFirestore, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import {
-  runUserAuthMigration,
-  type MigrationReport,
-  type UserMigrationEntry,
-} from '@/lib/migration/user-auth-migration';
+  runOperationRoleKeyMigration,
+  type OperationRoleKeyMigrationReport,
+} from '@/lib/migration/operation-role-key-migration';
+import {
+  runPayrollOfficerProfileNormalization,
+  type PayrollProfileNormalizationReport,
+} from '@/lib/migration/payroll-officer-profile-normalization';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
-import { Checkbox } from '@/components/ui/checkbox';
 
 export default function UserMigrationPage() {
   const firestore = useFirestore();
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const { user: firebaseUser } = useUser();
+  useUser();
   const { toast } = useToast();
 
   const [isRunning, setIsRunning] = useState(false);
-  const [report, setReport] = useState<MigrationReport | null>(null);
-  const [dryRun, setDryRun] = useState(true);
-  const [skipNeedsReview, setSkipNeedsReview] = useState(true);
+  const [roleKeyReport, setRoleKeyReport] = useState<OperationRoleKeyMigrationReport | null>(null);
+  const [isPayrollNormalizationRunning, setIsPayrollNormalizationRunning] = useState(false);
+  const [payrollNormalizationReport, setPayrollNormalizationReport] = useState<PayrollProfileNormalizationReport | null>(null);
 
   const canRun = firestore && currentUser && isSystemAdmin(currentUser);
 
-  const handleRun = async (apply: boolean) => {
+  const handleRoleKeyMigration = async (apply: boolean) => {
     if (!firestore || !currentUser?.id) return;
     if (!isSystemAdmin(currentUser)) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะผู้ดูแลระบบเท่านั้น' });
       return;
     }
-
     setIsRunning(true);
-    setReport(null);
+    setRoleKeyReport(null);
     try {
-      const r = await runUserAuthMigration(firestore, {
+      const r = await runOperationRoleKeyMigration(firestore, {
         actorUid: currentUser.id,
-        dryRun: apply ? false : true,
-        skipNeedsReview,
+        dryRun: !apply,
       });
-      setReport(r);
+      setRoleKeyReport(r);
       toast({
-        title: apply ? 'Migration เสร็จสิ้น' : 'Dry Run เสร็จสิ้น',
+        title: apply ? 'Role-key migration เสร็จสิ้น' : 'Role-key dry run เสร็จสิ้น',
         description: apply
-          ? `อัปเดต ${r.usersPatched} ผู้ใช้, สร้าง ${r.profilesCreated.length} โปรไฟล์`
-          : `จะอัปเดต ${r.usersPatched} ผู้ใช้ (ยังไม่ได้เขียน)`,
+          ? `users patched ${r.usersPatched}, profiles patched ${r.profilesPatched}, cloned ${r.profilesCloned}`
+          : `จะ patch users ${r.usersPatched}, profiles ${r.profilesPatched}`,
       });
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Error', description: e.message });
@@ -74,37 +70,31 @@ export default function UserMigrationPage() {
     }
   };
 
-  const handleDownloadReport = () => {
-    if (!report) return;
-    const lines = [
-      `# User Auth Migration Report`,
-      `Timestamp: ${new Date(report.timestamp).toISOString()}`,
-      `Actor: ${report.actorUid}`,
-      `Dry Run: ${report.dryRun}`,
-      ``,
-      `## Summary`,
-      `- Users processed: ${report.usersProcessed}`,
-      `- Users patched: ${report.usersPatched}`,
-      `- Users skipped: ${report.usersSkipped}`,
-      `- Needs review: ${report.usersNeedsReview}`,
-      `- Conflicts: ${report.usersConflict}`,
-      `- Profiles created: ${report.profilesCreated.join(', ') || 'none'}`,
-      ``,
-      `## Entries`,
-      `| User | Email | Legacy | Mapped | Confidence | Conflict | Applied |`,
-      `|------|-------|--------|--------|------------|----------|---------|`,
-      ...report.entries.map(
-        (e) =>
-          `| ${e.displayName} | ${e.email} | ${e.legacyRole || e.legacyDepartment || '-'} | ${e.mappedCanonical} | ${e.confidence} | ${e.hasConflict ? 'Yes' : ''} | ${e.patchApplied ? 'Yes' : ''} |`
-      ),
-    ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `migration-report-${report.timestamp}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handlePayrollProfileNormalization = async (apply: boolean) => {
+    if (!firestore || !currentUser?.id) return;
+    if (!isSystemAdmin(currentUser)) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะผู้ดูแลระบบเท่านั้น' });
+      return;
+    }
+    setIsPayrollNormalizationRunning(true);
+    setPayrollNormalizationReport(null);
+    try {
+      const r = await runPayrollOfficerProfileNormalization(firestore, {
+        actorUid: currentUser.id,
+        dryRun: !apply,
+      });
+      setPayrollNormalizationReport(r);
+      toast({
+        title: apply ? 'Payroll profile normalization เสร็จสิ้น' : 'Payroll profile dry run เสร็จสิ้น',
+        description: apply
+          ? `users patched ${r.usersPatched}, profiles patched ${r.profilesPatched}`
+          : `จะ patch users ${r.usersPatched}, profiles ${r.profilesPatched}`,
+      });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message });
+    } finally {
+      setIsPayrollNormalizationRunning(false);
+    }
   };
 
   if (userLoading || !currentUser) {
@@ -135,10 +125,10 @@ export default function UserMigrationPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Database className="h-7 w-7" /> Migration สิทธิ์ผู้ใช้ (User Auth)
+              <Database className="h-7 w-7" /> Migration สิทธิ์ผู้ใช้ (Maintenance Only)
             </h1>
             <p className="text-muted-foreground text-sm mt-1">
-              Backfill departmentGroup, accessLevel, assignedRoleKey, permissionProfileKey จาก legacy
+              เครื่องมือนี้เป็นงานบำรุงรักษาชั่วคราวสำหรับ System Admin เท่านั้น ไม่ใช่ flow จัดการผู้ใช้ประจำวัน
             </p>
           </div>
           <Button variant="ghost" size="icon" asChild>
@@ -152,169 +142,220 @@ export default function UserMigrationPage() {
           <AlertTriangle className="h-5 w-5 text-amber-600" />
           <AlertTitle className="font-bold text-amber-800">คำเตือน</AlertTitle>
           <AlertDescription className="text-amber-700 text-sm">
-            Migration จะ <strong>เพิ่ม</strong> fields ใหม่เท่านั้น ไม่ลบข้อมูลเก่า
-            ผู้ใช้ที่ข้อมูลไม่ชัดจะถูก mark เป็น needs_review แทนการเดาสุ่ม
+            หน้านี้ทำงานเฉพาะการแปลง role key แบบ exact-match จาก plural เป็น singular เท่านั้น
+            และจะไม่ reclassify role อื่น
           </AlertDescription>
         </Alert>
 
         <Card>
           <CardHeader>
-            <CardTitle>ตัวเลือก</CardTitle>
+            <CardTitle>Operation Role Key Canonicalization</CardTitle>
             <CardDescription>
-              Dry Run = ดูผลลัพธ์โดยไม่เขียน Firestore
-              Apply = เขียนการเปลี่ยนแปลงจริง
+              This tool only converts legacy plural operation role keys to canonical singular keys. It does not reclassify roles.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox checked={dryRun} onCheckedChange={(v) => setDryRun(!!v)} />
-                <span>Dry Run (แนะนำก่อน apply จริง)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <Checkbox checked={skipNeedsReview} onCheckedChange={(v) => setSkipNeedsReview(!!v)} />
-                <span>ข้ามผู้ใช้ที่ needs_review (ไม่ patch)</span>
-              </label>
-            </div>
+            <Alert className="bg-blue-50 border-blue-200">
+              <ShieldAlert className="h-5 w-5 text-blue-600" />
+              <AlertTitle className="font-bold text-blue-800">Recommended execution order</AlertTitle>
+              <AlertDescription className="text-blue-700 text-sm">
+                This migration only canonicalizes the two operation plural keys and does not reclassify any other role.
+                <br />
+                1) Deploy code/rules with temporary normalization
+                <br />
+                2) Run dry run here, then apply migration
+                <br />
+                3) Verify users/permission_profiles and custom-claim sync input fields
+                <br />
+                4) Remove temporary legacy compatibility later
+              </AlertDescription>
+            </Alert>
             <div className="flex gap-2">
               <Button
-                onClick={() => handleRun(false)}
+                onClick={() => handleRoleKeyMigration(false)}
                 disabled={!canRun || isRunning}
                 variant="outline"
                 className="gap-2"
               >
                 {isRunning ? <Loader2 className="animate-spin h-4 w-4" /> : <FileText className="h-4 w-4" />}
-                Dry Run
+                Role-Key Dry Run
               </Button>
               <Button
-                onClick={() => handleRun(true)}
+                onClick={() => handleRoleKeyMigration(true)}
                 disabled={!canRun || isRunning}
                 className="gap-2 bg-primary"
               >
                 {isRunning ? <Loader2 className="animate-spin h-4 w-4" /> : <Play className="h-4 w-4" />}
-                Apply Migration
+                Apply Role-Key Migration
               </Button>
             </div>
-          </CardContent>
-        </Card>
-
-        {report && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>รายงาน Migration</CardTitle>
-                <CardDescription>
-                  {report.dryRun ? 'Dry Run — ไม่มีการเขียน' : 'มีการอัปเดต Firestore'}
-                </CardDescription>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleDownloadReport} className="gap-2">
-                <Download className="h-4 w-4" /> ดาวน์โหลด
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-sm">
+            {roleKeyReport && (
+              <div className="grid grid-cols-2 md:grid-cols-7 gap-2 text-sm">
                 <div className="p-3 rounded bg-muted">
-                  <div className="font-bold">{report.usersProcessed}</div>
-                  <div className="text-muted-foreground text-xs">Processed</div>
+                  <div className="font-bold">{roleKeyReport.usersProcessed}</div>
+                  <div className="text-muted-foreground text-xs">Users Processed</div>
                 </div>
                 <div className="p-3 rounded bg-green-100">
-                  <div className="font-bold">{report.usersPatched}</div>
-                  <div className="text-muted-foreground text-xs">Patched</div>
+                  <div className="font-bold">{roleKeyReport.usersPatched}</div>
+                  <div className="text-muted-foreground text-xs">Users Patched</div>
                 </div>
                 <div className="p-3 rounded bg-muted">
-                  <div className="font-bold">{report.usersSkipped}</div>
-                  <div className="text-muted-foreground text-xs">Skipped</div>
+                  <div className="font-bold">{roleKeyReport.usersSkipped}</div>
+                  <div className="text-muted-foreground text-xs">Users Skipped</div>
+                </div>
+                <div className="p-3 rounded bg-muted">
+                  <div className="font-bold">{roleKeyReport.profilesProcessed}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Processed</div>
                 </div>
                 <div className="p-3 rounded bg-amber-100">
-                  <div className="font-bold">{report.usersNeedsReview}</div>
-                  <div className="text-muted-foreground text-xs">Needs Review</div>
-                </div>
-                <div className="p-3 rounded bg-red-100">
-                  <div className="font-bold">{report.usersConflict}</div>
-                  <div className="text-muted-foreground text-xs">Conflict</div>
+                  <div className="font-bold">{roleKeyReport.profilesPatched}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Patched</div>
                 </div>
                 <div className="p-3 rounded bg-blue-100">
-                  <div className="font-bold">{report.profilesCreated.length}</div>
-                  <div className="text-muted-foreground text-xs">Profiles Created</div>
+                  <div className="font-bold">{roleKeyReport.profilesCloned}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Cloned</div>
+                </div>
+                <div className="p-3 rounded bg-muted">
+                  <div className="font-bold">{roleKeyReport.profilesSkipped}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Skipped</div>
                 </div>
               </div>
-
-              {report.profilesCreated.length > 0 && (
-                <div>
-                  <div className="text-sm font-bold mb-1">Profiles ที่สร้างใหม่:</div>
-                  <div className="flex flex-wrap gap-1">
-                    {report.profilesCreated.map((k) => (
-                      <Badge key={k} variant="secondary">
-                        {k}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {report.errors.length > 0 && (
-                <Alert variant="destructive">
-                  <AlertTriangle />
-                  <AlertTitle>Errors</AlertTitle>
-                  <AlertDescription>
-                    <ul className="list-disc pl-4">
-                      {report.errors.map((e, i) => (
-                        <li key={i}>{e}</li>
-                      ))}
-                    </ul>
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              <div className="border rounded overflow-x-auto max-h-[400px] overflow-y-auto">
+            )}
+            {roleKeyReport && (
+              <div className="border rounded overflow-x-auto max-h-[320px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>User</TableHead>
-                      <TableHead>Legacy</TableHead>
+                      <TableHead>Collection</TableHead>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Legacy Plural</TableHead>
                       <TableHead>Mapped</TableHead>
-                      <TableHead>Confidence</TableHead>
-                      <TableHead>Conflict</TableHead>
-                      <TableHead>Applied</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Updated Fields</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {report.entries.map((e) => (
-                      <TableRow key={e.userId}>
+                    {roleKeyReport.entries.map((e, idx) => (
+                      <TableRow key={`${e.collection}-${e.documentId}-${idx}`}>
+                        <TableCell>{e.collection}</TableCell>
+                        <TableCell className="font-mono text-xs">{e.documentId}</TableCell>
                         <TableCell>
-                          <div className="font-medium">{e.displayName || e.email}</div>
-                          <div className="text-xs text-muted-foreground">{e.email}</div>
+                          {e.legacyValues.length > 0 ? e.legacyValues.join(', ') : '—'}
                         </TableCell>
                         <TableCell>
-                          {e.legacyRole || e.legacyDepartment || '-'}
-                          {e.legacyLevel && ` / ${e.legacyLevel}`}
+                          {e.mappedValues.length > 0 ? e.mappedValues.join(', ') : '—'}
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{e.mappedCanonical}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              e.confidence === 'needs_review'
-                                ? 'destructive'
-                                : e.confidence === 'high'
-                                  ? 'default'
-                                  : 'secondary'
-                            }
-                          >
-                            {e.confidence}
+                          <Badge variant={e.status === 'patched' ? 'default' : 'secondary'}>
+                            {e.status}
                           </Badge>
                         </TableCell>
-                        <TableCell>{e.hasConflict ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : '-'}</TableCell>
-                        <TableCell>{e.patchApplied ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : '-'}</TableCell>
+                        <TableCell>
+                          {e.updatedFields.length > 0 ? e.updatedFields.join(', ') : '—'}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Payroll Role/Profile Normalization (Maintenance Only)</CardTitle>
+            <CardDescription>
+              This tool only fixes the exact mismatch: assignedRoleKey = payroll_officer but permissionProfileKey = hr_officer.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Alert className="bg-blue-50 border-blue-200">
+              <ShieldAlert className="h-5 w-5 text-blue-600" />
+              <AlertTitle className="font-bold text-blue-800">Scope is intentionally narrow</AlertTitle>
+              <AlertDescription className="text-blue-700 text-sm">
+                Detect and patch only payroll-role/profile mismatch records. No unrelated role remapping.
+                <br />
+                Also ensures permission profile <code>payroll_officer</code> exists and template key is canonical.
+              </AlertDescription>
+            </Alert>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => handlePayrollProfileNormalization(false)}
+                disabled={!canRun || isPayrollNormalizationRunning}
+                variant="outline"
+                className="gap-2"
+              >
+                {isPayrollNormalizationRunning ? <Loader2 className="animate-spin h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                Payroll Profile Dry Run
+              </Button>
+              <Button
+                onClick={() => handlePayrollProfileNormalization(true)}
+                disabled={!canRun || isPayrollNormalizationRunning}
+                className="gap-2 bg-primary"
+              >
+                {isPayrollNormalizationRunning ? <Loader2 className="animate-spin h-4 w-4" /> : <Play className="h-4 w-4" />}
+                Apply Payroll Profile Normalization
+              </Button>
+            </div>
+            {payrollNormalizationReport && (
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-sm">
+                <div className="p-3 rounded bg-muted">
+                  <div className="font-bold">{payrollNormalizationReport.usersProcessed}</div>
+                  <div className="text-muted-foreground text-xs">Users Processed</div>
+                </div>
+                <div className="p-3 rounded bg-green-100">
+                  <div className="font-bold">{payrollNormalizationReport.usersPatched}</div>
+                  <div className="text-muted-foreground text-xs">Users Patched</div>
+                </div>
+                <div className="p-3 rounded bg-muted">
+                  <div className="font-bold">{payrollNormalizationReport.usersSkipped}</div>
+                  <div className="text-muted-foreground text-xs">Users Skipped</div>
+                </div>
+                <div className="p-3 rounded bg-muted">
+                  <div className="font-bold">{payrollNormalizationReport.profilesProcessed}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Processed</div>
+                </div>
+                <div className="p-3 rounded bg-amber-100">
+                  <div className="font-bold">{payrollNormalizationReport.profilesPatched}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Patched</div>
+                </div>
+                <div className="p-3 rounded bg-muted">
+                  <div className="font-bold">{payrollNormalizationReport.profilesSkipped}</div>
+                  <div className="text-muted-foreground text-xs">Profiles Skipped</div>
+                </div>
+              </div>
+            )}
+            {payrollNormalizationReport && (
+              <div className="border rounded overflow-x-auto max-h-[320px] overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Collection</TableHead>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Updated Fields</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {payrollNormalizationReport.entries.map((e, idx) => (
+                      <TableRow key={`${e.collection}-${e.documentId}-${idx}`}>
+                        <TableCell>{e.collection}</TableCell>
+                        <TableCell className="font-mono text-xs">{e.documentId}</TableCell>
+                        <TableCell>
+                          <Badge variant={e.status === 'patched' ? 'default' : 'secondary'}>{e.status}</Badge>
+                        </TableCell>
+                        <TableCell>{e.reason}</TableCell>
+                        <TableCell>{e.updatedFields.length > 0 ? e.updatedFields.join(', ') : '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </AppShell>
   );

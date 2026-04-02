@@ -58,6 +58,7 @@ import {
   getProfileDepartmentGroup,
   isAccessLevelAllowedForGroup,
 } from '@/lib/permissions';
+import { getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 
 const DEPARTMENT_GROUPS: { id: DepartmentGroup; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหารระบบ)' },
@@ -241,10 +242,10 @@ export default function PermissionProfilesPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <LockKeyhole className="h-8 w-8 text-primary" /> จัดการสิทธิ์การใช้งาน (Permission Profiles)
+              <LockKeyhole className="h-8 w-8 text-primary" /> ตั้งค่าโปรไฟล์สิทธิ์ (Maintenance Only)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดโปรไฟล์การเข้าถึงโมดูลต่าง ๆ ตามกลุ่มองค์กร (departmentGroup) และระดับสิทธิ์ (accessLevel)
+              หน้านี้เป็นการตั้งค่าระดับระบบสำหรับ System Admin เท่านั้น ไม่ใช่จุดปฏิบัติงานจัดการสิทธิ์ผู้ใช้รายวัน
             </p>
           </div>
           <div className="flex gap-2">
@@ -270,6 +271,7 @@ export default function PermissionProfilesPage() {
                     <TableHeader className="bg-muted/50">
                       <TableRow>
                         <TableHead className="pl-6 py-4">Profile Key</TableHead>
+                        <TableHead>Canonical Role</TableHead>
                         <TableHead>ชื่อโปรไฟล์ (TH/EN)</TableHead>
                         <TableHead>กลุ่ม / ระดับ</TableHead>
                         <TableHead>สถานะ</TableHead>
@@ -278,9 +280,20 @@ export default function PermissionProfilesPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {profiles?.map((p) => (
+                      {profiles?.map((p) => {
+                        const roleKey = deriveBusinessRoleKeyFromPermissionProfile(p);
+                        const roleMeta = getRoleCatalogEntry(roleKey);
+                        return (
                         <TableRow key={p.id} className="hover:bg-muted/30 transition-all group">
                           <TableCell className="py-4 pl-6 font-mono text-xs font-bold text-primary">{p.profileKey}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <Badge variant="outline" className="text-[9px] bg-white border-primary/20 text-primary w-fit">
+                                {roleMeta ? `${roleMeta.displayNameTh} (${roleMeta.displayNameEn})` : roleKey}
+                              </Badge>
+                              <span className="text-[9px] text-muted-foreground font-mono">{roleKey}</span>
+                            </div>
+                          </TableCell>
                           <TableCell>
                             <div className="flex flex-col">
                               <span className="font-bold text-sm text-primary">{p.profileNameEn}</span>
@@ -310,7 +323,8 @@ export default function PermissionProfilesPage() {
                             </Button>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}
@@ -397,6 +411,21 @@ export default function PermissionProfilesPage() {
                     <p className="text-[10px] text-muted-foreground">
                       ค่า legacy <code className="font-mono">department</code> จะถูกเติมอัตโนมัติเมื่อบันทึก (รองรับข้อมูลเก่า)
                     </p>
+                    {(() => {
+                      const previewRoleKey = deriveBusinessRoleKeyFromPermissionProfile(formData as PermissionProfile);
+                      const previewRoleMeta = getRoleCatalogEntry(previewRoleKey);
+                      return (
+                        <div className="rounded border bg-white p-2 text-[10px]">
+                          <p className="font-bold text-muted-foreground">Canonical Role Preview</p>
+                          <p className="text-primary">
+                            {previewRoleMeta
+                              ? `${previewRoleMeta.displayNameTh} (${previewRoleMeta.displayNameEn})`
+                              : previewRoleKey}
+                          </p>
+                          <p className="text-muted-foreground font-mono">{previewRoleKey}</p>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="space-y-2">

@@ -7,13 +7,12 @@ import { SidebarNav } from './sidebar-nav';
 import { User } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { LogOut, Shield, AlertTriangle, Info, Settings2, Building2 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useAuth } from '@/firebase';
+import { LogOut, Shield, Building2 } from 'lucide-react';
+import { useFirestore, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { usePermissionProfiles } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
 import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
-import { isSystemAdmin } from '@/lib/permission-core';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -27,7 +26,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -40,16 +38,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const auth = useAuth();
   const router = useRouter();
 
-  const { profiles, isLoading: isProfilesLoading } = usePermissionProfiles(user);
-
-  const profileKeys = React.useMemo(() => {
-    if (!user) return [] as string[];
-    const keys = user.permissionProfileKeys || [];
-    if (user.permissionProfileKey && !keys.includes(user.permissionProfileKey)) {
-      return [...keys, user.permissionProfileKey];
-    }
-    return keys;
-  }, [user]);
+  const { profiles } = usePermissionProfiles(user);
 
   const handleLogout = async () => {
     if (user && firestore) {
@@ -77,11 +66,6 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   const dept = getEffectiveDepartment(user);
   const level = getEffectiveLevel(user);
-  const isAdmin = isSystemAdmin(user);
-  
-  const isLegacy = !user.permissionProfileKeys || user.permissionProfileKeys.length === 0;
-  const isProfileMissing = profileKeys.length > 0 && !isProfilesLoading && (!profiles || profiles.length === 0);
-  const isContextMissing = !user.department || !user.level;
 
   // Primary profile identification for simple display
   const primaryProfile = profiles?.find(p => p.profileKey === user.permissionProfileKey) || profiles?.[0];
@@ -104,39 +88,6 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             </div>
             
             <div className="flex items-center gap-4">
-              {/* Discrete System Admin Utilities */}
-              {isAdmin && (
-                <div className="flex items-center gap-2 mr-2">
-                  {(isLegacy || isProfileMissing || isContextMissing) && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-amber-600 hover:bg-amber-50"
-                            onClick={() => router.push('/system-admin/permission-audit')}
-                          >
-                            <Settings2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-[300px]">
-                          <div className="space-y-2 p-1">
-                            <p className="font-bold text-xs flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> System Migration Status</p>
-                            <div className="text-[10px] space-y-1">
-                              {isLegacy && <p>• บัญชีนี้ใช้สิทธิ์รูปแบบเดิม (Legacy Mode)</p>}
-                              {isProfileMissing && <p>• ไม่พบเอกสาร Profile Matrix ในฐานข้อมูล</p>}
-                              {isContextMissing && <p>• ข้อมูลแผนกหรือระดับไม่สมบูรณ์</p>}
-                            </div>
-                            <p className="text-[9px] text-muted-foreground italic border-t pt-1 mt-1">คลิกเพื่อไปยังหน้าตรวจสอบสิทธิ์</p>
-                          </div>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                </div>
-              )}
-
               <div className="hidden md:flex flex-col items-end max-w-[250px]">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-black truncate text-primary">{user.displayName}</span>

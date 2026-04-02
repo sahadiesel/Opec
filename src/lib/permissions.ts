@@ -399,7 +399,6 @@ const VIEWER_NO_APPROVE: ModulePermission = {
 type RoleMatrixKey =
   | 'sales_manager'
   | 'operation_manager'
-  | 'operations_manager'
   | 'hr_manager'
   | 'hr_officer'
   | 'store_officer'
@@ -438,31 +437,6 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     office_staff: P_NONE,
   },
   operation_manager: {
-    overview_dashboard: P_VIEW,
-    positions: P_FULL_NO_APPROVE,
-    vendors: P_FULL_NO_APPROVE,
-    customers: P_VCE,
-    main_contracts: P_NONE,
-    customer_pos: P_NONE,
-    sales_contract_terms: P_NONE,
-    rate_conditions: P_NONE,
-    profit_estimates: P_NONE,
-    waves: P_FULL_NO_APPROVE,
-    assignments: P_FULL_NO_APPROVE,
-    mobilization: P_FULL_NO_APPROVE,
-    hr_hub: P_VCE,
-    timesheets: P_FULL_NO_APPROVE,
-    workers: P_FULL_NO_APPROVE,
-    worker_payroll: P_VCE,
-    purchases: P_FULL_NO_APPROVE,
-    store_inventory: P_FULL_NO_APPROVE,
-    labor_cost_contract_terms: P_VCE,
-    quotations: P_VCE,
-    payment_export_batches: P_VCE,
-    office_payroll: P_NONE,
-    office_staff: P_NONE,
-  },
-  operations_manager: {
     overview_dashboard: P_VIEW,
     positions: P_FULL_NO_APPROVE,
     vendors: P_FULL_NO_APPROVE,
@@ -605,7 +579,7 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
 
 /**
  * ชุดเมนูตามบทบาท (กลุ่ม Operation — แผนกขาย / บุคคล / ปฏิบัติการ / คลัง)
- * hr_manager = ทุกแผนก; sales_manager = ขาย+ปฏิบัติการ; operation(s)_manager = ปฏิบัติการ+บุคคล;
+ * hr_manager = ทุกแผนก; sales_manager = ขาย+ปฏิบัติการ; operation_manager = ปฏิบัติการ+บุคคล;
  * hr_officer = บุคคลทั้งหมด; store_* = คลัง+จัดซื้อ
  */
 function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleKey> {
@@ -618,7 +592,7 @@ function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleK
   if (primaryRole === 'sales_manager') {
     return new Set<ModuleKey>([...SALES_MODULES, ...OPERATIONS_MODULES]);
   }
-  if (primaryRole === 'operations_manager' || primaryRole === 'operation_manager') {
+  if (primaryRole === 'operation_manager') {
     return new Set<ModuleKey>([...OPERATIONS_MODULES, ...HR_MODULES]);
   }
   if (primaryRole === 'hr_officer' || primaryRole === 'payroll_officer') {
@@ -631,7 +605,6 @@ function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleK
     return new Set<ModuleKey>(SALES_MODULES);
   }
   if (
-    primaryRole === 'operations_officer' ||
     primaryRole === 'operation_officer'
   ) {
     return new Set<ModuleKey>(OPERATIONS_MODULES);
@@ -644,7 +617,6 @@ function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleK
 function operationManagerMayOfficePayroll(primaryRole: string | null): boolean {
   return (
     primaryRole === 'hr_manager' ||
-    primaryRole === 'operations_manager' ||
     primaryRole === 'operation_manager'
   );
 }
@@ -697,6 +669,15 @@ const ACCOUNTING_GROUP_MODULES = new Set<ModuleKey>([
   ...OPERATIONS_MODULES, // Added waves, assignments, mobilization for Accounting visibility
 ]);
 
+const PAYROLL_OFFICER_BASELINE_MODULES: readonly ModuleKey[] = [
+  'worker_payroll',
+  'payment_export_batches',
+  'timesheets',
+  'workers',
+  'office_staff',
+  'positions',
+];
+
 function buildPermissionMap(
   allowedKeys: readonly ModuleKey[],
   access: ModulePermission
@@ -717,6 +698,11 @@ function buildPermissionMap(
 /** HR Officer baseline: แผนกบุคคลทั้งหมด — officer ไม่ approve */
 function buildHrOfficerPermissionMap(): Record<string, ModulePermission> {
   return buildPermissionMap(HR_MODULES, OFFICER_NO_APPROVE);
+}
+
+/** Payroll Officer baseline: เน้นงานเงินเดือน/ส่งออก + อ่านข้อมูลต้นทางที่เกี่ยวข้อง */
+function buildPayrollOfficerPermissionMap(): Record<string, ModulePermission> {
+  return buildPermissionMap(PAYROLL_OFFICER_BASELINE_MODULES, OFFICER_NO_APPROVE);
 }
 
 /**
@@ -1097,9 +1083,20 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       isActive: true,
       permissions: buildHrOfficerPermissionMap(),
     },
+    {
+      profileKey: 'payroll_officer',
+      profileNameEn: 'Payroll Officer',
+      profileNameTh: 'เจ้าหน้าที่เงินเดือน',
+      departmentGroup: legacyDeptToDepartmentGroup('hr'),
+      primaryRoleTemplateKey: 'payroll_officer',
+      department: 'hr',
+      level: 'officer',
+      isActive: true,
+      permissions: buildPayrollOfficerPermissionMap(),
+    },
 
     {
-      profileKey: 'operations_manager',
+      profileKey: 'operation_manager',
       profileNameEn: 'Operations Manager',
       profileNameTh: 'ผู้จัดการฝ่ายปฏิบัติการ',
       departmentGroup: 'operation',
@@ -1110,7 +1107,7 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       permissions: buildPermissionMap([...OPERATIONS_MODULES, ...HR_MODULES], FULL_ACCESS),
     },
     {
-      profileKey: 'operations_officer',
+      profileKey: 'operation_officer',
       profileNameEn: 'Operations Officer',
       profileNameTh: 'เจ้าหน้าที่ฝ่ายปฏิบัติการ',
       departmentGroup: 'operation',

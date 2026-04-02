@@ -93,14 +93,14 @@ service cloud.firestore {
       );
     }
 
-    function hasRoleAliasOverlap(roles, candidates) {
+    function listHasAnyNormalizedRole(roles, candidates) {
       return candidates != null && candidates is list && (
-        (roles.hasAny(['system_admin', 'admin_admin'])
-          && candidates.hasAny(['system_admin', 'admin_admin']))
-        || (roles.hasAny(['operation_manager', 'operations_manager'])
-          && candidates.hasAny(['operation_manager', 'operations_manager']))
-        || (roles.hasAny(['operation_officer', 'operations_officer'])
-          && candidates.hasAny(['operation_officer', 'operations_officer']))
+        (candidates.size() > 0 && matchesBusinessRole(roles, candidates[0]))
+        || (candidates.size() > 1 && matchesBusinessRole(roles, candidates[1]))
+        || (candidates.size() > 2 && matchesBusinessRole(roles, candidates[2]))
+        || (candidates.size() > 3 && matchesBusinessRole(roles, candidates[3]))
+        || (candidates.size() > 4 && matchesBusinessRole(roles, candidates[4]))
+        || (candidates.size() > 5 && matchesBusinessRole(roles, candidates[5]))
       );
     }
 
@@ -230,13 +230,13 @@ service cloud.firestore {
       return u != null && (
         matchesBusinessRole(roles, assignedRoleKey())
         || (u.assignedRoleKeys != null && u.assignedRoleKeys is list
-          && (u.assignedRoleKeys.hasAny(roles) || hasRoleAliasOverlap(roles, u.assignedRoleKeys)))
+          && listHasAnyNormalizedRole(roles, u.assignedRoleKeys))
         || matchesBusinessRole(roles, u.roleId)
         || (u.roleIds != null && u.roleIds is list
-          && (u.roleIds.hasAny(roles) || hasRoleAliasOverlap(roles, u.roleIds)))
+          && listHasAnyNormalizedRole(roles, u.roleIds))
         || matchesBusinessRole(roles, u.permissionProfileKey)
         || (u.permissionProfileKeys != null && u.permissionProfileKeys is list
-          && (u.permissionProfileKeys.hasAny(roles) || hasRoleAliasOverlap(roles, u.permissionProfileKeys)))
+          && listHasAnyNormalizedRole(roles, u.permissionProfileKeys))
         || ('primaryRoleTemplateKey' in u && matchesBusinessRole(roles, u.primaryRoleTemplateKey))
         || (!hasExplicitRoleBindingOnUserDoc() && matchesBusinessRole(roles, inferredLegacyRoleFromUserDoc()))
       );
@@ -285,7 +285,7 @@ service cloud.firestore {
     function hasOperationHrPayrollRole() {
       return hasAnyAssignedRole([
         'hr_manager', 'hr_officer', 'payroll_officer',
-        'operations_manager', 'operation_manager',
+        'operation_manager',
       ]);
     }
 
@@ -316,35 +316,35 @@ service cloud.firestore {
     }
 
     function isOpsManagerRole() {
-      return hasAnyRole(['operations_manager', 'operation_manager']);
+      return hasAnyRole(['operation_manager']);
     }
 
     function canViewPositionsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'sales_manager', 'hr_manager', 'hr_officer',
         'store_officer', 'accounting_manager',
       ]);
     }
     function canCreatePositionsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'sales_manager', 'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
     function canEditPositionsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
     function canDeletePositionsByRole() {
-      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager']);
+      return hasAnyRole(['operation_manager', 'hr_manager']);
     }
 
     function canViewVendorsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'sales_manager', 'hr_manager', 'store_officer', 'accounting_manager',
       ]);
     }
@@ -360,7 +360,7 @@ service cloud.firestore {
 
     function canViewCustomersByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'sales_manager', 'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
@@ -392,7 +392,7 @@ service cloud.firestore {
 
     function canViewQuotationsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
       ]);
     }
@@ -408,13 +408,13 @@ service cloud.firestore {
 
     function canViewOpsExecutionByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
       ]);
     }
     function canCreateOpsExecutionByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
@@ -422,24 +422,24 @@ service cloud.firestore {
       return canCreateOpsExecutionByRole();
     }
     function canDeleteOpsExecutionByRole() {
-      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'accounting_manager']);
+      return hasAnyRole(['operation_manager', 'hr_manager', 'accounting_manager']);
     }
 
     function canViewWorkersByRoleMatrix() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'payroll_officer',
         'accounting_manager', 'accounting_officer',
       ]);
     }
     function canCreateWorkersByRoleMatrix() {
-      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'hr_officer', 'accounting_manager']);
+      return hasAnyRole(['operation_manager', 'hr_manager', 'hr_officer', 'accounting_manager']);
     }
     function canEditWorkersByRoleMatrix() {
       return canCreateWorkersByRoleMatrix();
     }
     function canDeleteWorkersByRoleMatrix() {
-      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'hr_officer']);
+      return hasAnyRole(['operation_manager', 'hr_manager', 'hr_officer']);
     }
 
     function canViewOfficeStaffByRoleMatrix() {
@@ -457,14 +457,14 @@ service cloud.firestore {
 
     function canViewWorkerPayrollByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'payroll_officer',
         'accounting_manager', 'accounting_officer',
       ]);
     }
     function canCreateWorkerPayrollByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'hr_manager', 'hr_officer', 'payroll_officer',
         'accounting_manager',
       ]);
@@ -490,10 +490,10 @@ service cloud.firestore {
     }
 
     function canViewPaymentExportsByRole() {
-      return hasAnyRole(['hr_manager', 'hr_officer', 'payroll_officer', 'accounting_manager', 'accounting_officer', 'operations_manager', 'operation_manager']);
+      return hasAnyRole(['hr_manager', 'hr_officer', 'payroll_officer', 'accounting_manager', 'accounting_officer', 'operation_manager']);
     }
     function canCreatePaymentExportsByRole() {
-      return hasAnyRole(['hr_manager', 'payroll_officer', 'accounting_manager', 'operations_manager', 'operation_manager']);
+      return hasAnyRole(['hr_manager', 'payroll_officer', 'accounting_manager', 'operation_manager']);
     }
     function canEditPaymentExportsByRole() {
       return canCreatePaymentExportsByRole();
@@ -504,13 +504,13 @@ service cloud.firestore {
 
     function canViewLaborCostTermsByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager', 'accounting_officer',
       ]);
     }
     function canCreateLaborCostTermsByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
@@ -523,14 +523,14 @@ service cloud.firestore {
 
     function canViewTimesheetsByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'payroll_officer',
         'accounting_manager', 'accounting_officer',
       ]);
     }
     function canCreateTimesheetsByRole() {
       return hasAnyRole([
-        'sales_manager', 'operations_manager', 'operation_manager',
+        'sales_manager', 'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
@@ -540,14 +540,14 @@ service cloud.firestore {
 
     function canViewWorkerDocumentsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'hr_manager', 'hr_officer',
         'accounting_manager', 'accounting_officer',
       ]);
     }
     function canCreateWorkerDocumentsByRole() {
       return hasAnyRole([
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'hr_manager', 'hr_officer', 'accounting_manager',
       ]);
     }
@@ -555,13 +555,13 @@ service cloud.firestore {
       return canCreateWorkerDocumentsByRole();
     }
     function canDeleteWorkerDocumentsByRole() {
-      return hasAnyRole(['operations_manager', 'operation_manager', 'hr_manager', 'accounting_manager']);
+      return hasAnyRole(['operation_manager', 'hr_manager', 'accounting_manager']);
     }
 
     function canViewPurchasesByRole() {
       return hasAnyRole([
         'hr_manager', 'hr_officer', 'store_officer',
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'accounting_manager', 'accounting_officer',
       ]);
     }
@@ -578,7 +578,7 @@ service cloud.firestore {
     function canViewStoreInventoryByRole() {
       return hasAnyRole([
         'hr_manager', 'hr_officer', 'store_officer',
-        'operations_manager', 'operation_manager',
+        'operation_manager',
         'accounting_manager', 'accounting_officer',
       ]);
     }
@@ -617,10 +617,10 @@ service cloud.firestore {
     }
 
     function isOperationManager() {
-      // Safe alias mapping: operation_manager <= operations_manager (centralized in canonicalBusinessRoleKey)
+      // operation_manager is the canonical manager role key
       return (isSignedIn() && authTokenHasAnyRole(['operation_manager']))
         || (isEligibleInternalUser()
-          && hasAnyAssignedRole(['operations_manager', 'operation_manager']));
+          && hasAnyAssignedRole(['operation_manager']));
     }
 
     function isOperationsManager() {
@@ -755,7 +755,7 @@ service cloud.firestore {
     function canReadPositions() {
       return canReadInternalData() || isClientUser()
         || supplementalPositionsByProfile([
-          'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
+          'hr_manager', 'hr_officer', 'payroll_officer', 'operation_manager'
         ]);
     }
 
@@ -764,18 +764,18 @@ service cloud.firestore {
         || (isEligibleInternalUser()
           && (!isStoreOfficer() || hasOperationHrPayrollRole())
           && hasAnyAssignedRole([
-            'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
+            'hr_manager', 'hr_officer', 'payroll_officer', 'operation_manager'
           ]))
         || supplementalPositionsByProfile([
-          'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager', 'operation_manager'
+          'hr_manager', 'hr_officer', 'payroll_officer', 'operation_manager'
         ]);
     }
 
     function canDeletePositions() {
       return canManageSystem()
         || (isEligibleInternalUser() && !isStoreOfficer()
-          && hasAnyAssignedRole(['hr_manager', 'operations_manager', 'operation_manager']))
-        || supplementalPositionsByProfile(['hr_manager', 'operations_manager', 'operation_manager']);
+          && hasAnyAssignedRole(['hr_manager', 'operation_manager']))
+        || supplementalPositionsByProfile(['hr_manager', 'operation_manager']);
     }
 
     function canReadWorkers() {
@@ -790,7 +790,7 @@ service cloud.firestore {
     function canDeleteWorkers() {
       return canManageSystem()
         || (isEligibleInternalUser() && !isStoreOfficer()
-          && hasAnyAssignedRole(['hr_manager', 'operations_manager', 'operation_manager']));
+          && hasAnyAssignedRole(['hr_manager', 'operation_manager']));
     }
 
     function canManagePayrollOperational() {
@@ -816,7 +816,7 @@ service cloud.firestore {
         || (isSignedIn() && userExists() && isActiveUser() && !isCustomerPortalUser() && !isStoreOfficer()
           && permissionProfileDocHasAnyRole([
             'hr_manager', 'hr_officer', 'payroll_officer',
-            'operations_manager', 'operation_manager',
+            'operation_manager',
           ]));
     }
 

@@ -20,7 +20,7 @@ Migration helper สำหรับ normalize ข้อมูลสิทธิ�
 | Legacy | Mapped To |
 |--------|-----------|
 | system_admin, super_admin, admin | admin_admin |
-| hr_*, operations_*, sales_*, store_* | operation_officer หรือ operation_manager |
+| hr_*, operation_*, sales_*, store_* | operation_officer หรือ operation_manager |
 | finance_*, accounting_* | accounting_officer หรือ accounting_manager |
 | client* | client_user |
 

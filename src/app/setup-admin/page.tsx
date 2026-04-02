@@ -307,8 +307,6 @@ export default function SetupAdminPage() {
                     <SelectItem value="accounting_officer">Accounting Officer</SelectItem>
                     <SelectItem value="hr_manager">HR Manager</SelectItem>
                     <SelectItem value="hr_officer">HR Officer</SelectItem>
-                    <SelectItem value="operations_manager">Operations Manager</SelectItem>
-                    <SelectItem value="operations_officer">Operations Officer</SelectItem>
                     <SelectItem value="sales_manager">Sales Manager</SelectItem>
                     <SelectItem value="sales_officer">Sales Officer</SelectItem>
                     <SelectItem value="operation_officer">Operations Officer (รวม)</SelectItem>

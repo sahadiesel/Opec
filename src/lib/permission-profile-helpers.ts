@@ -119,6 +119,7 @@ export type ProfileAuditIssue =
   | 'group_mismatch'
   | 'inactive_profile'
   | 'legacy_only'
+  | 'role_profile_mismatch'
   | 'role_field_conflict';
 
 /** Mirrors mapBusinessRoleToAccessGroup in auth-mapping (avoid circular import). */
@@ -144,8 +145,7 @@ export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionPr
     'system_admin',
     'hr_manager',
     'hr_officer',
-    'operations_manager',
-    'operations_officer',
+    'payroll_officer',
     'operation_manager',
     'operation_officer',
     'accounting_manager',
@@ -169,9 +169,9 @@ export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionPr
   const legacy = profile.department;
   if (legacy === 'sales') return level === 'manager' ? 'sales_manager' : 'sales_officer';
   if (legacy === 'hr') return level === 'manager' ? 'hr_manager' : 'hr_officer';
-  if (legacy === 'operations') return level === 'manager' ? 'operations_manager' : 'operations_officer';
+  if (legacy === 'operations') return level === 'manager' ? 'operation_manager' : 'operation_officer';
   if (legacy === 'store') return level === 'manager' ? 'store_manager' : 'store_officer';
-  return level === 'manager' || level === 'admin' ? 'operations_manager' : 'operations_officer';
+  return level === 'manager' || level === 'admin' ? 'operation_manager' : 'operation_officer';
 }
 
 export function analyzeUserProfileBinding(
@@ -204,11 +204,15 @@ export function analyzeUserProfileBinding(
   if (roleG && pg && roleG !== pg) {
     issues.push('role_field_conflict');
   }
+  if ((user.assignedRoleKey ?? user.roleId) === 'payroll_officer' && key === 'hr_officer') {
+    issues.push('role_profile_mismatch');
+  }
   if (!user.accessGroup && !user.department) {
     issues.push('legacy_only');
   }
   let summary = 'ปกติ';
-  if (issues.includes('role_field_conflict')) summary = 'ฟิลด์ role / accessGroup ขัดกัน';
+  if (issues.includes('role_profile_mismatch')) summary = 'Payroll role ผูกกับ HR profile (legacy mismatch)';
+  else if (issues.includes('role_field_conflict')) summary = 'ฟิลด์ role / accessGroup ขัดกัน';
   else if (issues.includes('group_mismatch')) summary = 'accessGroup ไม่ตรงกับโปรไฟล์';
   else if (issues.includes('profile_not_found')) summary = 'โปรไฟล์หาย';
   else if (issues.includes('inactive_profile')) summary = 'โปรไฟล์ปิดใช้งาน';
