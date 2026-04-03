@@ -58,46 +58,12 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Canonical role helpers
+    // Simple role helpers
     // ---------------------------------------------------------------------
-    function canonicalRole(role) {
-      return role == null ? null
-        : role == 'admin_admin' ? 'system_admin'
-        : role == 'operations_manager' ? 'operation_manager'
-        : role == 'operations_officer' ? 'operation_officer'
-        : role == 'store_manager' ? 'store_officer'
-        : role;
-    }
-
-    function listHasCanonicalRole(values, role) {
-      return values != null && values is list && (
-        (values.size() > 0 && canonicalRole(values[0]) == role)
-        || (values.size() > 1 && canonicalRole(values[1]) == role)
-        || (values.size() > 2 && canonicalRole(values[2]) == role)
-        || (values.size() > 3 && canonicalRole(values[3]) == role)
-        || (values.size() > 4 && canonicalRole(values[4]) == role)
-        || (values.size() > 5 && canonicalRole(values[5]) == role)
-        || (values.size() > 6 && canonicalRole(values[6]) == role)
-        || (values.size() > 7 && canonicalRole(values[7]) == role)
-      );
-    }
-
-    function hasRole(role) {
+    function roleKey() {
       let u = userData();
-      return u != null && (
-        canonicalRole(u.assignedRoleKey) == role
-        || canonicalRole(u.roleId) == role
-        || canonicalRole(u.permissionProfileKey) == role
-        || ('primaryRoleTemplateKey' in u && canonicalRole(u.primaryRoleTemplateKey) == role)
-        || (u.assignedRoleKeys != null && u.assignedRoleKeys is list && listHasCanonicalRole(u.assignedRoleKeys, role))
-        || (u.roleIds != null && u.roleIds is list && listHasCanonicalRole(u.roleIds, role))
-        || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && listHasCanonicalRole(u.permissionProfileKeys, role))
-      );
-    }
-
-    function department() {
-      let u = userData();
-      return u != null && ('department' in u) ? u.department : null;
+      return u != null && ('assignedRoleKey' in u) ? u.assignedRoleKey
+        : (u != null && ('roleId' in u) ? u.roleId : null);
     }
 
     function departmentGroup() {
@@ -106,20 +72,25 @@ service cloud.firestore {
         : (u != null && ('accessGroup' in u) ? u.accessGroup : null);
     }
 
-    function isAdminUser() {
-      return isEligibleInternal()
-        && (hasRole('system_admin') || departmentGroup() == 'admin' || department() == 'admin');
+    function department() {
+      let u = userData();
+      return u != null && ('department' in u) ? u.department : null;
     }
 
-    function isOperationManager() {
-      return isEligibleInternal() && hasRole('operation_manager');
+    function isAdminUser() {
+      return isEligibleInternal()
+        && (
+          roleKey() == 'system_admin'
+          || departmentGroup() == 'admin'
+          || department() == 'admin'
+        );
     }
 
     function isAccountingUser() {
       return isEligibleInternal()
         && (
-          hasRole('accounting_manager')
-          || hasRole('accounting_officer')
+          roleKey() == 'accounting_manager'
+          || roleKey() == 'accounting_officer'
           || departmentGroup() == 'accounting'
           || department() == 'accounting'
         );
@@ -127,30 +98,39 @@ service cloud.firestore {
 
     function isSalesUser() {
       return isEligibleInternal()
-        && (hasRole('sales_manager') || hasRole('sales_officer') || department() == 'sales');
+        && (
+          roleKey() == 'sales_manager'
+          || roleKey() == 'sales_officer'
+          || department() == 'sales'
+        );
     }
 
-    function isHrUser() {
+    function isHrOfficer() {
       return isEligibleInternal()
         && (
-          hasRole('hr_manager')
-          || hasRole('hr_officer')
-          || hasRole('payroll_officer')
+          roleKey() == 'hr_officer'
           || department() == 'hr'
         );
     }
 
-    function isStoreOfficer() {
-      return isEligibleInternal() && (hasRole('store_officer') || department() == 'store');
+    function isPayrollOfficer() {
+      return isEligibleInternal()
+        && roleKey() == 'payroll_officer';
     }
 
-    function isOperationsUser() {
+    function isStoreOfficer() {
       return isEligibleInternal()
         && (
-          hasRole('operation_manager')
-          || hasRole('operation_officer')
-          || department() == 'operations'
-          || departmentGroup() == 'operation'
+          roleKey() == 'store_officer'
+          || department() == 'store'
+        );
+    }
+
+    function isOperationManager() {
+      return isEligibleInternal()
+        && (
+          roleKey() == 'operation_manager'
+          || roleKey() == 'operations_manager'
         );
     }
 
@@ -163,22 +143,22 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Domain access model (7 users / 3 groups: admin, operation, accounting)
+    // Domain access model
     // ---------------------------------------------------------------------
     function canManageSystem() {
       return isAdminUser();
     }
 
     function canAccessSales() {
-      return isAdminUser() || isOperationManager() || isSalesUser();
+      return isAdminUser() || isSalesUser() || isOperationManager();
     }
 
     function canAccessOperations() {
-      return isAdminUser() || isOperationManager() || hasRole('hr_officer');
+      return isAdminUser() || isOperationManager() || isHrOfficer();
     }
 
     function canAccessHR() {
-      return isAdminUser() || isOperationManager() || hasRole('hr_officer') || hasRole('payroll_officer');
+      return isAdminUser() || isOperationManager() || isHrOfficer() || isPayrollOfficer();
     }
 
     function canAccessStore() {
@@ -190,19 +170,19 @@ service cloud.firestore {
     }
 
     function canManageWorkers() {
-      return isAdminUser() || isOperationManager() || hasRole('hr_officer') || hasRole('payroll_officer');
+      return isAdminUser() || isOperationManager() || isHrOfficer() || isPayrollOfficer();
     }
 
     function canManagePositions() {
-      return canManageWorkers();
+      return isAdminUser() || isOperationManager() || isHrOfficer() || isPayrollOfficer();
     }
 
     function canDeleteHrMaster() {
-      return isAdminUser() || isOperationManager() || hasRole('hr_manager');
+      return isAdminUser() || isOperationManager();
     }
 
     function canPreparePayroll() {
-      return isAdminUser() || isOperationManager() || hasRole('payroll_officer');
+      return isAdminUser() || isOperationManager() || isPayrollOfficer();
     }
 
     function canApprovePayroll() {
@@ -214,7 +194,7 @@ service cloud.firestore {
     }
 
     function canViewPayroll() {
-      return internalRead() || canManagePayrollFinancial();
+      return isAdminUser() || isOperationManager() || isPayrollOfficer() || isAccountingUser();
     }
 
     function payrollBatchLocked(data) {
@@ -236,25 +216,6 @@ service cloud.firestore {
     function payrollUpdateAllowedForPreparer() {
       let nextStatus = 'status' in request.resource.data ? request.resource.data.status : null;
       return nextStatus == null || !managerOnlyPayrollStatus(nextStatus);
-    }
-
-    function canReadOwnPermissionProfile(profileData) {
-      let u = userData();
-      return u != null && isActiveUser()
-        && profileData.profileKey != null
-        && (
-          (u.permissionProfileKey != null && profileData.profileKey == u.permissionProfileKey)
-          || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny([profileData.profileKey]))
-        );
-    }
-
-    function canReadPermissionProfileByDocId(profileDocId) {
-      let u = userData();
-      return u != null && isEligibleInternal()
-        && (
-          (u.permissionProfileKey != null && u.permissionProfileKey == profileDocId)
-          || (u.permissionProfileKeys != null && u.permissionProfileKeys is list && u.permissionProfileKeys.hasAny([profileDocId]))
-        );
     }
 
     function isOwner(userId) {
@@ -350,7 +311,6 @@ service cloud.firestore {
       allow write: if canAccessOperations();
     }
 
-    // Legacy alias path
     match /assignments/{id} {
       allow read: if internalRead() || sameCustomerId(resource.data.customerId);
       allow write: if canAccessOperations();
@@ -403,7 +363,8 @@ service cloud.firestore {
       allow read: if canViewPayroll();
       allow create: if canPreparePayroll();
       allow update: if canApprovePayroll()
-        || (canPreparePayroll() && !payrollBatchLocked(resource.data) && payrollUpdateAllowedForPreparer());
+        || (canPreparePayroll() && !payrollBatchLocked(resource.data) && payrollUpdateAllowedForPreparer())
+        || canManagePayrollFinancial();
       allow delete: if canApprovePayroll();
     }
 
@@ -565,7 +526,7 @@ service cloud.firestore {
     }
 
     match /permission_profiles/{id} {
-      allow get: if isSignedIn() && (canManageSystem() || canReadOwnPermissionProfile(resource.data) || canReadPermissionProfileByDocId(id));
+      allow get: if canManageSystem();
       allow list: if canManageSystem();
       allow write: if canManageSystem();
     }
@@ -707,7 +668,6 @@ service cloud.firestore {
       allow write: if internalReadNonStoreOfficer();
     }
 
-    // Default deny except admin catch-all
     match /{document=**} {
       allow read, write: if canManageSystem();
     }
