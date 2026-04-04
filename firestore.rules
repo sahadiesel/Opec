@@ -188,6 +188,7 @@ service cloud.firestore {
         );
     }
 
+    /** สอดคล้องแอป: permissionProfileKeys ใดก็ตามที่มี operation_manager → สิทธิ์ pillar (ไม่ผูกแค่ตัวแรกในลิสต์) */
     function isOperationManager() {
       return isEligibleInternal()
         && (

@@ -5,6 +5,8 @@
  *
  * Keep in sync with firestore.rules: roleKey()/normalizedRoleKey(), canManageHrMasterData(),
  * canAccessOperations/HR, and useAppUser (no localStorage RBAC after user-doc errors).
+ * operation_manager: pillar เต็ม (ไม่รวม accounting/admin) — getPermissions ใช้แถว matrix +โมดูลใหม่อัตโนมัติ;
+ * getPrimaryLegacyRole สแกน permissionProfileKeys หา operation_manager (ไม่ยึดแค่ [0]).
  * Baseline profiles in getBaselineProfiles() must match ROLE_PERMISSION_MATRIX for the same role;
  * nav-access MODULE_PREFIXES / hr-nav-items keys must use the same ModuleKey as getPermissions().
  */
@@ -24,6 +26,7 @@ import {
   getEffectiveAccessGroup,
   getEffectiveAccessLevel,
   getPrimaryLegacyRole,
+  isOperationManager,
   canActAsHrManager,
   isOperationGroupMember,
   isAccountingGroupMember,
@@ -452,6 +455,8 @@ const ACCOUNTING_MODULES: readonly ModuleKey[] = [
   'office_payroll',
   'executive_payroll',
 ];
+
+const ACCOUNTING_MODULE_KEY_SET = new Set<ModuleKey>(ACCOUNTING_MODULES);
 
 const ADMIN_ONLY_MODULES = new Set<ModuleKey>(['system_admin', 'document_numbering', 'audit_logs']);
 
@@ -1060,6 +1065,26 @@ export function getPermissions(
       : resolvePermissionModuleKey(rawModuleKey)
   ) as ModuleKey;
   if (!MODULE_KEY_SET.has(moduleKey)) {
+    return clonePermission(NO_ACCESS);
+  }
+
+  /**
+   * Operations Manager = pillar เต็ม (ขาย+HR+ปฏิบัติการ+คลัง) ไม่รวมบัญชี/แอดมิน
+   * — แถว matrix เป็นหลัก; โมดูลใหม่ที่ยังไม่อยู่ในแถวให้สิทธิ์ P_FULL_NO_APPROVE อัตโนมัติ
+   */
+  if (isOperationManager(u)) {
+    const om = ROLE_PERMISSION_MATRIX.operation_manager;
+    const omPerm = om[moduleKey as keyof typeof om];
+    if (omPerm !== undefined) {
+      return clonePermission(omPerm);
+    }
+    if (
+      !ADMIN_ONLY_MODULES.has(moduleKey) &&
+      !ACCOUNTING_MODULE_KEY_SET.has(moduleKey) &&
+      moduleKey !== 'client_portal'
+    ) {
+      return clonePermission(P_FULL_NO_APPROVE);
+    }
     return clonePermission(NO_ACCESS);
   }
 

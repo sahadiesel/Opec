@@ -48,7 +48,7 @@ import {
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canDelete } from '@/lib/permissions';
 
-const NO_PERMISSION_MESSAGE = 'คุณไม่มีสิทธ์ในการทำรายการ';
+const NO_PERMISSION_MESSAGE = 'คุณไม่มีสิทธิ์ในการทำรายการ';
 
 function isFirestorePermissionDenied(error: unknown): boolean {
   if (!error || typeof error !== 'object' || !('code' in error)) return false;

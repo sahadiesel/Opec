@@ -184,6 +184,19 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
   if (fromScalar === 'payroll_officer') return 'payroll_officer';
   if (fromScalar) return fromScalar;
 
+  /**
+   * หลาย permissionProfileKeys: ถ้ามี operation_manager อยู่ในรายการให้ชนะแค่ตัวแรก [0]
+   * (เดิม [0]=hr_officer แต่มี operation_manager ท้ายรายการ → UI/Firestore คนละสิทธิ์)
+   */
+  if (Array.isArray(user.permissionProfileKeys)) {
+    for (const key of user.permissionProfileKeys) {
+      if (typeof key !== 'string' || !key.trim()) continue;
+      if (normalizeAssignedPrimaryRole(key) === 'operation_manager') {
+        return 'operation_manager';
+      }
+    }
+  }
+
   const fromProfileKey =
     typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
       ? user.permissionProfileKey
