@@ -409,7 +409,14 @@ export default function Home() {
     setShowResetDialog(false);
   };
 
-  if (!isLoaded || isUserLoading) return null;
+  if (!isLoaded || isUserLoading) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">กำลังเตรียมระบบ…</p>
+      </div>
+    );
+  }
 
   // Wait for Firestore user profile after Firebase Auth (avoid flashing wrong UI)
   if (firebaseUser && isDocLoading) {

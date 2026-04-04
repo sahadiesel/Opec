@@ -64,9 +64,21 @@ export function useDoc<T = any>(
     setError(null);
     // Optional: setData(null); // Clear previous data instantly
 
+    const LOAD_TIMEOUT_MS = 50_000;
+    const timeoutId = window.setTimeout(() => {
+      setIsLoading(false);
+      setIsDataFromCache(false);
+      setError(
+        new Error(
+          'Firestore ไม่ตอบสนองภายในเวลาที่กำหนด — ตรวจสอบอินเทอร์เน็ต VPN/ไฟร์วอลล์ หรือลองรีเฟรช (timeout)',
+        ),
+      );
+    }, LOAD_TIMEOUT_MS);
+
     const unsubscribe = onSnapshot(
       memoizedDocRef,
       (snapshot: DocumentSnapshot<DocumentData>) => {
+        window.clearTimeout(timeoutId);
         setIsDataFromCache(snapshot.metadata.fromCache);
         if (snapshot.exists()) {
           setData({ ...(snapshot.data() as T), id: snapshot.id });
@@ -78,6 +90,7 @@ export function useDoc<T = any>(
         setIsLoading(false);
       },
       (error: FirestoreError) => {
+        window.clearTimeout(timeoutId);
         const contextualError = new FirestorePermissionError({
           operation: 'get',
           path: memoizedDocRef.path,
@@ -97,7 +110,10 @@ export function useDoc<T = any>(
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      window.clearTimeout(timeoutId);
+      unsubscribe();
+    };
   }, [memoizedDocRef]); // Re-run if the memoizedDocRef changes.
 
   return { data, isLoading, error, isDataFromCache };
