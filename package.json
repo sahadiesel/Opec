@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "deploy:app": "firebase deploy --only apphosting:opecbackend --force",
     "deploy:rules": "firebase deploy --only firestore:rules",
-    "deploy:all": "firebase deploy --only firestore:rules,apphosting:opecbackend --force"
+    "deploy:storage": "firebase deploy --only storage",
+    "deploy:all": "firebase deploy --only firestore:rules,storage,apphosting:opecbackend --force"
   },
   "dependencies": {
     "@genkit-ai/google-genai": "^1.28.0",
