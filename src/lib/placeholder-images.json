@@ -2,9 +2,9 @@
   "placeholderImages": [
     {
       "id": "login-bg",
-      "description": "Offshore Oil Rig at Sunset",
-      "imageUrl": "https://picsum.photos/seed/offshore-platform-rig-1/1920/1080",
-      "imageHint": "offshore platform"
+      "description": "OPEC login background (Firebase Storage)",
+      "imageUrl": "https://firebasestorage.googleapis.com/v0/b/studio-9554558161-dc547.firebasestorage.app/o/OPEC_Image_2.png?alt=media",
+      "imageHint": "OPEC branding"
     }
   ]
 }
