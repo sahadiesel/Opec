@@ -32,7 +32,7 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
-import { isSystemAdmin, isHrManager } from '@/lib/permission-core';
+import { isSystemAdmin, isHrManager, isOperationManager } from '@/lib/permission-core';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
@@ -142,9 +142,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       || currentUser.roleId === 'hr_officer';
   }, [currentUser]);
   const canEditSellSide = useMemo(() => canModify && !isHRRole, [canModify, isHRRole]);
-  /** Labour cost baseline: System Admin or HR Manager only (not sales, not hr_officer, not operations). */
+  /** ต้นทุนในสัญญา: Admin / HR Manager / Operations Manager (operation pillar เต็ม) — ไม่ให้ sales-only / hr_officer */
   const canEditCostSide = useMemo(
-    () => canModify && (isSystemAdmin(currentUser) || isHrManager(currentUser)),
+    () =>
+      canModify &&
+      (isSystemAdmin(currentUser) || isHrManager(currentUser) || isOperationManager(currentUser)),
     [canModify, currentUser],
   );
   const canViewCostFields = useMemo(() => !isSalesRole, [isSalesRole]);
@@ -156,13 +158,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   /** วันหยุดสัญญา: ผู้จัดการ (ทั้งสองฝั่ง) — ไม่ผูกแยกขาย/ต้นทุน */
   const canEditContractHolidaySchedule = useMemo(() => {
     if (!currentUser || !canModify) return false;
-    if (canApproveContract || isSystemAdmin(currentUser) || isHrManager(currentUser)) return true;
+    if (canApproveContract || isSystemAdmin(currentUser) || isHrManager(currentUser) || isOperationManager(currentUser)) return true;
     const rk = `${currentUser.assignedRoleKey || ''} ${currentUser.roleId || ''}`.toLowerCase();
     return rk.includes('manager');
   }, [currentUser, canModify, canApproveContract]);
-  /** กฎตัวคูณหลัง Active: Admin / HR Manager */
+  /** กฎตัวคูณหลัง Active: Admin / HR Manager / Operations Manager */
   const canEditActiveContractMultipliers = useMemo(
-    () => canModify && (isSystemAdmin(currentUser) || isHrManager(currentUser)),
+    () =>
+      canModify &&
+      (isSystemAdmin(currentUser) || isHrManager(currentUser) || isOperationManager(currentUser)),
     [canModify, currentUser],
   );
 
@@ -1028,7 +1032,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     )}
                     {isActiveContract && !isSupplementalContract && (
                       <p className="text-xs text-amber-800 mt-1">
-                        สัญญา Active: แก้กฎตัวคูณได้เฉพาะ Admin / HR Manager แล้วกด &quot;บันทึกกฎตัวคูณ&quot; ด้านล่าง
+                        สัญญา Active: แก้กฎตัวคูณได้เฉพาะ Admin / HR Manager / Operations Manager แล้วกด &quot;บันทึกกฎตัวคูณ&quot; ด้านล่าง
                       </p>
                     )}
                   </div>
@@ -1045,7 +1049,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     </div>
                     <div className="space-y-2">
                       <Label>ฝั่งลูกจ้าง (Payroll): OT / Holiday / Public Holiday / Sunday / Sunday OT</Label>
-                      <p className="text-[10px] text-muted-foreground">ฉบับ Pending: แก้ฝั่งนี้ได้เฉพาะ Admin / HR Manager — สัญญา Active: Admin / HR Manager แก้ได้ทั้งสองฝั่ง</p>
+                      <p className="text-[10px] text-muted-foreground">ฉบับ Pending: แก้ฝั่งนี้ได้เฉพาะ Admin / HR Manager / Operations Manager — สัญญา Active: บทบาทเดียวกันแก้ได้ทั้งสองฝั่ง</p>
                       <div className="grid grid-cols-5 gap-2">
                         <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.otAfterShift} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, otAfterShift: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, otAfterShift: v } } }); }} />
                         <Input type="number" step="0.1" disabled={multCostDisabled} value={policyCostLive.holiday} onChange={(e) => { const v = Number(e.target.value) || 0; if (isActiveContract && activeMultDraft) setActiveMultDraft({ ...activeMultDraft, cost: { ...activeMultDraft.cost, holiday: v } }); else setEditedMC({ ...editedMC, rateMultiplierPolicy: { ...effectiveRatePolicy, cost: { ...effectiveRatePolicy.cost, holiday: v } } }); }} />
@@ -1182,7 +1186,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       </span>
                     )}
                     {contract.commercialTermsOwner === 'sales' && canViewCostFields && (
-                      <span className="block mt-1 text-amber-700 font-medium">สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายได้ที่นี่ ต้นทุนค่าแรงให้ HR Manager / Admin กรอก</span>
+                      <span className="block mt-1 text-amber-700 font-medium">สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายได้ที่นี่ ต้นทุนค่าแรงให้ HR Manager / Operations Manager / Admin กรอก</span>
                     )}
                   </CardDescription>
                   {(contract.contractType || 'master') === 'supplemental' && (
