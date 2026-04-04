@@ -10,6 +10,8 @@
  */
 export const DOMAIN_TO_MODULE_MAP: Record<string, string> = {
   'purchase_orders': 'customer_pos',
+  /** Firestore collection name ↔ UI module key worker_documents (permissions.ts / SYSTEM_MODULES) */
+  'worker_document_catalog': 'worker_documents',
   'daily_timesheets': 'timesheets',
   'payroll_batches': 'worker_payroll',
   'payroll_runs': 'worker_payroll',

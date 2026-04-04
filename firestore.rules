@@ -239,7 +239,10 @@ service cloud.firestore {
       return isAdminUser() || isAccountingUser();
     }
 
-    /** ทะเบียนลูกจ้าง/พนักงาน/ตำแหน่ง — ไม่ให้ payroll แก้ master (เงินเดือน/ฐานค่าจ้าง) */
+    /**
+     * HR master writes — ต้องสอดคล้องกับ ROLE_PERMISSION_MATRIX ใน src/lib/permissions.ts
+     * (โมดูล UI: positions, workers, office_staff, worker_documents ↔ collections นี้)
+     */
     function canManageHrMasterData() {
       return isAdminUser() || isOperationManager() || isHrManager() || isHrOfficer();
     }

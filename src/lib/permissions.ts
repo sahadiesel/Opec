@@ -2,6 +2,9 @@
  * OPEC OpsFlow - Module-level permissions & authorization.
  * Permission core: src/lib/permission-core.ts (access groups, domains).
  * See docs/permissions-architecture.md for source of truth.
+ *
+ * Keep in sync with firestore.rules: roleKey()/normalizedRoleKey(), canManageHrMasterData(),
+ * canAccessOperations/HR, and useAppUser (no localStorage RBAC after user-doc errors).
  */
 
 import {
@@ -122,6 +125,7 @@ export const SYSTEM_MODULES = [
   { group: 'HR & Payroll (บุคคล)', key: 'labor_cost_contract_terms', label: 'เงื่อนไขต้นทุน (Labor Cost Terms)' },
   { group: 'HR & Payroll (บุคคล)', key: 'positions', label: 'ตำแหน่งงาน (Positions)' },
   { group: 'HR & Payroll (บุคคล)', key: 'workers', label: 'ทะเบียนคนงาน (Workers)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'worker_documents', label: 'เอกสารบุคลากรกลาง (Worker document catalog)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_staff', label: 'พนักงานออฟฟิศ (Office Staff)' },
 
   { group: 'Operations (ปฏิบัติการ)', key: 'waves', label: 'กลุ่มรอบการทำงาน (Waves)' },
@@ -220,14 +224,19 @@ export const PERMISSION_MATRIX: Record<string, BasePermissionRoleMap | { all: tr
   },
 };
 
+/**
+ * Sidebar / matrix guard — ใช้ getPrimaryLegacyRole เดียวกับ permission-core + Firestore rules
+ * (รองรับ permissionProfileKey เมื่อ assignedRoleKey ว่าง)
+ */
 export function canAccess(
-  user: Pick<User, 'assignedRoleKey'> | null | undefined,
+  user: Partial<User> | null | undefined,
   module: string,
   action: BasePermissionAction = 'view'
 ): boolean {
-  if (!user || !user.assignedRoleKey) return false;
+  if (!user) return false;
 
-  const role = user.assignedRoleKey;
+  const role = getPrimaryLegacyRole(user as User);
+  if (!role) return false;
   if (role === 'system_admin') return true;
 
   const rolePerm = PERMISSION_MATRIX[role];
@@ -240,9 +249,10 @@ export function canAccess(
   return Boolean((modulePerm as Partial<Record<BasePermissionAction, boolean>>)[action]);
 }
 
-export function isMatrixControlledRole(user: Pick<User, 'assignedRoleKey'> | null | undefined): boolean {
-  if (!user?.assignedRoleKey) return false;
-  return Object.prototype.hasOwnProperty.call(PERMISSION_MATRIX, user.assignedRoleKey);
+export function isMatrixControlledRole(user: Partial<User> | null | undefined): boolean {
+  const role = getPrimaryLegacyRole(user as User);
+  if (!role) return false;
+  return Object.prototype.hasOwnProperty.call(PERMISSION_MATRIX, role);
 }
 
 const PAYROLL_PREPARED_STATUSES = new Set([
@@ -342,6 +352,7 @@ const HR_MODULES: readonly ModuleKey[] = [
   'labor_cost_contract_terms',
   'positions',
   'workers',
+  'worker_documents',
   'office_staff',
 ];
 
@@ -455,6 +466,7 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     hr_hub: P_VCE,
     timesheets: P_FULL_NO_APPROVE,
     workers: P_FULL_NO_APPROVE,
+    worker_documents: P_FULL_NO_APPROVE,
     worker_payroll: P_VCE,
     purchases: P_FULL_NO_APPROVE,
     store_inventory: P_FULL_NO_APPROVE,
@@ -487,6 +499,7 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     quotations: P_FULL_NO_APPROVE,
     payment_export_batches: P_FULL_NO_APPROVE,
     workers: P_FULL_NO_APPROVE,
+    worker_documents: P_FULL_NO_APPROVE,
     hr_hub: P_FULL_NO_APPROVE,
   },
   hr_officer: {
@@ -513,6 +526,7 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     labor_cost_contract_terms: P_VCE,
     quotations: P_VIEW,
     payment_export_batches: P_VCE,
+    worker_documents: P_FULL_NO_APPROVE,
   },
   /** จ่ายเงิน/สลิป/งวด — อ่านทะเบียนได้ แต่ไม่สร้างตำแหน่ง/ไม่แก้ master เงินเดือน */
   payroll_officer: {
@@ -531,6 +545,7 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     hr_hub: P_VIEW,
     timesheets: P_VIEW,
     workers: P_VIEW,
+    worker_documents: P_VIEW,
     worker_payroll: P_VCE,
     office_payroll: P_VCE,
     office_staff: P_VIEW,
@@ -957,6 +972,7 @@ export const canApprove = (user: User | null, moduleKey: string, profile?: Permi
 const HR_PILLAR_UI_KEYS: ModuleKey[] = [
   'hr_hub',
   'workers',
+  'worker_documents',
   'worker_payroll',
   'office_payroll',
   'office_staff',

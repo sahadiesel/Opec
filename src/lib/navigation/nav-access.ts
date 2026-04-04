@@ -13,6 +13,7 @@ import {
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
   canAccess,
+  getPrimaryLegacyRole,
   isClient,
 } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -43,7 +44,7 @@ export function resolveMatrixModuleForPath(pathname: string): string | null {
  * ถ้าคืน null = ไม่ใช้ matrix สำหรับ role นี้หรือ path นี้ — ใช้ canView ต่อ
  */
 export function sidebarMatrixVisibilityForPath(user: User, pathname: string): boolean | null {
-  const role = user.assignedRoleKey;
+  const role = getPrimaryLegacyRole(user);
   if (!role) return null;
 
   if (!['system_admin', 'hr_officer', 'payroll_officer', 'operation_manager'].includes(role)) {
