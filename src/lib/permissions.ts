@@ -217,10 +217,17 @@ export const PERMISSION_MATRIX: Record<string, BasePermissionRoleMap | { all: tr
     timesheets: { view: true },
   },
 
+  /** สอดคล้อง ROLE_PERMISSION_MATRIX + canAccess บน path ที่ resolveMatrixModuleForPath ใช้ */
   operation_manager: {
-    workers: { view: true },
-    payroll_runs: { view: true, approve: true },
-    payslips: { view: true, approve: true },
+    workers: { view: true, create: true, edit: true, delete: true, approve: false },
+    positions: { view: true, create: true, edit: true, delete: true, approve: false },
+    worker_documents: { view: true, create: true, edit: true, delete: true, approve: false },
+    assignments: { view: true, create: true, edit: true, delete: true, approve: false },
+    mobilization: { view: true, create: true, edit: true, delete: true, approve: false },
+    timesheets: { view: true, create: true, edit: true, delete: true, approve: false },
+    worker_payroll: { view: true, create: true, edit: true, delete: false, approve: false },
+    payroll_runs: { view: true, create: false, edit: false, delete: false, approve: true },
+    payslips: { view: true, create: false, edit: false, delete: false, approve: true },
   },
 };
 
@@ -450,31 +457,51 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     office_payroll: P_NONE,
     office_staff: P_NONE,
   },
+  /** Operation pillar เต็ม — ไม่รวมบัญชี / system admin / office payroll (เงินเดือนออฟฟิศ) */
   operation_manager: {
     overview_dashboard: P_VIEW,
+    // Sales / Commercial
+    customers: P_FULL_NO_APPROVE,
+    main_contracts: P_FULL_NO_APPROVE,
+    customer_pos: P_FULL_NO_APPROVE,
+    quotations: P_FULL_NO_APPROVE,
+    sales_contract_terms: P_FULL_NO_APPROVE,
+    rate_conditions: P_FULL_NO_APPROVE,
+    profit_estimates: P_FULL_NO_APPROVE,
+    // HR / payroll operations (ไม่ใช่ office_payroll)
+    hr_hub: P_FULL_NO_APPROVE,
+    timesheets: P_FULL_NO_APPROVE,
+    worker_payroll: P_FULL_NO_APPROVE,
+    payment_export_batches: P_FULL_NO_APPROVE,
+    labor_cost_contract_terms: P_FULL_NO_APPROVE,
     positions: P_FULL_NO_APPROVE,
-    vendors: P_FULL_NO_APPROVE,
-    customers: P_VCE,
-    main_contracts: P_NONE,
-    customer_pos: P_NONE,
-    sales_contract_terms: P_NONE,
-    rate_conditions: P_NONE,
-    profit_estimates: P_NONE,
+    workers: P_FULL_NO_APPROVE,
+    worker_documents: P_FULL_NO_APPROVE,
+    office_staff: P_FULL_NO_APPROVE,
+    office_payroll: P_NONE,
+    // Operations
     waves: P_FULL_NO_APPROVE,
     assignments: P_FULL_NO_APPROVE,
     mobilization: P_FULL_NO_APPROVE,
-    hr_hub: P_VCE,
-    timesheets: P_FULL_NO_APPROVE,
-    workers: P_FULL_NO_APPROVE,
-    worker_documents: P_FULL_NO_APPROVE,
-    worker_payroll: P_VCE,
+    // Store
+    vendors: P_FULL_NO_APPROVE,
     purchases: P_FULL_NO_APPROVE,
     store_inventory: P_FULL_NO_APPROVE,
-    labor_cost_contract_terms: P_VCE,
-    quotations: P_VCE,
-    payment_export_batches: P_VCE,
-    office_payroll: P_NONE,
-    office_staff: P_NONE,
+    // Accounting — ห้าม
+    billing_notes: P_NONE,
+    tax_invoices: P_NONE,
+    receipts: P_NONE,
+    ap_bills: P_NONE,
+    accounts_receivable: P_NONE,
+    accounts_payable: P_NONE,
+    cashbook: P_NONE,
+    bank_accounts: P_NONE,
+    executive_payroll: P_NONE,
+    // System / portal
+    system_admin: P_NONE,
+    document_numbering: P_NONE,
+    audit_logs: P_NONE,
+    client_portal: P_NONE,
   },
   hr_manager: {
     overview_dashboard: P_VIEW,
@@ -623,7 +650,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
 
 /**
  * ชุดเมนูตามบทบาท (กลุ่ม Operation — แผนกขาย / บุคคล / ปฏิบัติการ / คลัง)
- * hr_manager = ทุกแผนก; sales_manager = ขาย+ปฏิบัติการ; operation_manager = ปฏิบัติการ+บุคคล;
+ * hr_manager = ทุกแผนก; sales_manager = ขาย+ปฏิบัติการ;
+ * operation_manager = operation pillar เต็ม (ขาย+HR+ปฏิบัติการ+คลัง) ไม่รวมบัญชี/ระบบ;
  * hr_officer = บุคคลทั้งหมด; store_* = คลัง+จัดซื้อ
  */
 function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleKey> {
@@ -637,7 +665,7 @@ function operationModulesForPrimaryRole(primaryRole: string | null): Set<ModuleK
     return new Set<ModuleKey>([...SALES_MODULES, ...OPERATIONS_MODULES]);
   }
   if (primaryRole === 'operation_manager') {
-    return new Set<ModuleKey>([...OPERATIONS_MODULES, ...HR_MODULES]);
+    return new Set<ModuleKey>(ALL_OPERATION_PILLAR_MODULES);
   }
   if (primaryRole === 'hr_officer' || primaryRole === 'payroll_officer') {
     return new Set<ModuleKey>(HR_MODULES);
