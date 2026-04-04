@@ -190,6 +190,22 @@ type BasePermissionAction = 'view' | 'create' | 'edit' | 'delete' | 'approve';
 type BasePermissionModule = { all?: true } | Partial<Record<BasePermissionAction, boolean>>;
 type BasePermissionRoleMap = Record<string, BasePermissionModule>;
 
+/** canAccess / sidebar matrix — operation_manager: CRUD ใน pillar ไม่รวม approve workflow */
+const OP_MGR_FULL: BasePermissionModule = {
+  view: true,
+  create: true,
+  edit: true,
+  delete: true,
+  approve: false,
+};
+const OP_MGR_NONE: BasePermissionModule = {
+  view: false,
+  create: false,
+  edit: false,
+  delete: false,
+  approve: false,
+};
+
 /**
  * Minimal base matrix (incremental adoption).
  * This does not replace the legacy permission engine yet.
@@ -217,17 +233,55 @@ export const PERMISSION_MATRIX: Record<string, BasePermissionRoleMap | { all: tr
     timesheets: { view: true },
   },
 
-  /** สอดคล้อง ROLE_PERMISSION_MATRIX + canAccess บน path ที่ resolveMatrixModuleForPath ใช้ */
+  /**
+   * Full operation pillar ใน UI + canAccess — สอดคล้อง ROLE_PERMISSION_MATRIX.operation_manager
+   * ห้าม accounting / system admin; ไม่รวม office_payroll (ตกผลึกใน ROLE matrix)
+   */
   operation_manager: {
-    workers: { view: true, create: true, edit: true, delete: true, approve: false },
-    positions: { view: true, create: true, edit: true, delete: true, approve: false },
-    worker_documents: { view: true, create: true, edit: true, delete: true, approve: false },
-    assignments: { view: true, create: true, edit: true, delete: true, approve: false },
-    mobilization: { view: true, create: true, edit: true, delete: true, approve: false },
-    timesheets: { view: true, create: true, edit: true, delete: true, approve: false },
+    // Commercial
+    customers: OP_MGR_FULL,
+    main_contracts: OP_MGR_FULL,
+    customer_pos: OP_MGR_FULL,
+    quotations: OP_MGR_FULL,
+    sales_contract_terms: OP_MGR_FULL,
+    rate_conditions: OP_MGR_FULL,
+    profit_estimates: OP_MGR_FULL,
+    // HR + operations
+    hr_hub: OP_MGR_FULL,
+    timesheets: OP_MGR_FULL,
     worker_payroll: { view: true, create: true, edit: true, delete: false, approve: false },
+    payment_export_batches: OP_MGR_FULL,
+    labor_cost_contract_terms: OP_MGR_FULL,
+    positions: OP_MGR_FULL,
+    workers: OP_MGR_FULL,
+    worker_documents: OP_MGR_FULL,
+    office_staff: OP_MGR_FULL,
+    waves: OP_MGR_FULL,
+    assignments: OP_MGR_FULL,
+    mobilization: OP_MGR_FULL,
+    // Store
+    vendors: OP_MGR_FULL,
+    purchases: OP_MGR_FULL,
+    store_inventory: OP_MGR_FULL,
+    // Payroll visibility / approve (dashboard & matrix paths)
     payroll_runs: { view: true, create: false, edit: false, delete: false, approve: true },
     payslips: { view: true, create: false, edit: false, delete: false, approve: true },
+    // Accounting — ห้าม
+    billing_notes: OP_MGR_NONE,
+    tax_invoices: OP_MGR_NONE,
+    receipts: OP_MGR_NONE,
+    ap_bills: OP_MGR_NONE,
+    accounts_receivable: OP_MGR_NONE,
+    accounts_payable: OP_MGR_NONE,
+    cashbook: OP_MGR_NONE,
+    bank_accounts: OP_MGR_NONE,
+    executive_payroll: OP_MGR_NONE,
+    office_payroll: OP_MGR_NONE,
+    // System / portal
+    system_admin: OP_MGR_NONE,
+    document_numbering: OP_MGR_NONE,
+    audit_logs: OP_MGR_NONE,
+    client_portal: OP_MGR_NONE,
   },
 };
 
