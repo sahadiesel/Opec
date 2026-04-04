@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { CreditCard, User, Phone, History, AlertTriangle } from 'lucide-react';
 import type { Worker, Position } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { sortPositionsByDisplayName } from '@/lib/position-display';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -19,6 +21,11 @@ interface WorkerInfoTabProps {
 }
 
 export function WorkerInfoTab({ worker, isEditing, editedWorker, setEditedWorker, allPositions }: WorkerInfoTabProps) {
+  const positionsSorted = useMemo(
+    () => sortPositionsByDisplayName(allPositions ?? []),
+    [allPositions]
+  );
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-6">
@@ -79,7 +86,7 @@ export function WorkerInfoTab({ worker, isEditing, editedWorker, setEditedWorker
                   <SelectTrigger className="h-10"><SelectValue placeholder="เลือกตำแหน่ง" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— เลือกตำแหน่ง —</SelectItem>
-                    {allPositions?.map((p) => (
+                    {positionsSorted.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.positionName || p.positionNameTh}
                       </SelectItem>

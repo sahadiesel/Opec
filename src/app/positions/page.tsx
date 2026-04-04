@@ -26,13 +26,35 @@ import { addDoc, collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { positionListPrimaryName, positionListSecondaryName, type PositionDoc } from '@/lib/position-display';
+import {
+  positionListPrimaryName,
+  positionListSecondaryName,
+  sortPositionsByDisplayName,
+  type PositionDoc,
+} from '@/lib/position-display';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canDelete } from '@/lib/permissions';
+
+const NO_PERMISSION_MESSAGE = 'คุณไม่มีสิทธ์ในการทำรายการ';
+
+function isFirestorePermissionDenied(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  const code = String((error as { code?: string }).code || '');
+  return code === 'permission-denied' || code.endsWith('permission-denied');
+}
 
 export default function PositionsPage() {
   const router = useRouter();
@@ -51,7 +73,13 @@ export default function PositionsPage() {
 
   const { data: positions, isLoading } = useCollection<Position>(positionsQuery as any);
 
+  const positionsSorted = useMemo(
+    () => sortPositionsByDisplayName(positions ?? []),
+    [positions]
+  );
+
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [noPermissionDialogOpen, setNoPermissionDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newPosition, setNewPosition] = useState<Partial<Position>>({
     positionName: '',
@@ -65,7 +93,7 @@ export default function PositionsPage() {
 
   const handleCreate = async () => {
     if (!canCreatePositions) {
-      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างตำแหน่งงาน' });
+      setNoPermissionDialogOpen(true);
       return;
     }
     if (!firestore || !currentUser || !firebaseUser) {
@@ -100,17 +128,14 @@ export default function PositionsPage() {
       });
       router.push(`/positions/${docRef.id}`);
     } catch (error: unknown) {
-      console.error(error);
-      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: string }).code) : '';
-      const msg = error instanceof Error ? error.message : 'ไม่สามารถสร้างตำแหน่งงานได้';
-      const hint =
-        code === 'permission-denied'
-          ? 'สิทธิ์ไม่พอสำหรับสร้างตำแหน่งงาน — ให้แอดมิน deploy firestore.rules ล่าสุด และตรวจ users/{uid} ของผู้ใช้ (operation manager)'
-          : msg;
+      if (isFirestorePermissionDenied(error)) {
+        setNoPermissionDialogOpen(true);
+        return;
+      }
       toast({
         variant: 'destructive',
-        title: 'เกิดข้อผิดพลาด',
-        description: hint,
+        title: 'ไม่สามารถบันทึกได้',
+        description: 'กรุณาลองใหม่หรือติดต่อผู้ดูแลระบบ',
       });
     } finally {
       setIsCreating(false);
@@ -122,7 +147,7 @@ export default function PositionsPage() {
     e.stopPropagation();
     if (!firestore) return;
     if (!canDeletePositions) {
-      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบตำแหน่งงาน' });
+      setNoPermissionDialogOpen(true);
       return;
     }
     if (
@@ -260,7 +285,7 @@ export default function PositionsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {positions?.map((pos) => {
+                  {positionsSorted.map((pos) => {
                     const p = pos as PositionDoc;
                     const nameSecondary = positionListSecondaryName(p);
                     return (
@@ -304,7 +329,7 @@ export default function PositionsPage() {
                     </TableRow>
                     );
                   })}
-                  {(!positions || positions.length === 0) && !isLoading && (
+                  {!isLoading && positionsSorted.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงานมาตรฐานในระบบ</TableCell>
                     </TableRow>
@@ -347,6 +372,18 @@ export default function PositionsPage() {
           </CardFooter>
         </Card>
       </div>
+
+      <AlertDialog open={noPermissionDialogOpen} onOpenChange={setNoPermissionDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{NO_PERMISSION_MESSAGE}</AlertDialogTitle>
+            <AlertDialogDescription className="sr-only">{NO_PERMISSION_MESSAGE}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction>ตกลง</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

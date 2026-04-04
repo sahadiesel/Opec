@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isSystemAdmin, canViewPayrollPerFirestoreRules, canEditEmployeeCompensation } from '@/lib/permission-core';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
 import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType, Position } from '@/lib/types';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -52,6 +52,7 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canEdit } from '@/lib/permissions';
+import { sortPositionsByDisplayName } from '@/lib/position-display';
 
 export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -63,6 +64,8 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const canViewOfficeStaff = useMemo(() => canView(currentUser, 'office_staff'), [currentUser]);
   const canCreateOfficeStaff = useMemo(() => canCreate(currentUser, 'office_staff'), [currentUser]);
   const canEditOfficeStaff = useMemo(() => canEdit(currentUser, 'office_staff'), [currentUser]);
+  const canOpenPayslipTab = useMemo(() => canViewPayrollPerFirestoreRules(currentUser), [currentUser]);
+  const canEditMoneyFields = useMemo(() => canEditEmployeeCompensation(currentUser), [currentUser]);
 
   const staffRef = useMemoFirebase(() => (firestore && !isNew && canViewOfficeStaff ? doc(firestore, 'office_staff', id) : null), [firestore, id, isNew, canViewOfficeStaff]);
   const { data: staffData, isLoading: isStaffLoading } = useDoc<OfficeStaff>(staffRef as any);
@@ -82,8 +85,8 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
   const officeCategoryPositions = useMemo(
     () =>
-      (allPositions || []).filter((p) => p.category === 'OFFICE' && p.active !== false).sort((a, b) =>
-        (a.positionName || a.positionNameTh || a.positionCode).localeCompare(b.positionName || b.positionNameTh || b.positionCode, 'th')
+      sortPositionsByDisplayName(
+        (allPositions || []).filter((p) => p.category === 'OFFICE' && p.active !== false)
       ),
     [allPositions]
   );
@@ -158,7 +161,18 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
     setIsSubmitting(true);
     const now = Date.now();
-    
+
+    const compensationPatch =
+      !canEditMoneyFields && !isNew && staffData
+        ? {
+            monthlySalary: staffData.monthlySalary,
+            salaryType: staffData.salaryType,
+            payrollBand: staffData.payrollBand ?? 'OFFICE',
+          }
+        : !canEditMoneyFields && isNew
+          ? { monthlySalary: 0, salaryType: 'MONTHLY' as StaffSalaryType, payrollBand: 'OFFICE' as const }
+          : {};
+
     try {
       if (isNew) {
         // Atomic Code Generation
@@ -169,6 +183,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
           newRef,
           sanitizeFirestorePayload({
             ...formData,
+            ...compensationPatch,
             staffCode: finalCode,
             id: newRef.id,
             positionId: resolvedPositionId,
@@ -186,6 +201,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
           staffRef!,
           sanitizeFirestorePayload({
             ...formData,
+            ...compensationPatch,
             positionId: resolvedPositionId,
             positionTitle: resolvedPositionTitle,
             updatedAt: now,
@@ -252,7 +268,12 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             <TabsTrigger value="basic" className="gap-2 py-2 px-8"><Briefcase className="h-4 w-4" /> ข้อมูลทั่วไป (Profile)</TabsTrigger>
             <TabsTrigger value="financial" className="gap-2 py-2 px-8"><CreditCard className="h-4 w-4" /> ข้อมูลการเงิน (Finance)</TabsTrigger>
             <TabsTrigger value="admin" className="gap-2 py-2 px-8"><ShieldCheck className="h-4 w-4" /> การเชื่อมโยง (System)</TabsTrigger>
-            <TabsTrigger value="payslips" className="gap-2 py-2 px-8" disabled={isNew}>
+            <TabsTrigger
+              value="payslips"
+              className="gap-2 py-2 px-8"
+              disabled={isNew || !canOpenPayslipTab}
+              title={isNew ? undefined : !canOpenPayslipTab ? 'คุณไม่มีสิทธ์ในการทำรายการ' : undefined}
+            >
               <Receipt className="h-4 w-4" /> สลิปเงินเดือน
             </TabsTrigger>
           </TabsList>
@@ -396,9 +417,18 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-6">
+                  {!canEditMoneyFields && (
+                    <p className="text-xs text-muted-foreground rounded-md border border-amber-200 bg-amber-50/80 p-2 dark:border-amber-900/50 dark:bg-amber-950/30">
+                      แก้เงินเดือน / รูปแบบเงินเดือน / กลุ่มงวดจ่าย ได้เฉพาะ HR Manager หรือ Operation Manager (หรือ Admin)
+                    </p>
+                  )}
                   <div className="space-y-2">
                     <Label className="font-bold">รูปแบบเงินเดือน (Salary Type)</Label>
-                    <Select onValueChange={(v: StaffSalaryType) => setFormData({...formData, salaryType: v})} value={formData.salaryType}>
+                    <Select
+                      disabled={!canEditMoneyFields}
+                      onValueChange={(v: StaffSalaryType) => setFormData({...formData, salaryType: v})}
+                      value={formData.salaryType}
+                    >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="MONTHLY">รายเดือน (Monthly)</SelectItem>
@@ -409,6 +439,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   <div className="space-y-2">
                     <Label className="font-bold">กลุ่มงวดเงินเดือน (Payroll band)</Label>
                     <Select
+                      disabled={!canEditMoneyFields}
                       onValueChange={(v: 'OFFICE' | 'EXECUTIVE') => setFormData({ ...formData, payrollBand: v })}
                       value={formData.payrollBand ?? 'OFFICE'}
                     >
@@ -424,7 +455,13 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">เงินเดือนพื้นฐาน (Monthly Salary)</Label>
-                    <Input type="number" value={formData.monthlySalary} onChange={e => setFormData({...formData, monthlySalary: parseFloat(e.target.value)})} className="text-lg font-black text-primary" />
+                    <Input
+                      type="number"
+                      disabled={!canEditMoneyFields}
+                      value={formData.monthlySalary}
+                      onChange={(e) => setFormData({ ...formData, monthlySalary: parseFloat(e.target.value) || 0 })}
+                      className="text-lg font-black text-primary"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">เลขผู้เสียภาษี (Tax ID)</Label>

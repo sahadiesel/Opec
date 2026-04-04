@@ -182,7 +182,7 @@ export default function HrPayrollWorkbenchPage() {
   const officeStats = useMemo(() => {
     const staff = (officeStaff || []).filter(isActiveOfficePayrollStaff);
     const total = staff.length;
-    const lineIds = buildOfficeLineStaffIdSet(officeLines);
+    const lineIds = buildOfficeLineStaffIdSet(officeLines ?? undefined);
     const linesResolved = Boolean(focusOfficeRun && !loadingLines);
     const missingBank = staff.filter((s) => !officeStaffHasBank(s)).length;
     const missingTax = staff.filter((s) => !officeStaffHasTax(s)).length;

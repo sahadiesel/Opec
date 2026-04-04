@@ -58,6 +58,7 @@ import { canAccess, hasMinimumLevel, isMatrixControlledRole, isSystemAdmin } fro
 import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/services/worker-delete-service';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
+import { sortPositionsByDisplayName } from '@/lib/position-display';
 
 function getInitialNewWorker(): Partial<Worker> {
   return {
@@ -97,6 +98,12 @@ export default function WorkersPage() {
     return collection(firestore, 'positions');
   }, [firestore, firebaseUser, can('positions').view]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
+
+  const positionsSortedForFilter = useMemo(
+    () => sortPositionsByDisplayName(positions ?? []),
+    [positions]
+  );
+
   const timesheetsQuery = useMemoFirebase(() => {
     if (!firestore || !firebaseUser || !canViewWorkers) return null;
     return collection(firestore, 'daily_timesheets');
@@ -334,7 +341,7 @@ export default function WorkersPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">ทุกตำแหน่ง</SelectItem>
-                {(positions || []).map((p) => (
+                {positionsSortedForFilter.map((p) => (
                   <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
                 ))}
               </SelectContent>
@@ -388,7 +395,7 @@ export default function WorkersPage() {
                         <SelectTrigger><SelectValue placeholder="เลือกตำแหน่งงาน..." /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">— เลือกตำแหน่งงาน —</SelectItem>
-                          {positions?.map((p) => (
+                          {positionsSortedForFilter.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
                               {p.positionName || p.positionNameTh}
                             </SelectItem>

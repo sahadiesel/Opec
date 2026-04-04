@@ -1,11 +1,13 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { PositionRate, Position } from '@/lib/types';
 import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
 import { OVERTIME_RULE_OPTIONS } from '@/lib/contract-position-rate-extras';
+import { sortPositionsByDisplayName } from '@/lib/position-display';
 
 export interface PositionRateFormFieldsProps {
   newRate: Partial<PositionRate>;
@@ -35,6 +37,11 @@ export function PositionRateFormFields({
 }: PositionRateFormFieldsProps) {
   const otKey = (newRate.overtimeRuleKey || 'MULT_1_5') as OvertimeRuleKey;
 
+  const positionsForSelect = useMemo(
+    () => sortPositionsByDisplayName(allPositions ?? []),
+    [allPositions]
+  );
+
   return (
     <div className="grid gap-5 py-2">
       <p className="text-xs text-muted-foreground rounded-md border bg-muted/30 p-3">
@@ -56,7 +63,7 @@ export function PositionRateFormFields({
               <SelectValue placeholder="เลือกตำแหน่ง..." />
             </SelectTrigger>
             <SelectContent>
-              {allPositions?.map((p) => (
+              {positionsForSelect.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.positionName || p.positionNameTh}
                 </SelectItem>

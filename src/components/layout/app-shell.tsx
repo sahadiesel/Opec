@@ -13,7 +13,9 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { usePermissionProfiles } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
 import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { userMayAccessPath } from '@/lib/navigation/nav-access';
 import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
@@ -37,8 +39,11 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const firestore = useFirestore();
   const auth = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   const { profiles } = usePermissionProfiles(user);
+  const permissionProfile = profiles?.[0] ?? null;
+  const routeAllowed = user ? userMayAccessPath(user, permissionProfile, pathname) : true;
 
   const handleLogout = async () => {
     if (user && firestore) {
@@ -138,7 +143,16 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             </div>
           </header>
           <main className="min-w-0 flex-1 p-6">
-            {children}
+            {!routeAllowed ? (
+              <div className="mx-auto flex max-w-lg flex-col items-center gap-4 py-20 text-center">
+                <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</p>
+                <Button asChild variant="default">
+                  <Link href="/">กลับแดชบอร์ด</Link>
+                </Button>
+              </div>
+            ) : (
+              children
+            )}
           </main>
         </SidebarInset>
       </div>

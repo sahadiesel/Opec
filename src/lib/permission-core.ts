@@ -173,7 +173,26 @@ function isFutureAccessLevel(value: unknown): value is CoreAccessLevel {
 /** Resolves a stable legacy role string (aligned with normalizeCurrentUserPermissions merges). */
 export function getPrimaryLegacyRole(user: Partial<User> | null): string | null {
   if (!user) return null;
-  return normalizeAssignedPrimaryRole(user.assignedRoleKey);
+  const fromAssigned =
+    typeof user.assignedRoleKey === 'string' && user.assignedRoleKey.trim() !== ''
+      ? user.assignedRoleKey
+      : null;
+  const fromRoleId =
+    typeof user.roleId === 'string' && user.roleId.trim() !== '' ? user.roleId : null;
+  const fromScalar = normalizeAssignedPrimaryRole(fromAssigned ?? fromRoleId);
+  /** Payroll role on user doc must win over a stale HR permission profile (align with Firestore rules). */
+  if (fromScalar === 'payroll_officer') return 'payroll_officer';
+  if (fromScalar) return fromScalar;
+
+  const fromProfileKey =
+    typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
+      ? user.permissionProfileKey
+      : null;
+  const fromProfileList =
+    typeof user.permissionProfileKeys?.[0] === 'string' && user.permissionProfileKeys[0].trim() !== ''
+      ? user.permissionProfileKeys[0]
+      : null;
+  return normalizeAssignedPrimaryRole(fromProfileKey ?? fromProfileList);
 }
 
 /** Effective access group: explicit User.accessGroup wins, else legacy-derived. */
@@ -350,9 +369,60 @@ export function isPayrollOfficer(user: User | null): boolean {
   return getPrimaryLegacyRole(user) === 'payroll_officer';
 }
 
+/** แก้ฐานเงินเดือน/ค่าจ้างใน master (เช่น office_staff.monthlySalary) — ไม่ให้ hr_officer / payroll */
+export function canEditEmployeeCompensation(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  const r = getPrimaryLegacyRole(user);
+  return r === 'hr_manager' || r === 'operation_manager';
+}
+
+/**
+ * Aligns with {@code canViewPayroll()} in firestore.rules (read on payroll_batches/…/lines,
+ * office_payroll_runs/…/lines, collectionGroup "lines", etc.). Stricter than {@link ModuleKey}
+ * {@code worker_payroll.view} — e.g. sales_manager may have matrix view but rules deny list.
+ */
+export function canViewPayrollPerFirestoreRules(user: User | null): boolean {
+  if (!user) return false;
+  if (!user.isActive) return false;
+  const st = user.approvalStatus;
+  if (st && st !== 'ACTIVE' && st !== 'APPROVED') return false;
+  if (user.userType === 'customer_portal') return false;
+  if (getEffectiveAccessGroup(user) === 'client') return false;
+
+  if (isSystemAdmin(user)) return true;
+  const ag = getEffectiveAccessGroup(user);
+  if (ag === 'admin') return true;
+  if ((user.department || '').toLowerCase() === 'admin') return true;
+
+  if (isOperationManager(user)) return true;
+  if (isPayrollOfficer(user)) return true;
+
+  const role = getPrimaryLegacyRole(user);
+  if (role === 'accounting_manager' || role === 'accounting_officer') return true;
+  if (ag === 'accounting') return true;
+  if ((user.department || '').toLowerCase() === 'accounting') return true;
+
+  return false;
+}
+
 export function canActAsHrManager(user: User | null): boolean {
   const role = getPrimaryLegacyRole(user);
   return role === 'hr_manager' || role === 'operation_manager' || isSystemAdmin(user);
+}
+
+/** แก้ไขตั้งค่าภาษี/ประกันสังคมในหน้า HR settings (เขียน payroll_policies) */
+export function canEditHrStatutoryPayrollSettings(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  if (canManageSystem(user)) return true;
+  const role = getPrimaryLegacyRole(user);
+  return (
+    role === 'hr_manager' ||
+    role === 'hr_officer' ||
+    role === 'payroll_officer' ||
+    role === 'operation_manager'
+  );
 }
 
 /**

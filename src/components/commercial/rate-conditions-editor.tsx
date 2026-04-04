@@ -68,6 +68,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Separator } from '@/components/ui/separator';
 import { writeAuditLog } from '@/lib/services/audit-service';
+import { sortPositionsByDisplayName } from '@/lib/position-display';
 
 interface RateConditionsEditorProps {
   parentType: RateConditionParentType;
@@ -116,6 +117,11 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
 
   const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const positionsSorted = useMemo(
+    () => sortPositionsByDisplayName(allPositions ?? []),
+    [allPositions]
+  );
 
   // 2. Editor State
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -400,7 +406,7 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
                   <SelectTrigger><SelectValue placeholder="ทุกตำแหน่ง (General)" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">-- ทุกตำแหน่ง --</SelectItem>
-                    {allPositions?.map(p => (
+                    {positionsSorted.map(p => (
                       <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
                     ))}
                   </SelectContent>

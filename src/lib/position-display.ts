@@ -32,3 +32,32 @@ export function positionListSecondaryName(pos: PositionDoc): string | null {
 export function positionDetailHeadline(pos: PositionDoc): string {
   return resolveName(pos) || pos.positionCode || pos.id;
 }
+
+const DISPLAY_SORT = { sensitivity: 'base' as const, numeric: true };
+
+/** A–Z / ก–ฮ friendly browse: primary display name, then code/id. */
+export function sortPositionsByDisplayName<T extends Position>(
+  positions: T[] | null | undefined
+): T[] {
+  if (!positions?.length) return positions ? [...positions] : [];
+  return [...positions].sort((a, b) =>
+    positionListPrimaryName(a as PositionDoc).localeCompare(
+      positionListPrimaryName(b as PositionDoc),
+      undefined,
+      DISPLAY_SORT
+    )
+  );
+}
+
+/** Sort contract/PO rate rows by resolved position title (same order as dropdowns). */
+export function sortPositionRatesByDisplayName<T extends { positionId: string }>(
+  rates: T[] | null | undefined,
+  positions: readonly Position[] | null | undefined
+): T[] {
+  if (!rates?.length) return [];
+  const label = (r: T) => {
+    const p = positions?.find((x) => x.id === r.positionId);
+    return p ? positionListPrimaryName(p as PositionDoc) : r.positionId || '';
+  };
+  return [...rates].sort((a, b) => label(a).localeCompare(label(b), undefined, DISPLAY_SORT));
+}

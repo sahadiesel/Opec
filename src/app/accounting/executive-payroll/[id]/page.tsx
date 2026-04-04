@@ -47,10 +47,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { canView } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
-import {
-  monthlyEmployeePITWithholding,
-  monthlyEmployeeSocialSecurity,
-} from '@/lib/payroll/employee-payroll-deductions';
+import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
+import { pitFromPolicy, socialSecurityFromPolicy } from '@/lib/payroll/d8/deductions-from-policy';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 
 export default function ExecutivePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -145,6 +143,10 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
       let totalAllowances = 0;
       let totalDeductions = 0;
 
+      const policyRecords = await loadPayrollPoliciesFromFirestore(firestore);
+      const asOfPolicy = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
+      const officePolicies = resolvePayrollPoliciesForDate(asOfPolicy, policyRecords, 'office');
+
       for (const staff of activeStaff) {
         const lineId = `EPL-${staff.staffCode}-${id.substring(0, 5)}`;
         const lineDoc = doc(linesCol, lineId);
@@ -153,8 +155,8 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
         const allowance = 0;
         const bonus = 0;
         const grossPay = baseSalary + allowance + bonus;
-        const tax = monthlyEmployeePITWithholding({ monthlyTaxableGross: grossPay });
-        const socialSecurity = monthlyEmployeeSocialSecurity(grossPay);
+        const tax = pitFromPolicy(grossPay, officePolicies.tax);
+        const socialSecurity = socialSecurityFromPolicy(grossPay, officePolicies.sso);
         const deductions = tax + socialSecurity;
         
         const netPay = grossPay - deductions;

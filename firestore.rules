@@ -26,7 +26,10 @@ service cloud.firestore {
       let u = userData();
       return u != null
         && (!('isActive' in u) || u.isActive == true)
-        && (!('approvalStatus' in u) || u.approvalStatus == 'ACTIVE' || u.approvalStatus == 'APPROVED');
+        && (!('approvalStatus' in u)
+          || u.approvalStatus == 'ACTIVE'
+          || u.approvalStatus == 'APPROVED'
+          || u.approvalStatus == 'active');
     }
 
     function isInternalUser() {
@@ -60,10 +63,53 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     // Simple role helpers
     // ---------------------------------------------------------------------
+    /**
+     * Primary business role — align with app getPrimaryLegacyRole.
+     * Many users only have permissionProfileKey (e.g. hr_officer) without assignedRoleKey/roleId.
+     */
     function roleKey() {
       let u = userData();
-      return u != null && ('assignedRoleKey' in u) ? u.assignedRoleKey
-        : (u != null && ('roleId' in u) ? u.roleId : null);
+      return u == null
+        ? null
+        : ('assignedRoleKey' in u && u.assignedRoleKey is string && u.assignedRoleKey.size() > 0
+            ? u.assignedRoleKey
+            : ('roleId' in u && u.roleId is string && u.roleId.size() > 0
+                ? u.roleId
+                : ('permissionProfileKey' in u && u.permissionProfileKey is string && u.permissionProfileKey.size() > 0
+                    ? u.permissionProfileKey
+                    : null)));
+    }
+
+    function userListsProfile(profileId) {
+      let u = userData();
+      return u != null
+        && ('permissionProfileKeys' in u)
+        && u.permissionProfileKeys is list
+        && profileId in u.permissionProfileKeys;
+    }
+
+    /**
+     * UI บันทึก permission profile key เป็นตัวพิมพ์ใหญ่ (HR_OFFICER) — แมตช์กับค่า canonical ตัวพิมพ์เล็กในกฎ
+     */
+    function normalizedRoleKey() {
+      let k = roleKey();
+      return k == null
+        ? null
+        : k == 'HR_OFFICER' || k == 'hr_officer' ? 'hr_officer'
+        : k == 'HR_MANAGER' || k == 'hr_manager' ? 'hr_manager'
+        : k == 'PAYROLL_OFFICER' || k == 'payroll_officer' ? 'payroll_officer'
+        : k == 'SYSTEM_ADMIN' || k == 'system_admin' || k == 'ADMIN_ADMIN' || k == 'admin_admin' ? 'system_admin'
+        : k == 'ACCOUNTING_MANAGER' || k == 'accounting_manager' ? 'accounting_manager'
+        : k == 'ACCOUNTING_OFFICER' || k == 'accounting_officer' ? 'accounting_officer'
+        : k == 'SALES_MANAGER' || k == 'sales_manager' ? 'sales_manager'
+        : k == 'SALES_OFFICER' || k == 'sales_officer' ? 'sales_officer'
+        : k == 'STORE_OFFICER' || k == 'store_officer' ? 'store_officer'
+        : k == 'STORE_MANAGER' || k == 'store_manager' ? 'store_manager'
+        : k == 'OPERATION_MANAGER' || k == 'operation_manager' ? 'operation_manager'
+        : k == 'OPERATIONS_MANAGER' || k == 'operations_manager' ? 'operation_manager'
+        : k == 'OPERATION_OFFICER' || k == 'operation_officer' ? 'operation_officer'
+        : k == 'CLIENT_USER' || k == 'client_user' ? 'client_user'
+        : k;
     }
 
     function departmentGroup() {
@@ -80,7 +126,7 @@ service cloud.firestore {
     function isAdminUser() {
       return isEligibleInternal()
         && (
-          roleKey() == 'system_admin'
+          normalizedRoleKey() == 'system_admin'
           || departmentGroup() == 'admin'
           || department() == 'admin'
         );
@@ -89,8 +135,8 @@ service cloud.firestore {
     function isAccountingUser() {
       return isEligibleInternal()
         && (
-          roleKey() == 'accounting_manager'
-          || roleKey() == 'accounting_officer'
+          normalizedRoleKey() == 'accounting_manager'
+          || normalizedRoleKey() == 'accounting_officer'
           || departmentGroup() == 'accounting'
           || department() == 'accounting'
         );
@@ -99,39 +145,50 @@ service cloud.firestore {
     function isSalesUser() {
       return isEligibleInternal()
         && (
-          roleKey() == 'sales_manager'
-          || roleKey() == 'sales_officer'
+          normalizedRoleKey() == 'sales_manager'
+          || normalizedRoleKey() == 'sales_officer'
           || department() == 'sales'
         );
     }
 
     function isHrOfficer() {
       return isEligibleInternal()
+        && normalizedRoleKey() != 'payroll_officer'
         && (
-          roleKey() == 'hr_officer'
+          normalizedRoleKey() == 'hr_officer'
           || department() == 'hr'
+          || department() == 'HR'
+          || userListsProfile('hr_officer')
+          || userListsProfile('HR_OFFICER')
+        );
+    }
+
+    /** HR Manager — แยกจาก hr_officer; ใช้ในเมนูทะเบียน/แดชบอร์ด HR และอ่านงวด payroll */
+    function isHrManager() {
+      return isEligibleInternal()
+        && (
+          normalizedRoleKey() == 'hr_manager'
+          || userListsProfile('hr_manager')
+          || userListsProfile('HR_MANAGER')
         );
     }
 
     function isPayrollOfficer() {
       return isEligibleInternal()
-        && roleKey() == 'payroll_officer';
+        && normalizedRoleKey() == 'payroll_officer';
     }
 
     function isStoreOfficer() {
       return isEligibleInternal()
         && (
-          roleKey() == 'store_officer'
+          normalizedRoleKey() == 'store_officer'
           || department() == 'store'
         );
     }
 
     function isOperationManager() {
       return isEligibleInternal()
-        && (
-          roleKey() == 'operation_manager'
-          || roleKey() == 'operations_manager'
-        );
+        && normalizedRoleKey() == 'operation_manager';
     }
 
     function internalRead() {
@@ -149,16 +206,29 @@ service cloud.firestore {
       return isAdminUser();
     }
 
+    /** Own permission matrix row — used by client hooks (onSnapshot by doc id). List stays admin-only. */
+    function userMayReadOwnPermissionProfile(profileDocId) {
+      let u = userData();
+      return isEligibleInternal()
+        && u != null
+        && (
+          (('permissionProfileKey' in u) && u.permissionProfileKey == profileDocId)
+          || (('permissionProfileKeys' in u)
+            && u.permissionProfileKeys is list
+            && profileDocId in u.permissionProfileKeys)
+        );
+    }
+
     function canAccessSales() {
       return isAdminUser() || isSalesUser() || isOperationManager();
     }
 
     function canAccessOperations() {
-      return isAdminUser() || isOperationManager() || isHrOfficer();
+      return isAdminUser() || isOperationManager() || isHrManager() || isHrOfficer();
     }
 
     function canAccessHR() {
-      return isAdminUser() || isOperationManager() || isHrOfficer() || isPayrollOfficer();
+      return isAdminUser() || isOperationManager() || isHrManager() || isHrOfficer() || isPayrollOfficer();
     }
 
     function canAccessStore() {
@@ -169,12 +239,17 @@ service cloud.firestore {
       return isAdminUser() || isAccountingUser();
     }
 
+    /** ทะเบียนลูกจ้าง/พนักงาน/ตำแหน่ง — ไม่ให้ payroll แก้ master (เงินเดือน/ฐานค่าจ้าง) */
+    function canManageHrMasterData() {
+      return isAdminUser() || isOperationManager() || isHrManager() || isHrOfficer();
+    }
+
     function canManageWorkers() {
-      return isAdminUser() || isOperationManager() || isHrOfficer() || isPayrollOfficer();
+      return canManageHrMasterData();
     }
 
     function canManagePositions() {
-      return isAdminUser() || isOperationManager() || isHrOfficer() || isPayrollOfficer();
+      return canManageHrMasterData();
     }
 
     function canDeleteHrMaster() {
@@ -193,8 +268,11 @@ service cloud.firestore {
       return isAdminUser() || isAccountingUser();
     }
 
+    /** อ่าน payroll_runs / batches / office runs / policies — HR ต้องเห็นในแดชบอร์ด HR */
     function canViewPayroll() {
-      return isAdminUser() || isOperationManager() || isPayrollOfficer() || isAccountingUser();
+      return isAdminUser() || isOperationManager() || isPayrollOfficer() || isAccountingUser()
+        || isHrManager()
+        || isHrOfficer();
     }
 
     function payrollBatchLocked(data) {
@@ -343,13 +421,13 @@ service cloud.firestore {
 
     match /office_staff/{id} {
       allow read: if internalRead();
-      allow create, update: if canManageWorkers();
+      allow create, update: if canManageHrMasterData();
       allow delete: if canDeleteHrMaster();
     }
 
     match /worker_document_catalog/{id} {
       allow read: if internalRead();
-      allow write: if canAccessHR();
+      allow write: if canManageHrMasterData();
     }
 
     match /payroll_runs/{id} {
@@ -375,7 +453,12 @@ service cloud.firestore {
 
     match /payroll_policies/{id} {
       allow read: if canViewPayroll();
-      allow write: if canManageSystem();
+      /** HR / payroll ปรับอัตราประกันสังคมและขั้นบันไดภาษี — อิงเมนูตั้งค่า HR */
+      allow write: if canManageSystem()
+        || canPreparePayroll()
+        || canApprovePayroll()
+        || (isEligibleInternal()
+            && (normalizedRoleKey() == 'hr_manager' || normalizedRoleKey() == 'hr_officer'));
     }
 
     match /payroll_correction_requests/{id} {
@@ -526,7 +609,7 @@ service cloud.firestore {
     }
 
     match /permission_profiles/{id} {
-      allow get: if canManageSystem();
+      allow get: if canManageSystem() || userMayReadOwnPermissionProfile(id);
       allow list: if canManageSystem();
       allow write: if canManageSystem();
     }

@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import Link from 'next/link';
 import { collectionGroup, limit, query, where, doc } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
-import { canView } from '@/lib/permissions';
+import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
 import type { PayrollBatch, PayrollBatchLine, User } from '@/lib/types';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
@@ -54,7 +54,7 @@ function WorkerPayslipRow({ line }: { line: PayrollBatchLine }) {
 
 export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: string; currentUser: User | null }) {
   const firestore = useFirestore();
-  const allowed = canView(currentUser, 'worker_payroll');
+  const allowed = canViewPayrollPerFirestoreRules(currentUser);
 
   const linesQuery = useMemoFirebase(
     () =>
@@ -75,7 +75,7 @@ export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: stri
       <Card>
         <CardHeader>
           <CardTitle>สลิปเงินเดือน</CardTitle>
-          <CardDescription>ไม่มีสิทธิ์ดู worker payroll</CardDescription>
+          <CardDescription>คุณไม่มีสิทธ์ดูข้อมูลสลิปในระบบนี้</CardDescription>
         </CardHeader>
       </Card>
     );

@@ -5,6 +5,8 @@
 
 import {
   calculateThaiAnnualPIT,
+  calculateAnnualPITFromProgressiveBands,
+  type PitProgressiveBand,
   DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT,
   DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
 } from '@/lib/hr/pit-thailand';
@@ -17,6 +19,8 @@ export interface MonthlyPitInput {
   monthlyTaxableGross: number;
   /** รวมลดหย่อนรายปี (ไม่มีเหมาจ่ายตามที่ตกลง) */
   annualDeductions?: number;
+  /** ถ้ามี — ใช้แทนตารางค่าเริ่มต้น (จากหน้าตั้งค่า HR / payroll_policies) */
+  pitProgressiveBands?: PitProgressiveBand[] | null;
 }
 
 /** รายได้ประมาณการทั้งปีจากฐานรายเดือนคงที่ */
@@ -29,7 +33,11 @@ export function monthlyEmployeePITWithholding(input: MonthlyPitInput): number {
   const annualGross = projectedAnnualGrossFromMonthly(input.monthlyTaxableGross);
   const deductions = input.annualDeductions ?? DEFAULT_ANNUAL_PERSONAL_ALLOWANCE;
   const net = Math.max(0, annualGross - deductions);
-  const annualTax = calculateThaiAnnualPIT(net);
+  const bands = input.pitProgressiveBands;
+  const annualTax =
+    bands && bands.length
+      ? calculateAnnualPITFromProgressiveBands(net, bands)
+      : calculateThaiAnnualPIT(net);
   return Math.round((annualTax / 12) * 100) / 100;
 }
 

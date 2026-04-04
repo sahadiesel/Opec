@@ -13,6 +13,7 @@ export const SEED_POSITIONS: Position[] = [
   {
     id: 'POS001',
     positionCode: 'OWEL',
+    positionName: 'Offshore Welder',
     positionNameTh: 'Offshore Welder',
     positionNameEn: 'Offshore Welder',
     category: 'OFFSHORE',
@@ -26,6 +27,7 @@ export const SEED_POSITIONS: Position[] = [
   {
     id: 'POS002',
     positionCode: 'SAFE',
+    positionName: 'Safety Officer',
     positionNameTh: 'Safety Officer',
     positionNameEn: 'Safety Officer',
     category: 'ONSHORE',

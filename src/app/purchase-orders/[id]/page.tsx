@@ -73,6 +73,7 @@ import { ProfitAnalysisTab } from '@/components/commercial/profit-analysis-tab';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete } from '@/lib/permissions';
+import { sortPositionRatesByDisplayName, sortPositionsByDisplayName } from '@/lib/position-display';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -114,6 +115,16 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const positionsQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'positions') : null), [firestore, canViewPo]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const positionsSortedForPoLine = useMemo(
+    () => sortPositionsByDisplayName(allPositions ?? []),
+    [allPositions]
+  );
+
+  const ratesSortedForPoLine = useMemo(
+    () => (rates ? sortPositionRatesByDisplayName(rates, allPositions ?? null) : []),
+    [rates, allPositions]
+  );
 
   const quotationRef = useMemoFirebase(
     () => (firestore && po?.quotationId ? doc(firestore, 'quotations', po.quotationId) : null),
@@ -585,12 +596,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           <SelectTrigger className="h-11"><SelectValue placeholder="เลือกตำแหน่งงาน..." /></SelectTrigger>
                           <SelectContent>
                             {isContractBasedPO
-                              ? rates?.map(r => {
-                                  const p = allPositions?.find(pos => pos.id === r.positionId);
-                                  return <SelectItem key={r.id} value={r.positionId}>{(p?.positionName || p?.positionNameTh) || r.positionId}</SelectItem>;
+                              ? ratesSortedForPoLine.map((r) => {
+                                  const p = allPositions?.find((pos) => pos.id === r.positionId);
+                                  return (
+                                    <SelectItem key={r.id} value={r.positionId}>
+                                      {(p?.positionName || p?.positionNameTh) || r.positionId}
+                                    </SelectItem>
+                                  );
                                 })
-                              : allPositions?.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>{p.positionName || p.positionNameTh}</SelectItem>
+                              : positionsSortedForPoLine.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.positionName || p.positionNameTh}
+                                  </SelectItem>
                                 ))}
                           </SelectContent>
                         </Select>

@@ -212,7 +212,7 @@ export function rowStateToTimesheetPayload(
     siteId,
     positionId: asgn.positionId,
     workMode: asgn.workMode,
-    remark: r.remark?.trim() || null,
+    remark: r.remark?.trim() || undefined,
     status: 'DRAFT' as const,
     readyForPayroll: false,
     readyForBilling: false,

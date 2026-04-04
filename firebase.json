@@ -1,5 +1,18 @@
 {
   "firestore": {
     "rules": "firestore.rules"
-  }
+  },
+  "apphosting": [
+    {
+      "backendId": "opecbackend",
+      "rootDir": ".",
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".next",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
 }

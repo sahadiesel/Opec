@@ -32,6 +32,7 @@ export {
   isHrManager,
   isOperationManager,
   isPayrollOfficer,
+  canEditEmployeeCompensation,
   canActAsHrManager,
   getUserAccessContext,
   mapLegacyBusinessRoleToCore,
@@ -197,6 +198,7 @@ export const PERMISSION_MATRIX: Record<string, BasePermissionRoleMap | { all: tr
   hr_officer: {
     workers: { view: true, create: true, edit: true },
     worker_documents: { view: true, create: true, edit: true },
+    positions: { view: true, create: true, edit: true },
     assignments: { view: true, create: true, edit: true },
     mobilization: { view: true, create: true, edit: true },
     timesheets: { view: true, create: true, edit: true },
@@ -401,6 +403,7 @@ type RoleMatrixKey =
   | 'operation_manager'
   | 'hr_manager'
   | 'hr_officer'
+  | 'payroll_officer'
   | 'store_officer'
   | 'accounting_manager'
   | 'accounting_officer';
@@ -508,6 +511,32 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     purchases: P_VCE,
     store_inventory: P_VCE,
     labor_cost_contract_terms: P_VCE,
+    quotations: P_VIEW,
+    payment_export_batches: P_VCE,
+  },
+  /** จ่ายเงิน/สลิป/งวด — อ่านทะเบียนได้ แต่ไม่สร้างตำแหน่ง/ไม่แก้ master เงินเดือน */
+  payroll_officer: {
+    overview_dashboard: P_VIEW,
+    positions: P_VIEW,
+    vendors: P_NONE,
+    customers: P_VIEW,
+    main_contracts: P_VIEW,
+    customer_pos: P_VIEW,
+    sales_contract_terms: P_VIEW,
+    rate_conditions: P_VIEW,
+    profit_estimates: P_VIEW,
+    waves: P_VIEW,
+    assignments: P_VIEW,
+    mobilization: P_VIEW,
+    hr_hub: P_VIEW,
+    timesheets: P_VIEW,
+    workers: P_VIEW,
+    worker_payroll: P_VCE,
+    office_payroll: P_VCE,
+    office_staff: P_VIEW,
+    purchases: P_NONE,
+    store_inventory: P_NONE,
+    labor_cost_contract_terms: P_VIEW,
     quotations: P_VIEW,
     payment_export_batches: P_VCE,
   },
@@ -673,9 +702,6 @@ const PAYROLL_OFFICER_BASELINE_MODULES: readonly ModuleKey[] = [
   'worker_payroll',
   'payment_export_batches',
   'timesheets',
-  'workers',
-  'office_staff',
-  'positions',
 ];
 
 function buildPermissionMap(

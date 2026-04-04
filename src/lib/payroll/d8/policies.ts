@@ -1,4 +1,8 @@
 import type { PayrollPolicyKind, PayrollPolicyRecord } from '@/lib/types';
+import {
+  HR_STATUTORY_POLICY_SSO_ID,
+  HR_STATUTORY_POLICY_TAX_OFFICE_ID,
+} from '@/lib/payroll/d8/hr-statutory-policy-ids';
 
 export type PayrollScope = 'office' | 'worker';
 
@@ -33,6 +37,14 @@ function pickLatest(
       (kind !== 'tax' && kind !== 'allowance_deduction' ? true : policyMatchesScope(p, scope))
   );
   if (!candidates.length) return null;
+  if (kind === 'sso') {
+    const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_SSO_ID);
+    if (hr) return hr;
+  }
+  if (kind === 'tax' && scope === 'office') {
+    const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_TAX_OFFICE_ID);
+    if (hr) return hr;
+  }
   return candidates.sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0] ?? null;
 }
 

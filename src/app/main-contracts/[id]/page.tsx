@@ -35,6 +35,7 @@ import { canView, canEdit } from '@/lib/permissions';
 import { isSystemAdmin, isHrManager } from '@/lib/permission-core';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
+import { sortPositionRatesByDisplayName } from '@/lib/position-display';
 
 import { ContractPoTab } from './_components/contract-po-tab';
 import { ContractLogsTab } from './_components/contract-logs-tab';
@@ -221,6 +222,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     return doc(firestore, 'main_contracts', inheritId);
   }, [firestore, isAuthorized, contract]);
   const { data: inheritedPolicyContract } = useDoc<MainContract>(inheritedPolicyContractRef as any);
+
+  const ratesSortedByPosition = useMemo(() => {
+    if (!rates) return rates;
+    return sortPositionRatesByDisplayName(rates, allPositions ?? null);
+  }, [rates, allPositions]);
 
   const duplicateAlertPositionLabel = useMemo(() => {
     if (!addRatePositionDuplicate) return '';
@@ -1256,7 +1262,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rates?.map(r => {
+                    {ratesSortedByPosition?.map(r => {
                       const pos = allPositions?.find(p => p.id === r.positionId);
                       const sellMissingCost = Number(r.sellRate || 0) > 0 && Number(r.costBaseline || 0) <= 0;
                       return (
@@ -1346,7 +1352,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                         </TableRow>
                       );
                     })}
-                    {!rates?.length && (
+                    {!ratesSortedByPosition?.length && (
                       <TableRow>
                         <TableCell
                           colSpan={5 + (canViewCostFields ? 1 : 0) + (canModify && canMutatePositionRates ? 1 : 0)}

@@ -188,7 +188,8 @@ export type BillingStatus =
   | 'OVERDUE'             // เกินกำหนดชำระ
   | 'CANCELLED';          // ยกเลิก
 
-export type ApprovalStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED';
+/** Matches firestore.rules: ACTIVE or legacy APPROVED both treated as approved for access. */
+export type ApprovalStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'REJECTED' | 'APPROVED';
 
 export type UserType = 'internal' | 'customer_portal';
 

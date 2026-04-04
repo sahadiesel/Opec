@@ -48,6 +48,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
 
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import { WorkerCertsTab } from './_components/worker-certs-tab';
@@ -137,6 +138,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
   const { payroll } = usePermissions(currentUser);
   const canEditWorker = useMatrixGuards ? canAccess(currentUser, 'workers', 'edit') : payroll('worker', 'edit');
+  const canOpenPayslipTab = canViewPayrollPerFirestoreRules(currentUser);
 
   // --- Business logic: save master (unchanged) ---
   const handleSaveMaster = () => {
@@ -369,7 +371,14 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
             <TabsTrigger value="drug" className="gap-2 py-2 px-6"><AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)</TabsTrigger>
             <TabsTrigger value="docs" className="gap-2 py-2 px-6"><FileSearch className="h-4 w-4" /> เอกสาร (Docs)</TabsTrigger>
             <TabsTrigger value="worklog" className="gap-2 py-2 px-6"><History className="h-4 w-4" /> ประวัติชั่วโมงงาน</TabsTrigger>
-            <TabsTrigger value="payslips" className="gap-2 py-2 px-6"><Receipt className="h-4 w-4" /> สลิปเงินเดือน</TabsTrigger>
+            <TabsTrigger
+              value="payslips"
+              className="gap-2 py-2 px-6"
+              disabled={!canOpenPayslipTab}
+              title={!canOpenPayslipTab ? 'คุณไม่มีสิทธ์ในการทำรายการ' : undefined}
+            >
+              <Receipt className="h-4 w-4" /> สลิปเงินเดือน
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6 space-y-6">

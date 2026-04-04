@@ -18,7 +18,7 @@ export function useAppUser() {
     return doc(firestore, 'users', authUser.uid);
   }, [firestore, authUser?.uid]);
 
-  const { data: firestoreUser, isLoading: docLoading } = useDoc<User>(userDocRef);
+  const { data: firestoreUser, isLoading: docLoading, error: userDocError } = useDoc<User>(userDocRef);
 
   const [cachedUser, setCachedUser] = useState<User | null>(null);
 
@@ -41,7 +41,17 @@ export function useAppUser() {
     }
   }, [firestoreUser]);
 
-  const currentUser = firestoreUser ?? cachedUser;
+  /**
+   * Never trust localStorage for RBAC after Firestore user doc fails (e.g. permission-denied),
+   * or after load completes with no server doc — avoids "UI says HR / Save says denied".
+   */
+  const currentUser = useMemo(() => {
+    if (firestoreUser) return firestoreUser;
+    if (docLoading && authUser) return cachedUser;
+    if (userDocError) return null;
+    return null;
+  }, [firestoreUser, docLoading, authUser, cachedUser, userDocError]);
+
   const isLoading =
     authLoading || (!!authUser && docLoading && !firestoreUser && !cachedUser);
 
@@ -50,5 +60,6 @@ export function useAppUser() {
     authUser,
     isLoading,
     isFromFirestore: !!firestoreUser,
+    userDocError,
   };
 }

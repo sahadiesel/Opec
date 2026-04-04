@@ -10,7 +10,10 @@
     "build": "NODE_ENV=production next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy:app": "firebase deploy --only apphosting:opecbackend --force",
+    "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy:all": "firebase deploy --only firestore:rules,apphosting:opecbackend --force"
   },
   "dependencies": {
     "@genkit-ai/google-genai": "^1.28.0",

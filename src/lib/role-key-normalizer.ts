@@ -18,5 +18,6 @@ export const LEGACY_ROLE_KEY_ALIASES: Record<string, string> = {
 
 export function normalizeBusinessRoleKey(roleKey?: string | null): string | null {
   if (!roleKey) return null;
-  return LEGACY_ROLE_KEY_ALIASES[roleKey] || roleKey;
+  const trimmed = roleKey.trim().toLowerCase();
+  return LEGACY_ROLE_KEY_ALIASES[trimmed] || trimmed;
 }

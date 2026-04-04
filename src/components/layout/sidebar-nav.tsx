@@ -33,19 +33,11 @@ import {
   Settings,
   FileSignature,
   Hash,
-  CalendarDays,
   History,
-  RotateCcw,
-  Grid3X3,
   FileBarChart,
-  Database,
   Building2,
   FlaskConical,
   ChevronRight,
-  Briefcase,
-  LayoutGrid,
-  ListChecks,
-  Sheet,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -63,9 +55,11 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView, canSeeHrPillarUi, isClient, canAccess } from '@/lib/permissions';
+import { ModuleKey, canView, isClient, canAccess } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { UI_LABELS } from '@/lib/constants/labels';
+import { HR_NAV_SUBSECTIONS } from '@/lib/navigation/hr-nav-items';
+import { pathMatches, sidebarMatrixVisibilityForPath, canViewHrHubItem } from '@/lib/navigation/nav-access';
 
 type NavAudience = 'internal' | 'client' | 'admin';
 
@@ -85,55 +79,6 @@ interface NavGroup {
   /** บัญชี: รายการหลักใน `items` + หมวดเงินเดือนย่อย */
   accountingStructured?: boolean;
 }
-
-/**
- * HR-D1: เมนูตามงานที่ต้องทำ — 3 โซน (เตรียมจ่าย / อนุมัติ / ทะเบียน)
- * คงการแยก Office | Worker ในรายการย่อย (สอดคล้อง HR-D3)
- */
-const HR_NAV_SUBSECTIONS: Array<{
-  title: string;
-  description: string;
-  icon: ComponentType<{ className?: string }>;
-  items: NavItem[];
-}> = [
-  {
-    title: 'เตรียมจ่าย (Preparation)',
-    description: 'HR Officer · งานประจำวัน',
-    icon: ListChecks,
-    items: [
-      { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
-      { key: 'timesheets', title: 'คีย์ Timesheet (Wave Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
-      { key: 'timesheets', title: 'คีย์ทั้ง Wave (Excel)', href: '/timesheets/wave-excel', icon: Sheet },
-      { key: 'timesheets', title: 'ตรวจ Timesheet รายวัน', href: '/timesheets/daily', icon: Clock },
-      { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (Batches)', href: '/payroll/batches', icon: Coins },
-      { key: 'worker_payroll', title: 'รอบจ่ายและตัดยอด (งวดคนงาน)', href: '/payroll/periods', icon: CalendarDays },
-      { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
-    ],
-  },
-  {
-    title: 'อนุมัติ (Approval)',
-    description: 'HR Manager · ตรวจและอนุมัติ',
-    icon: ShieldCheck,
-    items: [
-      { key: 'hr_hub', title: 'ศูนย์อนุมัติ Payroll (Approval Center)', href: '/hr/payroll-approval', icon: ShieldCheck },
-      { key: 'hr_hub', title: 'รายการรออนุมัติ', href: '/hr/payroll-approval#pending', icon: ClipboardList },
-      { key: 'hr_hub', title: 'คำขอแก้ไข (Corrections)', href: '/hr/dashboard#hr-action-queue', icon: RotateCcw },
-    ],
-  },
-  {
-    title: 'ทะเบียน (Master Data)',
-    description: 'Officer + Manager · ไม่ใช่งานประจำวัน',
-    icon: Database,
-    items: [
-      { key: 'workers', title: 'ทะเบียนลูกจ้าง', href: '/workers', icon: HardHat },
-      { key: 'office_staff', title: 'ทะเบียนพนักงานออฟฟิศ', href: '/office-staff', icon: UserSearch },
-      { key: 'positions', title: 'ตำแหน่งงาน', href: '/positions', icon: Activity },
-      { key: 'workers', title: 'เอกสารบุคลากร (Catalog)', href: '/worker-document-catalog', icon: FileText },
-      { key: 'hr_hub', title: 'ตั้งค่า HR', href: '/hr/settings', icon: Settings },
-      { key: 'hr_hub', title: 'แดชบอร์ด HR (ภาพรวม)', href: '/hr/dashboard', icon: Briefcase },
-    ],
-  },
-];
 
 const ACCOUNTING_MAIN_ITEMS: NavItem[] = [
   { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
@@ -161,60 +106,8 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
   },
 ];
 
-function pathMatches(pathname: string, href: string): boolean {
-  const base = href.split('#')[0];
-  if (pathname === base) return true;
-  if (base !== '/' && pathname.startsWith(`${base}/`)) return true;
-  return false;
-}
-
-function resolveMatrixModuleForSidebarItem(item: NavItem): string | null {
-  if (item.href === '/workers') return 'workers';
-  if (item.href === '/worker-document-catalog') return 'worker_documents';
-  if (item.href === '/assignments') return 'assignments';
-  if (item.href === '/mobilization') return 'mobilization';
-  if (
-    item.href === '/timesheets/wave-board' ||
-    item.href === '/timesheets/wave-excel' ||
-    item.href === '/timesheets/daily'
-  ) {
-    return 'timesheets';
-  }
-  if (item.href === '/payroll/batches') return 'worker_payroll';
-  if (item.href === '/payroll/periods') return 'payroll_runs';
-  return null;
-}
-
 function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
-  const role = user.assignedRoleKey;
-  if (!role) return null;
-
-  // Incremental rollout: only enforce matrix visibility for these roles.
-  if (!['system_admin', 'hr_officer', 'payroll_officer', 'operation_manager'].includes(role)) {
-    return null;
-  }
-
-  const module = resolveMatrixModuleForSidebarItem(item);
-  if (!module) return null; // keep legacy behavior for menus not mapped yet
-
-  return canAccess(user, module, 'view');
-}
-
-/** หน้า /hr/* เฉพาะผู้ที่มีโมดูลแผนกบุคคลอย่างน้อยหนึ่งรายการ (ไม่โชว์ให้ store / sales ล้วน) */
-function canViewHrHubItem(
-  user: User,
-  profile: PermissionProfile | null,
-  admin: boolean,
-  item: NavItem
-): boolean {
-  if (admin) return true;
-  const byMatrix = sidebarMatrixVisibility(user, item);
-  if (byMatrix !== null) return byMatrix;
-  if (canView(user, item.key, profile)) return true;
-  if (item.href.startsWith('/hr/')) {
-    return canSeeHrPillarUi(user, profile);
-  }
-  return false;
+  return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
 
 const navGroups: NavGroup[] = [
