@@ -80,7 +80,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/main-contracts', 'main_contracts'],
   ['/sales-terms', 'sales_contract_terms'],
   ['/labor-cost-terms', 'labor_cost_contract_terms'],
-  ['/worker-document-catalog', 'workers'],
+  ['/worker-document-catalog', 'worker_documents'],
   ['/accounts-receivable', 'accounts_receivable'],
   ['/accounts-payable', 'accounts_payable'],
   ['/billing-notes', 'billing_notes'],

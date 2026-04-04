@@ -67,7 +67,7 @@ export const HR_NAV_SUBSECTIONS: Array<{
       { key: 'workers', title: 'ทะเบียนลูกจ้าง', href: '/workers', icon: HardHat },
       { key: 'office_staff', title: 'ทะเบียนพนักงานออฟฟิศ', href: '/office-staff', icon: UserSearch },
       { key: 'positions', title: 'ตำแหน่งงาน', href: '/positions', icon: Activity },
-      { key: 'workers', title: 'เอกสารบุคลากร (Catalog)', href: '/worker-document-catalog', icon: FileText },
+      { key: 'worker_documents', title: 'เอกสารบุคลากร (Catalog)', href: '/worker-document-catalog', icon: FileText },
       { key: 'hr_hub', title: 'ตั้งค่า HR', href: '/hr/settings', icon: Settings },
       { key: 'hr_hub', title: 'แดชบอร์ด HR (ภาพรวม)', href: '/hr/dashboard', icon: Briefcase },
     ],

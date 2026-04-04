@@ -14,7 +14,7 @@ export const DOMAIN_TO_MODULE_MAP: Record<string, string> = {
   'worker_document_catalog': 'worker_documents',
   'daily_timesheets': 'timesheets',
   'payroll_batches': 'worker_payroll',
-  'payroll_runs': 'worker_payroll',
+  /** payroll_runs เป็น module key ของ UI — resolve ที่ getPermissions เท่านั้น (ไม่ alias) */
   'office_payroll_runs': 'office_payroll',
   'payroll_policies': 'hr_hub',
   'payroll_correction_requests': 'hr_hub',

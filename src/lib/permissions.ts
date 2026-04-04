@@ -5,6 +5,8 @@
  *
  * Keep in sync with firestore.rules: roleKey()/normalizedRoleKey(), canManageHrMasterData(),
  * canAccessOperations/HR, and useAppUser (no localStorage RBAC after user-doc errors).
+ * Baseline profiles in getBaselineProfiles() must match ROLE_PERMISSION_MATRIX for the same role;
+ * nav-access MODULE_PREFIXES / hr-nav-items keys must use the same ModuleKey as getPermissions().
  */
 
 import {
@@ -120,6 +122,9 @@ export const SYSTEM_MODULES = [
   { group: 'HR & Payroll (บุคคล)', key: 'hr_hub', label: 'ศูนย์กลาง HR (แดชบอร์ด / ตั้งค่า)' },
   { group: 'HR & Payroll (บุคคล)', key: 'timesheets', label: 'ลงเวลาทำงาน (Timesheets)' },
   { group: 'HR & Payroll (บุคคล)', key: 'worker_payroll', label: 'จ่ายเงินคนงาน (Worker Payroll)' },
+  /** งวดจ่ายคนงาน — สิทธิ์แยกจาก worker_payroll (อนุมัติงวด / ดูรอบจ่าย) */
+  { group: 'HR & Payroll (บุคคล)', key: 'payroll_runs', label: 'รอบจ่ายคนงาน (Payroll runs)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'payslips', label: 'สลิปเงินเดือนคนงาน (Payslips)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_payroll', label: 'เงินเดือนออฟฟิศ (Office Payroll — ดู/แก้ตามโปรไฟล์)' },
   { group: 'HR & Payroll (บุคคล)', key: 'payment_export_batches', label: 'ไฟล์โอนเงินธนาคาร (Payment Exports)' },
   { group: 'HR & Payroll (บุคคล)', key: 'labor_cost_contract_terms', label: 'เงื่อนไขต้นทุน (Labor Cost Terms)' },
@@ -222,6 +227,9 @@ export const PERMISSION_MATRIX: Record<string, BasePermissionRoleMap | { all: tr
     assignments: { view: true, create: true, edit: true },
     mobilization: { view: true, create: true, edit: true },
     timesheets: { view: true, create: true, edit: true },
+    worker_payroll: { view: true, create: true, edit: true },
+    payroll_runs: { view: true, create: true, edit: true },
+    payslips: { view: true, create: true, edit: true },
   },
 
   payroll_officer: {
@@ -394,6 +402,9 @@ export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = SY
 
 const MODULE_KEY_SET = new Set<ModuleKey>(SYSTEM_MODULES.map((m) => m.key));
 
+/** ไม่ผ่าน DOMAIN_TO_MODULE_MAP — แยกสิทธิ์งวดจ่าย/สลิปจากแบทช์ worker_payroll */
+const MODULE_KEYS_WITHOUT_DOMAIN_ALIAS: ReadonlySet<string> = new Set(['payroll_runs', 'payslips']);
+
 const SALES_MODULES: readonly ModuleKey[] = [
   'customers',
   'main_contracts',
@@ -484,6 +495,22 @@ const P_VIEW: ModulePermission = { view: true, create: false, edit: false, delet
 const P_VCE: ModulePermission = { view: true, create: true, edit: true, delete: false, approve: false };
 const P_FULL_NO_APPROVE: ModulePermission = { view: true, create: true, edit: true, delete: true, approve: false };
 const P_NONE: ModulePermission = { view: false, create: false, edit: false, delete: false, approve: false };
+/** สอดคล้อง PERMISSION_MATRIX.operation_manager.worker_payroll — ไม่ลบแบทช์ผ่านสิทธิ์โมดูลนี้ */
+const P_OP_MGR_WORKER_PAYROLL: ModulePermission = {
+  view: true,
+  create: true,
+  edit: true,
+  delete: false,
+  approve: false,
+};
+/** ดูงวด/สลิป + อนุมัติ — สอดคล้อง PERMISSION_MATRIX payroll_runs / payslips */
+const P_OP_MGR_PAYROLL_CYCLE: ModulePermission = {
+  view: true,
+  create: false,
+  edit: false,
+  delete: false,
+  approve: true,
+};
 
 const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, ModulePermission>>> = {
   sales_manager: {
@@ -503,6 +530,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     timesheets: P_VCE,
     workers: P_VIEW,
     worker_payroll: P_VIEW,
+    payroll_runs: P_VIEW,
+    payslips: P_VIEW,
     purchases: P_NONE,
     store_inventory: P_NONE,
     labor_cost_contract_terms: P_FULL_NO_APPROVE,
@@ -525,7 +554,9 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     // HR / payroll operations (ไม่ใช่ office_payroll)
     hr_hub: P_FULL_NO_APPROVE,
     timesheets: P_FULL_NO_APPROVE,
-    worker_payroll: P_FULL_NO_APPROVE,
+    worker_payroll: P_OP_MGR_WORKER_PAYROLL,
+    payroll_runs: P_OP_MGR_PAYROLL_CYCLE,
+    payslips: P_OP_MGR_PAYROLL_CYCLE,
     payment_export_batches: P_FULL_NO_APPROVE,
     labor_cost_contract_terms: P_FULL_NO_APPROVE,
     positions: P_FULL_NO_APPROVE,
@@ -582,6 +613,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     workers: P_FULL_NO_APPROVE,
     worker_documents: P_FULL_NO_APPROVE,
     hr_hub: P_FULL_NO_APPROVE,
+    payroll_runs: P_FULL_NO_APPROVE,
+    payslips: P_FULL_NO_APPROVE,
   },
   hr_officer: {
     overview_dashboard: P_VIEW,
@@ -608,6 +641,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     quotations: P_VIEW,
     payment_export_batches: P_VCE,
     worker_documents: P_FULL_NO_APPROVE,
+    payroll_runs: P_VCE,
+    payslips: P_VCE,
   },
   /** จ่ายเงิน/สลิป/งวด — อ่านทะเบียนได้ แต่ไม่สร้างตำแหน่ง/ไม่แก้ master เงินเดือน */
   payroll_officer: {
@@ -635,6 +670,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     labor_cost_contract_terms: P_VIEW,
     quotations: P_VIEW,
     payment_export_batches: P_VCE,
+    payroll_runs: P_VCE,
+    payslips: P_VCE,
   },
   store_officer: {
     positions: P_VIEW,
@@ -675,6 +712,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     labor_cost_contract_terms: P_FULL_NO_APPROVE,
     quotations: P_VIEW,
     payment_export_batches: P_FULL_NO_APPROVE,
+    payroll_runs: P_FULL_NO_APPROVE,
+    payslips: P_FULL_NO_APPROVE,
   },
   accounting_officer: {
     positions: P_NONE,
@@ -699,6 +738,8 @@ const ROLE_PERMISSION_MATRIX: Record<RoleMatrixKey, Partial<Record<ModuleKey, Mo
     labor_cost_contract_terms: P_VIEW,
     quotations: P_VIEW,
     payment_export_batches: P_VIEW,
+    payroll_runs: P_VIEW,
+    payslips: P_VIEW,
   },
 };
 
@@ -826,6 +867,21 @@ function buildHrOfficerPermissionMap(): Record<string, ModulePermission> {
 /** Payroll Officer baseline: เน้นงานเงินเดือน/ส่งออก + อ่านข้อมูลต้นทางที่เกี่ยวข้อง */
 function buildPayrollOfficerPermissionMap(): Record<string, ModulePermission> {
   return buildPermissionMap(PAYROLL_OFFICER_BASELINE_MODULES, OFFICER_NO_APPROVE);
+}
+
+/** Seed / profile template — ตรง ROLE_PERMISSION_MATRIX.operation_manager (ไม่รวม office_payroll; approve เฉพาะงวด/สลิป) */
+const OPERATION_MANAGER_BASELINE_MODULES: readonly ModuleKey[] = ALL_OPERATION_PILLAR_MODULES.filter(
+  (k) => k !== 'office_payroll'
+);
+
+function buildOperationManagerBaselinePermissions(): Record<string, ModulePermission> {
+  const base = buildPermissionMap(OPERATION_MANAGER_BASELINE_MODULES, P_FULL_NO_APPROVE);
+  return {
+    ...base,
+    worker_payroll: clonePermission(P_OP_MGR_WORKER_PAYROLL),
+    payroll_runs: clonePermission(P_OP_MGR_PAYROLL_CYCLE),
+    payslips: clonePermission(P_OP_MGR_PAYROLL_CYCLE),
+  };
 }
 
 /**
@@ -998,7 +1054,11 @@ export function getPermissions(
     return clonePermission(FULL_ACCESS);
   }
 
-  const moduleKey = resolvePermissionModuleKey(rawModuleKey) as ModuleKey;
+  const moduleKey = (
+    MODULE_KEYS_WITHOUT_DOMAIN_ALIAS.has(rawModuleKey)
+      ? rawModuleKey
+      : resolvePermissionModuleKey(rawModuleKey)
+  ) as ModuleKey;
   if (!MODULE_KEY_SET.has(moduleKey)) {
     return clonePermission(NO_ACCESS);
   }
@@ -1228,7 +1288,8 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'operations',
       level: 'manager',
       isActive: true,
-      permissions: buildPermissionMap([...OPERATIONS_MODULES, ...HR_MODULES], FULL_ACCESS),
+      /** สอดคล้อง ROLE_PERMISSION_MATRIX.operation_manager (pillar เต็ม ยกเว้น office_payroll + งวดเงินเดือนแยกตาม matrix) */
+      permissions: buildOperationManagerBaselinePermissions(),
     },
     {
       profileKey: 'operation_officer',
