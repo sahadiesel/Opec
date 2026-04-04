@@ -446,13 +446,26 @@ export default function Home() {
   if (mustShowLoginShell) {
     const loginBg = PlaceHolderImages.find(img => img.id === 'login-bg')?.imageUrl || '';
     return (
-      <div 
-        className="flex items-center justify-center min-h-screen p-4 bg-cover bg-center bg-no-repeat relative"
-        style={{ backgroundImage: loginBg ? `url(${loginBg})` : 'none' }}
+      <div
+        className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-slate-950 p-4"
+        style={
+          loginBg
+            ? {
+                backgroundImage: `url(${loginBg})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top',
+                backgroundRepeat: 'no-repeat',
+              }
+            : undefined
+        }
         data-ai-hint="offshore oil rig"
       >
-        <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-[3px]" />
-        <Card className="w-full max-w-md shadow-2xl border-t-8 border-t-primary relative z-10 bg-white/95">
+        {/* ไม่ใช้ backdrop-blur — จะทำให้ภาพพื้นหลังดูเบลอทั้งแม้ไฟล์ต้นฉบับคม */}
+        <div
+          className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-slate-950/50 via-slate-950/30 to-slate-950/55"
+          aria-hidden
+        />
+        <Card className="relative z-10 w-full max-w-md border-t-8 border-t-primary bg-white shadow-2xl">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
               <ShieldCheck className="h-10 w-10 text-primary" />
