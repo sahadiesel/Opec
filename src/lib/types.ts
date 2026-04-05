@@ -204,6 +204,12 @@ export interface User {
   /** เบอร์โทร (เช่น ลงทะเบียนผ่านหน้าแรก) */
   phone?: string;
 
+  /** Optional 3-tier model (snake_case; mirrors Firestore rules helpers). */
+  status?: 'active' | 'pending' | 'suspended' | string;
+  user_type?: 'internal' | 'customer_portal' | string;
+  /** Primary role for simplified RBAC: system_admin | accounting_* | operations_officer | ... */
+  role?: string;
+
   // FUTURE PRIMARY ACCESS MODEL (internal: accessGroup + accessLevel + allowedModules; portal separate)
   userType?: 'internal' | 'customer_portal';
   /** Canonical: `operations` (plural). Writers must use `normalizeUserAuthorizationFields` — do not store `operation`. */
@@ -265,7 +271,7 @@ export interface PermissionProfile {
   department?: DeptType;
   /** Access tier within {@link departmentGroup} (viewer → admin). */
   level: AccessLevel;
-  /** Optional canonical template id (e.g. admin_admin, operations_manager). */
+  /** Optional canonical template id (e.g. system_admin, operations_manager). Legacy: admin_admin. */
   primaryRoleTemplateKey?: string;
   isActive: boolean;
   permissions: Record<string, ModulePermission>;
@@ -529,6 +535,8 @@ export interface ContactPerson {
 export interface MainContract {
   id: string;
   contractNumber: string;
+  /** เลขที่สัญญา/เอกสารอ้างอิงฝั่งลูกค้า (Service Agreement No.) */
+  serviceAgreementNo?: string;
   contractType?: 'master' | 'supplemental';
   parentContractId?: string;
   inheritTermsFromContractId?: string;
@@ -630,6 +638,8 @@ export interface PurchaseOrder {
   poCode: string;
   /** Customer-issued PO document number (external reference) */
   customerPONumber?: string;
+  /** วันที่ลูกค้าออกเอกสาร PO (อ้างอิงฝั่งลูกค้า) */
+  customerPoIssueDate?: number;
   /** contract = based on active contract, quotation = based on approved/sent quotation */
   poType?: 'contract' | 'quotation';
   contractId: string;
@@ -988,6 +998,8 @@ export interface AccountsPayable {
   status: APStatus;
   createdAt: number;
   updatedAt: number;
+  /** สร้างจากใบรับวางบิลคลัง */
+  origin?: 'STORE_VENDOR_BILL';
 }
 
 export interface AccountsReceivable {
@@ -1453,6 +1465,8 @@ export interface Role {
   permissions: string[];
 }
 
+export type PurchaseLineEntryMode = 'INVENTORY' | 'SERVICE';
+
 export interface Purchase {
   id: string;
   purchaseNo: string;
@@ -1463,15 +1477,31 @@ export interface Purchase {
   amountBeforeTax: number;
   vatAmount: number;
   status: PurchaseStatus;
+  /** แบบที่ 1 เลือกจากคลัง / แบบที่ 2 สั่งจ้างคีย์มือ */
+  purchaseLineMode?: PurchaseLineEntryMode;
   notes?: string;
   paymentStatus?: string;
   storeReceiptStatus?: string;
+  approvalRequestedAt?: number;
+  approvalDecidedAt?: number;
+  approvalDecisionByUid?: string;
+  approvalDecisionByName?: string;
+  approvalComment?: string | null;
+  rejectionReason?: string | null;
   createdAt: number;
   updatedAt: number;
 }
 
 export type PurchaseType = 'CASH' | 'CREDIT';
-export type PurchaseStatus = 'DRAFT' | 'ISSUED' | 'COMPLETED' | 'CANCELLED';
+export type PurchaseStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'RETURNED_FOR_REVISION'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'ISSUED'
+  | 'COMPLETED'
+  | 'CANCELLED';
 
 export interface PurchaseLine {
   id: string;
@@ -1480,7 +1510,33 @@ export interface PurchaseLine {
   quantity: number;
   unitPrice: number;
   amount: number;
+  /** เมื่อ purchaseLineMode = INVENTORY */
+  storeItemId?: string;
   createdAt: number;
+}
+
+/** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
+export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PAID';
+
+export interface PurchaseVendorBill {
+  id: string;
+  receiptNo: string;
+  purchaseId: string;
+  /** สำหรับแสดงผล */
+  purchaseNo?: string;
+  vendorId: string;
+  /** วันที่รับวางบิล */
+  billingReceivedDate: string;
+  /** วันที่ตั้งใจจ่ายเงิน */
+  plannedPaymentDate: string;
+  status: PurchaseVendorBillStatus;
+  submittedToAccountingAt?: number;
+  paidAt?: number;
+  paidByUid?: string;
+  paidByName?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Vendor {

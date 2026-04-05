@@ -49,6 +49,7 @@ export default function MainContractsPage() {
   const [newContract, setNewContract] = useState<Partial<MainContract>>({
     title: '',
     contractNumber: getPreviewPattern('main_contract'),
+    serviceAgreementNo: '',
     customerId: '',
     projectId: '',
     startDate: Date.now(),
@@ -245,6 +246,15 @@ export default function MainContractsPage() {
                     className="bg-muted font-mono font-bold text-primary" 
                   />
                   <p className="text-[10px] text-muted-foreground italic">* ระบบจะรันเลขที่จริงให้อัตโนมัติเมื่อกดบันทึก</p>
+                </div>
+                <div className="grid gap-2">
+                  <Label>เลขที่สัญญาของลูกค้า (Service Agreement No.)</Label>
+                  <Input
+                    value={newContract.serviceAgreementNo ?? ''}
+                    onChange={(e) => setNewContract({ ...newContract, serviceAgreementNo: e.target.value })}
+                    placeholder="เช่น เลขที่เอกสารฝั่งลูกค้า / MSO / SA No."
+                    className="h-11"
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>ลูกค้า (Customer)</Label>

@@ -54,7 +54,7 @@ import { deleteDocumentNonBlocking, addDocumentNonBlocking, updateDocumentNonBlo
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { canAccess, hasMinimumLevel, isMatrixControlledRole, isSystemAdmin } from '@/lib/permissions';
+import { canAccess, isMatrixControlledRole, isSystemAdmin, isOperationsPillarExecutive } from '@/lib/permissions';
 import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/services/worker-delete-service';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -112,8 +112,8 @@ export default function WorkersPage() {
 
   const canDeleteWorkerRecord = useMemo(() => {
     if (!currentUser) return false;
-    if (isSystemAdmin(currentUser)) return true;
-    return hasMinimumLevel(currentUser, 'manager') && check('workers', 'delete');
+    if (isSystemAdmin(currentUser) || isOperationsPillarExecutive(currentUser)) return true;
+    return check('workers', 'delete');
   }, [currentUser, check]);
 
   const assignmentsQuery = useMemoFirebase(() => {

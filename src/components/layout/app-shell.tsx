@@ -4,7 +4,7 @@
 import * as React from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { SidebarNav } from './sidebar-nav';
-import { User } from '@/lib/types';
+import { User, type AccessLevel, type DeptType } from '@/lib/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LogOut, Shield, Building2 } from 'lucide-react';
@@ -12,7 +12,7 @@ import { useFirestore, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { usePermissionProfiles, getEffectivePermissionProfileKey } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
-import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
+import { getEffectiveDepartment, getEffectiveLevel, deriveBusinessRoleKey, BUSINESS_ROLES } from '@/lib/auth-mapping';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { userMayAccessPath } from '@/lib/navigation/nav-access';
@@ -28,6 +28,23 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+
+const ROLE_DEPT_LABEL_TH: Record<DeptType, string> = {
+  admin: 'ผู้ดูแลระบบ',
+  hr: 'งานบุคคล',
+  sales: 'งานขายและสัญญา',
+  operations: 'งานปฏิบัติการ',
+  accounting: 'บัญชีและการเงิน',
+  store: 'คลัง / จัดซื้อ',
+  client: 'ลูกค้า',
+};
+
+const ROLE_LEVEL_LABEL_TH: Record<AccessLevel, string> = {
+  admin: 'ผู้ดูแลระบบ',
+  manager: 'ผู้จัดการ',
+  officer: 'เจ้าหน้าที่',
+  viewer: 'ผู้ดู',
+};
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -71,6 +88,8 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   const dept = getEffectiveDepartment(user);
   const level = getEffectiveLevel(user);
+  const resolvedRoleKey = deriveBusinessRoleKey(user);
+  const roleLine = BUSINESS_ROLES[resolvedRoleKey];
 
   // Primary profile identification for simple display (canonical doc id vs legacy casing on user doc)
   const effectiveProfileKey = getEffectivePermissionProfileKey(user);
@@ -100,13 +119,38 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
                   <span className="text-sm font-black truncate text-primary">{user.displayName}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-tighter flex items-center gap-1">
-                    <Building2 className="h-2.5 w-2.5" /> {dept} / {level}
+                  <span className="text-[9px] text-muted-foreground font-bold tracking-tighter flex items-center gap-1 max-w-[220px] justify-end text-right leading-tight">
+                    <Building2 className="h-2.5 w-2.5 shrink-0" />
+                    <span className="normal-case">
+                      {roleLine ? (
+                        <>
+                          <span className="text-foreground font-semibold">{roleLine.labelTh}</span>
+                          <span className="text-muted-foreground font-medium"> · {roleLine.labelEn}</span>
+                          <span className="block text-[8px] text-muted-foreground font-bold mt-0.5 tracking-wide normal-case">
+                            {ROLE_DEPT_LABEL_TH[roleLine.dept] ?? roleLine.dept} ·{' '}
+                            {ROLE_LEVEL_LABEL_TH[roleLine.level] ?? roleLine.level}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="uppercase">
+                          {ROLE_DEPT_LABEL_TH[dept] ?? dept} / {ROLE_LEVEL_LABEL_TH[level] ?? level}
+                        </span>
+                      )}
+                    </span>
                   </span>
-                  {primaryProfile && (
-                    <Badge variant="secondary" className="text-[9px] h-4 py-0 px-1 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1 font-black">
-                      <Shield className="h-2.5 w-2.5" /> {primaryProfile.profileNameEn}
-                      {profiles && profiles.length > 1 && <span className="ml-0.5 opacity-60">+{profiles.length - 1}</span>}
+                  {(roleLine || primaryProfile) && (
+                    <Badge
+                      variant="secondary"
+                      title={roleLine?.labelEn ?? primaryProfile?.profileNameEn}
+                      className="text-[9px] h-4 py-0 px-1.5 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1 font-black max-w-[200px]"
+                    >
+                      <Shield className="h-2.5 w-2.5 shrink-0" />
+                      <span className="truncate">
+                        {roleLine?.labelTh ?? primaryProfile?.profileNameTh ?? 'ผู้ใช้งาน'}
+                      </span>
+                      {profiles && profiles.length > 1 && (
+                        <span className="ml-0.5 shrink-0 opacity-60">+{profiles.length - 1}</span>
+                      )}
                     </Badge>
                   )}
                 </div>

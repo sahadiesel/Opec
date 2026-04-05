@@ -25,6 +25,7 @@ export function userMatchesBusinessRoleKey(
  * (lowercase snake_case). Custom profile IDs are not listed here.
  */
 export const BUILTIN_PERMISSION_PROFILE_DOC_IDS = new Set([
+  'system_admin',
   'admin_admin',
   'client_user',
   'sales_manager',

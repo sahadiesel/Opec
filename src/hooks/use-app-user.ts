@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { doc, DocumentReference, DocumentData } from 'firebase/firestore';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { doc, DocumentReference, DocumentData, setDoc } from 'firebase/firestore';
 import { useFirestore, useUser } from '@/firebase';
 import { useDoc } from '@/firebase/firestore/use-doc';
 import type { User } from '@/lib/types';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 /**
  * Primary app user profile: prefers live Firestore `users/{uid}`; localStorage is cache/fallback only.
@@ -21,6 +22,7 @@ export function useAppUser() {
   const { data: firestoreUser, isLoading: docLoading, error: userDocError } = useDoc<User>(userDocRef);
 
   const [cachedUser, setCachedUser] = useState<User | null>(null);
+  const bootstrapAttempted = useRef(false);
 
   useEffect(() => {
     try {
@@ -40,6 +42,45 @@ export function useAppUser() {
       }
     }
   }, [firestoreUser]);
+
+  /** First-time Auth user: create default internal Firestore profile (matches firestore.rules bootstrap). */
+  useEffect(() => {
+    if (!firestore || !authUser?.uid) return;
+    if (docLoading) return;
+    if (firestoreUser) {
+      bootstrapAttempted.current = false;
+      return;
+    }
+    if (userDocError) return;
+    if (bootstrapAttempted.current) return;
+    bootstrapAttempted.current = true;
+
+    const uid = authUser.uid;
+    const now = Date.now();
+    const payload = sanitizeFirestorePayload({
+      id: uid,
+      email: authUser.email || '',
+      displayName: authUser.displayName || 'User',
+      phone: '',
+      userType: 'internal' as const,
+      user_type: 'internal',
+      status: 'active',
+      role: 'operations_officer',
+      assignedRoleKey: 'operations_officer' as const,
+      assignedRoleKeys: ['operations_officer'] as const,
+      department: 'operations',
+      level: 'officer' as const,
+      roleIds: [],
+      isActive: true,
+      approvalStatus: 'ACTIVE' as const,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    setDoc(doc(firestore, 'users', uid), payload, { merge: true }).catch(() => {
+      bootstrapAttempted.current = false;
+    });
+  }, [firestore, authUser, docLoading, firestoreUser, userDocError]);
 
   /**
    * Never trust localStorage for RBAC after Firestore user doc fails (e.g. permission-denied),

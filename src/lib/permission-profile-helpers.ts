@@ -154,6 +154,7 @@ export function accessGroupFromAssignedRoleKey(key: string | undefined): Departm
 export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionProfile): BusinessRoleKey {
   const pkRaw = (profile.primaryRoleTemplateKey || profile.profileKey) as string;
   const pk = normalizeBusinessRoleKey(pkRaw) ?? pkRaw;
+  if (pk === 'admin_admin' || pkRaw === 'admin_admin') return 'system_admin';
   const direct = [
     'system_admin',
     'hr_manager',

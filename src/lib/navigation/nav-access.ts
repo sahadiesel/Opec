@@ -12,11 +12,10 @@ import {
   canSeeOperationsPillarUi,
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
-  canAccess,
-  getPrimaryLegacyRole,
   isClient,
 } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { getFlattenedHrNavItems, type HrNavItem } from '@/lib/navigation/hr-nav-items';
 
 export function pathMatches(pathname: string, href: string): boolean {
@@ -26,44 +25,12 @@ export function pathMatches(pathname: string, href: string): boolean {
   return false;
 }
 
-/** แม็ป path → โมดูล matrix (ถ้ามี) — ต้องครอบคลุม dynamic segments */
-export function resolveMatrixModuleForPath(pathname: string): string | null {
-  const p = pathname.split('?')[0];
-  if (p === '/workers' || p.startsWith('/workers/')) return 'workers';
-  if (p === '/positions' || p.startsWith('/positions/')) return 'positions';
-  if (p === '/worker-document-catalog' || p.startsWith('/worker-document-catalog/')) return 'worker_documents';
-  if (p === '/waves' || p.startsWith('/waves/')) return 'waves';
-  if (p === '/assignments' || p.startsWith('/assignments/')) return 'assignments';
-  if (p === '/mobilization' || p.startsWith('/mobilization/')) return 'mobilization';
-  if (p.startsWith('/timesheets')) return 'timesheets';
-  if (p.startsWith('/payroll/batches')) return 'worker_payroll';
-  if (p.startsWith('/payroll/periods')) return 'payroll_runs';
-  return null;
-}
-
 /**
- * ถ้าคืน null = ไม่ใช้ matrix สำหรับ role นี้หรือ path นี้ — ใช้ canView ต่อ
+ * Simplified RBAC: do not use per-path matrix override here (was duplicating legacy matrix and could deny
+ * operations_manager / others while sidebar still showed links). Always fall through to canView / canViewHrHubItem.
  */
-export function sidebarMatrixVisibilityForPath(user: User, pathname: string): boolean | null {
-  const role = getPrimaryLegacyRole(user);
-  if (!role) return null;
-
-  if (
-    ![
-      'system_admin',
-      'hr_officer',
-      'payroll_officer',
-      'operations_manager',
-      'operations_officer',
-    ].includes(role)
-  ) {
-    return null;
-  }
-
-  const module = resolveMatrixModuleForPath(pathname);
-  if (!module) return null;
-
-  return canAccess(user, module, 'view');
+export function sidebarMatrixVisibilityForPath(_user: User, _pathname: string): boolean | null {
+  return null;
 }
 
 export function canViewHrHubItem(
@@ -85,6 +52,8 @@ export function canViewHrHubItem(
 const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounting/executive-payroll', 'executive_payroll'],
   ['/office-payroll', 'office_payroll'],
+  ['/payroll', 'worker_payroll'],
+  ['/timesheets', 'timesheets'],
   ['/purchase-orders', 'customer_pos'],
   ['/main-contracts', 'main_contracts'],
   ['/sales-terms', 'sales_contract_terms'],
@@ -99,6 +68,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/quotations', 'quotations'],
   ['/assignments', 'assignments'],
   ['/mobilization', 'mobilization'],
+  ['/store/vendor-bills', 'store_inventory'],
   ['/purchases', 'purchases'],
   ['/ap-bills', 'ap_bills'],
   ['/receipts', 'receipts'],
@@ -121,7 +91,8 @@ const SORTED_PREFIXES = [...MODULE_PREFIXES].sort((a, b) => b[0].length - a[0].l
  */
 export function userMayAccessPath(user: User, profile: PermissionProfile | null, pathname: string): boolean {
   const p = (pathname.split('?')[0] || '/').trim() || '/';
-  const admin = isSystemAdmin(user);
+  const admin = isSystemAdmin(user) || isSimpleAdmin(user);
+  const accounting = admin || isSimpleAccounting(user);
 
   if (admin) return true;
 
@@ -137,7 +108,23 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return false;
   }
 
+  const accountingPrefixes = [
+    '/billing-notes',
+    '/tax-invoices',
+    '/receipts',
+    '/ap-bills',
+    '/accounts-receivable',
+    '/accounts-payable',
+    '/cashbook',
+    '/bank-accounts',
+    '/accounting/executive-payroll',
+  ];
+  if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {
+    return accounting;
+  }
+
   if (p === '/' || p === '') {
+    if (isSimpleInternalEligible(user)) return true;
     return canView(user, 'overview_dashboard', profile);
   }
 
@@ -167,6 +154,5 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     }
   }
 
-  /* เส้นทางที่ยังไม่ลงทะเบียน: ไม่บล็อกเพื่อไม่ให้หน้าใหม่พัง — ค่อยเพิ่ม prefix ใน MODULE_PREFIXES */
   return true;
 }

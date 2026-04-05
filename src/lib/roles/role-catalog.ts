@@ -21,7 +21,8 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     department: 'admin',
     accessGroup: 'admin',
     accessLevel: 'admin',
-    permissionProfileKey: 'admin_admin',
+    /** Firestore permission_profiles doc id (same name as business role). */
+    permissionProfileKey: 'system_admin',
     canonicalRole: 'system_admin',
     descriptionTh: 'เข้าถึงและจัดการได้ทุกส่วนของระบบ รวมถึงการตั้งค่าสิทธิ์และความปลอดภัย',
   },

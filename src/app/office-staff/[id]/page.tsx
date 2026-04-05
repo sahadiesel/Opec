@@ -25,7 +25,12 @@ import {
 } from 'lucide-react';
 import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { isSystemAdmin, canViewPayrollPerFirestoreRules, canEditEmployeeCompensation } from '@/lib/permission-core';
+import {
+  isSystemAdmin,
+  isOperationsPillarExecutive,
+  canViewPayrollPerFirestoreRules,
+  canEditEmployeeCompensation,
+} from '@/lib/permission-core';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
 import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType, Position } from '@/lib/types';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -72,7 +77,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
   // users list: Firestore rules allow list only for canManageSystem (admin)
   const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser || !isSystemAdmin(currentUser) || !canViewOfficeStaff) return null;
+    const canListUsers =
+      !!currentUser && (isSystemAdmin(currentUser) || isOperationsPillarExecutive(currentUser));
+    if (!firestore || !canListUsers || !canViewOfficeStaff) return null;
     return collection(firestore, 'users');
   }, [firestore, currentUser, canViewOfficeStaff]);
   const { data: allUsers } = useCollection<User>(usersQuery as any);

@@ -64,12 +64,41 @@ import { PlaceHolderImages } from '@/lib/placeholder-images';
 import {
   normalizeCurrentUserPermissions,
   isSystemAdmin,
+  isStoreOfficer,
   canSeeHrPillarUi,
   canSeeSalesPillarUi,
   canSeeOperationsPillarUi,
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
 } from '@/lib/permissions';
+import type { CSSProperties, ReactNode } from 'react';
+
+/** Same Storage image as login form — keep all pre-dashboard full-screen states visually consistent. */
+const LOGIN_BG_URL = PlaceHolderImages.find((img) => img.id === 'login-bg')?.imageUrl ?? '';
+const loginShellBackgroundStyle: CSSProperties | undefined = LOGIN_BG_URL
+  ? {
+      backgroundImage: `url(${LOGIN_BG_URL})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center top',
+      backgroundRepeat: 'no-repeat',
+    }
+  : undefined;
+
+function LoginStageBackdrop({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-slate-950 p-4"
+      style={loginShellBackgroundStyle}
+      data-ai-hint="offshore oil rig"
+    >
+      <div
+        className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-slate-950/50 via-slate-950/30 to-slate-950/55"
+        aria-hidden
+      />
+      {children}
+    </div>
+  );
+}
 
 export default function Home() {
   const router = useRouter();
@@ -164,6 +193,14 @@ export default function Home() {
         router.push('/client-portal/dashboard');
       }
 
+      if (
+        latestUserDoc.userType !== 'customer_portal' &&
+        isStoreOfficer(latestUserDoc) &&
+        !latestUserDoc.mustResetPassword
+      ) {
+        router.replace('/store');
+      }
+
       // Security Guard: Forced Password Reset
       if (latestUserDoc.mustResetPassword) {
         setShowResetDialog(true);
@@ -235,6 +272,8 @@ export default function Home() {
           
           if (userData.userType === 'customer_portal') {
             router.push('/client-portal/dashboard');
+          } else if (isStoreOfficer(userData)) {
+            router.push('/store');
           }
         }
       } else {
@@ -411,19 +450,23 @@ export default function Home() {
 
   if (!isLoaded || isUserLoading) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50">
-        <Loader2 className="h-10 w-10 animate-spin text-primary" />
-        <p className="text-sm text-muted-foreground">กำลังเตรียมระบบ…</p>
-      </div>
+      <LoginStageBackdrop>
+        <div className="relative z-10 flex flex-col items-center justify-center gap-3">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <p className="text-sm text-white/85">กำลังเตรียมระบบ…</p>
+        </div>
+      </LoginStageBackdrop>
     );
   }
 
   // Wait for Firestore user profile after Firebase Auth (avoid flashing wrong UI)
   if (firebaseUser && isDocLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950/5">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </div>
+      <LoginStageBackdrop>
+        <div className="relative z-10 flex items-center justify-center">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        </div>
+      </LoginStageBackdrop>
     );
   }
 
@@ -444,27 +487,8 @@ export default function Home() {
 
   // Login / register shell (never show main dashboard for inactive or missing profile)
   if (mustShowLoginShell) {
-    const loginBg = PlaceHolderImages.find(img => img.id === 'login-bg')?.imageUrl || '';
     return (
-      <div
-        className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-slate-950 p-4"
-        style={
-          loginBg
-            ? {
-                backgroundImage: `url(${loginBg})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center top',
-                backgroundRepeat: 'no-repeat',
-              }
-            : undefined
-        }
-        data-ai-hint="offshore oil rig"
-      >
-        {/* ไม่ใช้ backdrop-blur — จะทำให้ภาพพื้นหลังดูเบลอทั้งแม้ไฟล์ต้นฉบับคม */}
-        <div
-          className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-slate-950/50 via-slate-950/30 to-slate-950/55"
-          aria-hidden
-        />
+      <LoginStageBackdrop>
         <Card className="relative z-10 w-full max-w-md border-t-8 border-t-primary bg-white shadow-2xl">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
@@ -654,15 +678,17 @@ export default function Home() {
             </form>
           </DialogContent>
         </Dialog>
-      </div>
+      </LoginStageBackdrop>
     );
   }
 
   if (!latestUserDoc) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </div>
+      <LoginStageBackdrop>
+        <div className="relative z-10 flex items-center justify-center">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        </div>
+      </LoginStageBackdrop>
     );
   }
 
@@ -711,8 +737,11 @@ export default function Home() {
                     </Badge>
                   )) : <Badge variant="outline">{latestUserDoc.department}</Badge>}
                   <span className="text-muted-foreground text-xs mx-1">/</span>
-                  <Badge variant="outline" className="capitalize font-bold border-primary/20">{latestUserDoc.level}</Badge>
+                  <Badge variant="outline" className="capitalize font-bold border-primary/20">{roleInfo?.level ?? latestUserDoc.level}</Badge>
                 </div>
+                {roleInfo?.descriptionTh && (
+                  <p className="text-[11px] text-muted-foreground mt-2 leading-snug">{roleInfo.descriptionTh}</p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -826,7 +855,7 @@ export default function Home() {
                     {check('positions', 'view') && (
                       <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
                     )}
-                    {check('workers', 'view') && (
+                    {(check('worker_documents', 'view') || check('workers', 'view')) && (
                       <ShortcutLink href="/worker-document-catalog" label="เอกสารกลาง" sub="Document catalog" />
                     )}
                   </ShortcutGroup>

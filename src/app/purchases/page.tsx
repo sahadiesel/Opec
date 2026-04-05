@@ -22,11 +22,11 @@ import {
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { Purchase, PurchaseType, User, Vendor, PurchaseStatus } from '@/lib/types';
+import { Purchase, PurchaseType, User, Vendor, PurchaseStatus, PurchaseLineEntryMode } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canView, canApprovePurchaseAsManager } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -68,6 +68,7 @@ export default function PurchasesPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [newLineMode, setNewLineMode] = useState<PurchaseLineEntryMode>('INVENTORY');
   const [newPurchase, setNewPurchase] = useState<Partial<Purchase>>({
     purchaseNo: getPreviewPattern('purchase'),
     purchaseDate: timestampToHtmlDateValue(Date.now()),
@@ -77,6 +78,12 @@ export default function PurchasesPage() {
     status: 'DRAFT',
     notes: ''
   });
+
+  const canApprove = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
+  const pendingApprovalCount = useMemo(
+    () => (purchases || []).filter((p) => p.status === 'PENDING_APPROVAL').length,
+    [purchases]
+  );
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -93,6 +100,7 @@ export default function PurchasesPage() {
       const docRef = await addDocumentNonBlocking(collection(firestore, 'purchases'), {
         ...newPurchase,
         purchaseNo: finalNo,
+        purchaseLineMode: newLineMode,
         amountBeforeTax: 0,
         vatAmount: 0,
         totalAmount: 0,
@@ -113,11 +121,24 @@ export default function PurchasesPage() {
 
   const getStatusBadge = (status: PurchaseStatus) => {
     switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'ISSUED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">ISSUED</Badge>;
-      case 'COMPLETED': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">COMPLETED</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      case 'DRAFT':
+        return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">ฉบับร่าง</Badge>;
+      case 'PENDING_APPROVAL':
+        return <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200">รออนุมัติ</Badge>;
+      case 'RETURNED_FOR_REVISION':
+        return <Badge variant="outline" className="bg-orange-50 text-orange-800 border-orange-200">ส่งกลับแก้ไข</Badge>;
+      case 'APPROVED':
+        return <Badge variant="outline" className="bg-green-50 text-green-800 border-green-200">อนุมัติแล้ว</Badge>;
+      case 'REJECTED':
+        return <Badge variant="destructive">ไม่อนุมัติ</Badge>;
+      case 'ISSUED':
+        return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">ISSUED</Badge>;
+      case 'COMPLETED':
+        return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">COMPLETED</Badge>;
+      case 'CANCELLED':
+        return <Badge variant="secondary">CANCELLED</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
     }
   };
 
@@ -134,6 +155,16 @@ export default function PurchasesPage() {
             บันทึกการจัดซื้ออุปกรณ์ PPE เครื่องมือ และบริการต่าง ๆ เพื่อควบคุมสต็อกและต้นทุนบริษัท
           </p>
         </div>
+
+        {canApprove && pendingApprovalCount > 0 && (
+          <Alert className="border-amber-300 bg-amber-50">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertTitle className="text-amber-900">มีใบสั่งซื้อรออนุมัติ</AlertTitle>
+            <AlertDescription className="text-amber-800">
+              จำนวน {pendingApprovalCount} รายการ — เปิดรายการแล้วใช้เมนูอนุมัติที่หน้ารายละเอียด
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
@@ -186,6 +217,25 @@ export default function PurchasesPage() {
                     <SelectContent>
                       <SelectItem value="CASH">เงินสด (CASH)</SelectItem>
                       <SelectItem value="CREDIT">เงินเชื่อ (CREDIT)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>แบบการบันทึกรายการ</Label>
+                  <Select
+                    value={newLineMode}
+                    onValueChange={(v) => setNewLineMode(v as typeof newLineMode)}
+                  >
+                    <SelectTrigger className="h-11">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="INVENTORY">
+                        แบบที่ 1 — ซื้อสินค้า (เลือกจากทะเบียนคลัง — ถ้ายังไม่มีให้ไปเพิ่มที่คลังก่อน)
+                      </SelectItem>
+                      <SelectItem value="SERVICE">
+                        แบบที่ 2 — สั่งจ้าง / คีย์รายการมือ
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -244,11 +294,7 @@ export default function PurchasesPage() {
                         <TableCell className="text-right font-black text-primary">
                           ฿ {p.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
-                        <TableCell>
-                          <Badge variant={p.status === 'COMPLETED' ? 'default' : 'outline'} className={p.status === 'COMPLETED' ? 'bg-green-600' : ''}>
-                            {p.status}
-                          </Badge>
-                        </TableCell>
+                        <TableCell>{getStatusBadge(p.status)}</TableCell>
                         <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
                         </TableCell>

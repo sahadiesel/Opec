@@ -32,7 +32,7 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
-import { isSystemAdmin, isHrManager, isOperationManager } from '@/lib/permission-core';
+import { isSystemAdmin, isHrManager, isOperationManager, canEditMasterContractCostBaseline } from '@/lib/permission-core';
 import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -146,11 +146,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     );
   }, [currentUser]);
   const canEditSellSide = useMemo(() => canModify && !isHRRole, [canModify, isHRRole]);
-  /** ต้นทุนในสัญญา: Admin / HR Manager / Operations Manager (operation pillar เต็ม) — ไม่ให้ sales-only / hr_officer */
+  /** ต้นทุนในสัญญา: Admin / HR Manager / Operations Manager (+ manager ในกลุ่ม operations ตามเอกสาร; ไม่ให้ทีมขาย) */
   const canEditCostSide = useMemo(
-    () =>
-      canModify &&
-      (isSystemAdmin(currentUser) || isHrManager(currentUser) || isOperationManager(currentUser)),
+    () => canModify && canEditMasterContractCostBaseline(currentUser),
     [canModify, currentUser],
   );
   const canViewCostFields = useMemo(() => !isSalesRole, [isSalesRole]);
@@ -375,6 +373,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if ((editedMC.billingTerms ?? '') !== (contract.billingTerms ?? '')) changedFields.push('billingTerms');
     if ((editedMC.paymentTerms ?? '') !== (contract.paymentTerms ?? '')) changedFields.push('paymentTerms');
     if ((editedMC.notes ?? '') !== (contract.notes ?? '')) changedFields.push('notes');
+    if ((editedMC.serviceAgreementNo ?? '').trim() !== (contract.serviceAgreementNo ?? '').trim()) {
+      changedFields.push('serviceAgreementNo');
+    }
     if (JSON.stringify(editedMC.rateMultiplierPolicy || null) !== JSON.stringify(contract.rateMultiplierPolicy || null)) {
       changedFields.push('rateMultiplierPolicy');
     }
@@ -428,6 +429,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           billingTerms: contract.billingTerms,
           paymentTerms: contract.paymentTerms,
           notes: contract.notes || '',
+          serviceAgreementNo: contract.serviceAgreementNo || '',
           rateMultiplierPolicy: contract.rateMultiplierPolicy || null,
         }),
         afterSummary: JSON.stringify({
@@ -437,6 +439,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           billingTerms: editedMC.billingTerms,
           paymentTerms: editedMC.paymentTerms,
           notes: editedMC.notes || '',
+          serviceAgreementNo: editedMC.serviceAgreementNo || '',
           rateMultiplierPolicy: editedMC.rateMultiplierPolicy || null,
         }),
       });
@@ -775,6 +778,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         contractCostCalendarHolidays: contract.contractCostCalendarHolidays,
         contractSellSpecialDays: contract.contractSellSpecialDays,
         contractCostSpecialDays: contract.contractCostSpecialDays,
+        serviceAgreementNo: contract.serviceAgreementNo || '',
         notes: `Supplemental contract inheriting holiday/OT terms from ${contract.contractNumber}`,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -875,6 +879,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
             <p className="text-muted-foreground flex items-center gap-2 mt-1">
               <Building2 className="h-4 w-4" /> {customer?.name || 'Loading customer...'}
             </p>
+            {contract.serviceAgreementNo?.trim() ? (
+              <p className="text-sm text-muted-foreground mt-1">
+                เลขที่สัญญาลูกค้า (Service Agreement No.):{' '}
+                <span className="font-mono font-medium text-foreground">{contract.serviceAgreementNo}</span>
+              </p>
+            ) : null}
           </div>
           <div className="flex gap-2">
             {isActiveContract ? (
@@ -963,6 +973,19 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <div className="space-y-2">
                     <Label>รหัสสัญญา (Contract Code)</Label>
                     <Input disabled value={contract.contractNumber} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>เลขที่สัญญาของลูกค้า (Service Agreement No.)</Label>
+                    <Input
+                      disabled={!isEditing || !isPendingContract}
+                      value={
+                        isEditing && isPendingContract
+                          ? (editedMC.serviceAgreementNo ?? '')
+                          : (contract.serviceAgreementNo ?? '')
+                      }
+                      onChange={(e) => setEditedMC({ ...editedMC, serviceAgreementNo: e.target.value })}
+                      placeholder="เลขที่เอกสารอ้างอิงฝั่งลูกค้า"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>ลูกค้า (Customer)</Label>

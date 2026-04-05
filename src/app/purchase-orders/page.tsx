@@ -27,11 +27,36 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, query, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { formatDateRangeThaiBE } from '@/lib/date-thai';
+import { formatDateRangeThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
+
+function computePoOperationalWindow(
+  poType: 'contract' | 'quotation' | undefined,
+  contractId: string,
+  quotationId: string,
+  activeContracts: MainContract[] | null | undefined,
+  eligibleQuotations: Quotation[] | null | undefined,
+  customerPoIssueMs: number
+): { startDate: number; endDate: number } {
+  const issue = Number.isFinite(customerPoIssueMs) ? customerPoIssueMs : Date.now();
+  if (poType === 'contract' && contractId) {
+    const c = activeContracts?.find((x) => x.id === contractId);
+    if (c) return { startDate: c.startDate, endDate: c.endDate };
+  }
+  if (poType === 'quotation' && quotationId) {
+    const q = eligibleQuotations?.find((x) => x.id === quotationId);
+    const s = q?.issueDate ? new Date(q.issueDate).getTime() : issue;
+    const e = q?.validUntilDate ? new Date(q.validUntilDate).getTime() : s + 2592000000;
+    return {
+      startDate: Number.isFinite(s) ? s : issue,
+      endDate: Number.isFinite(e) ? e : issue + 2592000000,
+    };
+  }
+  return { startDate: issue, endDate: issue + 365 * 86400000 };
+}
 
 function CustomerPOsPageContent() {
   const router = useRouter();
@@ -62,10 +87,9 @@ function CustomerPOsPageContent() {
     contractId: '',
     quotationId: '',
     customerPONumber: '',
+    customerPoIssueDate: Date.now(),
     projectName: '',
     description: '',
-    startDate: Date.now(),
-    endDate: Date.now() + 2592000000, // +30 days
     status: 'pending',
     notes: ''
   });
@@ -120,15 +144,11 @@ function CustomerPOsPageContent() {
     if (newPO.poType !== 'quotation') return;
     const selectedQuotation = eligibleQuotations?.find((q) => q.id === newPO.quotationId);
     if (!selectedQuotation) return;
-    const projectedStart = selectedQuotation.issueDate ? new Date(selectedQuotation.issueDate).getTime() : newPO.startDate;
-    const projectedEnd = selectedQuotation.validUntilDate ? new Date(selectedQuotation.validUntilDate).getTime() : newPO.endDate;
     setNewPO((prev) => ({
       ...prev,
       customerId: selectedQuotation.customerId,
       title: prev.title || selectedQuotation.projectTitle || '',
       projectName: prev.projectName || selectedQuotation.projectTitle || '',
-      startDate: Number.isFinite(projectedStart) ? projectedStart : prev.startDate,
-      endDate: Number.isFinite(projectedEnd) ? projectedEnd : prev.endDate,
     }));
   }, [newPO.poType, newPO.quotationId, eligibleQuotations]);
 
@@ -163,6 +183,15 @@ function CustomerPOsPageContent() {
         actor: currentUser.displayName 
       });
 
+      const { startDate, endDate } = computePoOperationalWindow(
+        newPO.poType,
+        newPO.contractId || '',
+        newPO.quotationId || '',
+        activeContracts,
+        eligibleQuotations,
+        newPO.customerPoIssueDate ?? Date.now()
+      );
+
       // 2. Create the document
       const colRef = collection(firestore, 'purchase_orders');
       const docRef = await addDocumentNonBlocking(colRef, {
@@ -170,6 +199,9 @@ function CustomerPOsPageContent() {
         contractId: newPO.poType === 'contract' ? (newPO.contractId || '') : '',
         quotationId: newPO.poType === 'quotation' ? (newPO.quotationId || '') : '',
         poCode: finalNo, // Apply final unique code
+        startDate,
+        endDate,
+        customerPoIssueDate: newPO.customerPoIssueDate,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -268,6 +300,16 @@ function CustomerPOsPageContent() {
                   />
                 </div>
                 <div className="grid gap-2">
+                  <Label>วันที่ออก PO ของลูกค้า (Customer PO issue date)</Label>
+                  <DatePickerThaiBE
+                    value={newPO.customerPoIssueDate ?? Date.now()}
+                    onChange={(ms) => setNewPO({ ...newPO, customerPoIssueDate: ms })}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    ระยะเวลาปฏิบัติงานในระบบจะดึงจากสัญญาหลักหรือใบเสนอราคาที่เลือกอัตโนมัติ
+                  </p>
+                </div>
+                <div className="grid gap-2">
                   <Label>แหล่งที่มาเอกสาร (PO Source)</Label>
                   <Select
                     onValueChange={(v: 'contract' | 'quotation') => setNewPO({
@@ -321,20 +363,6 @@ function CustomerPOsPageContent() {
                   <Input
                     disabled
                     value={customers?.find((c) => c.id === newPO.customerId)?.name || 'ระบบจะดึงจากเอกสารต้นทางอัตโนมัติ'}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>วันที่เริ่มโครงการ (Start Date)</Label>
-                  <DatePickerThaiBE
-                    value={newPO.startDate}
-                    onChange={(ms) => setNewPO({ ...newPO, startDate: ms })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>วันที่สิ้นสุดโครงการ (End Date)</Label>
-                  <DatePickerThaiBE
-                    value={newPO.endDate}
-                    onChange={(ms) => setNewPO({ ...newPO, endDate: ms })}
                   />
                 </div>
                 <div className="grid gap-2 col-span-2">
@@ -403,6 +431,11 @@ function CustomerPOsPageContent() {
                             <span className="text-[10px] text-muted-foreground uppercase">{po.projectName || 'General Project'}</span>
                             {po.customerPONumber && (
                               <span className="text-[10px] text-slate-500">Customer PO: {po.customerPONumber}</span>
+                            )}
+                            {po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0 && (
+                              <span className="text-[10px] text-slate-500">
+                                วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
+                              </span>
                             )}
                           </div>
                         </TableCell>

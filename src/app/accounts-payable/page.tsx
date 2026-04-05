@@ -2,6 +2,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -117,6 +118,14 @@ export default function AccountsPayablePage() {
           </AlertDescription>
         </Alert>
 
+        <Alert className="border-amber-200 bg-amber-50/80">
+          <Info className="h-5 w-5 text-amber-800" />
+          <AlertTitle className="font-bold text-amber-950">ใบรับวางบิลจากคลัง</AlertTitle>
+          <AlertDescription className="text-sm text-amber-900">
+            เมื่อเจ้าหน้าที่คลังส่งเอกสารจากเมนู «รับวางบิล» รายการจะปรากฏที่นี่ (เลข VBR-) การบันทึกสถานะ «จ่ายแล้ว» ทำที่หน้ารายละเอียดใบรับวางบิล
+          </AlertDescription>
+        </Alert>
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
@@ -155,7 +164,18 @@ export default function AccountsPayablePage() {
                             {vendor?.vendorName || 'N/A'}
                           </div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs font-bold text-primary">{item.documentNo}</TableCell>
+                        <TableCell className="font-mono text-xs font-bold text-primary">
+                          {item.origin === 'STORE_VENDOR_BILL' ? (
+                            <Link
+                              href={`/store/vendor-bills/${item.id}`}
+                              className="text-primary underline hover:no-underline"
+                            >
+                              {item.documentNo}
+                            </Link>
+                          ) : (
+                            item.documentNo
+                          )}
+                        </TableCell>
                         <TableCell>
                           <div className="flex flex-col text-[10px]">
                             <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-2.5 w-2.5" /> {item.billDate}</span>

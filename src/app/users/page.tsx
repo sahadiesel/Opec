@@ -19,6 +19,8 @@ import {
   AlertTriangle,
   Building2,
   ShieldAlert,
+  Pencil,
+  Phone,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
@@ -51,7 +53,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, deleteField, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
@@ -145,6 +147,15 @@ export default function UsersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [listTab, setListTab] = useState<'all' | 'pending'>('pending');
 
+  /** แก้ไขชื่อ / อีเมล / เบอร์ (ไม่รวมสิทธิ์) */
+  const [detailsEditUser, setDetailsEditUser] = useState<User | null>(null);
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [isSavingDetails, setIsSavingDetails] = useState(false);
+  const [showDetailsConfirmCancel, setShowDetailsConfirmCancel] = useState(false);
+
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setCurrentUser(JSON.parse(stored));
@@ -232,6 +243,81 @@ export default function UsersPage() {
 
     return rolesChanged || statusChanged || notesChanged || profileChanged;
   }, [selectedUser, editedRole, editedStatus, notes, editedProfileKey]);
+
+  const isDetailsDirty = useMemo(() => {
+    if (!detailsEditUser) return false;
+    const p0 = (detailsEditUser.phone || '').trim();
+    const p1 = editPhone.trim();
+    return (
+      editDisplayName.trim() !== (detailsEditUser.displayName || '').trim() ||
+      editEmail.trim() !== (detailsEditUser.email || '').trim() ||
+      p1 !== p0
+    );
+  }, [detailsEditUser, editDisplayName, editEmail, editPhone]);
+
+  const handleOpenDetailsEdit = (user: User) => {
+    setDetailsEditUser(user);
+    setEditDisplayName(user.displayName || '');
+    setEditEmail(user.email || '');
+    setEditPhone(user.phone || '');
+    setIsDetailsDialogOpen(true);
+  };
+
+  const handleDetailsOpenChange = (open: boolean) => {
+    if (!open && isDetailsDirty) {
+      setShowDetailsConfirmCancel(true);
+    } else if (!open) {
+      setIsDetailsDialogOpen(false);
+      setDetailsEditUser(null);
+    } else {
+      setIsDetailsDialogOpen(true);
+    }
+  };
+
+  const handleConfirmDetailsCancel = () => {
+    setShowDetailsConfirmCancel(false);
+    setIsDetailsDialogOpen(false);
+    setDetailsEditUser(null);
+  };
+
+  const handleSaveDetails = () => {
+    if (!firestore || !detailsEditUser || !isUserAdmin) return;
+    const dn = editDisplayName.trim();
+    const em = editEmail.trim();
+    if (!dn) {
+      toast({ variant: 'destructive', title: 'กรุณากรอกชื่อ', description: 'ชื่อที่แสดงในระบบต้องไม่ว่าง' });
+      return;
+    }
+    if (!em || !em.includes('@')) {
+      toast({ variant: 'destructive', title: 'อีเมลไม่ถูกต้อง', description: 'กรุณากรอกอีเมลในรูปแบบที่ใช้งานได้' });
+      return;
+    }
+    setIsSavingDetails(true);
+    try {
+      const userRef = doc(firestore, 'users', detailsEditUser.id);
+      const phoneTrim = editPhone.trim();
+      const payload = sanitizeFirestorePayload({
+        displayName: dn,
+        email: em,
+        phone: phoneTrim ? phoneTrim : deleteField(),
+        updatedAt: Date.now(),
+      });
+      updateDocumentNonBlocking(userRef, payload);
+      setTimeout(() => {
+        setIsSavingDetails(false);
+        setIsDetailsDialogOpen(false);
+        setDetailsEditUser(null);
+        toast({
+          title: 'บันทึกข้อมูลผู้ใช้แล้ว',
+          description:
+            'อัปเดตชื่อ อีเมล หรือเบอร์ในเอกสารผู้ใช้แล้ว — หากต้องการเปลี่ยนอีเมลสำหรับเข้าสู่ระบบจริง ให้ปรับที่ Firebase Authentication ด้วย',
+        });
+      }, 150);
+    } catch (err: any) {
+      setIsSavingDetails(false);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: err?.message ?? String(err) });
+    }
+  };
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
@@ -525,6 +611,10 @@ export default function UsersPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleOpenDetailsEdit(u)}>
+                                <Pencil className="h-4 w-4 mr-2" />
+                                แก้ไขข้อมูล (Edit details)
+                              </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => handleEditUser(u)}>
                                 แก้ไขสิทธิ์ (Edit Access)
                               </DropdownMenuItem>
@@ -544,6 +634,86 @@ export default function UsersPage() {
         </Card>
           </TabsContent>
         </Tabs>
+
+        {/* แก้ไขชื่อ / อีเมล / เบอร์ */}
+        <Dialog open={isDetailsDialogOpen} onOpenChange={handleDetailsOpenChange}>
+          <DialogContent className="max-w-md border-t-8 border-t-primary">
+            <DialogHeader>
+              <DialogTitle className="text-xl flex items-center gap-2">
+                <Pencil className="h-6 w-6 text-primary" />
+                แก้ไขข้อมูลผู้ใช้
+              </DialogTitle>
+              <DialogDescription>
+                แก้ชื่อที่แสดง อีเมลในเอกสาร และเบอร์โทร — การเข้าสู่ระบบยังผูกกับ Firebase Authentication; หากต้องการเปลี่ยนอีเมลล็อกอินจริง ให้ดำเนินการที่ Console ด้วย
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="edit-display-name">ชื่อที่แสดง (Display name)</Label>
+                <Input
+                  id="edit-display-name"
+                  value={editDisplayName}
+                  onChange={(e) => setEditDisplayName(e.target.value)}
+                  className="h-11"
+                  autoComplete="name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-email" className="flex items-center gap-1">
+                  <Mail className="h-3.5 w-3.5" /> อีเมล (ในเอกสารผู้ใช้)
+                </Label>
+                <Input
+                  id="edit-email"
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="h-11"
+                  autoComplete="email"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-phone" className="flex items-center gap-1">
+                  <Phone className="h-3.5 w-3.5" /> เบอร์โทร (ไม่บังคับ)
+                </Label>
+                <Input
+                  id="edit-phone"
+                  type="tel"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  className="h-11"
+                  placeholder="เช่น +66812345678"
+                  autoComplete="tel"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => handleDetailsOpenChange(false)} disabled={isSavingDetails}>
+                ยกเลิก
+              </Button>
+              <Button onClick={handleSaveDetails} disabled={isSavingDetails || !isDetailsDirty} className="font-semibold">
+                {isSavingDetails ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                บันทึก
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <AlertDialog open={showDetailsConfirmCancel} onOpenChange={setShowDetailsConfirmCancel}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ยืนยันการยกเลิก</AlertDialogTitle>
+              <AlertDialogDescription>
+                มีการแก้ข้อมูลผู้ใช้ที่ยังไม่ได้บันทึก ต้องการปิดและทิ้งการเปลี่ยนแปลงหรือไม่?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setShowDetailsConfirmCancel(false)}>แก้ไขต่อ</AlertDialogCancel>
+              <AlertDialogAction onClick={handleConfirmDetailsCancel} className="bg-destructive text-destructive-foreground">
+                ทิ้งข้อมูลและยกเลิก
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Access Editor Modal */}
         <Dialog open={isEditDialogOpen} onOpenChange={handleOpenChange}>

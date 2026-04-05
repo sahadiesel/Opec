@@ -55,13 +55,14 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView, isClient, canAccess } from '@/lib/permissions';
+import { ModuleKey, canView, isClient, canAccess, isStoreOfficer, isPayrollOfficer } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HR_NAV_SUBSECTIONS } from '@/lib/navigation/hr-nav-items';
 import { pathMatches, sidebarMatrixVisibilityForPath, canViewHrHubItem } from '@/lib/navigation/nav-access';
 
-type NavAudience = 'internal' | 'client' | 'admin';
+type NavAudience = 'internal' | 'client' | 'admin' | 'accounting';
 
 interface NavItem {
   key: ModuleKey;
@@ -142,11 +143,17 @@ const navGroups: NavGroup[] = [
       { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
       { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
       { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
+      {
+        key: 'store_inventory',
+        title: 'รับวางบิล (Vendor billing)',
+        href: '/store/vendor-bills',
+        icon: FileText,
+      },
     ],
   },
   {
     label: 'การเงินและบัญชี (Finance & Accounting)',
-    audience: 'internal',
+    audience: 'accounting',
     accountingStructured: true,
     items: ACCOUNTING_MAIN_ITEMS,
   },
@@ -174,10 +181,55 @@ const navGroups: NavGroup[] = [
   },
 ];
 
+/** เมนูเฉพาะเจ้าหน้าที่คลัง: หน้าแรก = คลัง, ไม่มี HR/ขาย, เฉพาะคลัง–จัดซื้อ */
+function navGroupsForUser(user: User): NavGroup[] {
+  if (isPayrollOfficer(user)) {
+    return navGroups.filter((g) => !g.label.startsWith('งานขายและสัญญา'));
+  }
+  if (!isStoreOfficer(user)) return navGroups;
+  return navGroups
+    .filter((g) => !g.hrStructured)
+    .filter((g) => !g.label.startsWith('งานขายและสัญญา'))
+    .map((g) => {
+      if (g.label === 'ภาพรวม (Overview)') {
+        return {
+          ...g,
+          items: [
+            {
+              key: 'store_inventory',
+              title: 'หน้าหลัก (คลังอุปกรณ์)',
+              href: '/store',
+              icon: LayoutDashboard,
+            },
+          ],
+        };
+      }
+      if (g.label === 'งานปฏิบัติการ (Operations)') {
+        return {
+          ...g,
+          items: [
+            { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
+            {
+              key: 'store_inventory',
+              title: 'รับวางบิล (Vendor billing)',
+              href: '/store/vendor-bills',
+              icon: FileText,
+            },
+            { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
+            { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
+          ],
+        };
+      }
+      return g;
+    });
+}
+
 function canSeeGroup(group: NavGroup, user: User, admin: boolean): boolean {
   const clientUser = isClient(user);
+  const acct = admin || isSimpleAccounting(user) || isSimpleAdmin(user);
 
   if (group.audience === 'admin') return admin;
+  if (group.audience === 'accounting') return acct && !clientUser;
   if (group.audience === 'client') return clientUser;
   if (group.audience === 'internal') return !clientUser;
 
@@ -210,7 +262,7 @@ export function SidebarNav({
       </SidebarHeader>
 
       <SidebarContent className="py-4">
-        {navGroups.map((group) => {
+        {navGroupsForUser(user).map((group) => {
           if (!canSeeGroup(group, user, admin)) return null;
 
           if (group.accountingStructured) {
@@ -369,6 +421,14 @@ export function SidebarNav({
 
           const visibleItems = group.items.filter((item) => {
             if (admin) return true;
+            if (
+              item.href === '/' &&
+              item.key === 'overview_dashboard' &&
+              isSimpleInternalEligible(user) &&
+              !isClient(user)
+            ) {
+              return true;
+            }
             const byMatrix = sidebarMatrixVisibility(user, item);
             if (byMatrix !== null) return byMatrix;
             return canView(user, item.key, profile);
@@ -388,13 +448,13 @@ export function SidebarNav({
                     <SidebarMenuItem key={`${item.key}-${item.href}`}>
                       <SidebarMenuButton
                         asChild
-                        isActive={pathname === item.href}
+                        isActive={pathMatches(pathname, item.href)}
                         tooltip={item.title}
-                        className={`transition-all duration-200 ${pathname === item.href ? 'font-bold' : ''}`}
+                        className={`transition-all duration-200 ${pathMatches(pathname, item.href) ? 'font-bold' : ''}`}
                       >
                         <Link href={item.href}>
                           <item.icon
-                            className={`h-4 w-4 ${pathname === item.href ? 'text-primary' : 'text-muted-foreground'}`}
+                            className={`h-4 w-4 ${pathMatches(pathname, item.href) ? 'text-primary' : 'text-muted-foreground'}`}
                           />
                           <span className="font-semibold text-xs tracking-tight">{item.title}</span>
                         </Link>

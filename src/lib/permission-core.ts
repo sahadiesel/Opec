@@ -6,6 +6,7 @@
 
 import type { BusinessRoleKey, DeptType, User } from './types';
 import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
+import { isActiveForApp, isInternalTypeUser } from './simple-tier-model';
 
 // ---------------------------------------------------------------------------
 // Canonical types
@@ -59,13 +60,13 @@ export const ALL_ACCESS_DOMAINS: readonly AccessDomain[] = [
 /**
  * Base domain coverage per access group (before legacy union).
  * - admin: all domains
- * - operations: sales / operations / hr
+ * - operations: sales / operations / hr / store (inventory & procurement live in ops pillar)
  * - accounting: sales / hr / store / accounting
  * - client: client only
  */
 export const DOMAINS_BY_ACCESS_GROUP: Record<AccessGroup, readonly AccessDomain[]> = {
   admin: ALL_ACCESS_DOMAINS,
-  operations: ['sales', 'operations', 'hr'],
+  operations: ['sales', 'operations', 'hr', 'store'],
   accounting: ['sales', 'hr', 'store', 'accounting'],
   client: ['client'],
 };
@@ -176,6 +177,12 @@ function isFutureAccessLevel(value: unknown): value is CoreAccessLevel {
 /** Primary business role: assignedRoleKey first; else permissionProfileKey or permissionProfileKeys[0] only. */
 export function getPrimaryLegacyRole(user: Partial<User> | null): string | null {
   if (!user) return null;
+  const fromRoleField =
+    typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : null;
+  if (fromRoleField) {
+    const normalizedField = normalizeAssignedPrimaryRole(fromRoleField);
+    if (normalizedField) return normalizedField;
+  }
   const fromAssigned =
     typeof user.assignedRoleKey === 'string' && user.assignedRoleKey.trim() !== ''
       ? user.assignedRoleKey
@@ -184,6 +191,16 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
   /** Payroll on user doc wins over profile-derived hints. */
   if (fromScalar === 'payroll_officer') return 'payroll_officer';
   if (fromScalar) return fromScalar;
+
+  const fromAssignedKeys0 =
+    Array.isArray(user.assignedRoleKeys) &&
+    typeof user.assignedRoleKeys[0] === 'string' &&
+    user.assignedRoleKeys[0].trim() !== ''
+      ? user.assignedRoleKeys[0].trim()
+      : null;
+  const fromKeysNorm = normalizeAssignedPrimaryRole(fromAssignedKeys0);
+  if (fromKeysNorm === 'payroll_officer') return 'payroll_officer';
+  if (fromKeysNorm) return fromKeysNorm;
 
   const fromProfileKey =
     typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
@@ -197,6 +214,11 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
       : null;
 
   return normalizeAssignedPrimaryRole(fromProfileKey ?? fromListZero);
+}
+
+/** True when the resolved primary business role is HR Officer (narrow UI: no sales / payroll run modules). */
+export function isPrimaryHrOfficer(user: Partial<User> | null | undefined): boolean {
+  return getPrimaryLegacyRole(user ?? null) === 'hr_officer';
 }
 
 /** Effective access group: explicit User.accessGroup wins, else legacy-derived. */
@@ -354,7 +376,7 @@ export function getUserAccessContext(user: User | null): UserAccessContext | nul
   };
 }
 
-/** True if any user permission profile key resolves to the admin profile doc (admin_admin). */
+/** True if profile keys point at the system admin matrix row (system_admin or legacy admin_admin). */
 function userReferencesAdminPermissionProfile(user: User): boolean {
   const keys = [
     user.permissionProfileKey,
@@ -362,18 +384,20 @@ function userReferencesAdminPermissionProfile(user: User): boolean {
   ];
   for (const k of keys) {
     if (typeof k !== 'string' || !k.trim()) continue;
-    if (normalizePermissionProfileDocumentId(k) === 'admin_admin') return true;
+    const id = normalizePermissionProfileDocumentId(k);
+    if (id === 'admin_admin' || id === 'system_admin') return true;
   }
   return false;
 }
 
 /**
  * Full system administrator (single app gate; keep in sync with firestore.rules isAdminUser()).
- * Business role key is always {@link BusinessRoleKey} `system_admin`; `admin_admin` is only the
- * Firestore permission_profiles document id, not a second role.
+ * Business role is always {@link BusinessRoleKey} `system_admin`. Profile doc id should be `system_admin`;
+ * `admin_admin` is legacy only (still honored for existing user docs).
  */
 export function isSystemAdmin(user: User | null): boolean {
   if (!user) return false;
+  if (typeof user.role === 'string' && normalizeBusinessRoleKey(user.role) === 'system_admin') return true;
   if (getPrimaryLegacyRole(user) === 'system_admin') return true;
   if (user.accessGroup === 'admin') return true;
   if (user.departmentGroup === 'admin') return true;
@@ -393,6 +417,41 @@ export function isHrManager(user: User | null): boolean {
 export function isOperationManager(user: User | null): boolean {
   if (!user) return false;
   return getPrimaryLegacyRole(user) === 'operations_manager';
+}
+
+export function isStoreOfficer(user: User | null): boolean {
+  if (!user) return false;
+  return getPrimaryLegacyRole(user) === 'store_officer';
+}
+
+/**
+ * หัวหน้าแนวร่วมปฏิบัติการ (ขาย / ปฏิบัติการ / HR / คลัง / payroll ในแอป):
+ * สิทธิ์เชิงธุรกิจใกล้เคียง system_admin แต่ไม่รวมเมนูระบบ (users, numbering, …) และโมดูลบัญชี — กำหนดที่ getPermissions / เส้นทาง
+ */
+export function isOperationsPillarExecutive(user: User | null): boolean {
+  if (!user) return false;
+  if (!isActiveForApp(user) || !isInternalTypeUser(user)) return false;
+  if (isSystemAdmin(user)) return false;
+  const rk = getPrimaryLegacyRole(user);
+  if (rk === 'operations_manager' || rk === 'hr_manager' || rk === 'sales_manager') return true;
+  return getEffectiveAccessGroup(user) === 'operations' && getEffectiveAccessLevel(user) === 'manager';
+}
+
+/**
+ * แก้ต้นทุน (cost baseline) ใน position rates ของสัญญาหลัก — ตามนโยบาย: Admin, HR Manager, Operations Manager
+ * รองรับผู้ใช้ที่แสดงเป็น manager ในกลุ่ม operations แต่เอกสารยังไม่มี assignedRoleKey = operations_manager
+ * (ไม่ให้ทีมขายแก้ต้นทุน)
+ */
+export function canEditMasterContractCostBaseline(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  if (isHrManager(user)) return true;
+  if (isOperationManager(user)) return true;
+  const rk = getPrimaryLegacyRole(user);
+  if (rk === 'sales_manager' || rk === 'sales_officer') return false;
+  const g = getEffectiveAccessGroup(user);
+  const lvl = getEffectiveAccessLevel(user);
+  return g === 'operations' && lvl === 'manager';
 }
 
 /** Combined operations pillar officer: full pillar menus in app matrix; no delete / no approve vs manager. */
@@ -426,26 +485,19 @@ export function canViewPayrollPerFirestoreRules(user: User | null): boolean {
   if (st && st !== 'ACTIVE' && st !== 'APPROVED') return false;
   if (user.userType === 'customer_portal') return false;
   if (getEffectiveAccessGroup(user) === 'client') return false;
-
-  if (isSystemAdmin(user)) return true;
-  const ag = getEffectiveAccessGroup(user);
-  if (ag === 'admin') return true;
-  if ((user.department || '').toLowerCase() === 'admin') return true;
-
-  if (isOperationManager(user)) return true;
-  if (isPayrollOfficer(user)) return true;
-
-  const role = getPrimaryLegacyRole(user);
-  if (role === 'accounting_manager' || role === 'accounting_officer') return true;
-  if (ag === 'accounting') return true;
-  if ((user.department || '').toLowerCase() === 'accounting') return true;
-
-  return false;
+  return true;
 }
 
 export function canActAsHrManager(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
   const role = getPrimaryLegacyRole(user);
-  return role === 'hr_manager' || role === 'operations_manager' || isSystemAdmin(user);
+  return (
+    role === 'hr_manager' ||
+    role === 'operations_manager' ||
+    role === 'hr_officer' ||
+    role === 'payroll_officer'
+  );
 }
 
 /** แก้ไขตั้งค่าภาษี/ประกันสังคมในหน้า HR settings (เขียน payroll_policies) */

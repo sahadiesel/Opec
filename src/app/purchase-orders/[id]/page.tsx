@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { formatDateRangeThaiBE } from '@/lib/date-thai';
+import { formatDateRangeThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -472,6 +472,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 {po.customerPONumber && (
                   <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> Customer PO: {po.customerPONumber}</span>
                 )}
+                {po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Calendar className="h-3.5 w-3.5" /> วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -517,6 +522,22 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       onChange={e => setEditedPO({...editedPO, customerPONumber: e.target.value})}
                       placeholder="เช่น PO-CLIENT-2026-00123"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">วันที่ออก PO ของลูกค้า</Label>
+                    {!isEditing && (po.customerPoIssueDate == null || Number(po.customerPoIssueDate) <= 0) ? (
+                      <p className="text-sm text-muted-foreground py-2 border rounded-md px-3 bg-muted/30">ยังไม่ระบุ</p>
+                    ) : (
+                      <DatePickerThaiBE
+                        disabled={!isEditing}
+                        value={
+                          isEditing
+                            ? (editedPO.customerPoIssueDate ?? po.customerPoIssueDate ?? Date.now())
+                            : (po.customerPoIssueDate as number)
+                        }
+                        onChange={(ms) => setEditedPO({ ...editedPO, customerPoIssueDate: ms })}
+                      />
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ชื่อโครงการเฉพาะทาง (Project Name)</Label>

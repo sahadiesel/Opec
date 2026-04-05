@@ -18,6 +18,7 @@ import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
 import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
 import { sanitizeFirestorePayload } from './utils';
 import { ROLE_CATALOG } from './roles/role-catalog';
+import { getPrimaryLegacyRole as resolvePrimaryLegacyRoleString } from './permission-core';
 
 export interface BusinessRole {
   key: BusinessRoleKey;
@@ -101,17 +102,31 @@ function canonicalizeRoleKey(roleKey?: string | null): BusinessRoleKey | null {
   return mapped in BUSINESS_ROLES ? (mapped as BusinessRoleKey) : null;
 }
 
+/** Single source of truth with permission-core (role, assignedRoleKey, assignedRoleKeys[0], profiles). */
+function primaryBusinessRoleFromUser(user: Partial<User> | null): BusinessRoleKey | null {
+  if (!user) return null;
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u) return null;
+  const raw = resolvePrimaryLegacyRoleString(u);
+  return raw ? canonicalizeRoleKey(raw) : null;
+}
+
+function businessRoleFromDeptLevel(dept: DeptType, level: AccessLevel): BusinessRoleKey {
+  if (dept === 'admin') return 'system_admin';
+  if (dept === 'accounting') return level === 'manager' ? 'accounting_manager' : 'accounting_officer';
+  if (dept === 'sales') return level === 'manager' ? 'sales_manager' : 'sales_officer';
+  if (dept === 'hr') return level === 'manager' ? 'hr_manager' : 'hr_officer';
+  if (dept === 'store') return 'store_officer';
+  if (dept === 'operations') return level === 'manager' ? 'operations_manager' : 'operations_officer';
+  if (dept === 'client') return 'client_user';
+  return 'operations_officer';
+}
+
 function inferPortalRole(user: Partial<User>): PortalRole {
   if (user.portalRole === 'approver' || user.portalRole === 'viewer') {
     return user.portalRole;
   }
   return 'viewer';
-}
-
-function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | null {
-  const u = normalizeCurrentUserPermissions(user);
-  if (!u) return null;
-  return canonicalizeRoleKey(u.assignedRoleKey);
 }
 
 function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'operations' | 'accounting' | 'client' {
@@ -147,7 +162,7 @@ export function inferDeptAndLevel(user: Partial<User> | null): { dept: DeptType;
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return { dept: 'hr', level: 'viewer' };
 
-  const primaryRole = getPrimaryLegacyRole(u);
+  const primaryRole = primaryBusinessRoleFromUser(u);
   if (primaryRole) {
     const role = BUSINESS_ROLES[primaryRole];
     return { dept: role.dept, level: role.level };
@@ -169,7 +184,7 @@ export const isOperationUser = (user: Partial<User> | null) => {
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return false;
   if (u.accessGroup === 'operations' || u.accessGroup === 'operation') return true;
-  const role = getPrimaryLegacyRole(u);
+  const role = primaryBusinessRoleFromUser(u);
   return role != null && mapBusinessRoleToAccessGroup(role) === 'operations';
 };
 
@@ -177,7 +192,7 @@ export const isAccountingUser = (user: Partial<User> | null) => {
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return false;
   if (u.accessGroup === 'accounting') return true;
-  const role = getPrimaryLegacyRole(u);
+  const role = primaryBusinessRoleFromUser(u);
   return role != null && mapBusinessRoleToAccessGroup(role) === 'accounting';
 };
 
@@ -192,7 +207,19 @@ export const isClientUser = (user: Partial<User> | null) => {
 };
 
 export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
-  return getPrimaryLegacyRole(user) || 'hr_officer';
+  const p = primaryBusinessRoleFromUser(user);
+  if (p) return p;
+  const u = normalizeCurrentUserPermissions(user);
+  const fromProfileId =
+    normalizePermissionProfileDocumentId(u?.permissionProfileKey ?? '') ||
+    normalizePermissionProfileDocumentId(u?.permissionProfileKeys?.[0] ?? '');
+  if (fromProfileId && fromProfileId in BUSINESS_ROLES) {
+    return fromProfileId as BusinessRoleKey;
+  }
+  if (u?.department && u.level) {
+    return businessRoleFromDeptLevel(u.department, u.level);
+  }
+  return 'operations_officer';
 }
 
 /**

@@ -28,11 +28,13 @@ export interface ValidationSummary {
 }
 
 function createMockUser(roles: string[], dept: any, level: any): User {
+  const primary = (roles[0] || '') as BusinessRoleKey;
   return normalizeCurrentUserPermissions({
     id: 'test-user',
     email: 'test@opec.com',
     displayName: 'Test User',
     roleIds: roles as RoleType[],
+    assignedRoleKey: primary,
     assignedRoleKeys: roles as BusinessRoleKey[],
     department: dept,
     level: level,
@@ -61,21 +63,22 @@ export function runPermissionLogicSuite(): ValidationSummary {
   );
 
   const hrOfficer = createMockUser(['hr_officer'], 'hr', 'officer');
-  const hrAccessToWorkers = getPermissions(hrOfficer, 'workers');
+  const hrBlockedWorkers = getPermissions(hrOfficer, 'workers');
+  const hrHub = getPermissions(hrOfficer, 'hr_hub');
   const hrAccessToAccounting = getPermissions(hrOfficer, 'billing_notes');
   assert(
     'HR Officer Isolation',
-    hrAccessToWorkers.view && !hrAccessToAccounting.view,
-    'HR Officer should see HR data but not Accounting data'
+    !hrBlockedWorkers.view && hrHub.view && !hrAccessToAccounting.view,
+    'HR Officer should use HR hub / master data only — no worker registry or accounting finance'
   );
 
-  const hybridUser = createMockUser(['hr_officer', 'operations_officer'], 'hr', 'officer');
-  const accessToHR = getPermissions(hybridUser, 'workers');
+  const hybridUser = createMockUser(['operations_officer', 'hr_officer'], 'operations', 'officer');
+  const accessToWorkers = getPermissions(hybridUser, 'workers');
   const accessToOps = getPermissions(hybridUser, 'waves');
   assert(
-    'Multi-Role Union',
-    accessToHR.view && accessToOps.view,
-    'Hybrid user should see both HR and Operations modules'
+    'Primary role wins for module blocks',
+    accessToWorkers.view && accessToOps.view,
+    'User with primary operations_officer should retain workers + ops even if also tagged hr_officer'
   );
 
   const client = createMockUser(['client_user'], 'client', 'viewer');

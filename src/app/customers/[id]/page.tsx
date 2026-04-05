@@ -40,7 +40,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isSystemAdmin, isOperationsPillarExecutive } from '@/lib/permission-core';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { doc, collection, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { 
@@ -126,9 +126,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   // users list: Firestore rules allow list only for canManageSystem (admin)
   const portalUsersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser || !isSystemAdmin(currentUser) || !canViewCustomers) return null;
+    const canListPortalUsers =
+      !!currentUser && (isSystemAdmin(currentUser) || isOperationsPillarExecutive(currentUser));
+    if (!firestore || !canListPortalUsers || !canViewCustomers) return null;
     return query(collection(firestore, 'users'), where('customerId', '==', id), where('userType', '==', 'customer_portal'));
-  }, [firestore, id, currentUser]);
+  }, [firestore, id, currentUser, canViewCustomers]);
   const { data: portalUsers } = useCollection<User>(portalUsersQuery as any);
 
   const quosQuery = useMemoFirebase(() => {
@@ -264,7 +266,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  const isAdmin = isSystemAdmin(currentUser);
+  const isBizExecutive = isSystemAdmin(currentUser) || isOperationsPillarExecutive(currentUser);
 
   const handleEditContact = async () => {
     if (!canEditCustomers) {
@@ -299,7 +301,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleDeleteContact = async (contactId: string) => {
-    if (!firestore || !isAdmin || !canDeleteCustomers) return;
+    if (!firestore || !isBizExecutive || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบผู้ติดต่อนี้?')) return;
     try {
       await deleteDoc(doc(firestore, 'customers', id, 'contact_persons', contactId));
@@ -311,7 +313,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeleteQuotation = async (quoId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isAdmin || !canDeleteCustomers) return;
+    if (!firestore || !isBizExecutive || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบใบเสนอราคานี้?')) return;
     try {
       await deleteDoc(doc(firestore, 'quotations', quoId));
@@ -323,7 +325,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeleteContract = async (contractId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isAdmin || !canDeleteCustomers) return;
+    if (!firestore || !isBizExecutive || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบสัญญานี้? การลบสัญญาจะมีผลต่อข้อมูลที่อ้างอิงทั้งหมด')) return;
     try {
       await deleteDoc(doc(firestore, 'main_contracts', contractId));
@@ -335,7 +337,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeletePO = async (poId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isAdmin || !canDeleteCustomers) return;
+    if (!firestore || !isBizExecutive || !canDeleteCustomers) return;
     if (!confirm('ยืนยันลบใบสั่งซื้อนี้?')) return;
     try {
       await deleteDoc(doc(firestore, 'purchase_orders', poId));
@@ -346,7 +348,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleDeletePortalUser = async (userId: string) => {
-    if (!firestore || !isAdmin) return;
+    if (!firestore || !isBizExecutive) return;
     if (!confirm('ยืนยันลบบัญชีผู้ใช้นี้? ผู้ใช้จะไม่สามารถเข้าระบบได้อีก')) return;
     try {
       await deleteDoc(doc(firestore, 'users', userId));
@@ -651,7 +653,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                               onClick={() => { setEditingContact(contact); setIsEditContactOpen(true); }}>
                               <Pencil className="h-4 w-4 text-primary" />
                             </Button>
-                            {isAdmin && (
+                            {isBizExecutive && (
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
                                 onClick={() => handleDeleteContact(contact.id)}>
                                 <Trash2 className="h-4 w-4" />
@@ -797,7 +799,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                               onClick={(e) => { e.stopPropagation(); router.push(`/quotations/${quo.id}`); }}>
                               <Pencil className="h-4 w-4 text-primary" />
                             </Button>
-                            {isAdmin && (
+                            {isBizExecutive && (
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
                                 onClick={(e) => handleDeleteQuotation(quo.id, e)}>
                                 <Trash2 className="h-4 w-4" />
@@ -874,7 +876,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                                   <Pencil className="h-4 w-4 text-primary" />
                                 </Button>
                               )}
-                              {isAdmin && !isLocked && contract.status !== 'active' && (
+                              {isBizExecutive && !isLocked && contract.status !== 'active' && (
                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
                                   onClick={(e) => handleDeleteContract(contract.id, e)}>
                                   <Trash2 className="h-4 w-4" />
@@ -939,7 +941,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                               onClick={(e) => { e.stopPropagation(); router.push(`/purchase-orders/${po.id}`); }}>
                               <Pencil className="h-4 w-4 text-primary" />
                             </Button>
-                            {isAdmin && (
+                            {isBizExecutive && (
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
                                 onClick={(e) => handleDeletePO(po.id, e)}>
                                 <Trash2 className="h-4 w-4" />
@@ -962,13 +964,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
           {/* Portal Access Tab */}
           <TabsContent value="portal" className="mt-6 space-y-6">
-            {!isSystemAdmin(currentUser) && (
+            {!isBizExecutive && (
               <Alert className="bg-amber-50 border-amber-200">
                 <Info className="h-4 w-4 text-amber-700" />
-                <AlertTitle className="text-amber-800">ต้องใช้สิทธิ์ System Admin</AlertTitle>
+                <AlertTitle className="text-amber-800">ต้องใช้สิทธิ์ผู้บริหารระบบหรือหัวหน้าปฏิบัติการ</AlertTitle>
                 <AlertDescription className="text-amber-700">
-                  การเพิ่ม/เปิดใช้งานบัญชีลูกค้า ต้องทำโดยผู้ดูแลระบบ เพื่อให้ผู้ใช้ใหม่ได้รับ `customerId`, `accessGroup=client`,
-                  `permissionProfileKey=client_user` ครบถ้วน แล้วจึง login ได้โดยไม่ติด permission.
+                  การเพิ่ม/เปิดใช้งานบัญชีลูกค้า ต้องทำโดย System Admin หรือผู้บริหารกลุ่มปฏิบัติการ (เช่น Operations Manager)
+                  เพื่อให้ผู้ใช้ใหม่ได้รับ customerId และสิทธิ์ client_user ครบถ้วน
                 </AlertDescription>
               </Alert>
             )}
@@ -991,7 +993,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 </div>
                 <Dialog open={isProvisioningOpen} onOpenChange={setIsProvisioningOpen}>
                   <DialogTrigger asChild>
-                    <Button className="gap-2 h-10 px-6 bg-primary font-bold shadow-sm" disabled={!isSystemAdmin(currentUser)}>
+                    <Button className="gap-2 h-10 px-6 bg-primary font-bold shadow-sm" disabled={!isBizExecutive}>
                       <UserPlus className="h-4 w-4" /> สร้างบัญชีลูกค้าใหม่
                     </Button>
                   </DialogTrigger>
@@ -1082,7 +1084,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                             >
                               {user.isActive ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
                             </Button>
-                            {isAdmin && (
+                            {isBizExecutive && (
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบบัญชี"
                                 onClick={() => handleDeletePortalUser(user.id)}>
                                 <Trash2 className="h-4 w-4" />
