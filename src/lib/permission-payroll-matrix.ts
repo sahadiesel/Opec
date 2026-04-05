@@ -57,7 +57,7 @@ function resolvePersona(
   if (role === 'hr_manager') return 'hr_manager';
   if (role === 'hr_officer') return 'hr_officer';
   if (role === 'payroll_officer') return 'payroll_officer';
-  if (role === 'operation_manager') return 'hr_manager';
+  if (role === 'operations_manager' || role === 'operations_officer') return 'hr_manager';
 
   return 'other';
 }

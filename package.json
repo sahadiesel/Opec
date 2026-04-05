@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "deploy:app": "firebase deploy --only apphosting:opecbackend --force",
     "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy:firestore": "firebase deploy --only firestore:rules",
     "deploy:storage": "firebase deploy --only storage",
     "deploy:all": "firebase deploy --only firestore:rules,storage,apphosting:opecbackend --force"
   },

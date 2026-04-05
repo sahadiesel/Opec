@@ -5,14 +5,14 @@
  */
 
 import type { BusinessRoleKey, DeptType, User } from './types';
-import { normalizeBusinessRoleKey } from './role-key-normalizer';
+import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
 
 // ---------------------------------------------------------------------------
 // Canonical types
 // ---------------------------------------------------------------------------
 
 /** Primary access partition (internal + client portal bucket). */
-export type AccessGroup = 'admin' | 'operation' | 'accounting' | 'client';
+export type AccessGroup = 'admin' | 'operations' | 'accounting' | 'client';
 
 /** Rank within an access group (aligns with User.accessLevel). */
 export type CoreAccessLevel = 'viewer' | 'officer' | 'manager' | 'admin';
@@ -29,18 +29,18 @@ export type AccessDomain =
 
 /** Minimum required role keys for the new model (extend via string for legacy). */
 export type CorePrimaryRoleKey =
-  | 'admin_admin'
-  | 'operation_officer'
-  | 'operation_manager'
+  | 'system_admin'
+  | 'operations_officer'
+  | 'operations_manager'
   | 'accounting_officer'
   | 'accounting_manager'
   | 'client_user';
 
-/** Canonical keys for migrations, tests, and future UI. */
+/** Canonical keys for tests and future UI. */
 export const CORE_PRIMARY_ROLE_KEYS = [
-  'admin_admin',
-  'operation_officer',
-  'operation_manager',
+  'system_admin',
+  'operations_officer',
+  'operations_manager',
   'accounting_officer',
   'accounting_manager',
   'client_user',
@@ -59,13 +59,13 @@ export const ALL_ACCESS_DOMAINS: readonly AccessDomain[] = [
 /**
  * Base domain coverage per access group (before legacy union).
  * - admin: all domains
- * - operation: sales / operations / hr
+ * - operations: sales / operations / hr
  * - accounting: sales / hr / store / accounting
  * - client: client only
  */
 export const DOMAINS_BY_ACCESS_GROUP: Record<AccessGroup, readonly AccessDomain[]> = {
   admin: ALL_ACCESS_DOMAINS,
-  operation: ['sales', 'operations', 'hr'],
+  operations: ['sales', 'operations', 'hr'],
   accounting: ['sales', 'hr', 'store', 'accounting'],
   client: ['client'],
 };
@@ -78,12 +78,8 @@ const LEVEL_RANK: Record<CoreAccessLevel, number> = {
 };
 
 // ---------------------------------------------------------------------------
-// Legacy → core (compatibility: prefer union / conservative upgrades, never drop access)
+// Business role → core metadata
 // ---------------------------------------------------------------------------
-
-function aliasLegacyRole(roleKey?: string | null): string | null {
-  return normalizeBusinessRoleKey(roleKey);
-}
 
 const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'system_admin',
@@ -93,44 +89,44 @@ const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'sales_officer',
   'sales_manager',
   'store_officer',
-  'store_manager',
-  'operation_manager',
-  'operation_officer',
+  'operations_manager',
+  'operations_officer',
   'accounting_officer',
   'accounting_manager',
   'client_user',
-  'admin_admin',
 ]);
 
 function normalizeAssignedPrimaryRole(roleKey?: string | null): string | null {
-  const aliased = aliasLegacyRole(roleKey);
-  if (!aliased) return null;
-  if (aliased === 'admin_admin') return 'system_admin';
-  return PRIMARY_ASSIGNED_ROLE_KEYS.has(aliased) ? aliased : null;
+  const raw = normalizeBusinessRoleKey(roleKey);
+  if (!raw) return null;
+  /** permission_profiles admin row id; business role on user is system_admin. */
+  if (raw === 'admin_admin') return 'system_admin';
+  return PRIMARY_ASSIGNED_ROLE_KEYS.has(raw) ? raw : null;
 }
 
-/** Maps legacy BusinessRoleKey to canonical core primary key + group + level (best-effort). */
-export const LEGACY_BUSINESS_ROLE_TO_CORE: Record<
+/** Maps BusinessRoleKey to core primary key + group + level. */
+export const BUSINESS_ROLE_TO_CORE: Record<
   BusinessRoleKey,
   { group: AccessGroup; level: CoreAccessLevel; primaryKey: CorePrimaryRoleKey | string }
 > = {
-  system_admin: { group: 'admin', level: 'admin', primaryKey: 'admin_admin' },
-  hr_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
-  hr_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
-  payroll_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
-  sales_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
-  sales_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
+  system_admin: { group: 'admin', level: 'admin', primaryKey: 'system_admin' },
+  hr_manager: { group: 'operations', level: 'manager', primaryKey: 'operations_manager' },
+  hr_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
+  payroll_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
+  sales_manager: { group: 'operations', level: 'manager', primaryKey: 'operations_manager' },
+  sales_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
   accounting_manager: { group: 'accounting', level: 'manager', primaryKey: 'accounting_manager' },
   accounting_officer: { group: 'accounting', level: 'officer', primaryKey: 'accounting_officer' },
-  store_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
-  store_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
-  operation_officer: { group: 'operation', level: 'officer', primaryKey: 'operation_officer' },
-  operation_manager: { group: 'operation', level: 'manager', primaryKey: 'operation_manager' },
-  admin_admin: { group: 'admin', level: 'admin', primaryKey: 'admin_admin' },
+  store_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
+  operations_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
+  operations_manager: { group: 'operations', level: 'manager', primaryKey: 'operations_manager' },
   client_user: { group: 'client', level: 'viewer', primaryKey: 'client_user' },
 };
 
-/** Extra domains implied by legacy DeptType (union with group defaults — avoids stripping access). */
+/** @deprecated use BUSINESS_ROLE_TO_CORE */
+export const LEGACY_BUSINESS_ROLE_TO_CORE = BUSINESS_ROLE_TO_CORE;
+
+/** Extra domains implied by DeptType (union with group defaults). */
 function domainsFromLegacyDepartment(dept: DeptType | undefined): Set<AccessDomain> {
   const s = new Set<AccessDomain>();
   if (!dept) return s;
@@ -162,50 +158,45 @@ function domainsFromLegacyDepartment(dept: DeptType | undefined): Set<AccessDoma
   return s;
 }
 
-function isFutureAccessGroup(value: unknown): value is AccessGroup {
-  return value === 'admin' || value === 'operation' || value === 'accounting' || value === 'client';
+/** Stored accessGroup on user doc; legacy `operation` (singular) maps to `operations`. */
+function coerceStoredAccessGroup(raw: unknown): AccessGroup | null {
+  if (raw === 'operations' || raw === 'operation') return 'operations';
+  if (raw === 'admin' || raw === 'accounting' || raw === 'client') return raw;
+  return null;
+}
+
+function isFutureAccessGroup(value: unknown): boolean {
+  return coerceStoredAccessGroup(value) != null;
 }
 
 function isFutureAccessLevel(value: unknown): value is CoreAccessLevel {
   return value === 'admin' || value === 'manager' || value === 'officer' || value === 'viewer';
 }
 
-/** Resolves a stable legacy role string (aligned with normalizeCurrentUserPermissions merges). */
+/** Primary business role: assignedRoleKey first; else permissionProfileKey or permissionProfileKeys[0] only. */
 export function getPrimaryLegacyRole(user: Partial<User> | null): string | null {
   if (!user) return null;
   const fromAssigned =
     typeof user.assignedRoleKey === 'string' && user.assignedRoleKey.trim() !== ''
       ? user.assignedRoleKey
       : null;
-  const fromRoleId =
-    typeof user.roleId === 'string' && user.roleId.trim() !== '' ? user.roleId : null;
-  const fromScalar = normalizeAssignedPrimaryRole(fromAssigned ?? fromRoleId);
-  /** Payroll role on user doc must win over a stale HR permission profile (align with Firestore rules). */
+  const fromScalar = normalizeAssignedPrimaryRole(fromAssigned);
+  /** Payroll on user doc wins over profile-derived hints. */
   if (fromScalar === 'payroll_officer') return 'payroll_officer';
   if (fromScalar) return fromScalar;
 
-  /**
-   * หลาย permissionProfileKeys: ถ้ามี operation_manager อยู่ในรายการให้ชนะแค่ตัวแรก [0]
-   * (เดิม [0]=hr_officer แต่มี operation_manager ท้ายรายการ → UI/Firestore คนละสิทธิ์)
-   */
-  if (Array.isArray(user.permissionProfileKeys)) {
-    for (const key of user.permissionProfileKeys) {
-      if (typeof key !== 'string' || !key.trim()) continue;
-      if (normalizeAssignedPrimaryRole(key) === 'operation_manager') {
-        return 'operation_manager';
-      }
-    }
-  }
-
   const fromProfileKey =
     typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
-      ? user.permissionProfileKey
+      ? user.permissionProfileKey.trim()
       : null;
-  const fromProfileList =
-    typeof user.permissionProfileKeys?.[0] === 'string' && user.permissionProfileKeys[0].trim() !== ''
-      ? user.permissionProfileKeys[0]
+  const fromListZero =
+    Array.isArray(user.permissionProfileKeys) &&
+    typeof user.permissionProfileKeys[0] === 'string' &&
+    user.permissionProfileKeys[0].trim() !== ''
+      ? user.permissionProfileKeys[0].trim()
       : null;
-  return normalizeAssignedPrimaryRole(fromProfileKey ?? fromProfileList);
+
+  return normalizeAssignedPrimaryRole(fromProfileKey ?? fromListZero);
 }
 
 /** Effective access group: explicit User.accessGroup wins, else legacy-derived. */
@@ -213,8 +204,13 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (!user) return null;
   const dep = String(user.department || '');
 
-  if (isFutureAccessGroup(user.accessGroup)) {
-    return user.accessGroup;
+  const fromStored = coerceStoredAccessGroup(user.accessGroup);
+  if (fromStored) {
+    return fromStored;
+  }
+  const fromDeptGroup = coerceStoredAccessGroup(user.departmentGroup);
+  if (fromDeptGroup) {
+    return fromDeptGroup;
   }
 
   const legacyRole = getPrimaryLegacyRole(user);
@@ -222,11 +218,7 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (legacyRole === 'system_admin') return 'admin';
   if (legacyRole === 'client_user') return 'client';
 
-  if (
-    legacyRole === 'accounting_manager' ||
-    legacyRole === 'accounting_officer' ||
-    legacyRole === 'finance_officer'
-  ) {
+  if (legacyRole === 'accounting_manager' || legacyRole === 'accounting_officer') {
     return 'accounting';
   }
 
@@ -236,12 +228,11 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
     legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_manager' ||
     legacyRole === 'sales_officer' ||
-    legacyRole === 'operation_officer' ||
-    legacyRole === 'operation_manager' ||
-    legacyRole === 'store_manager' ||
+    legacyRole === 'operations_officer' ||
+    legacyRole === 'operations_manager' ||
     legacyRole === 'store_officer'
   ) {
-    return 'operation';
+    return 'operations';
   }
 
   if (user.userType === 'customer_portal') return 'client';
@@ -249,7 +240,7 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (user.department === 'accounting') return 'accounting';
   if (user.department === 'client') return 'client';
   if (dep === 'hr' || dep === 'sales' || dep === 'operations' || dep === 'operation' || dep === 'store') {
-    return 'operation';
+    return 'operations';
   }
 
   return null;
@@ -271,9 +262,8 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
   if (
     legacyRole === 'hr_manager' ||
     legacyRole === 'sales_manager' ||
-    legacyRole === 'operation_manager' ||
-    legacyRole === 'accounting_manager' ||
-    legacyRole === 'store_manager'
+    legacyRole === 'operations_manager' ||
+    legacyRole === 'accounting_manager'
   ) {
     return 'manager';
   }
@@ -282,6 +272,7 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
     legacyRole === 'hr_officer' ||
     legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_officer' ||
+    legacyRole === 'operations_officer' ||
     legacyRole === 'accounting_officer' ||
     legacyRole === 'store_officer' ||
     legacyRole === 'finance_officer'
@@ -293,26 +284,32 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
   return 'officer';
 }
 
-/** Map a legacy business role key to canonical core metadata when possible. */
-export function mapLegacyBusinessRoleToCore(roleKey: string): {
+/** Map a business role key to core metadata when possible. */
+export function mapBusinessRoleToCore(roleKey: string): {
   group: AccessGroup;
   level: CoreAccessLevel;
   primaryKey: CorePrimaryRoleKey | string;
 } | null {
-  const canonical = aliasLegacyRole(roleKey) || roleKey;
-  const mapped = LEGACY_BUSINESS_ROLE_TO_CORE[canonical as BusinessRoleKey];
+  const canonical = normalizeBusinessRoleKey(roleKey) ?? roleKey.trim().toLowerCase();
+  const mapped = BUSINESS_ROLE_TO_CORE[canonical as BusinessRoleKey];
   return mapped ?? null;
+}
+
+/** @deprecated use mapBusinessRoleToCore */
+export function mapLegacyBusinessRoleToCore(roleKey: string) {
+  return mapBusinessRoleToCore(roleKey);
 }
 
 export interface UserAccessContext {
   accessGroup: AccessGroup | null;
   accessLevel: CoreAccessLevel;
-  /** Canonical core key when mappable, else legacy string. */
+  /** Canonical core key when mappable, else resolved string. */
   primaryRoleKey: CorePrimaryRoleKey | string | null;
-  legacySourceRole: string | null;
+  /** Same as getPrimaryLegacyRole(user) — primary business role resolved from user doc. */
+  resolvedBusinessRole: string | null;
   /** True when accessGroup/accessLevel were set on the user document. */
   explicitAccess: boolean;
-  /** Domains the user may access (group defaults ∪ legacy department hints). */
+  /** Domains the user may access (group defaults ∪ department hints). */
   domains: ReadonlySet<AccessDomain>;
 }
 
@@ -327,20 +324,20 @@ export function getUserAccessContext(user: User | null): UserAccessContext | nul
   if (!user) return null;
 
   const explicitAccess =
-    isFutureAccessGroup(user.accessGroup) && isFutureAccessLevel(user.accessLevel);
+    coerceStoredAccessGroup(user.accessGroup) != null && isFutureAccessLevel(user.accessLevel);
 
   const accessGroup = getEffectiveAccessGroup(user);
   const accessLevel = getEffectiveAccessLevel(user);
-  const legacySourceRole = getPrimaryLegacyRole(user);
+  const resolvedBusinessRole = getPrimaryLegacyRole(user);
 
   let primaryRoleKey: CorePrimaryRoleKey | string | null = null;
-  if (legacySourceRole) {
-    const mapped = mapLegacyBusinessRoleToCore(legacySourceRole);
-    primaryRoleKey = mapped?.primaryKey ?? legacySourceRole;
+  if (resolvedBusinessRole) {
+    const mapped = mapBusinessRoleToCore(resolvedBusinessRole);
+    primaryRoleKey = mapped?.primaryKey ?? resolvedBusinessRole;
   }
 
   if (accessGroup === 'admin') {
-    primaryRoleKey = primaryRoleKey ?? 'admin_admin';
+    primaryRoleKey = primaryRoleKey ?? 'system_admin';
   }
 
   const baseDomains = accessGroup ? [...DOMAINS_BY_ACCESS_GROUP[accessGroup]] : [];
@@ -351,16 +348,37 @@ export function getUserAccessContext(user: User | null): UserAccessContext | nul
     accessGroup,
     accessLevel,
     primaryRoleKey,
-    legacySourceRole,
+    resolvedBusinessRole,
     explicitAccess: Boolean(explicitAccess),
     domains,
   };
 }
 
-/** System administrator: explicit admin group or legacy system_admin role. */
+/** True if any user permission profile key resolves to the admin profile doc (admin_admin). */
+function userReferencesAdminPermissionProfile(user: User): boolean {
+  const keys = [
+    user.permissionProfileKey,
+    ...(Array.isArray(user.permissionProfileKeys) ? user.permissionProfileKeys : []),
+  ];
+  for (const k of keys) {
+    if (typeof k !== 'string' || !k.trim()) continue;
+    if (normalizePermissionProfileDocumentId(k) === 'admin_admin') return true;
+  }
+  return false;
+}
+
+/**
+ * Full system administrator (single app gate; keep in sync with firestore.rules isAdminUser()).
+ * Business role key is always {@link BusinessRoleKey} `system_admin`; `admin_admin` is only the
+ * Firestore permission_profiles document id, not a second role.
+ */
 export function isSystemAdmin(user: User | null): boolean {
   if (!user) return false;
-  return getPrimaryLegacyRole(user) === 'system_admin';
+  if (getPrimaryLegacyRole(user) === 'system_admin') return true;
+  if (user.accessGroup === 'admin') return true;
+  if (user.departmentGroup === 'admin') return true;
+  if (user.department === 'admin') return true;
+  return userReferencesAdminPermissionProfile(user);
 }
 
 /**
@@ -374,7 +392,13 @@ export function isHrManager(user: User | null): boolean {
 
 export function isOperationManager(user: User | null): boolean {
   if (!user) return false;
-  return getPrimaryLegacyRole(user) === 'operation_manager';
+  return getPrimaryLegacyRole(user) === 'operations_manager';
+}
+
+/** Combined operations pillar officer: full pillar menus in app matrix; no delete / no approve vs manager. */
+export function isOperationsOfficer(user: User | null): boolean {
+  if (!user) return false;
+  return getPrimaryLegacyRole(user) === 'operations_officer';
 }
 
 export function isPayrollOfficer(user: User | null): boolean {
@@ -387,7 +411,7 @@ export function canEditEmployeeCompensation(user: User | null): boolean {
   if (!user) return false;
   if (isSystemAdmin(user)) return true;
   const r = getPrimaryLegacyRole(user);
-  return r === 'hr_manager' || r === 'operation_manager';
+  return r === 'hr_manager' || r === 'operations_manager';
 }
 
 /**
@@ -421,7 +445,7 @@ export function canViewPayrollPerFirestoreRules(user: User | null): boolean {
 
 export function canActAsHrManager(user: User | null): boolean {
   const role = getPrimaryLegacyRole(user);
-  return role === 'hr_manager' || role === 'operation_manager' || isSystemAdmin(user);
+  return role === 'hr_manager' || role === 'operations_manager' || isSystemAdmin(user);
 }
 
 /** แก้ไขตั้งค่าภาษี/ประกันสังคมในหน้า HR settings (เขียน payroll_policies) */
@@ -434,7 +458,7 @@ export function canEditHrStatutoryPayrollSettings(user: User | null): boolean {
     role === 'hr_manager' ||
     role === 'hr_officer' ||
     role === 'payroll_officer' ||
-    role === 'operation_manager'
+    role === 'operations_manager'
   );
 }
 
@@ -474,7 +498,7 @@ export function isAccountingGroupMember(user: User | null): boolean {
 
 /** Admin or operation access group (sales / ops scheduling / HR timesheets / waves). */
 export function isOperationGroupMember(user: User | null): boolean {
-  return isSystemAdmin(user) || isDepartmentGroup(user, 'operation');
+  return isSystemAdmin(user) || isDepartmentGroup(user, 'operations');
 }
 
 /** Timesheets + waves + assignments + mobilization: admin or operation only (not accounting-only). */

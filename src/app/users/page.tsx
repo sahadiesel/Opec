@@ -76,6 +76,10 @@ import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ACTIVE_BUSINESS_ROLE_KEYS, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
+import {
+  normalizeBusinessRoleKey,
+  normalizePermissionProfileDocumentId,
+} from '@/lib/role-key-normalizer';
 
 /** แปลง baseline partial → โปรไฟล์สำหรับกรองสิทธิ์ / บันทึก user เมื่อยังไม่มี doc ใน Firestore */
 function permissionProfileFromBaseline(p: Partial<PermissionProfile>): PermissionProfile {
@@ -103,16 +107,19 @@ function resolvePermissionProfileForKey(
   profileKey: string,
   loadedProfiles: PermissionProfile[] | null | undefined
 ): PermissionProfile | null {
-  const fromDb = loadedProfiles?.find((x) => x.profileKey === profileKey);
+  const canon = normalizePermissionProfileDocumentId(profileKey) ?? profileKey;
+  const fromDb = loadedProfiles?.find((x) => x.profileKey === canon);
   if (fromDb) return fromDb;
-  const raw = getBaselineProfiles().find((x) => x.profileKey === profileKey);
+  const raw = getBaselineProfiles().find((x) => x.profileKey === canon);
   if (!raw?.profileKey) return null;
   return permissionProfileFromBaseline(raw);
 }
 
 function resolvePreferredProfileKeyForUser(user: Partial<User>): string {
   const roleKey = deriveBusinessRoleKey(user);
-  const current = user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? '';
+  const raw = (user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? '').trim();
+  const current =
+    (raw ? normalizePermissionProfileDocumentId(raw) : null) ?? raw.toLowerCase();
   if (roleKey === 'payroll_officer' && (current === '' || current === 'hr_officer')) {
     return 'payroll_officer';
   }
@@ -209,12 +216,16 @@ export default function UsersPage() {
    */
   const isDirty = useMemo(() => {
     if (!selectedUser) return false;
-    const initialRole = deriveBusinessRoleKey(selectedUser);
+    const initialRole =
+      normalizeBusinessRoleKey(deriveBusinessRoleKey(selectedUser)) ??
+      deriveBusinessRoleKey(selectedUser);
     const initialStatus = selectedUser.approvalStatus || (selectedUser.isActive ? 'ACTIVE' : 'PENDING');
     const initialNotes = selectedUser.notes || '';
     const initialProfileKey = resolvePreferredProfileKeyForUser(selectedUser);
 
-    const rolesChanged = editedRole !== initialRole;
+    const editedRoleNorm =
+      editedRole ? normalizeBusinessRoleKey(editedRole) ?? editedRole : '';
+    const rolesChanged = editedRoleNorm !== initialRole;
     const statusChanged = editedStatus !== initialStatus;
     const notesChanged = notes !== initialNotes;
     const profileChanged = editedProfileKey !== initialProfileKey;
@@ -224,7 +235,8 @@ export default function UsersPage() {
 
   const handleEditUser = (user: User) => {
     setSelectedUser(user);
-    setEditedRole(deriveBusinessRoleKey(user));
+    const rk = deriveBusinessRoleKey(user);
+    setEditedRole((normalizeBusinessRoleKey(rk) ?? rk) as BusinessRoleKey);
     setEditedProfileKey(resolvePreferredProfileKeyForUser(user));
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
@@ -275,9 +287,12 @@ export default function UsersPage() {
         let authPartial: Partial<User> = {};
 
         if (editedProfileKey) {
-          const profile = resolvePermissionProfileForKey(editedProfileKey, profiles);
+          const profileKeyCanon =
+            normalizePermissionProfileDocumentId(editedProfileKey.trim()) ??
+            editedProfileKey.trim().toLowerCase();
+          const profile = resolvePermissionProfileForKey(profileKeyCanon, profiles);
           if (!profile) {
-            toast({ variant: 'destructive', title: 'ไม่พบโปรไฟล์', description: editedProfileKey });
+            toast({ variant: 'destructive', title: 'ไม่พบโปรไฟล์', description: profileKeyCanon });
             setIsSaving(false);
             return;
           }
@@ -292,7 +307,9 @@ export default function UsersPage() {
           const profileFields = getUserFieldsFromPermissionProfile(profile);
           authPartial = { ...roleFields, ...profileFields };
         } else if (editedRole) {
-          authPartial = getFieldsForBusinessRole(editedRole as BusinessRoleKey);
+          const rk =
+            (normalizeBusinessRoleKey(editedRole) ?? editedRole) as BusinessRoleKey;
+          authPartial = getFieldsForBusinessRole(rk);
         }
 
         authPartial = normalizeUserAuthorizationFields({
@@ -380,7 +397,12 @@ export default function UsersPage() {
               <ShieldCheck className="h-8 w-8 text-primary" /> จัดการผู้ใช้งาน (User Access Management)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — ผู้ลงทะเบียนผ่านหน้าแรกจะอยู่สถานะ PENDING จนกว่าแอดมินจะอนุมัติที่แท็บ <b>รออนุมัติ</b>
+              กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — บันทึกลงฐานข้อมูลเป็น{' '}
+              <span className="font-mono text-sm">assignedRoleKey</span>,{' '}
+              <span className="font-mono text-sm">permissionProfileKey(s)</span>,{' '}
+              <span className="font-mono text-sm">accessGroup</span> แบบ{' '}
+              <b>lowercase snake_case เท่านั้น</b> (เช่น <span className="font-mono">operations_manager</span>,{' '}
+              <span className="font-mono">operations</span>) ให้ตรงกับ rules และโค้ดทั้ง repo — ผู้ลงทะเบียนผ่านหน้าแรกจะอยู่สถานะ PENDING จนกว่าแอดมินจะอนุมัติที่แท็บ <b>รออนุมัติ</b>
             </p>
           </div>
         </div>
@@ -472,7 +494,7 @@ export default function UsersPage() {
                               รอแอดมินกำหนดบทบาท
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="text-[9px] uppercase font-black bg-white border-primary/20 text-primary max-w-[280px] truncate">
+                            <Badge variant="outline" className="text-[9px] font-semibold bg-white border-primary/20 text-primary max-w-[280px] truncate">
                               {roleMeta ? `${roleMeta.displayNameTh} (${roleMeta.displayNameEn})` : rk}
                             </Badge>
                           )}
@@ -530,8 +552,10 @@ export default function UsersPage() {
               <DialogTitle className="text-2xl flex items-center gap-3">
                 <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
               </DialogTitle>
-              <DialogDescription className="italic">
-                เลือกโปรไฟล์สิทธิ์ (แนะนำ) หรือบทบาทเดิม — โปรไฟล์จะถูกกรองให้เหลือเฉพาะกลุ่มเดียวกับผู้ใช้
+              <DialogDescription>
+                เลือกโปรไฟล์สิทธิ์ (แนะนำ) หรือบทบาทหนึ่งรายการ — โปรไฟล์ถูกกรองตามกลุ่มผู้ใช้ ระบบจะ normalize แล้วบันทึกคีย์เป็น{' '}
+                <span className="font-mono text-xs">lowercase</span> เท่านั้น (ไม่มีตัวพิมพ์ใหญ่หรือคีย์เก่า เช่น{' '}
+                <span className="font-mono line-through opacity-60">OPERATION_MANAGER</span>).
               </DialogDescription>
             </DialogHeader>
 
@@ -568,8 +592,10 @@ export default function UsersPage() {
                         setEditedProfileKey('');
                         return;
                       }
-                      setEditedProfileKey(v);
-                      const prof = resolvePermissionProfileForKey(v, profiles);
+                      const pk =
+                        normalizePermissionProfileDocumentId(v.trim()) ?? v.trim().toLowerCase();
+                      setEditedProfileKey(pk);
+                      const prof = resolvePermissionProfileForKey(pk, profiles);
                       if (prof) {
                         setEditedRole(deriveBusinessRoleKeyFromPermissionProfile(prof));
                       }
@@ -603,7 +629,8 @@ export default function UsersPage() {
                     disabled={!isUserAdmin || !!editedProfileKey}
                     value={editedRole || undefined}
                     onValueChange={(v) => {
-                      setEditedRole(v as BusinessRoleKey);
+                      const rk = (normalizeBusinessRoleKey(v) ?? v) as BusinessRoleKey;
+                      setEditedRole(rk);
                       setEditedProfileKey('');
                     }}
                   >
@@ -641,16 +668,23 @@ export default function UsersPage() {
                         </div>
                       )}
                       <div className="space-y-2">
-                        <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">แผนก / ระดับ (จากบทบาทที่เลือก)</p>
+                        <p className="text-[9px] font-bold text-muted-foreground tracking-tight">
+                          แผนก / ระดับ / คีย์ที่จะบันทึก
+                        </p>
                         {(() => {
                           const selectedMeta = getRoleCatalogEntry(editedRole || null);
+                          const saveKey =
+                            (editedRole && (normalizeBusinessRoleKey(editedRole) ?? editedRole)) || '—';
                           return (
-                        <div className="flex flex-wrap gap-1">
-                          <Badge variant="outline" className="bg-white capitalize text-[10px] font-black border-blue-200 text-blue-700">
+                        <div className="flex flex-wrap gap-1 items-center">
+                          <Badge variant="outline" className="bg-white text-[10px] font-medium border-blue-200 text-blue-700">
                             <Building2 className="h-2.5 w-2.5 mr-1" /> {selectedMeta?.department || '—'}
                           </Badge>
                           <Badge variant="secondary" className="text-[10px]">
                             {selectedMeta?.accessLevel || '—'}
+                          </Badge>
+                          <Badge variant="outline" className="font-mono text-[10px] normal-case">
+                            assignedRoleKey: {saveKey}
                           </Badge>
                         </div>
                           );

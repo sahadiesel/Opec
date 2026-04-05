@@ -1,23 +1,50 @@
 /**
- * Centralized role-key normalization for legacy compatibility.
- * Keep all temporary backward-compatibility mappings in this single helper.
+ * Canonical role and permission profile keys: trim + lowercase only.
+ * Stored user docs and profile doc ids are expected to be lowercase snake_case.
  */
-export const LEGACY_ROLE_KEY_ALIASES: Record<string, string> = {
-  finance_officer: 'accounting_officer',
-  safety_officer: 'operation_officer',
-  operations_manager: 'operation_manager',
-  operations_officer: 'operation_officer',
-  client: 'client_user',
-  client_viewer: 'client_user',
-  client_approver: 'client_user',
-  customer_viewer: 'client_user',
-  customer_approver: 'client_user',
-  super_admin: 'system_admin',
-  admin: 'system_admin',
-};
 
 export function normalizeBusinessRoleKey(roleKey?: string | null): string | null {
   if (!roleKey) return null;
   const trimmed = roleKey.trim().toLowerCase();
-  return LEGACY_ROLE_KEY_ALIASES[trimmed] || trimmed;
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** True if normalized assignedRoleKey equals one of the canonical candidates (lowercase). */
+export function userMatchesBusinessRoleKey(
+  assignedRoleKey: string | null | undefined,
+  ...candidates: string[]
+): boolean {
+  const a = normalizeBusinessRoleKey(assignedRoleKey ?? undefined);
+  if (a == null) return false;
+  const want = new Set(candidates.map((c) => c.trim().toLowerCase()));
+  return want.has(a);
+}
+
+/**
+ * Firestore document IDs under permission_profiles for seeded / built-in rows
+ * (lowercase snake_case). Custom profile IDs are not listed here.
+ */
+export const BUILTIN_PERMISSION_PROFILE_DOC_IDS = new Set([
+  'admin_admin',
+  'client_user',
+  'sales_manager',
+  'sales_officer',
+  'hr_manager',
+  'hr_officer',
+  'payroll_officer',
+  'operations_manager',
+  'operations_officer',
+  'accounting_manager',
+  'accounting_officer',
+  'store_officer',
+]);
+
+/**
+ * Normalize a permission profile document id: lowercase; known built-ins must match the set above.
+ */
+export function normalizePermissionProfileDocumentId(key: string | null | undefined): string | null {
+  if (!key || !String(key).trim()) return null;
+  const lower = String(key).trim().toLowerCase();
+  if (BUILTIN_PERMISSION_PROFILE_DOC_IDS.has(lower)) return lower;
+  return lower;
 }

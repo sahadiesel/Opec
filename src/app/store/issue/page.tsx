@@ -35,6 +35,7 @@ import {
   PositionPPERequirement,
   PositionToolRequirement,
   OfficeStaff,
+  formatStoreItemLabel,
 } from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -65,14 +66,83 @@ function issueItemMatchesPositionReq(
   posPPE: PositionPPERequirement[],
   posTools: PositionToolRequirement[],
 ): { matchPPE?: PositionPPERequirement; matchTool?: PositionToolRequirement } {
-  const matchPPE = posPPE.find((p) => p.itemCode === item.itemCode || p.itemName === item.itemName);
-  const matchTool = posTools.find(
-    (t) =>
-      (t.storeItemId && t.storeItemId === item.id) ||
-      t.itemCode === item.itemCode ||
-      t.itemName === item.itemName,
-  );
+  const matchPPE = posPPE.find((p) => {
+    if (p.storeItemId && p.storeItemId === item.id) return true;
+    const pk = (p.variantGroupKey || '').trim();
+    const ik = (item.variantGroupKey || '').trim();
+    if (pk && ik && pk === ik) return true;
+    if (p.itemCode && p.itemCode === item.itemCode) return true;
+    if (p.itemName && p.itemName === item.itemName) return true;
+    return false;
+  });
+  const matchTool = posTools.find((t) => {
+    if (t.storeItemId && t.storeItemId === item.id) return true;
+    const tk = (t.variantGroupKey || '').trim();
+    const ik = (item.variantGroupKey || '').trim();
+    if (tk && ik && tk === ik) return true;
+    if (t.itemCode && t.itemCode === item.itemCode) return true;
+    if (t.itemName && t.itemName === item.itemName) return true;
+    return false;
+  });
   return { matchPPE, matchTool };
+}
+
+function quantityUsedTowardPpeRequirement(
+  match: PositionPPERequirement,
+  issueList: { itemId: string; quantity: number }[],
+  storeItems: StoreItem[],
+): number {
+  const gk = (match.variantGroupKey || '').trim();
+  if (gk) {
+    let sum = 0;
+    for (const line of issueList) {
+      const si = storeItems.find((x) => x.id === line.itemId);
+      if (!si) continue;
+      if ((si.variantGroupKey || '').trim() === gk) sum += line.quantity;
+    }
+    return sum;
+  }
+  if (match.storeItemId) {
+    return issueList.find((l) => l.itemId === match.storeItemId)?.quantity ?? 0;
+  }
+  let sum = 0;
+  for (const line of issueList) {
+    const si = storeItems.find((x) => x.id === line.itemId);
+    if (!si) continue;
+    if ((match.itemCode && si.itemCode === match.itemCode) || (match.itemName && si.itemName === match.itemName)) {
+      sum += line.quantity;
+    }
+  }
+  return sum;
+}
+
+function quantityUsedTowardToolRequirement(
+  match: PositionToolRequirement,
+  issueList: { itemId: string; quantity: number }[],
+  storeItems: StoreItem[],
+): number {
+  const gk = (match.variantGroupKey || '').trim();
+  if (gk) {
+    let sum = 0;
+    for (const line of issueList) {
+      const si = storeItems.find((x) => x.id === line.itemId);
+      if (!si) continue;
+      if ((si.variantGroupKey || '').trim() === gk) sum += line.quantity;
+    }
+    return sum;
+  }
+  if (match.storeItemId) {
+    return issueList.find((l) => l.itemId === match.storeItemId)?.quantity ?? 0;
+  }
+  let sum = 0;
+  for (const line of issueList) {
+    const si = storeItems.find((x) => x.id === line.itemId);
+    if (!si) continue;
+    if ((match.itemCode && si.itemCode === match.itemCode) || (match.itemName && si.itemName === match.itemName)) {
+      sum += line.quantity;
+    }
+  }
+  return sum;
 }
 
 export default function IssueItemsPage() {
@@ -166,7 +236,9 @@ export default function IssueItemsPage() {
       if (!q) return true;
       return (
         (i.itemName || '').toLowerCase().includes(q) ||
-        (i.itemCode || '').toLowerCase().includes(q)
+        (i.itemCode || '').toLowerCase().includes(q) ||
+        (i.variantSpecification || '').toLowerCase().includes(q) ||
+        (i.variantGroupKey || '').toLowerCase().includes(q)
       );
     });
   }, [storeItems, catalogSearch]);
@@ -196,6 +268,7 @@ export default function IssueItemsPage() {
           itemId: item.id,
           itemCode: item.itemCode,
           itemName: item.itemName,
+          displayLabel: formatStoreItemLabel(item),
           quantity: 1,
           unit: item.unit,
           remarks: '',
@@ -221,7 +294,7 @@ export default function IssueItemsPage() {
         variant: 'destructive',
         title: 'ตำแหน่งคุณไม่สามารถเบิกได้',
         description:
-          'รายการนี้ไม่อยู่ในลิสต์ PPE/เครื่องมือที่กำหนดไว้ในตำแหน่งงาน — ติดต่อ HR เพื่อเพิ่มจากทะเบียนคลังที่ตำแหน่งงาน (แท็บอุปกรณ์)',
+          'รายการนี้ไม่อยู่ในลิสต์ PPE/เครื่องมือที่กำหนดไว้ในตำแหน่งงาน — ติดต่อ HR เพื่อเพิ่มจากทะเบียนคลังที่ตำแหน่งงาน (แท็บ PPE หรืออุปกรณ์)',
       });
       setPositionEditReason('not_listed');
       setPositionEditDialogOpen(true);
@@ -230,11 +303,28 @@ export default function IssueItemsPage() {
 
     const maxQty = matchPPE?.quantityDefault ?? matchTool?.quantityDefault ?? 1;
     const existing = issueList.find((i) => i.itemId === item.id);
-    const nextTotal = (existing?.quantity ?? 0) + 1;
-    if (nextTotal > maxQty) {
-      setPositionEditReason('over_qty');
-      setPositionEditDialogOpen(true);
-      return;
+    const storeList = storeItems || [];
+
+    const groupKeyActive = matchPPE
+      ? (matchPPE.variantGroupKey || '').trim()
+      : (matchTool?.variantGroupKey || '').trim();
+
+    if (groupKeyActive) {
+      const used = matchPPE
+        ? quantityUsedTowardPpeRequirement(matchPPE, issueList, storeList)
+        : quantityUsedTowardToolRequirement(matchTool!, issueList, storeList);
+      if (used + 1 > maxQty) {
+        setPositionEditReason('over_qty');
+        setPositionEditDialogOpen(true);
+        return;
+      }
+    } else {
+      const nextLine = (existing?.quantity ?? 0) + 1;
+      if (nextLine > maxQty) {
+        setPositionEditReason('over_qty');
+        setPositionEditDialogOpen(true);
+        return;
+      }
     }
 
     if (item.currentStock <= 0) {
@@ -248,9 +338,14 @@ export default function IssueItemsPage() {
 
     if (existing) {
       setIssueList(
-        issueList.map((i) =>
-          i.itemId === item.id ? { ...i, quantity: Math.min(i.quantity + 1, item.currentStock, maxQty) } : i
-        )
+        issueList.map((i) => {
+          if (i.itemId !== item.id) return i;
+          const bumped = Math.min(i.quantity + 1, item.currentStock);
+          if (!groupKeyActive) {
+            return { ...i, quantity: Math.min(bumped, maxQty) };
+          }
+          return { ...i, quantity: bumped };
+        }),
       );
       return;
     }
@@ -261,6 +356,7 @@ export default function IssueItemsPage() {
         itemId: item.id,
         itemCode: item.itemCode,
         itemName: item.itemName,
+        displayLabel: formatStoreItemLabel(item),
         quantity: 1,
         unit: item.unit,
         remarks: '',
@@ -444,7 +540,7 @@ export default function IssueItemsPage() {
           <AlertDescription className="text-sm">
             {issueMode === 'field' ? (
               <>
-                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินจำนวนที่กำหนด หากต้องการเพิ่มรายการหรือจำนวน ให้ไปแก้ไขที่เมนูตำแหน่งงาน → แท็บอุปกรณ์ (Tools)
+                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า หากต้องการเพิ่มรายการหรือจำนวน ให้ไปแก้ที่เมนูตำแหน่งงาน → แท็บ PPE หรืออุปกรณ์
               </>
             ) : (
               <>
@@ -546,7 +642,7 @@ export default function IssueItemsPage() {
                             <TableCell className="font-mono text-xs font-bold text-primary">{item.itemCode}</TableCell>
                             <TableCell>
                               <div className="flex flex-col">
-                                <span className="font-bold text-sm text-primary">{item.itemName}</span>
+                                <span className="font-bold text-sm text-primary">{formatStoreItemLabel(item)}</span>
                                 <span className="text-[10px] text-muted-foreground uppercase">{item.category}</span>
                               </div>
                             </TableCell>
@@ -587,7 +683,7 @@ export default function IssueItemsPage() {
                 <CardHeader className="border-b bg-blue-50/50">
                   <CardTitle className="text-lg">แคตตาล็อกทั้งหมด (กรณีต้องการเพิ่มรายการ)</CardTitle>
                   <CardDescription>
-                    หากรายการไม่อยู่ในลิสต์ตำแหน่งหรือต้องการเกินจำนวนที่กำหนด ระบบจะถามให้ไปแก้ไขที่เมนูตำแหน่ง → แท็บ <b>อุปกรณ์ (Tools)</b>
+                    หากรายการไม่อยู่ในลิสต์ตำแหน่งหรือต้องการเกินโควต้า ระบบจะถามให้ไปแก้ที่เมนูตำแหน่ง → แท็บ <b>PPE</b> หรือ <b>อุปกรณ์</b>
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -616,7 +712,7 @@ export default function IssueItemsPage() {
                         {filteredCatalogForField.map((item) => (
                           <TableRow key={`cat-${item.id}`}>
                             <TableCell className="font-mono text-xs">{item.itemCode}</TableCell>
-                            <TableCell className="text-sm font-medium">{item.itemName}</TableCell>
+                            <TableCell className="text-sm font-medium">{formatStoreItemLabel(item)}</TableCell>
                             <TableCell className="text-center">{item.currentStock}</TableCell>
                             <TableCell className="text-right pr-6">
                               <Button
@@ -686,7 +782,7 @@ export default function IssueItemsPage() {
                         {filteredCatalogForField.map((item) => (
                           <TableRow key={item.id}>
                             <TableCell className="font-mono text-xs">{item.itemCode}</TableCell>
-                            <TableCell>{item.itemName}</TableCell>
+                            <TableCell>{formatStoreItemLabel(item)}</TableCell>
                             <TableCell className="text-center">{item.currentStock}</TableCell>
                             <TableCell className="text-right pr-4">
                               <Button
@@ -727,7 +823,7 @@ export default function IssueItemsPage() {
                     {issueList.map((item, idx) => (
                       <div key={item.itemId} className="p-3 border rounded-lg bg-card shadow-sm group">
                         <div className="flex justify-between items-start mb-2">
-                          <p className="text-xs font-black text-primary truncate flex-1">{item.itemName}</p>
+                          <p className="text-xs font-black text-primary truncate flex-1">{item.displayLabel || item.itemName}</p>
                           <Button 
                             variant="ghost" 
                             size="icon" 
@@ -827,8 +923,8 @@ export default function IssueItemsPage() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {positionEditReason === 'not_listed'
-                ? 'รายการนี้ไม่อยู่ในลิสต์ PPE/เครื่องมือของตำแหน่ง — ให้เพิ่มจากทะเบียนคลังที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) ก่อนเบิก'
-                : 'จำนวนที่ต้องการเบิกเกินกว่าที่กำหนดในรายการตำแหน่ง — กรุณาปรับเกณฑ์ที่เมนูตำแหน่งงาน (แท็บ อุปกรณ์) หรือลดจำนวนในใบเบิก'}
+                ? 'รายการนี้ไม่อยู่ในลิสต์ PPE/เครื่องมือของตำแหน่ง — ให้เพิ่มจากทะเบียนคลังที่เมนูตำแหน่งงาน (แท็บ PPE หรืออุปกรณ์) ก่อนเบิก'
+                : 'จำนวนที่ต้องการเบิกเกินโควต้า — กรุณาปรับที่เมนูตำแหน่งงาน (แท็บ PPE / อุปกรณ์) หรือลดจำนวนในใบเบิก'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -840,7 +936,7 @@ export default function IssueItemsPage() {
                 }
               }}
             >
-              ไปแก้ไขตำแหน่ง (แท็บอุปกรณ์)
+              ไปแก้ไขตำแหน่ง (แท็บ PPE / อุปกรณ์)
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

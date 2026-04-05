@@ -10,12 +10,12 @@
 | Group | Domains | Collections (write) | Collections (read) |
 |-------|---------|---------------------|--------------------|
 | **admin** | All | All | All |
-| **operation** | sales, operations, hr | sales, waves, mobilizations, hr, store, vendors, purchases | Same + customers, POs |
+| **operations** | sales, operations pillar, hr | sales, waves, mobilizations, hr, store, vendors, purchases | Same + customers, POs |
 | **accounting** | sales, hr, store, accounting | sales, hr, accounting (no store write) | Same + store for AP |
 | **client** | client | None (read-only) | customerId-scoped only |
 
 - **System management** (users, permission_profiles, number_sequences, etc.): admin only.
-- **users** list: `canManageSystem()` only — blocks HR/operation/accounting from listing users.
+- **users** list: `canManageSystem()` only — blocks HR / **operations** partition / accounting from listing users.
 
 ---
 
@@ -133,7 +133,7 @@
 
 - **Replaced hardcoded roleIds**: mobilization, quotations, main-contracts, purchase-orders, office-staff, cashbook, vendors → use `canView` or `isClient`
 - **Consolidated is*Staff**: Now delegate to `isOperationGroupMember` / `isAccountingGroupMember` from permission-core
-- **Fixed isStoreStaff**: Store moved to operation group — returns `admin || operation`
+- **Fixed isStoreStaff**: Store modules use the **operations** access group in the permission model (alongside admin where applicable).
 - **Centralized isClient**: client-portal dashboard, customer-query-service use `isClient` from permissions
 - **vendors page**: Switched to `useAppUser` + `canView(user, 'vendors')`; removed localStorage/roleIds pattern
 - **Dashboard (page.tsx)**: Uses `deriveBusinessRoleKey` for primary role display instead of `assignedRoleKey || 'hr_officer'`
@@ -143,9 +143,9 @@
 ## 10. Summary
 
 - **Admin pages**: Unblocked; layout guard prevents non-admin from reaching content.
-- **Operation pages**: No accounting-only collections; store fully gated.
+- **Operations pillar pages**: No accounting-only collections; store fully gated.
 - **Accounting pages**: No operations-only collections; store read access via `canAccessDomain('store')`.
-- **HR pages**: Compatible with both operation and accounting.
-- **Sales pages**: Compatible with both operation and accounting via `isSalesStaff`.
+- **HR pages**: Compatible with both **operations** and accounting partitions.
+- **Sales pages**: Compatible with both **operations** and accounting via `isSalesStaff`.
 - **Client pages**: Read-only, customerId-scoped via `CustomerQueryService`; workers query gated by `currentUser`.
 - **Hidden queries**: users list and store queries stopped at UI when user lacks permission.

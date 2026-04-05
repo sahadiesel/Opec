@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { LogOut, Shield, Building2 } from 'lucide-react';
 import { useFirestore, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import { usePermissionProfiles } from '@/hooks/use-permission-profiles';
+import { usePermissionProfiles, getEffectivePermissionProfileKey } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
 import { getEffectiveDepartment, getEffectiveLevel } from '@/lib/auth-mapping';
 import Link from 'next/link';
@@ -72,8 +72,10 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const dept = getEffectiveDepartment(user);
   const level = getEffectiveLevel(user);
 
-  // Primary profile identification for simple display
-  const primaryProfile = profiles?.find(p => p.profileKey === user.permissionProfileKey) || profiles?.[0];
+  // Primary profile identification for simple display (canonical doc id vs legacy casing on user doc)
+  const effectiveProfileKey = getEffectivePermissionProfileKey(user);
+  const primaryProfile =
+    (effectiveProfileKey && profiles?.find((p) => p.profileKey === effectiveProfileKey)) || profiles?.[0];
 
   return (
     <SidebarProvider>

@@ -2,7 +2,7 @@
 
 ## Core Features:
 
-- User Authentication & Access Control: Secure user authentication using Firebase Auth and role-based access enforcement for different system functionalities. Includes dedicated login/logout, user registration (admin only), and password management.
+- User Authentication & Access Control: Secure user authentication using Firebase Auth and role-based access enforcement. Roles and permission profile ids are stored in **lowercase snake_case** (`assignedRoleKey`, `permissionProfileKey`, `accessGroup` such as `operations`) and enforced consistently in Firestore rules and the User Access Management UI.
 - Role-Based Navigation & UI Shell: A responsive application shell with dynamic sidebar navigation tailored to the user's assigned role. UI elements for Phase 1A modules will display Thai labels first, conforming to `shadcn/ui` components.
 - Core Data Management (CRUD): Comprehensive Create, Read, Update, and Delete (CRUD) screens for essential Phase 1A entities: Users, Roles, Positions, Position Requirements (Certificates, PPE, Tools), Workers, Worker Certificates, Worker Medical Records, and Worker Drug Tests. All data is persisted in Firestore.
 - Worker Readiness Logic: Automated calculation and clear display of each worker's readiness status, based on the completion and validity of their certificates, medical records, and drug test results, compared against required position matrices.

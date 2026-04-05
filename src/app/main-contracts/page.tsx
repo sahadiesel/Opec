@@ -31,6 +31,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, isClient } from '@/lib/permissions';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 
 export default function MainContractsPage() {
   const router = useRouter();
@@ -105,11 +106,12 @@ export default function MainContractsPage() {
       });
 
       const isSalesCreator =
-        currentUser.department === 'sales'
-        || currentUser.assignedRoleKey === 'sales_manager'
-        || currentUser.assignedRoleKey === 'sales_officer'
-        || currentUser.roleId === 'sales_manager'
-        || currentUser.roleId === 'sales_officer';
+        currentUser.department === 'sales' ||
+        userMatchesBusinessRoleKey(
+          currentUser.assignedRoleKey,
+          'sales_manager',
+          'sales_officer'
+        );
 
       // 2. Create the document using explicit awaited addDoc to catch errors
       const colRef = collection(firestore, 'main_contracts');

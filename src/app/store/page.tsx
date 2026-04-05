@@ -259,10 +259,17 @@ export default function StoreDashboardPage() {
           />
           <QuickActionCard 
             title="ทะเบียนอุปกรณ์" 
-            sub="Master Catalog" 
+            sub="เครื่องมือ (ไม่รวม PPE)" 
             href="/store/items" 
             icon={ClipboardList} 
             color="bg-slate-500" 
+          />
+          <QuickActionCard 
+            title="ทะเบียน PPE" 
+            sub="Master PPE Catalog" 
+            href="/store/ppe" 
+            icon={HardHat} 
+            color="bg-orange-600" 
           />
         </div>
 

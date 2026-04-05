@@ -21,25 +21,22 @@ export type RoleType =
   | 'sales_manager'
   | 'hr_manager'
   | 'hr_officer'
-  | 'operation_officer'
-  | 'operation_manager'
+  | 'operations_officer'
+  | 'operations_manager'
   | 'store_officer'
-  | 'store_manager'
   | 'client_user'; 
 
 export type BusinessRoleKey = 
   | 'system_admin'
-  | 'admin_admin'
   | 'payroll_officer'
   | 'sales_manager'
   | 'sales_officer'
   | 'hr_manager'
   | 'hr_officer'
-  | 'operation_manager'
-  | 'operation_officer'
+  | 'operations_manager'
+  | 'operations_officer'
   | 'accounting_manager'
   | 'accounting_officer'
-  | 'store_manager'
   | 'store_officer'
   | 'client_user';
 
@@ -198,7 +195,7 @@ export type DataAccessClass = 'staff' | 'client' | 'admin';
 export type PortalRole = 'approver' | 'viewer';
 
 /** Primary org partition for permission profiles (aligns with User.accessGroup). */
-export type DepartmentGroup = 'admin' | 'operation' | 'accounting' | 'client';
+export type DepartmentGroup = 'admin' | 'operations' | 'accounting' | 'client';
 
 export interface User {
   id: string;
@@ -209,9 +206,10 @@ export interface User {
 
   // FUTURE PRIMARY ACCESS MODEL (internal: accessGroup + accessLevel + allowedModules; portal separate)
   userType?: 'internal' | 'customer_portal';
-  accessGroup?: 'admin' | 'operation' | 'accounting' | 'client';
-  /** Same partition as {@link accessGroup} (new naming); keep both in sync when writing. */
-  departmentGroup?: DepartmentGroup;
+  /** Canonical: `operations` (plural). Writers must use `normalizeUserAuthorizationFields` — do not store `operation`. */
+  accessGroup?: 'admin' | 'operations' | 'operation' | 'accounting' | 'client';
+  /** Same partition as {@link accessGroup}; keep in sync on write (both should be `operations`, not `operation`). */
+  departmentGroup?: DepartmentGroup | 'operation';
   accessLevel?: 'admin' | 'manager' | 'officer' | 'viewer';
   allowedModules?: string[];
   portalRole?: 'approver' | 'viewer';
@@ -228,7 +226,7 @@ export interface User {
   roleIds: RoleType[];
   /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
   permissionProfileKey?: string | null;
-  /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
+  /** Canonical business role; lowercase snake_case only (e.g. `operations_manager`, `client_user`). */
   assignedRoleKey?: BusinessRoleKey | null;
 
   /** Transitional storage only — do not add multi-profile aggregation; runtime should use {@link permissionProfileKey} or first entry. */
@@ -259,15 +257,15 @@ export interface PermissionProfile {
   profileKey: string;
   profileNameTh: string;
   profileNameEn: string;
-  /** Primary partition for new UI & assignment rules (admin / operation / accounting / client). */
-  departmentGroup?: DepartmentGroup;
+  /** Primary partition for new UI & assignment rules (admin / operations / accounting / client). */
+  departmentGroup?: DepartmentGroup | 'operation';
   /**
    * @deprecated Legacy single-department label; keep for reads / migration. Prefer {@link departmentGroup}.
    */
   department?: DeptType;
   /** Access tier within {@link departmentGroup} (viewer → admin). */
   level: AccessLevel;
-  /** Optional canonical template id (e.g. admin_admin, operation_manager). */
+  /** Optional canonical template id (e.g. admin_admin, operations_manager). */
   primaryRoleTemplateKey?: string;
   isActive: boolean;
   permissions: Record<string, ModulePermission>;
@@ -395,6 +393,12 @@ export interface PositionPPERequirement {
   quantityDefault: number;
   required: boolean;
   notes?: string;
+  /** อ้างอิงทะเบียน store — เมื่อมีจะใช้จับคู่เบิกแทนแค่ชื่อ/รหัส */
+  storeItemId?: string;
+  storeCategory?: string;
+  /** รหัสกลุ่มเดียวกับ `store_items.variantGroupKey` — โควต้า `quantityDefault` นับรวมทุก SKU ในกลุ่ม */
+  variantGroupKey?: string;
+  variantSpecification?: string;
 }
 
 export interface PositionToolRequirement {
@@ -409,6 +413,9 @@ export interface PositionToolRequirement {
   storeItemId?: string;
   /** Denormalized from `store_items.category` at save time */
   storeCategory?: string;
+  /** ขนาด/รุ่น จากทะเบียน store (ถ้ามี) */
+  variantSpecification?: string;
+  variantGroupKey?: string;
 }
 
 /** Store catalog categories — keep in sync with `src/app/store/items/page.tsx` */
@@ -1512,7 +1519,12 @@ export type VendorType =
 export interface StoreItem {
   id: string;
   itemCode: string;
+  /** ชื่อรายการหลัก (ไม่รวมขนาด/รุ่น) */
   itemName: string;
+  /** ขนาด/รุ่น เช่น Size M, 8\" — แยกจากชื่อเพื่อโควต้ารวมหลาย SKU */
+  variantSpecification?: string;
+  /** รหัสกลุ่มเดียวกันสำหรับโควต้าเบิกรวม (เช่น เสื้อ M กับ L ใช้คีย์เดียวกัน) */
+  variantGroupKey?: string;
   category: string;
   unit: string;
   minimumStock: number;
@@ -1522,6 +1534,18 @@ export interface StoreItem {
   active: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+/** รายการที่ถือเป็น PPE ในคลัง — ใช้แยกหน้าทะเบียน PPE กับอุปกรณ์ทั่วไป */
+export function storeItemIsPpeCatalog(item: Pick<StoreItem, 'isPPE' | 'category'>): boolean {
+  return item.isPPE === true || (item.category || '') === 'PPE';
+}
+
+export function formatStoreItemLabel(item: Pick<StoreItem, 'itemName' | 'variantSpecification'>): string {
+  const name = (item.itemName || '').trim();
+  const spec = (item.variantSpecification || '').trim();
+  if (!name && spec) return spec;
+  return spec ? `${name} — ${spec}` : name;
 }
 
 export interface StoreTransaction {

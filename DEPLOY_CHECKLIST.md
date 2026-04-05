@@ -46,8 +46,8 @@ If Firebase returns transient `503`, retry with delay (or use `deploy-rules.ps1`
 - Open Firebase Console > Firestore > Rules.
 - Confirm latest timeline entry time is the one you just deployed.
 - Spot-check important markers:
-  - `canonicalBusinessRoleKey`
-  - `canUpdateWorkersCollection`
+  - `roleKey()` / `assignedRoleKey` (lowercase canonical)
+  - `canUpdateWorkersCollection` (or your latest rule helper name)
 
 ## 5) If deploy fails
 

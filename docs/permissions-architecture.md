@@ -1,85 +1,80 @@
 # Permissions Architecture
 
-## Source of Truth
+## Source of truth
 
 | Layer | Location | Purpose |
 |-------|----------|---------|
-| **Permission Core** | `src/lib/permission-core.ts` | Access groups, domains, `getEffectiveAccessGroup`, `canAccessDomain`, `isOperationGroupMember`, `isAccountingGroupMember` |
-| **Permissions** | `src/lib/permissions.ts` | Module-level `canView`/`canCreate`/`canEdit`, `getPermissions`, `is*Staff` helpers, baseline profiles |
-| **Auth Mapping** | `src/lib/auth-mapping.ts` | Role→fields mapping, `getFieldsForBusinessRole`, setup-admin repair |
-| **Migration** | `src/lib/migration/user-auth-migration.ts` | User auth backfill, baseline profile creation |
+| **Permission core** | `src/lib/permission-core.ts` | Access groups, domains, `getEffectiveAccessGroup`, `canAccessDomain`, `getPrimaryLegacyRole` (primary business role from user doc) |
+| **Permissions** | `src/lib/permissions.ts` | Module-level `canView` / `canCreate` / `canEdit`, `getPermissions`, baseline `permission_profiles` templates |
+| **Auth mapping** | `src/lib/auth-mapping.ts` | Role → Firestore user fields, `getFieldsForBusinessRole`, `normalizeUserAuthorizationFields`, setup-admin repair |
+| **Role catalog** | `src/lib/roles/role-catalog.ts` | Display names and metadata per `BusinessRoleKey` |
+| **Key normalization** | `src/lib/role-key-normalizer.ts` | `normalizeBusinessRoleKey`, `normalizePermissionProfileDocumentId` (trim + lowercase; built-in profile ids only) |
+| **Firestore rules** | `firestore.rules` | Server-side checks use `assignedRoleKey` (exact lowercase canonical) plus `userType` / `accessGroup` for client portal; admin/HR/ops profile fallbacks use **both** `permissionProfileKey` and `permissionProfileKeys` (`userReferencesProfileDocId`) so rules match `isSystemAdmin` / profile binding in the app |
 
-## Primary User Authorization Fields
+## Canonical string rules (mandatory)
+
+- **All role keys, profile doc ids, and partition fields written to Firestore must be lowercase `snake_case`.**
+- **No legacy synonyms in storage** (e.g. do not store `operation_manager`, `OPERATIONS_MANAGER`, or `operation` as `accessGroup`; use `operations_manager` and `operations`).
+- **`assignedRoleKey`** is the single business role field for rules and app gates (see `BusinessRoleKey` in `src/lib/types.ts`).
+- **`permission_profiles` document id** for the system admin matrix row is `admin_admin`; the user’s **business role** remains `system_admin`.
+- **`accessGroup` and `departmentGroup`** must match each other on write and use **`operations`** (plural), never `operation`.
+
+## Primary user authorization fields
 
 | Field | Purpose |
 |-------|---------|
-| `accessGroup` | `admin` \| `operation` \| `accounting` \| `client` — primary partition |
-| `departmentGroup` | Same as `accessGroup` (alias) |
+| `userType` | `internal` \| `customer_portal` |
+| `accessGroup` | `admin` \| `operations` \| `accounting` \| `client` |
+| `departmentGroup` | Same partition as `accessGroup` |
 | `accessLevel` | `admin` \| `manager` \| `officer` \| `viewer` |
-| `permissionProfileKey` | Links to `permission_profiles` document |
-| `assignedRoleKey` | Canonical role (e.g. `operation_officer`, `accounting_manager`) |
-| `roleIds` | Compatibility; used by Firestore rules fallback |
+| `assignedRoleKey` | Canonical role (e.g. `operations_manager`, `client_user`) |
+| `permissionProfileKey` | Single primary profile doc id (e.g. `operations_manager`, `admin_admin`) |
+| `permissionProfileKeys` | Single-element array, same id as `permissionProfileKey` |
 
-## Legacy Compatibility (Kept for Rollback / Repair)
+`roleId` / `roleIds` are still populated for backward compatibility but **must stay aligned** with `assignedRoleKey` (same lowercase semantic). Prefer helpers instead of reading `roleId` in new code.
 
-- `department`, `level` — legacy dept/level; permission-core uses for fallback when `accessGroup` missing
-- `roleId`, `roleIds` — Firestore rules `legacyResolvedGroup()` reads these
-- `assignedRoleKeys` (array) — transitional; runtime prefers `assignedRoleKey`
+## Built-in permission profile ids
 
-Do not delete these until Firestore rules and all consumers are verified to use the new fields.
+Aligned with `BUILTIN_PERMISSION_PROFILE_DOC_IDS` in `role-key-normalizer.ts`:
 
-## Baseline Profiles (New Model)
+`admin_admin`, `client_user`, `sales_manager`, `sales_officer`, `hr_manager`, `hr_officer`, `payroll_officer`, `operations_manager`, `operations_officer`, `accounting_manager`, `accounting_officer`, `store_officer`.
 
-| Profile Key | Group | Description |
-|-------------|-------|-------------|
-| `admin_admin` | admin | System Administrator |
-| `operation_officer` | operation | Sales/HR/Ops/Store (รวม) |
-| `operation_manager` | operation | Sales/HR/Ops/Store (รวม) |
-| `accounting_officer` | accounting | Finance/Accounting |
-| `accounting_manager` | accounting | Finance/Accounting |
-| `client_user` | client | Customer Portal read-only |
-
-Legacy profiles (`hr_manager`, `sales_officer`, `store_officer`, etc.) remain for backward compatibility.
-
-## Central Helpers (Prefer These)
+## Central helpers (prefer these)
 
 ```ts
-// Access group / domain
-getEffectiveAccessGroup(user)  // 'admin' | 'operation' | 'accounting' | 'client'
+// Access
+getEffectiveAccessGroup(user)
+getEffectiveAccessLevel(user)
 canAccessDomain(user, 'store')
 isOperationGroupMember(user)
 isAccountingGroupMember(user)
 isSystemAdmin(user)
 
-// Primary role (auth-mapping) — for display, repair, migration
-deriveBusinessRoleKey(user)   // BusinessRoleKey
+// Primary role (from assignedRoleKey → profile fallback)
+getPrimaryLegacyRole(user)
+
+// UI / repair (auth-mapping)
+deriveBusinessRoleKey(user)
+getFieldsForBusinessRole(roleKey)
+normalizeUserAuthorizationFields(partialUser)
 
 // Module-level
 canView(user, 'quotations')
 canCreate(user, 'cashbook')
-canEdit(user, 'workers')
-
-// Staff type (delegate to core)
-isInternalStaff(user)
-isHRStaff(user)
-isSalesStaff(user)
-isAccountingStaff(user)
-isStoreStaff(user)
-isOperationsStaff(user)
-isClient(user)
 ```
 
-## What to Avoid
+## Admin UI
 
-- Hardcoded `roleIds?.some(...)` or `assignedRoleKey === 'x'` — use helpers above
-- Direct `user.department === 'x'` for access decisions — use `getEffectiveAccessGroup` or `canAccessDomain`
-- Adding new role checks without going through permission-core/permissions
-- For primary role display: use `deriveBusinessRoleKey(user)` from auth-mapping instead of `user.assignedRoleKey || fallback`
+- **User Access Management:** `/users` — approve pending users, assign profile or role; all writes go through `normalizeUserAuthorizationFields`.
+- **Setup / repair:** `/setup-admin` — Account Repair uses `buildAuthorizationForRepairRole` from `auth-mapping.ts`; choose a canonical `BusinessRoleKey` only.
 
-## Admin Repair Path
+## What to avoid
 
-`/setup-admin` → Account Repair tab uses `buildAuthorizationForRepairRole` from auth-mapping. Supports: system_admin, operation_officer, operation_manager, accounting_*, hr_*, sales_*, store_*, etc.
+- Storing mixed-case or legacy role strings on user documents.
+- Deriving primary role from `permissionProfileKeys` priority order — use `assignedRoleKey` first, then a single profile key.
+- Duplicating access logic with ad-hoc `user.department === 'x'` in new code — use permission-core / `canView` where possible.
 
-## Migration Path
+## Related docs
 
-`/system-admin/user-migration` — Admin-only. Backfills `departmentGroup`, `accessLevel`, `assignedRoleKey`, `permissionProfileKey` from legacy. Does not delete legacy fields.
+- `docs/user-auth-migration-guide.md` — field reference and admin workflows (historical migration UI removed from repo).
+- `docs/firestore-rules-sets-2-9.md` — ordered batches **2–9** after Sets 0–1 (Sales → … → catch-all); do one batch at a time.

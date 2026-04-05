@@ -11,7 +11,6 @@ export interface RoleCatalogEntry {
   permissionProfileKey: string;
   canonicalRole: RoleType;
   descriptionTh: string;
-  legacyAliases?: string[];
 }
 
 export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
@@ -25,25 +24,13 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     permissionProfileKey: 'admin_admin',
     canonicalRole: 'system_admin',
     descriptionTh: 'เข้าถึงและจัดการได้ทุกส่วนของระบบ รวมถึงการตั้งค่าสิทธิ์และความปลอดภัย',
-    legacyAliases: ['super_admin', 'admin'],
-  },
-  admin_admin: {
-    key: 'admin_admin',
-    displayNameTh: 'ผู้ดูแลระบบ',
-    displayNameEn: 'System Administrator',
-    department: 'admin',
-    accessGroup: 'admin',
-    accessLevel: 'admin',
-    permissionProfileKey: 'admin_admin',
-    canonicalRole: 'system_admin',
-    descriptionTh: 'สิทธิ์สูงสุด',
   },
   hr_manager: {
     key: 'hr_manager',
     displayNameTh: 'ผู้จัดการฝ่ายบุคคล',
     displayNameEn: 'HR Manager',
     department: 'hr',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'manager',
     permissionProfileKey: 'hr_manager',
     canonicalRole: 'hr_manager',
@@ -54,7 +41,7 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     displayNameTh: 'เจ้าหน้าที่ฝ่ายบุคคล',
     displayNameEn: 'HR Officer',
     department: 'hr',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'officer',
     permissionProfileKey: 'hr_officer',
     canonicalRole: 'hr_officer',
@@ -65,7 +52,7 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     displayNameTh: 'เจ้าหน้าที่เงินเดือน',
     displayNameEn: 'Payroll Officer',
     department: 'hr',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'officer',
     permissionProfileKey: 'payroll_officer',
     canonicalRole: 'payroll_officer',
@@ -98,7 +85,7 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     displayNameTh: 'ผู้จัดการฝ่ายขาย',
     displayNameEn: 'Sales Manager',
     department: 'sales',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'manager',
     permissionProfileKey: 'sales_manager',
     canonicalRole: 'sales_manager',
@@ -109,29 +96,18 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     displayNameTh: 'เจ้าหน้าที่ฝ่ายขาย',
     displayNameEn: 'Sales Officer',
     department: 'sales',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'officer',
     permissionProfileKey: 'sales_officer',
     canonicalRole: 'sales_officer',
     descriptionTh: 'ดูแลข้อมูลลูกค้า เอกสารขาย และสัญญาเบื้องต้น',
-  },
-  store_manager: {
-    key: 'store_manager',
-    displayNameTh: 'ผู้จัดการคลังสินค้า',
-    displayNameEn: 'Store Manager',
-    department: 'store',
-    accessGroup: 'operation',
-    accessLevel: 'manager',
-    permissionProfileKey: 'store_manager',
-    canonicalRole: 'store_manager',
-    descriptionTh: 'ดูแลคลังอุปกรณ์และการจัดซื้อ',
   },
   store_officer: {
     key: 'store_officer',
     displayNameTh: 'เจ้าหน้าที่คลังสินค้า',
     displayNameEn: 'Store Officer',
     department: 'store',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'officer',
     permissionProfileKey: 'store_officer',
     canonicalRole: 'store_officer',
@@ -147,31 +123,28 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     permissionProfileKey: 'client_user',
     canonicalRole: 'client_user',
     descriptionTh: 'เข้าดูข้อมูลลูกค้าของตนเองและทำรายการใน client portal',
-    legacyAliases: ['client', 'client_viewer', 'client_approver', 'customer_viewer', 'customer_approver'],
   },
-  operation_officer: {
-    key: 'operation_officer',
+  operations_officer: {
+    key: 'operations_officer',
     displayNameTh: 'เจ้าหน้าที่ปฏิบัติการ',
     displayNameEn: 'Operations Officer',
     department: 'operations',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'officer',
-    permissionProfileKey: 'operation_officer',
-    canonicalRole: 'operation_officer',
+    permissionProfileKey: 'operations_officer',
+    canonicalRole: 'operations_officer',
     descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
-    legacyAliases: ['operations_officer', 'safety_officer'],
   },
-  operation_manager: {
-    key: 'operation_manager',
+  operations_manager: {
+    key: 'operations_manager',
     displayNameTh: 'ผู้จัดการปฏิบัติการ',
     displayNameEn: 'Operations Manager',
     department: 'operations',
-    accessGroup: 'operation',
+    accessGroup: 'operations',
     accessLevel: 'manager',
-    permissionProfileKey: 'operation_manager',
-    canonicalRole: 'operation_manager',
+    permissionProfileKey: 'operations_manager',
+    canonicalRole: 'operations_manager',
     descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
-    legacyAliases: ['operations_manager'],
   },
 };
 
@@ -182,10 +155,9 @@ export const ACTIVE_BUSINESS_ROLE_KEYS: BusinessRoleKey[] = [
   'payroll_officer',
   'sales_manager',
   'sales_officer',
-  'store_manager',
   'store_officer',
-  'operation_manager',
-  'operation_officer',
+  'operations_manager',
+  'operations_officer',
   'accounting_manager',
   'accounting_officer',
   'client_user',
@@ -194,7 +166,6 @@ export const ACTIVE_BUSINESS_ROLE_KEYS: BusinessRoleKey[] = [
 export function getCanonicalBusinessRoleKey(roleKey?: string | null): BusinessRoleKey | null {
   const normalized = normalizeBusinessRoleKey(roleKey);
   if (!normalized) return null;
-  if (normalized === 'admin_admin') return 'system_admin';
   return normalized in ROLE_CATALOG ? (normalized as BusinessRoleKey) : null;
 }
 

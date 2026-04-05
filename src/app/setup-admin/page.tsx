@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildAuthorizationForRepairRole } from '@/lib/auth-mapping';
 import { getBaselineProfiles } from '@/lib/permissions';
+import { ACTIVE_BUSINESS_ROLE_KEYS, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
 export default function SetupAdminPage() {
@@ -170,7 +171,7 @@ export default function SetupAdminPage() {
     setIsSubmitting(true);
     try {
       // 1. Always ensure profiles exist when repairing an admin
-      if (repairRole === 'system_admin' || repairRole === 'admin_admin') {
+      if (repairRole === 'system_admin') {
         await ensureEnvironmentProfiles();
       }
 
@@ -298,19 +299,23 @@ export default function SetupAdminPage() {
               <div className="space-y-2">
                 <Label className="font-bold">บทบาทที่ต้องการกู้คืน (Target Role)</Label>
                 <Select value={repairRole} onValueChange={setRepairRole}>
-                  <SelectTrigger className="h-11 font-bold">
+                  <SelectTrigger className="h-11 font-bold font-mono text-sm normal-case">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="system_admin">System Admin (สิทธิ์สูงสุด)</SelectItem>
-                    <SelectItem value="accounting_manager">Accounting Manager</SelectItem>
-                    <SelectItem value="accounting_officer">Accounting Officer</SelectItem>
-                    <SelectItem value="hr_manager">HR Manager</SelectItem>
-                    <SelectItem value="hr_officer">HR Officer</SelectItem>
-                    <SelectItem value="sales_manager">Sales Manager</SelectItem>
-                    <SelectItem value="sales_officer">Sales Officer</SelectItem>
-                    <SelectItem value="operation_officer">Operations Officer (รวม)</SelectItem>
-                    <SelectItem value="operation_manager">Operations Manager (รวม)</SelectItem>
+                  <SelectContent className="max-h-[320px]">
+                    {ACTIVE_BUSINESS_ROLE_KEYS.map((key) => {
+                      const meta = getRoleCatalogEntry(key);
+                      return (
+                        <SelectItem key={key} value={key} className="font-mono text-xs normal-case">
+                          <span className="font-mono">{key}</span>
+                          {meta ? (
+                            <span className="text-muted-foreground ml-2 font-sans text-xs">
+                              — {meta.displayNameTh}
+                            </span>
+                          ) : null}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>

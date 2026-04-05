@@ -15,7 +15,7 @@ import {
   PortalRole,
 } from './types';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
-import { normalizeBusinessRoleKey } from './role-key-normalizer';
+import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
 import { sanitizeFirestorePayload } from './utils';
 import { ROLE_CATALOG } from './roles/role-catalog';
 
@@ -101,41 +101,32 @@ function canonicalizeRoleKey(roleKey?: string | null): BusinessRoleKey | null {
   return mapped in BUSINESS_ROLES ? (mapped as BusinessRoleKey) : null;
 }
 
-function hasRawLegacyKey(user: Partial<User>, candidates: string[]): boolean {
-  const values = [
-    user.roleId,
-    user.assignedRoleKey,
-    ...(Array.isArray(user.roleIds) ? user.roleIds : []),
-    ...(Array.isArray(user.assignedRoleKeys) ? user.assignedRoleKeys : []),
-  ]
-    .filter(Boolean)
-    .map((v) => String(v));
-
-  return candidates.some((candidate) => values.includes(candidate));
-}
-
 function inferPortalRole(user: Partial<User>): PortalRole {
   if (user.portalRole === 'approver' || user.portalRole === 'viewer') {
     return user.portalRole;
   }
-
-  if (hasRawLegacyKey(user, ['client_approver', 'customer_approver'])) {
-    return 'approver';
-  }
-
   return 'viewer';
 }
 
 function getPrimaryLegacyRole(user: Partial<User> | null): BusinessRoleKey | null {
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return null;
-  const resolved = canonicalizeRoleKey(u.assignedRoleKey);
-  if (resolved === 'admin_admin') return 'system_admin';
-  return resolved;
+  return canonicalizeRoleKey(u.assignedRoleKey);
 }
 
-function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'operation' | 'accounting' | 'client' {
-  return ROLE_CATALOG[roleKey]?.accessGroup ?? 'operation';
+function mapBusinessRoleToAccessGroup(roleKey: BusinessRoleKey): 'admin' | 'operations' | 'accounting' | 'client' {
+  return ROLE_CATALOG[roleKey]?.accessGroup ?? 'operations';
+}
+
+/** Persist only canonical partition spelling (`operations`, never legacy `operation`). */
+function coerceCanonicalAccessPartition(
+  g: string | undefined | null
+): 'admin' | 'operations' | 'accounting' | 'client' | undefined {
+  if (g == null || g === '') return undefined;
+  const s = String(g).trim().toLowerCase();
+  if (s === 'operation') return 'operations';
+  if (s === 'admin' || s === 'operations' || s === 'accounting' || s === 'client') return s;
+  return undefined;
 }
 
 function mapBusinessRoleToAccessLevel(roleKey: BusinessRoleKey): 'admin' | 'manager' | 'officer' | 'viewer' {
@@ -143,11 +134,11 @@ function mapBusinessRoleToAccessLevel(roleKey: BusinessRoleKey): 'admin' | 'mana
 }
 
 function getDefaultAllowedModules(
-  accessGroup: 'admin' | 'operation' | 'accounting' | 'client',
+  accessGroup: 'admin' | 'operations' | 'accounting' | 'client',
   accessLevel: 'admin' | 'manager' | 'officer' | 'viewer'
 ): string[] | undefined {
   if (accessLevel !== 'officer') return undefined;
-  if (accessGroup === 'operation') return [...OPERATION_DEFAULT_MODULES];
+  if (accessGroup === 'operations') return [...OPERATION_DEFAULT_MODULES];
   if (accessGroup === 'accounting') return [...ACCOUNTING_DEFAULT_MODULES];
   return undefined;
 }
@@ -177,9 +168,9 @@ export const isAdminUser = (user: User | null) => isSystemAdmin(user);
 export const isOperationUser = (user: Partial<User> | null) => {
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return false;
-  if (u.accessGroup === 'operation') return true;
+  if (u.accessGroup === 'operations' || u.accessGroup === 'operation') return true;
   const role = getPrimaryLegacyRole(u);
-  return role != null && mapBusinessRoleToAccessGroup(role) === 'operation';
+  return role != null && mapBusinessRoleToAccessGroup(role) === 'operations';
 };
 
 export const isAccountingUser = (user: Partial<User> | null) => {
@@ -193,9 +184,11 @@ export const isAccountingUser = (user: Partial<User> | null) => {
 export const isClientUser = (user: Partial<User> | null) => {
   const u = normalizeCurrentUserPermissions(user);
   if (!u) return false;
-  if (u.userType === 'customer_portal' || u.accessGroup === 'client') return true;
-  const role = getPrimaryLegacyRole(u);
-  return role === 'client_user';
+  return (
+    u.userType === 'customer_portal'
+    && u.accessGroup === 'client'
+    && normalizeBusinessRoleKey(u.assignedRoleKey) === 'client_user'
+  );
 };
 
 export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
@@ -214,7 +207,7 @@ export function deriveDataAccess(roleKeys: BusinessRoleKey[]): DataAccessClass {
   const primary = roleKeys[0];
   if (!primary) return 'staff';
   if (primary === 'client_user') return 'client';
-  if (primary === 'system_admin' || primary === 'admin_admin') return 'admin';
+  if (primary === 'system_admin') return 'admin';
   return 'staff';
 }
 
@@ -226,18 +219,21 @@ function getProfileKeyForRole(roleKey: BusinessRoleKey): string {
  * Primary helper: single-role mapping only.
  */
 export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User> {
-  const role = BUSINESS_ROLES[roleKey];
-  const accessGroup = mapBusinessRoleToAccessGroup(roleKey);
-  const accessLevel = mapBusinessRoleToAccessLevel(roleKey);
-  const dataAccess = deriveDataAccess([roleKey]);
+  const mapped = normalizeBusinessRoleKey(roleKey);
+  const rk =
+    mapped && mapped in BUSINESS_ROLES ? (mapped as BusinessRoleKey) : roleKey;
+  const role = BUSINESS_ROLES[rk];
+  const accessGroup = mapBusinessRoleToAccessGroup(rk);
+  const accessLevel = mapBusinessRoleToAccessLevel(rk);
+  const dataAccess = deriveDataAccess([rk]);
   const userType: UserType = dataAccess === 'client' ? 'customer_portal' : 'internal';
-  const permissionProfileKey = getProfileKeyForRole(roleKey);
-  const portalRole: PortalRole | undefined = roleKey === 'client_user' ? 'viewer' : undefined;
+  const permissionProfileKey = getProfileKeyForRole(rk);
+  const portalRole: PortalRole | undefined = rk === 'client_user' ? 'viewer' : undefined;
   const allowedModules = getDefaultAllowedModules(accessGroup, accessLevel);
 
   return {
-    assignedRoleKey: roleKey,
-    assignedRoleKeys: [roleKey],
+    assignedRoleKey: rk,
+    assignedRoleKeys: [rk],
     roleId: role.canonicalRole,
     roleIds: [role.canonicalRole],
     permissionProfileKey,
@@ -267,10 +263,12 @@ export function resolveRepairRoleKey(raw: string): BusinessRoleKey {
  * Call after composing role/profile merges and before Firestore writes.
  */
 export function normalizeUserAuthorizationFields(draft: Partial<User>): Partial<User> {
-  const roleKey: BusinessRoleKey =
+  const raw: BusinessRoleKey =
     draft.assignedRoleKey && draft.assignedRoleKey in BUSINESS_ROLES
       ? draft.assignedRoleKey
       : deriveBusinessRoleKey(draft as User);
+  const mapped = normalizeBusinessRoleKey(raw) ?? raw;
+  const roleKey = (mapped in BUSINESS_ROLES ? mapped : raw) as BusinessRoleKey;
 
   const canonical = getFieldsForBusinessRole(roleKey);
   const merged: Partial<User> = { ...canonical, ...draft };
@@ -282,12 +280,19 @@ export function normalizeUserAuthorizationFields(draft: Partial<User>): Partial<
   merged.roleId = br.canonicalRole;
   merged.roleIds = [br.canonicalRole];
 
-  const g = (merged.accessGroup ?? canonical.accessGroup) as DepartmentGroup;
+  const gRaw = (merged.accessGroup ?? canonical.accessGroup) as string;
+  const g =
+    coerceCanonicalAccessPartition(gRaw) ??
+    (canonical.accessGroup as 'admin' | 'operations' | 'accounting' | 'client');
   merged.accessGroup = g;
   merged.departmentGroup = g;
 
   if (merged.permissionProfileKey) {
-    merged.permissionProfileKeys = [merged.permissionProfileKey];
+    const pk =
+      normalizePermissionProfileDocumentId(String(merged.permissionProfileKey).trim()) ??
+      merged.permissionProfileKey;
+    merged.permissionProfileKey = pk;
+    merged.permissionProfileKeys = [pk];
   } else {
     merged.permissionProfileKey = canonical.permissionProfileKey;
     merged.permissionProfileKeys = canonical.permissionProfileKeys;

@@ -14,13 +14,13 @@ import { User, PermissionProfile } from '@/lib/types';
 import type { WithId } from '@/firebase/firestore/use-collection';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { errorEmitter } from '@/firebase/error-emitter';
+import { normalizePermissionProfileDocumentId } from '@/lib/role-key-normalizer';
 
 /** Effective profile key: primary field first, else first transitional array entry (no aggregation). */
 export function getEffectivePermissionProfileKey(user: User | null): string | null {
   if (!user) return null;
-  if (user.permissionProfileKey) return user.permissionProfileKey;
-  const first = user.permissionProfileKeys?.[0];
-  return first ?? null;
+  const raw = user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? null;
+  return normalizePermissionProfileDocumentId(raw);
 }
 
 /**

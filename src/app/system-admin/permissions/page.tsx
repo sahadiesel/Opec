@@ -62,7 +62,7 @@ import { getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 
 const DEPARTMENT_GROUPS: { id: DepartmentGroup; label: string }[] = [
   { id: 'admin', label: 'Admin (บริหารระบบ)' },
-  { id: 'operation', label: 'Operation (ปฏิบัติการ / การค้า / บุคคล)' },
+  { id: 'operations', label: 'Operations (ปฏิบัติการ / การค้า / บุคคล)' },
   { id: 'accounting', label: 'Accounting (บัญชี / คลัง)' },
   { id: 'client', label: 'Client (ลูกค้า)' },
 ];
@@ -72,6 +72,14 @@ function levelOptionsForGroup(group: DepartmentGroup): { id: AccessLevel; label:
     id,
     label: id.charAt(0).toUpperCase() + id.slice(1),
   }));
+}
+
+function effectiveDepartmentGroup(
+  g: DepartmentGroup | 'operation' | undefined,
+  fallback: PermissionProfile
+): DepartmentGroup {
+  const raw = g ?? getProfileDepartmentGroup(fallback);
+  return raw === 'operation' ? 'operations' : raw;
 }
 
 export default function PermissionProfilesPage() {
@@ -89,7 +97,7 @@ export default function PermissionProfilesPage() {
     profileKey: '',
     profileNameTh: '',
     profileNameEn: '',
-    departmentGroup: 'operation',
+    departmentGroup: 'operations',
     level: 'viewer',
     isActive: true,
     notes: '',
@@ -128,7 +136,7 @@ export default function PermissionProfilesPage() {
       profileKey: '',
       profileNameTh: '',
       profileNameEn: '',
-      departmentGroup: 'operation',
+      departmentGroup: 'operations',
       level: 'viewer',
       isActive: true,
       notes: '',
@@ -141,6 +149,9 @@ export default function PermissionProfilesPage() {
     const copy = JSON.parse(JSON.stringify(profile)) as PermissionProfile;
     if (!copy.departmentGroup) {
       copy.departmentGroup = getProfileDepartmentGroup(copy);
+    }
+    if (copy.departmentGroup === 'operation') {
+      copy.departmentGroup = 'operations';
     }
     if (!isAccessLevelAllowedForGroup(copy.departmentGroup!, copy.level)) {
       const allowed = ACCESS_LEVELS_BY_DEPARTMENT_GROUP[copy.departmentGroup!];
@@ -166,7 +177,7 @@ export default function PermissionProfilesPage() {
       return;
     }
 
-    const group = formData.departmentGroup ?? getProfileDepartmentGroup(formData as PermissionProfile);
+    const group = effectiveDepartmentGroup(formData.departmentGroup, formData as PermissionProfile);
     const level = formData.level ?? 'viewer';
     if (!isAccessLevelAllowedForGroup(group, level)) {
       toast({
@@ -182,7 +193,7 @@ export default function PermissionProfilesPage() {
       const profileKey = formData.profileKey!;
       const profileRef = doc(firestore, 'permission_profiles', profileKey);
       const legacyDept =
-        profileKey === 'store_officer' || profileKey === 'store_manager'
+        profileKey === 'store_officer'
           ? 'store'
           : deriveLegacyDepartmentForGroup(group, level);
 
@@ -367,7 +378,7 @@ export default function PermissionProfilesPage() {
                     <div className="space-y-2">
                       <Label className="font-bold">Profile Key (unique ID)</Label>
                       <Input 
-                        placeholder="e.g. HR_OFFICER" 
+                        placeholder="e.g. hr_officer" 
                         value={formData.profileKey} 
                         onChange={e => setFormData({ ...formData, profileKey: e.target.value.toUpperCase().replace(/\s+/g, '_') })}
                         className="font-mono text-sm"
@@ -377,7 +388,7 @@ export default function PermissionProfilesPage() {
                       <div className="space-y-2">
                         <Label className="text-[10px] font-bold">กลุ่มสิทธิ์ (departmentGroup)</Label>
                         <Select
-                          value={formData.departmentGroup ?? 'operation'}
+                          value={formData.departmentGroup ?? 'operations'}
                           onValueChange={(v: DepartmentGroup) => {
                             const allowed = ACCESS_LEVELS_BY_DEPARTMENT_GROUP[v];
                             let nextLevel = formData.level ?? 'viewer';
@@ -401,7 +412,9 @@ export default function PermissionProfilesPage() {
                         >
                           <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {levelOptionsForGroup(formData.departmentGroup ?? 'operation').map((l) => (
+                            {levelOptionsForGroup(
+                              effectiveDepartmentGroup(formData.departmentGroup, formData as PermissionProfile)
+                            ).map((l) => (
                               <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>
                             ))}
                           </SelectContent>

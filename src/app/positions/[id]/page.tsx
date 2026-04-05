@@ -50,7 +50,11 @@ import {
   WorkerDocumentCatalogItem,
   StoreItem,
   STORE_ITEM_CATEGORIES,
+  storeItemIsPpeCatalog,
+  formatStoreItemLabel,
 } from '@/lib/types';
+
+const TOOL_STORE_CATEGORIES = STORE_ITEM_CATEGORIES.filter((c) => c !== 'PPE');
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
@@ -101,15 +105,38 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   });
   const [newPPE, setNewPPE] = useState<Partial<PositionPPERequirement>>({ required: true, quantityDefault: 1 });
   const [newTool, setNewTool] = useState<Partial<PositionToolRequirement>>({ allowed: true, quantityDefault: 1, itemType: 'tool' });
-  const [toolStoreCategory, setToolStoreCategory] = useState<string>('PPE');
+  const [toolStoreCategory, setToolStoreCategory] = useState<string>('General');
+  const [ppeStoreCategory, setPpeStoreCategory] = useState<string>('all');
+
+  const ppeCategoryOptions = useMemo(() => {
+    const s = new Set<string>();
+    (storeItems || []).forEach((i) => {
+      if (storeItemIsPpeCatalog(i) && (i.category || '').trim()) s.add(i.category);
+    });
+    return Array.from(s).sort();
+  }, [storeItems]);
+
+  const ppeFromStoreFiltered = useMemo(() => {
+    if (!storeItems?.length) return [];
+    return storeItems.filter((i) => {
+      if (!storeItemIsPpeCatalog(i) || i.active === false) return false;
+      if (ppeStoreCategory !== 'all' && (i.category || '') !== ppeStoreCategory) return false;
+      return true;
+    });
+  }, [storeItems, ppeStoreCategory]);
 
   const toolsInSelectedStoreCategory = useMemo(() => {
     if (!storeItems?.length) return [];
-    return storeItems.filter((i) => (i.category || '') === toolStoreCategory && i.active !== false);
+    return storeItems.filter(
+      (i) =>
+        !storeItemIsPpeCatalog(i) &&
+        (i.category || '') === toolStoreCategory &&
+        i.active !== false,
+    );
   }, [storeItems, toolStoreCategory]);
 
   const resetAddToolDialog = useCallback(() => {
-    setToolStoreCategory('PPE');
+    setToolStoreCategory('General');
     setNewTool({ allowed: true, quantityDefault: 1, itemType: 'tool' });
   }, []);
 
@@ -168,16 +195,44 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลตำแหน่งงาน' });
       return;
     }
-    if (!ppeQuery) return;
+    if (!ppeQuery || !newPPE.storeItemId) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้เลือกรายการ',
+        description: 'เลือก PPE จากทะเบียนคลัง (หน้า ทะเบียน PPE)',
+      });
+      return;
+    }
+    const si = storeItems?.find((s) => s.id === newPPE.storeItemId);
+    if (!si) {
+      toast({ variant: 'destructive', title: 'ไม่พบรายการ', description: 'รีเฟรชหน้าแล้วลองใหม่' });
+      return;
+    }
+    const gk = (si.variantGroupKey || '').trim();
+    if (gk) {
+      if (ppe?.some((p) => (p.variantGroupKey || '').trim() === gk)) {
+        toast({ variant: 'destructive', title: 'รายการซ้ำ', description: 'ตำแหน่งนี้มีโควต้ากลุ่มเดียวกันแล้ว (ใช้รหัสกลุ่มเดียวกัน)' });
+        return;
+      }
+    } else if (ppe?.some((p) => p.storeItemId === si.id)) {
+      toast({ variant: 'destructive', title: 'รายการซ้ำ', description: 'ตำแหน่งนี้มี SKU นี้ในลิสต์แล้ว' });
+      return;
+    }
+    const ppeSpec = (si.variantSpecification || '').trim();
     addDocumentNonBlocking(ppeQuery, {
-      itemName: newPPE.itemName || '',
-      itemCode: newPPE.itemCode || '',
+      storeItemId: si.id,
+      storeCategory: si.category ?? '',
+      itemName: si.itemName ?? '',
+      itemCode: si.itemCode ?? '',
       quantityDefault: newPPE.quantityDefault ?? 1,
       required: newPPE.required ?? true,
-      notes: newPPE.notes || ''
+      notes: newPPE.notes || '',
+      ...(gk ? { variantGroupKey: gk } : {}),
+      ...(ppeSpec ? { variantSpecification: ppeSpec } : {}),
     });
     setIsAddPPEOpen(false);
-    setNewPPE({ required: true, quantityDefault: 1 });
+    setPpeStoreCategory('all');
+    setNewPPE({ required: true, quantityDefault: 1, storeItemId: undefined });
   };
 
   const storeItemToToolItemType = (si: StoreItem): PositionToolRequirement['itemType'] => {
@@ -204,19 +259,30 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       toast({ variant: 'destructive', title: 'ไม่พบรายการ', description: 'รีเฟรชหน้าแล้วลองใหม่' });
       return;
     }
-    if (tools?.some((t) => t.storeItemId === newTool.storeItemId)) {
-      toast({ variant: 'destructive', title: 'รายการซ้ำ', description: 'ตำแหน่งนี้มีอุปกรณ์นี้ในลิสต์แล้ว' });
+    const newGk = (si.variantGroupKey || '').trim();
+    if (
+      tools?.some((t) => {
+        if (t.storeItemId === newTool.storeItemId) return true;
+        const tg = (t.variantGroupKey || '').trim();
+        return Boolean(newGk && tg && tg === newGk);
+      })
+    ) {
+      toast({ variant: 'destructive', title: 'รายการซ้ำ', description: 'ตำแหน่งนี้มีรายการหรือกลุ่มโควต้าเดียวกันแล้ว' });
       return;
     }
+    const toolSpec = (si.variantSpecification || '').trim();
+    const toolGk = (si.variantGroupKey || '').trim();
     addDocumentNonBlocking(toolsQuery, {
       storeItemId: si.id,
-      storeCategory: si.category,
-      itemName: si.itemName,
-      itemCode: si.itemCode,
+      storeCategory: si.category ?? '',
+      itemName: si.itemName ?? '',
+      itemCode: si.itemCode ?? '',
       itemType: storeItemToToolItemType(si),
       quantityDefault: newTool.quantityDefault ?? 1,
       allowed: newTool.allowed ?? true,
       notes: newTool.notes || '',
+      ...(toolSpec ? { variantSpecification: toolSpec } : {}),
+      ...(toolGk ? { variantGroupKey: toolGk } : {}),
     });
     setIsAddToolOpen(false);
     resetAddToolDialog();
@@ -509,26 +575,74 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     {isGenerating === 'ppe' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                     แนะนำโดย AI
                   </Button>
-                  <Dialog open={isAddPPEOpen} onOpenChange={setIsAddPPEOpen}>
+                  <Dialog
+                    open={isAddPPEOpen}
+                    onOpenChange={(open) => {
+                      setIsAddPPEOpen(open);
+                      if (open) {
+                        setPpeStoreCategory('all');
+                        setNewPPE({ required: true, quantityDefault: 1, storeItemId: undefined });
+                      }
+                    }}
+                  >
                     <DialogTrigger asChild>
                       <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มรายการ (Add)</Button>
                     </DialogTrigger>
                     <DialogContent>
-                      <DialogHeader><DialogTitle>เพิ่มรายการ PPE มาตรฐาน</DialogTitle></DialogHeader>
+                      <DialogHeader>
+                        <DialogTitle>เพิ่มรายการ PPE มาตรฐาน</DialogTitle>
+                        <DialogDescription>
+                          เลือกจากทะเบียน PPE ในคลัง — โควต้าต่อคนนับรวมทุกขนาดเมื่อใช้รหัสกลุ่มเดียวกันใน store
+                        </DialogDescription>
+                      </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label className="font-bold">ชื่ออุปกรณ์ (Item Name) *</Label>
-                          <Input value={newPPE.itemName || ''} onChange={e => setNewPPE({...newPPE, itemName: e.target.value})} />
+                          <Label className="font-bold">หมวดหมู่ (กรอง)</Label>
+                          <Select value={ppeStoreCategory} onValueChange={(v) => {
+                            setPpeStoreCategory(v);
+                            setNewPPE((prev) => ({ ...prev, storeItemId: undefined }));
+                          }}>
+                            <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">ทุกหมวด</SelectItem>
+                              {ppeCategoryOptions.map((c) => (
+                                <SelectItem key={c} value={c}>{c}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label className="font-bold">รหัส (Item Code)</Label>
-                            <Input value={newPPE.itemCode || ''} onChange={e => setNewPPE({...newPPE, itemCode: e.target.value})} />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label className="font-bold">จำนวนต่อคน (Qty)</Label>
-                            <Input type="number" value={newPPE.quantityDefault || 1} onChange={e => setNewPPE({...newPPE, quantityDefault: parseInt(e.target.value)})} />
-                          </div>
+                        <div className="grid gap-2">
+                          <Label className="font-bold">รายการจากคลัง (PPE) *</Label>
+                          <Select
+                            key={`${ppeStoreCategory}-${ppeFromStoreFiltered.length}`}
+                            value={newPPE.storeItemId ?? undefined}
+                            onValueChange={(storeItemId) => {
+                              const si = ppeFromStoreFiltered.find((x) => x.id === storeItemId);
+                              if (!si) return;
+                              setNewPPE((prev) => ({
+                                ...prev,
+                                storeItemId: si.id,
+                                itemCode: si.itemCode,
+                                itemName: si.itemName,
+                              }));
+                            }}
+                          >
+                            <SelectTrigger className="h-10">
+                              <SelectValue placeholder={ppeFromStoreFiltered.length ? 'เลือกรายการ…' : 'ไม่มี PPE ในหมวดนี้ — ไปที่ /store/ppe'} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ppeFromStoreFiltered.map((si) => (
+                                <SelectItem key={si.id} value={si.id}>
+                                  {si.itemCode} — {formatStoreItemLabel(si)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label className="font-bold">จำนวนต่อคน (โควต้า)</Label>
+                          <Input type="number" min={1} value={newPPE.quantityDefault || 1} onChange={e => setNewPPE({...newPPE, quantityDefault: parseInt(e.target.value, 10) || 1})} />
+                          <p className="text-[11px] text-muted-foreground">ถ้าหลายไซส์ใช้ &quot;รหัสกลุ่มโควต้า&quot; เดียวกันใน store จะนับรวมกันเมื่อเบิก (เช่น M 1 + L 1 = 2)</p>
                         </div>
                         <div className="flex items-center space-x-2 p-3 border rounded-lg">
                           <Checkbox id="ppe-req" checked={newPPE.required} onCheckedChange={v => setNewPPE({...newPPE, required: !!v})} />
@@ -556,7 +670,17 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   <TableBody>
                     {ppe?.map(p => (
                       <TableRow key={p.id}>
-                        <TableCell className="pl-6 font-bold text-primary">{p.itemName}</TableCell>
+                        <TableCell className="pl-6">
+                          <div className="flex flex-col gap-1">
+                            <span className="font-bold text-primary">
+                              {formatStoreItemLabel({ itemName: p.itemName, variantSpecification: p.variantSpecification })}
+                            </span>
+                            <span className="text-[10px] font-mono text-muted-foreground">{p.itemCode}</span>
+                            {(p.variantGroupKey || '').trim() ? (
+                              <Badge variant="outline" className="text-[10px] w-fit">กลุ่มโควต้า: {p.variantGroupKey}</Badge>
+                            ) : null}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-sm font-medium">{p.quantityDefault} ชุด/คน</TableCell>
                         <TableCell>{p.required ? <Badge className="bg-orange-600">Required</Badge> : <Badge variant="outline">Optional</Badge>}</TableCell>
                         <TableCell className="text-right pr-6">
@@ -603,7 +727,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       <DialogHeader>
                         <DialogTitle>เพิ่มรายการเครื่องมือ/อุปกรณ์</DialogTitle>
                         <DialogDescription>
-                          เลือกจากทะเบียนคลังอุปกรณ์ (Store) ตามหมวดหมู่ — ใช้ผูกสิทธิ์เบิกของลูกจ้างตามตำแหน่ง
+                          เลือกจากทะเบียนอุปกรณ์ (ไม่รวม PPE) — PPE กำหนดที่แท็บ PPE
                         </DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
@@ -624,7 +748,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                           >
                             <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              {STORE_ITEM_CATEGORIES.map((c) => (
+                              {TOOL_STORE_CATEGORIES.map((c) => (
                                 <SelectItem key={c} value={c}>{c}</SelectItem>
                               ))}
                             </SelectContent>
@@ -653,7 +777,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                             <SelectContent>
                               {toolsInSelectedStoreCategory.map((si) => (
                                 <SelectItem key={si.id} value={si.id}>
-                                  {si.itemCode} — {si.itemName}
+                                  {si.itemCode} — {formatStoreItemLabel(si)}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -699,7 +823,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       <TableRow key={t.id}>
                         <TableCell className="pl-6 font-bold text-primary">
                           <div className="flex flex-col gap-0.5">
-                            <span>{t.itemName}</span>
+                            <span>{formatStoreItemLabel({ itemName: t.itemName, variantSpecification: t.variantSpecification })}</span>
                             {t.itemCode ? (
                               <span className="text-[10px] font-mono text-muted-foreground font-normal">{t.itemCode}</span>
                             ) : null}

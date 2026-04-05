@@ -33,6 +33,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
 import { isSystemAdmin, isHrManager, isOperationManager } from '@/lib/permission-core';
+import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
@@ -127,19 +128,22 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const canModify = useMemo(() => !!currentUser && canEdit(currentUser, 'main_contracts'), [currentUser]);
   const isSalesRole = useMemo(() => {
     if (!currentUser) return false;
-    return currentUser.department === 'sales'
-      || currentUser.assignedRoleKey === 'sales_manager'
-      || currentUser.assignedRoleKey === 'sales_officer'
-      || currentUser.roleId === 'sales_manager'
-      || currentUser.roleId === 'sales_officer';
+    return (
+      currentUser.department === 'sales' ||
+      userMatchesBusinessRoleKey(
+        currentUser.assignedRoleKey,
+        'sales_manager',
+        'sales_officer'
+      )
+    );
   }, [currentUser]);
   const isHRRole = useMemo(() => {
     if (!currentUser) return false;
-    return currentUser.department === 'hr'
+    return (
+      currentUser.department === 'hr'
       || currentUser.assignedRoleKey === 'hr_manager'
       || currentUser.assignedRoleKey === 'hr_officer'
-      || currentUser.roleId === 'hr_manager'
-      || currentUser.roleId === 'hr_officer';
+    );
   }, [currentUser]);
   const canEditSellSide = useMemo(() => canModify && !isHRRole, [canModify, isHRRole]);
   /** ต้นทุนในสัญญา: Admin / HR Manager / Operations Manager (operation pillar เต็ม) — ไม่ให้ sales-only / hr_officer */
@@ -158,7 +162,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   /** วันหยุดสัญญา: ผู้จัดการ (ทั้งสองฝั่ง) — ไม่ผูกแยกขาย/ต้นทุน */
   const canEditContractHolidaySchedule = useMemo(() => {
     if (!currentUser || !canModify) return false;
-    if (canApproveContract || isSystemAdmin(currentUser) || isHrManager(currentUser) || isOperationManager(currentUser)) return true;
+    if (canApproveContract || isHrManager(currentUser) || isOperationManager(currentUser)) return true;
     const rk = `${currentUser.assignedRoleKey || ''} ${currentUser.roleId || ''}`.toLowerCase();
     return rk.includes('manager');
   }, [currentUser, canModify, canApproveContract]);

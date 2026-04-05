@@ -1,63 +1,66 @@
-# User Auth Migration Guide
+# User authorization — field reference & admin workflows
 
-See `docs/permissions-architecture.md` for permission source of truth and primary fields.
+This document describes **how user access is stored today** and how admins should assign it.  
+(Legacy bulk migration UI has been removed; use **User Access Management** and **setup-admin repair** instead.)
 
-## Overview
+See **`docs/permissions-architecture.md`** for the full permission stack and helper list.
 
-Migration helper สำหรับ normalize ข้อมูลสิทธิ์ผู้ใช้จาก legacy ไปสู่โครงสร้างใหม่ โดย**ไม่ลบข้อมูลเก่า**
+## Canonical formatting (required)
 
-## สเปกสิทธิ์ใหม่
+| Rule | Example |
+|------|---------|
+| Lowercase only | `operations_manager` ✓ — `OPERATIONS_MANAGER` ✗ |
+| `snake_case` for keys | `hr_officer`, `client_user` |
+| Operations partition | `accessGroup`: `operations` ✓ — `operation` ✗ |
+| Admin profile vs role | Profile doc id `admin_admin` — user `assignedRoleKey` `system_admin` |
 
-| Group | Domains | หมายเหตุ |
-|-------|---------|----------|
-| **admin** | ทุกเมนู ทุก collection | รวม system management |
-| **operation** | sales / operations / hr / store | store ย้ายมาอยู่ operation |
-| **accounting** | sales / hr / accounting | ไม่มี store write |
-| **client** | read only | เฉพาะ customerId ของตัวเอง |
+The app normalizes on write via **`normalizeUserAuthorizationFields`** (`auth-mapping.ts`) and **`normalizeBusinessRoleKey` / `normalizePermissionProfileDocumentId`** (`role-key-normalizer.ts`).
 
-## Mapping
+## Access groups (partitions)
 
-| Legacy | Mapped To |
-|--------|-----------|
-| system_admin, super_admin, admin | admin_admin |
-| hr_*, operation_*, sales_*, store_* | operation_officer หรือ operation_manager |
-| finance_*, accounting_* | accounting_officer หรือ accounting_manager |
-| client* | client_user |
+| Group | Typical domains / notes |
+|-------|-------------------------|
+| **admin** | Full system; users, security, numbering, audit |
+| **operations** | Sales, HR, operations scheduling, store (under one partition) |
+| **accounting** | Accounting/finance modules; may read some operational data per matrix |
+| **client** | Customer portal; `userType` must be `customer_portal`, `accessGroup` `client`, `assignedRoleKey` `client_user` |
 
-## วิธีใช้งาน
+## Mapping business role → profile
 
-1. **Dry Run ก่อน** — กด "Dry Run" เพื่อดูรายงานโดยไม่เขียน Firestore
-2. **ตรวจสอบรายงาน** — ดู user ที่ needs_review หรือ conflict
-3. **Apply Migration** — กด "Apply Migration" เมื่อมั่นใจแล้ว
+Each `BusinessRoleKey` in `ROLE_CATALOG` has a **`permissionProfileKey`** (Firestore `permission_profiles` doc id). Examples:
 
-## Baseline Profiles ที่สร้าง
+| `assignedRoleKey` | Typical `permissionProfileKey` |
+|-------------------|-------------------------------|
+| `system_admin` | `admin_admin` |
+| `operations_manager` | `operations_manager` |
+| `operations_officer` | `operations_officer` |
+| `client_user` | `client_user` |
 
-- `admin_admin` — System Administrator
-- `operation_officer` — เจ้าหน้าที่ปฏิบัติการ (รวม sales/hr/ops/store)
-- `operation_manager` — ผู้จัดการปฏิบัติการ (รวม)
-- `accounting_officer` — เจ้าหน้าที่ฝ่ายบัญชี
-- `accounting_manager` — ผู้จัดการฝ่ายบัญชี
-- `client_user` — ลูกค้า Portal
+Custom profiles may exist in Firestore; ids should still be **lowercase** and consistent.
 
-## Fields ที่เพิ่ม (ไม่ลบของเดิม)
+## Admin workflows
 
-- `departmentGroup` / `accessGroup`
-- `accessLevel`
-- `assignedRoleKey` / `assignedRoleKeys`
-- `permissionProfileKey` / `permissionProfileKeys`
-- `roleIds` (compatibility)
+1. **Approve new registrations** — `/users` → tab **รออนุมัติ** → **แก้ไขสิทธิ์** → choose **permission profile** (recommended) or **role** → set status **ACTIVE** → save.  
+   The page stores canonical fields only (no uppercase legacy keys).
 
-## needs_review
+2. **Emergency repair** — `/setup-admin` → Account Repair → pick a canonical business role; payload is built with `buildAuthorizationForRepairRole`.
 
-ผู้ใช้ที่ข้อมูลไม่ชัดจะถูก mark เป็น `migrationNeedsReview: true` แทนการเดาสุ่ม — ต้องตรวจมือ
+## Fields touched on assign / approve
 
-## Setup Admin / Repair
+Writes typically set (at minimum):
 
-หน้า setup-admin (Account Repair) ใช้ mapping ใหม่แล้ว และเพิ่มตัวเลือก operation_officer, operation_manager
+- `assignedRoleKey`, `assignedRoleKeys` (single value)
+- `permissionProfileKey`, `permissionProfileKeys` (single value)
+- `accessGroup`, `departmentGroup` (matching, `operations` not `operation`)
+- `accessLevel`, `department`, `level`, `userType`, `dataAccess`
+- `approvalStatus`, `isActive`, `updatedAt`
 
-## ข้อจำกัด
+`roleId` / `roleIds` are kept in sync with the catalog’s `canonicalRole` for older readers.
 
-- รันได้เฉพาะ admin
-- ไม่ลบ users หรือ legacy fields
-- ไม่แก้ business records อื่น
-- ไม่เปลี่ยน customer ownership
+## `migrationNeedsReview`
+
+Users with unclear data may carry `migrationNeedsReview: true` until an admin fixes them via `/users` or setup-admin.
+
+## Firestore rules alignment
+
+Rules use **`users/{uid}.assignedRoleKey`** as the primary role string (exact match to canonical lowercase). Client portal additionally requires `userType == customer_portal` and `accessGroup == client`. Keep user documents aligned with this model to avoid denied reads/writes.

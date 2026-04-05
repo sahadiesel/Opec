@@ -287,7 +287,7 @@ export default function PermissionAuditPage() {
                   <SelectContent>
                     <SelectItem value="ALL">ทุกกลุ่มสิทธิ์</SelectItem>
                     <SelectItem value="admin">admin</SelectItem>
-                    <SelectItem value="operation">operation</SelectItem>
+                    <SelectItem value="operations">operations</SelectItem>
                     <SelectItem value="accounting">accounting</SelectItem>
                     <SelectItem value="client">client</SelectItem>
                   </SelectContent>

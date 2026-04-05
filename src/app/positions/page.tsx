@@ -377,7 +377,16 @@ export default function PositionsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{NO_PERMISSION_MESSAGE}</AlertDialogTitle>
-            <AlertDialogDescription className="sr-only">{NO_PERMISSION_MESSAGE}</AlertDialogDescription>
+            <AlertDialogDescription className="text-sm text-muted-foreground space-y-2">
+              <p>
+                Firestore ปฏิเสธคำขอ (มักเกิดตอนสร้างตำแหน่งหรือออกเลข POS-) — สาเหตุที่พบบ่อยคือกฎบนคลาวด์ยังไม่ตรงกับไฟล์ในโปรเจกต์
+                หรือเอกสารผู้ใช้ในคอลเลกชัน users ไม่มี / สถานะไม่ ACTIVE
+              </p>
+              <p>
+                ให้แอดมินรัน <span className="font-mono text-xs bg-muted px-1 rounded">npm run deploy:rules</span> หรือเปิด Firebase Console → Firestore → Rules
+                แล้ววางเนื้อหาจากไฟล์ firestore.rules ใน repo แล้วกด Publish
+              </p>
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogAction>ตกลง</AlertDialogAction>

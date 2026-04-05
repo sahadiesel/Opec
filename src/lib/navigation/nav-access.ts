@@ -32,6 +32,7 @@ export function resolveMatrixModuleForPath(pathname: string): string | null {
   if (p === '/workers' || p.startsWith('/workers/')) return 'workers';
   if (p === '/positions' || p.startsWith('/positions/')) return 'positions';
   if (p === '/worker-document-catalog' || p.startsWith('/worker-document-catalog/')) return 'worker_documents';
+  if (p === '/waves' || p.startsWith('/waves/')) return 'waves';
   if (p === '/assignments' || p.startsWith('/assignments/')) return 'assignments';
   if (p === '/mobilization' || p.startsWith('/mobilization/')) return 'mobilization';
   if (p.startsWith('/timesheets')) return 'timesheets';
@@ -47,7 +48,15 @@ export function sidebarMatrixVisibilityForPath(user: User, pathname: string): bo
   const role = getPrimaryLegacyRole(user);
   if (!role) return null;
 
-  if (!['system_admin', 'hr_officer', 'payroll_officer', 'operation_manager'].includes(role)) {
+  if (
+    ![
+      'system_admin',
+      'hr_officer',
+      'payroll_officer',
+      'operations_manager',
+      'operations_officer',
+    ].includes(role)
+  ) {
     return null;
   }
 
@@ -106,7 +115,7 @@ const SORTED_PREFIXES = [...MODULE_PREFIXES].sort((a, b) => b[0].length - a[0].l
 
 /**
  * ผู้ใช้ที่ล็อกอินแล้ว (internal) เข้า path นี้ได้หรือไม่ — ใช้ใน AppShell
- * - system_admin: ผ่านทุก path (ยกเว้นจะแยก logic client ด้านล่าง)
+ * - isSystemAdmin (rules ยัง normalize เป็น system_admin): ผ่านทุก path ภายใน
  * - ลูกค้า portal: เฉพาะ /client-portal/*
  * - internal: ไม่ให้เข้า /client-portal
  */

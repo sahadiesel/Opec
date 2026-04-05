@@ -69,7 +69,7 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'HR Officer should see HR data but not Accounting data'
   );
 
-  const hybridUser = createMockUser(['hr_officer', 'operation_officer'], 'hr', 'officer');
+  const hybridUser = createMockUser(['hr_officer', 'operations_officer'], 'hr', 'officer');
   const accessToHR = getPermissions(hybridUser, 'workers');
   const accessToOps = getPermissions(hybridUser, 'waves');
   assert(

@@ -11,24 +11,26 @@ import type {
   BusinessRoleKey,
 } from './types';
 import { getEffectiveAccessGroup } from './permission-core';
+import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
 
 export type { DepartmentGroup };
 
 export function legacyDeptToDepartmentGroup(d: DeptType | undefined): DepartmentGroup {
-  if (!d) return 'operation';
+  if (!d) return 'operations';
   if (d === 'admin') return 'admin';
   if (d === 'client') return 'client';
   if (d === 'accounting') return 'accounting';
-  /** คลัง/จัดซื้ออยู่ภายใต้ partition operation (สอดคล้อง user accessGroup + เมนูจัดการผู้ใช้) */
-  if (d === 'store') return 'operation';
-  return 'operation';
+  /** คลัง/จัดซื้ออยู่ภายใต้ partition operations */
+  if (d === 'store') return 'operations';
+  return 'operations';
 }
 
 /** Resolved group for a profile (new field wins, else infer from legacy department). */
 export function getProfileDepartmentGroup(profile: PermissionProfile): DepartmentGroup {
   if (profile.department === 'store' && profile.departmentGroup === 'accounting') {
-    return 'operation';
+    return 'operations';
   }
+  if (profile.departmentGroup === 'operation') return 'operations';
   if (profile.departmentGroup) return profile.departmentGroup;
   return legacyDeptToDepartmentGroup(profile.department);
 }
@@ -47,7 +49,7 @@ export function deriveLegacyDepartmentForGroup(
       return 'client';
     case 'accounting':
       return 'accounting';
-    case 'operation':
+    case 'operations':
       if (level === 'admin') return 'operations';
       return 'hr';
     default:
@@ -58,7 +60,7 @@ export function deriveLegacyDepartmentForGroup(
 /** Allowed levels per group (admin rank only for admin group). */
 export const ACCESS_LEVELS_BY_DEPARTMENT_GROUP: Record<DepartmentGroup, readonly AccessLevel[]> = {
   admin: ['viewer', 'officer', 'manager', 'admin'],
-  operation: ['viewer', 'officer', 'manager', 'admin'],
+  operations: ['viewer', 'officer', 'manager', 'admin'],
   accounting: ['viewer', 'officer', 'manager', 'admin'],
   client: ['viewer', 'officer', 'manager'],
 };
@@ -125,39 +127,48 @@ export type ProfileAuditIssue =
 /** Mirrors mapBusinessRoleToAccessGroup in auth-mapping (avoid circular import). */
 export function accessGroupFromAssignedRoleKey(key: string | undefined): DepartmentGroup | null {
   if (!key) return null;
-  if (key === 'system_admin') return 'admin';
-  if (key === 'client_user') return 'client';
-  if (key === 'accounting_manager' || key === 'accounting_officer') {
+  const k = normalizeBusinessRoleKey(key) ?? String(key).trim();
+  if (k === 'system_admin') return 'admin';
+  if (k === 'client_user') return 'client';
+  if (k === 'accounting_manager' || k === 'accounting_officer') {
     return 'accounting';
   }
-  if (key === 'store_manager' || key === 'store_officer') {
-    return 'operation';
-  }
-  return 'operation';
+  /** Operation partition in ROLE_CATALOG (sales / hr / ops / store / payroll). */
+  const operationRoleKeys = new Set([
+    'sales_manager',
+    'sales_officer',
+    'hr_manager',
+    'hr_officer',
+    'payroll_officer',
+    'operations_manager',
+    'operations_officer',
+    'store_officer',
+  ]);
+  if (operationRoleKeys.has(k)) return 'operations';
+  return 'operations';
 }
 
 /**
  * Map a permission profile to the closest transitional BusinessRoleKey (for user doc sync).
  */
 export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionProfile): BusinessRoleKey {
-  const pk = (profile.primaryRoleTemplateKey || profile.profileKey) as string;
+  const pkRaw = (profile.primaryRoleTemplateKey || profile.profileKey) as string;
+  const pk = normalizeBusinessRoleKey(pkRaw) ?? pkRaw;
   const direct = [
     'system_admin',
     'hr_manager',
     'hr_officer',
     'payroll_officer',
-    'operation_manager',
-    'operation_officer',
+    'operations_manager',
+    'operations_officer',
     'accounting_manager',
     'accounting_officer',
     'sales_manager',
     'sales_officer',
-    'store_manager',
     'store_officer',
     'client_user',
   ];
   if (direct.includes(pk)) return pk as BusinessRoleKey;
-  if (pk === 'admin_admin') return 'system_admin';
 
   const g = getProfileDepartmentGroup(profile);
   const level = profile.level;
@@ -169,9 +180,9 @@ export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionPr
   const legacy = profile.department;
   if (legacy === 'sales') return level === 'manager' ? 'sales_manager' : 'sales_officer';
   if (legacy === 'hr') return level === 'manager' ? 'hr_manager' : 'hr_officer';
-  if (legacy === 'operations') return level === 'manager' ? 'operation_manager' : 'operation_officer';
-  if (legacy === 'store') return level === 'manager' ? 'store_manager' : 'store_officer';
-  return level === 'manager' || level === 'admin' ? 'operation_manager' : 'operation_officer';
+  if (legacy === 'operations') return level === 'manager' ? 'operations_manager' : 'operations_officer';
+  if (legacy === 'store') return 'store_officer';
+  return level === 'manager' || level === 'admin' ? 'operations_manager' : 'operations_officer';
 }
 
 export function analyzeUserProfileBinding(
@@ -179,7 +190,8 @@ export function analyzeUserProfileBinding(
   profileByKey: Map<string, PermissionProfile>
 ): { issues: ProfileAuditIssue[]; summary: string } {
   const issues: ProfileAuditIssue[] = [];
-  const key = user.permissionProfileKey ?? user.permissionProfileKeys?.[0];
+  const rawKey = user.permissionProfileKey ?? user.permissionProfileKeys?.[0];
+  const key = rawKey ? normalizePermissionProfileDocumentId(rawKey) ?? rawKey : undefined;
   if (!key) {
     issues.push('no_profile_key');
     return { issues, summary: 'ไม่มี profile key' };
@@ -197,14 +209,16 @@ export function analyzeUserProfileBinding(
   if (ug && pg && ug !== pg) {
     issues.push('group_mismatch');
   }
-  const roleG = accessGroupFromAssignedRoleKey(user.assignedRoleKey ?? user.roleId ?? undefined);
+  const roleG = accessGroupFromAssignedRoleKey(user.assignedRoleKey ?? undefined);
   if (roleG && ug && roleG !== ug) {
     issues.push('role_field_conflict');
   }
   if (roleG && pg && roleG !== pg) {
     issues.push('role_field_conflict');
   }
-  if ((user.assignedRoleKey ?? user.roleId) === 'payroll_officer' && key === 'hr_officer') {
+  const assignedCanon =
+    normalizeBusinessRoleKey(user.assignedRoleKey ?? '') ?? (user.assignedRoleKey ?? '');
+  if (assignedCanon === 'payroll_officer' && key === 'hr_officer') {
     issues.push('role_profile_mismatch');
   }
   if (!user.accessGroup && !user.department) {
