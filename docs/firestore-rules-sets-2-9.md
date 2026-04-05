@@ -29,7 +29,7 @@
 
 - `canReadCustomers` / `canWriteCustomers` — สอดคล้อง `customers` column (ตัด `store_officer`, `accounting_officer` ออกจาก read; เขียนลูกค้าเฉพาะ sales/ops pillar + `hr_manager` + `accounting_manager` + admin)
 - `canReadQuotationsInternal` / `canWriteQuotations` — `sales_manager` **ไม่** write quotation (matrix `quotations: P_NONE`); ops pillar + `hr_manager` + sales อื่น ๆ ยังเขียนได้
-- `canReadCommercialDocuments` / `canWriteCommercialDocuments` — ใช้กับ `main_contracts`, `sales_contract_terms`, `rate_conditions`, `profit_estimates`, `purchase_orders` (โมดูล `customer_pos` ใน matrix)
+- `canReadCommercialDocs` / `canWriteCommercialDocs` — ใช้กับ `main_contracts`, `sales_contract_terms`, `rate_conditions`, `profit_estimates`, `purchase_orders` (โมดูล `customer_pos` ใน matrix)
 
 **เป้าหมายชุดนี้**
 
@@ -53,8 +53,7 @@
 **Helpers หลังปรับ (implemented)**
 
 - `canReadOpsScheduling` — view ตาม matrix (ตัด `store_officer`; รวม payroll/accounting แบบ view)
-- `canCreateOpsScheduling` — สร้างได้เมื่อ matrix `create` (ไม่รวม `payroll_officer`, `accounting_officer`)
-- `canEditOpsScheduling` — แก้ไขเมื่อ matrix `edit` (รวม `sales_manager` + `operations_officer`; ไม่รวม payroll/accounting officer แบบ view-only)
+- `canWriteOpsScheduling` — create/update รวม (สมาชิกเดียวกับ `canCreateOpsScheduling`/`canEditOpsScheduling` เดิม; ไม่รวม `payroll_officer`, `accounting_officer`)
 - `canDeleteOpsScheduling` — ลบเฉพาะแถวที่ matrix ให้ `delete` (`operations_manager`, `hr_manager`, `accounting_manager` + admin; ไม่รวม officer/sales แบบ P_VCE / P_OFFICER_PILLAR)
 
 **เป้าหมาย**
@@ -78,11 +77,11 @@
 
 **Helpers หลังปรับ (implemented)**
 
-- `canReadWorkers` / `canCreateWorkers` / `canEditWorkers` / `canDeleteWorkers` — `sales_manager` อ่านอย่างเดียว; `store_officer` ไม่อ่าน; ลบคนงาน: admin, `operations_manager`, `hr_manager`, `hr_officer` (ไม่รวม `operations_officer`)
+- `canReadWorkers` / `canWriteWorkers` / `canDeleteWorkers` — `sales_manager` อ่านอย่างเดียว; `store_officer` ไม่อ่าน; ลบคนงาน: admin, `operations_manager`, `hr_manager`, `hr_officer` (ไม่รวม `operations_officer`); sub `workers/...` create/update/delete ใช้ `canWriteWorkers` (เดิม `canEditWorkers`)
 - `canReadPositions` / create / edit / delete — `store_officer` อ่านได้; `sales_manager` สร้างตำแหน่งได้แต่ไม่แก้/ลบ; `accounting_officer` ไม่อ่าน; ลบ: admin + `operations_manager` + `hr_manager` เท่านั้น
-- `labor_cost_contract_terms` — แยก create/update/delete ตาม matrix (`operations_officer` / `hr_officer` ไม่ลบ; `payroll_officer` / `accounting_officer` อ่านอย่างเดียว)
-- `office_staff` — `sales_manager` / `store_officer` ไม่เข้า; ลบ: admin, `operations_manager`, `hr_manager`, `accounting_manager` (ไม่รวม officer / `hr_officer` แบบ P_VCE)
-- `worker_document_catalog` — สอดคล้อง `worker_documents`: `sales_manager` และ `accounting_manager` ไม่มีสิทธิ์ใน matrix; `payroll_officer` อ่านอย่างเดียว; ลบ catalog: รวม `hr_officer`
+- `labor_cost_contract_terms` — `canReadLaborCostContractTerms` (= `canReadWorkers`); `canWriteLaborCostContractTerms` (= `canWriteWorkers` + `sales_manager`); delete ตาม matrix
+- `office_staff` — create/update ใช้ `canWriteWorkers` (สมาชิกเดิมกับ `canCreateOfficeStaff`); ลบ: admin, `operations_manager`, `hr_manager`, `accounting_manager`
+- `worker_document_catalog` — `canWriteWorkerDocumentCatalog` สำหรับ create/update; สอดคล้อง `worker_documents`: `sales_manager` และ `accounting_manager` ไม่มีสิทธิ์ใน matrix; `payroll_officer` อ่านอย่างเดียว; ลบ catalog: รวม `hr_officer`
 - `number_sequences`: `worker` / `office_staff` / `position` / `cost_term` ใช้ helper สร้างที่สอดคล้อง (ตัด `payroll_officer` ออกจากการ bump เลข master ที่ไม่มีสิทธิ์สร้างเอกสาร)
 
 **เป้าหมาย**
@@ -115,8 +114,8 @@
 - `canReadPaymentExportBatches` / `canWritePaymentExportBatches` — อ่านรวม accounting officer; **เขียน**ไม่รวม `accounting_officer` (matrix view-only), ไม่รวม `sales_manager`
 - `canReadPayrollPolicies` — union อ่านที่เกี่ยว; **เขียน** `payroll_policies` เฉพาะ `canManageSystem()` (matrix: policy edit ห้าม hr_manager/ops persona)
 - `canPrepareOfficePayrollRunDoc` — สร้าง/แก้ office run เมื่อยังไม่ล็อก (ไม่ใช้ `operations_manager` แม้เป็น preparer งานคนงาน)
-- `canReadTimesheetsInternal` / `canCreateDailyTimesheet` / `canUpdateDailyTimesheet` — เลิก `internalRead()`; **ไม่**ให้ `payroll_officer` / accounting สร้าง-แก้ timesheet (matrix)
-- `exception_requests` — อ่านตาม cohort timesheet; เขียนยัง `canAccessHR()`
+- `canReadTimesheetsInternal` / `canWriteDailyTimesheet` — create/update รวม (สมาชิกเดิม); **ไม่**ให้ `payroll_officer` / accounting สร้าง-แก้ timesheet (matrix); update ยังต้อง `!dailyTimesheetLocked`
+- `exception_requests` — อ่านตาม cohort timesheet; เขียน `canWriteExceptionRequests()` (สมาชิกเดิมกับ `canAccessHR()`)
 - Executive subs — ใช้ `canManagePayrollFinancial() || canManageSystem()` ให้สอดคล้อง parent
 
 **เป้าหมาย**
@@ -139,10 +138,11 @@
 
 **Helpers หลังปรับ (implemented)**
 
-- `canReadVendors` / `canCreateVendors` / `canEditVendors` / `canDeleteVendors` — `sales_manager` สร้างได้แต่ไม่แก้/ลบ; ตัด `hr_officer` / `payroll_officer` / `accounting_officer` ออกจากอ่าน; ลบ vendor: admin + `operations_manager` + `hr_manager` + `accounting_manager` (ไม่รวม officer / `store_officer` แบบ P_VCE)
-- `canReadPurchases` / create / edit / delete — ไม่รวม `sales_manager` / `payroll_officer`; `accounting_officer` อ่านอย่างเดียว; ลบ: admin + `operations_manager` + `hr_manager` + `accounting_manager`
-- `canReadStoreInventory` / create / edit / delete — ใช้กับคอลเลกชัน store ทั้งหมดด้านบน; ไม่รวม `sales_manager` / `payroll_officer`; `accounting_officer` อ่านอย่างเดียว; ลบ: admin + `store_officer` + `operations_manager` + `hr_manager` + `accounting_manager` (ไม่รวม `operations_officer` / `hr_officer`)
-- `number_sequences`: `vendor` / `purchase` / `store_*` keys ผูกกับ `canCreateVendors` / `canCreatePurchases` / `canCreateStoreInventory` (แทน `canAccessStore()` แบบรวม)
+- `procurementReadCore` / `procurementWriteCore` — ฐานสมาชิกร่วม vendors/purchases
+- `canReadVendors` / `canCreateVendors` / `canEditVendors` / `canDeleteStoreProcurement` — `sales_manager` สร้างได้แต่ไม่แก้/ลบ; ตัด `hr_officer` / `payroll_officer` / `accounting_officer` ออกจากอ่าน
+- `canReadPurchases` / `canWritePurchases` / `canDeleteStoreProcurement` — ไม่รวม `sales_manager` / `payroll_officer`; `accounting_officer` อ่านอย่างเดียว
+- `canReadStoreInventory` / `canWriteStoreInventory` / `canDeleteStoreInventory` — คอลเลกชัน store ทั้งหมดด้านบน + sub สลิป
+- `number_sequences`: `canUseProcurementSequence` / `canUseStoreInventorySequence` (+ helpers pillar อื่น)
 
 **เป้าหมาย**
 
@@ -192,7 +192,7 @@
 
 **Helpers**
 
-`canManageSystem()`, `isSignedIn()`, `canWriteCommercialDocuments()` สำหรับ `main_contract`, `canReadQuotationsInternal()` / `canReadWorkers()` สำหรับ `system/*` อ่านตาม doc
+`canManageSystem()`, `isSignedIn()`, `canWriteCommercialDocs()` สำหรับ `main_contract`, `canReadQuotationsInternal()` / `canReadWorkers()` สำหรับ `system/*` อ่านตาม doc
 
 **เป้าหมาย**
 
@@ -202,7 +202,7 @@
 
 **DoD**
 
-- [x] ไล่ทุก sequence key ใน `SEQUENCE_REGISTRY` / `generateNextDocumentCode` ว่าตรงกับ rule (`main_contract` ↔ `canWriteCommercialDocuments()`)
+- [x] ไล่ทุก sequence key ใน `SEQUENCE_REGISTRY` / `generateNextDocumentCode` ว่าตรงกับ rule (`main_contract` ↔ `canWriteCommercialDocs()` / `canUseCommercialSequence`)
 - [x] `system/{docId}` read แยก `bootstrap` / `company_profile` / `drug_test_panel`
 - [ ] UAT: สร้างเอกสารที่ต้อง gen เลขในหลายโมดูล; client อ่าน worker + drug panel; quotation อ่าน company_profile
 

@@ -4,8 +4,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Helper map (structure only; function order unchanged):
+    // (1) Identity / user
+    // (2) Role normalization & predicates
+    // (3) Domain access (matrix-aligned, coarse gates, number_sequences)
+    // (4) Status / workflow guards + user self-service (users match)
+
     // ---------------------------------------------------------------------
-    // Basic identity (Set 1: users + permission_profiles rely on these helpers)
+    // (1) Identity / user
     // ---------------------------------------------------------------------
     function isSignedIn() {
       return request.auth != null;
@@ -52,7 +58,7 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Simple role helpers
+    // (2) Role normalization & predicates (assignedRoleKey, profile refs, department, role booleans)
     // ---------------------------------------------------------------------
     /**
      * Business role for rules: users/{uid}.assignedRoleKey only (lowercase canonical; app normalizes on write).
@@ -198,6 +204,23 @@ service cloud.firestore {
       return isOperationManager() || isOperationsOfficer();
     }
 
+    function isAccountingManager() {
+      return isEligibleInternal()
+        && (
+          roleKey() == 'accounting_manager'
+          || userReferencesProfileDocId('accounting_manager')
+        );
+    }
+
+    function isAccountingOfficer() {
+      return isEligibleInternal()
+        && (
+          roleKey() == 'accounting_officer'
+          || userReferencesProfileDocId('accounting_officer')
+        );
+    }
+
+    // Coarse eligibility helpers (keep for reference; do not use as primary allow on matrix-tight collections).
     function internalRead() {
       return isEligibleInternal();
     }
@@ -207,7 +230,7 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
-    // Domain access model
+    // (3) Domain access helpers
     // ---------------------------------------------------------------------
     function canManageSystem() {
       return isAdminUser();
@@ -243,30 +266,32 @@ service cloud.firestore {
       return isAdminUser() || isAccountingUser();
     }
 
-    // ---------------------------------------------------------------------
-    // Set 2 — Sales collections (align ROLE_PERMISSION_MATRIX rows)
-    // ---------------------------------------------------------------------
-    function isAccountingManager() {
-      return isEligibleInternal()
-        && (
-          roleKey() == 'accounting_manager'
-          || userReferencesProfileDocId('accounting_manager')
-        );
+    /** Same membership as former canAccessHR() on eligible internal (exception_requests write). */
+    function canWriteExceptionRequests() {
+      return isAdminUser()
+        || isOperationsPillarStaff()
+        || isHrManager()
+        || isHrOfficer()
+        || isPayrollOfficer();
     }
 
-    function isAccountingOfficer() {
-      return isEligibleInternal()
-        && (
-          roleKey() == 'accounting_officer'
-          || userReferencesProfileDocId('accounting_officer')
-        );
+    /** approvals read: internal eligible or client portal. */
+    function canReadApprovals() {
+      return isEligibleInternal() || isClientUser();
     }
 
+    /** approvals write: union of ops pillar + HR + payroll (+ admin), matching former canAccessHR||canAccessOperations||admin. */
+    function canWriteApprovals() {
+      return canWriteExceptionRequests();
+    }
+
+    // --- (3) Set 2 — Sales (ROLE_PERMISSION_MATRIX) ---
     /** customers.view — excludes store_officer, accounting_officer (matrix P_NONE). */
     function canReadCustomers() {
       return isAdminUser()
         || (isEligibleInternal() && (
-          canAccessSales()
+          isSalesUser()
+          || isOperationsPillarStaff()
           || isHrManager()
           || isHrOfficer()
           || isPayrollOfficer()
@@ -277,7 +302,8 @@ service cloud.firestore {
     /** customers create/edit — hr_officer/payroll_officer view-only on matrix. */
     function canWriteCustomers() {
       return isAdminUser()
-        || canAccessSales()
+        || isSalesUser()
+        || isOperationsPillarStaff()
         || isHrManager()
         || isAccountingManager();
     }
@@ -286,7 +312,8 @@ service cloud.firestore {
     function canReadQuotationsInternal() {
       return isAdminUser()
         || (isEligibleInternal() && (
-          canAccessSales()
+          isSalesUser()
+          || isOperationsPillarStaff()
           || isHrManager()
           || isHrOfficer()
           || isPayrollOfficer()
@@ -311,22 +338,19 @@ service cloud.firestore {
      * main_contracts, sales_contract_terms, rate_conditions, profit_estimates, purchase_orders (maps to customer_pos):
      * read like quotations; write excludes view-only HR/payroll/accounting_officer (matrix).
      */
-    function canReadCommercialDocuments() {
+    function canReadCommercialDocs() {
       return canReadQuotationsInternal();
     }
 
-    function canWriteCommercialDocuments() {
+    function canWriteCommercialDocs() {
       return isAdminUser()
-        || canAccessSales()
+        || isSalesUser()
+        || isOperationsPillarStaff()
         || isHrManager()
         || isAccountingManager();
     }
 
-    // ---------------------------------------------------------------------
-    // Set 3 — Operations scheduling (waves, mobilizations, assignments, worker_wave_acceptances)
-    // Matrix modules waves | assignments | mobilization (ROLE_PERMISSION_MATRIX in permissions.ts).
-    // store_officer P_NONE; payroll_officer / accounting_officer view-only; sales_manager edit but no delete.
-    // ---------------------------------------------------------------------
+    // --- (3) Set 3 — Ops scheduling (waves, mobilizations, assignments, worker_wave_acceptances) ---
     function canReadOpsScheduling() {
       return isAdminUser()
         || (isEligibleInternal() && !isStoreOfficer()
@@ -342,16 +366,8 @@ service cloud.firestore {
         );
     }
 
-    function canCreateOpsScheduling() {
-      return isAdminUser()
-        || isSalesUser()
-        || isOperationsPillarStaff()
-        || isHrManager()
-        || isHrOfficer()
-        || isAccountingManager();
-    }
-
-    function canEditOpsScheduling() {
+    /** create and update share the same membership (matrix create/edit match for ops scheduling). */
+    function canWriteOpsScheduling() {
       return isAdminUser()
         || isSalesUser()
         || isOperationsPillarStaff()
@@ -368,10 +384,7 @@ service cloud.firestore {
         || isAccountingManager();
     }
 
-    // ---------------------------------------------------------------------
-    // Set 4 — HR master (workers, positions, labor_cost_contract_terms, office_staff, worker_document_catalog)
-    // ROLE_PERMISSION_MATRIX rows in src/lib/permissions.ts (incl. sales_manager workers view-only, store_officer workers none).
-    // ---------------------------------------------------------------------
+    // --- (3) Set 4 — HR master (workers, positions, labor terms, office_staff, worker_document_catalog) ---
     function canReadWorkers() {
       return isAdminUser()
         || (isEligibleInternal() && !isStoreOfficer()
@@ -388,17 +401,13 @@ service cloud.firestore {
         );
     }
 
-    function canCreateWorkers() {
+    function canWriteWorkers() {
       return isAdminUser()
         || isOperationManager()
         || isOperationsOfficer()
         || isHrManager()
         || isHrOfficer()
         || isAccountingManager();
-    }
-
-    function canEditWorkers() {
-      return canCreateWorkers();
     }
 
     function canDeleteWorkers() {
@@ -446,33 +455,11 @@ service cloud.firestore {
     }
 
     function canReadLaborCostContractTerms() {
-      return isAdminUser()
-        || (isEligibleInternal() && !isStoreOfficer()
-          && (
-            isSalesManager()
-            || isOperationManager()
-            || isOperationsOfficer()
-            || isHrManager()
-            || isHrOfficer()
-            || isPayrollOfficer()
-            || isAccountingManager()
-            || isAccountingOfficer()
-          )
-        );
+      return canReadWorkers();
     }
 
-    function canCreateLaborCostContractTerms() {
-      return isAdminUser()
-        || isSalesManager()
-        || isOperationManager()
-        || isOperationsOfficer()
-        || isHrManager()
-        || isHrOfficer()
-        || isAccountingManager();
-    }
-
-    function canEditLaborCostContractTerms() {
-      return canCreateLaborCostContractTerms();
+    function canWriteLaborCostContractTerms() {
+      return canWriteWorkers() || isSalesManager();
     }
 
     function canDeleteLaborCostContractTerms() {
@@ -498,19 +485,6 @@ service cloud.firestore {
         );
     }
 
-    function canCreateOfficeStaff() {
-      return isAdminUser()
-        || isOperationManager()
-        || isOperationsOfficer()
-        || isHrManager()
-        || isHrOfficer()
-        || isAccountingManager();
-    }
-
-    function canEditOfficeStaff() {
-      return canCreateOfficeStaff();
-    }
-
     function canDeleteOfficeStaff() {
       return isAdminUser()
         || isOperationManager()
@@ -533,16 +507,12 @@ service cloud.firestore {
         );
     }
 
-    function canCreateWorkerDocumentCatalog() {
+    function canWriteWorkerDocumentCatalog() {
       return isAdminUser()
         || isOperationManager()
         || isOperationsOfficer()
         || isHrManager()
         || isHrOfficer();
-    }
-
-    function canEditWorkerDocumentCatalog() {
-      return canCreateWorkerDocumentCatalog();
     }
 
     function canDeleteWorkerDocumentCatalog() {
@@ -552,6 +522,7 @@ service cloud.firestore {
         || isHrOfficer();
     }
 
+    // --- (3) Payroll prepare / approve / finance (do not rename; business meaning) ---
     // Prepare worker payroll (batches/runs/periods): matrix + permission-payroll-matrix — includes HR officer/manager (not sales_manager).
     function canPreparePayroll() {
       return isAdminUser()
@@ -570,9 +541,7 @@ service cloud.firestore {
       return isAdminUser() || isAccountingUser();
     }
 
-    // ---------------------------------------------------------------------
-    // Set 5 — Payroll / timesheets / exports (ROLE_PERMISSION_MATRIX + permission-payroll-matrix)
-    // ---------------------------------------------------------------------
+    // --- (3) Set 5 — Payroll reads, timesheets, payment export ---
     /** Worker payroll_runs, payroll_batches, payroll_periods, correction requests — not office payroll or bank export. */
     function canReadWorkerPayrollStack() {
       return isAdminUser()
@@ -652,17 +621,13 @@ service cloud.firestore {
     }
 
     /** Timesheet create/edit: matrix denies payroll_officer + accounting on non-view actions. */
-    function canCreateDailyTimesheet() {
+    function canWriteDailyTimesheet() {
       return isAdminUser()
         || isSalesManager()
         || isOperationManager()
         || isOperationsOfficer()
         || isHrManager()
         || isHrOfficer();
-    }
-
-    function canUpdateDailyTimesheet() {
-      return canCreateDailyTimesheet();
     }
 
     /** payment_export_batches write — exclude accounting_officer (matrix P_VIEW). */
@@ -676,66 +641,17 @@ service cloud.firestore {
         || isPayrollOfficer();
     }
 
-    // ---------------------------------------------------------------------
-    // Set 6 — Store & procurement (vendors, purchases, store_*)
-    // ROLE_PERMISSION_MATRIX: vendors | purchases | store_inventory.
-    // ---------------------------------------------------------------------
-    function canReadVendors() {
-      return isAdminUser()
-        || (isEligibleInternal() && (
-          isSalesManager()
-          || isOperationManager()
-          || isOperationsOfficer()
-          || isHrManager()
-          || isStoreOfficer()
-          || isAccountingManager()
-        ));
-    }
-
-    function canCreateVendors() {
-      return isAdminUser()
-        || isSalesManager()
-        || isOperationManager()
+    // --- (3) Set 6 — Store & procurement (vendors, purchases, store_*) ---
+    function procurementReadCore() {
+      return isOperationManager()
         || isOperationsOfficer()
         || isHrManager()
         || isStoreOfficer()
         || isAccountingManager();
     }
 
-    /** sales_manager: create vendor only (matrix edit false). */
-    function canEditVendors() {
-      return isAdminUser()
-        || isOperationManager()
-        || isOperationsOfficer()
-        || isHrManager()
-        || isStoreOfficer()
-        || isAccountingManager();
-    }
-
-    function canDeleteVendors() {
-      return isAdminUser()
-        || isOperationManager()
-        || isHrManager()
-        || isAccountingManager();
-    }
-
-    /** purchases: matrix P_NONE for sales_manager, payroll_officer; accounting_officer view-only. */
-    function canReadPurchases() {
-      return isAdminUser()
-        || (isEligibleInternal() && (
-          isOperationManager()
-          || isOperationsOfficer()
-          || isHrManager()
-          || isHrOfficer()
-          || isStoreOfficer()
-          || isAccountingManager()
-          || isAccountingOfficer()
-        ));
-    }
-
-    function canCreatePurchases() {
-      return isAdminUser()
-        || isOperationManager()
+    function procurementWriteCore() {
+      return isOperationManager()
         || isOperationsOfficer()
         || isHrManager()
         || isHrOfficer()
@@ -743,11 +659,32 @@ service cloud.firestore {
         || isAccountingManager();
     }
 
-    function canEditPurchases() {
-      return canCreatePurchases();
+    function canReadVendors() {
+      return isAdminUser()
+        || (isEligibleInternal() && (procurementReadCore() || isSalesManager()));
     }
 
-    function canDeletePurchases() {
+    /** sales_manager: create vendor only (matrix edit false) — keep create/update split on match. */
+    function canCreateVendors() {
+      return isAdminUser()
+        || isSalesManager()
+        || procurementWriteCore();
+    }
+
+    function canEditVendors() {
+      return isAdminUser() || procurementWriteCore();
+    }
+
+    function canReadPurchases() {
+      return isAdminUser()
+        || (isEligibleInternal() && (procurementReadCore() || isHrOfficer() || isAccountingOfficer()));
+    }
+
+    function canWritePurchases() {
+      return isAdminUser() || procurementWriteCore();
+    }
+
+    function canDeleteStoreProcurement() {
       return isAdminUser()
         || isOperationManager()
         || isHrManager()
@@ -768,7 +705,7 @@ service cloud.firestore {
         ));
     }
 
-    function canCreateStoreInventory() {
+    function canWriteStoreInventory() {
       return isAdminUser()
         || isOperationManager()
         || isOperationsOfficer()
@@ -776,10 +713,6 @@ service cloud.firestore {
         || isHrOfficer()
         || isStoreOfficer()
         || isAccountingManager();
-    }
-
-    function canEditStoreInventory() {
-      return canCreateStoreInventory();
     }
 
     function canDeleteStoreInventory() {
@@ -790,11 +723,7 @@ service cloud.firestore {
         || isAccountingManager();
     }
 
-    // ---------------------------------------------------------------------
-    // Set 7 — Accounting (billing_notes, tax_invoices, receipts, AR/AP, bank, cashbook)
-    // ROLE_PERMISSION_MATRIX: ops/sales/HR/payroll rows P_NONE or omit accounting modules; store_officer excluded from read.
-    // Read: isAccountingUser (+ admin), not store_officer. Write: accounting staff except officer (manager + legacy dept accounting).
-    // ---------------------------------------------------------------------
+    // --- (3) Set 7 — Accounting (billing, tax, receipts, AR/AP, bank, cashbook) ---
     function canReadAccountingInternal() {
       return isAdminUser()
         || (isEligibleInternal() && !isStoreOfficer() && isAccountingUser());
@@ -806,6 +735,9 @@ service cloud.firestore {
         || (isAccountingUser() && !isAccountingOfficer());
     }
 
+    // ---------------------------------------------------------------------
+    // (4) Status / workflow guards (payroll + timesheet state machines)
+    // ---------------------------------------------------------------------
     function payrollBatchLocked(data) {
       return data.status in ['LOCKED', 'PAID'];
     }
@@ -827,6 +759,7 @@ service cloud.firestore {
       return nextStatus == null || !managerOnlyPayrollStatus(nextStatus);
     }
 
+    // (4 cont.) User self-service guards for users/{uid} match (Set 1)
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -883,28 +816,28 @@ service cloud.firestore {
     }
 
     match /main_contracts/{id} {
-      allow read: if canReadCommercialDocuments();
-      allow write: if canWriteCommercialDocuments();
+      allow read: if canReadCommercialDocs();
+      allow write: if canWriteCommercialDocs();
     }
 
     match /sales_contract_terms/{id} {
-      allow read: if canReadCommercialDocuments();
-      allow write: if canWriteCommercialDocuments();
+      allow read: if canReadCommercialDocs();
+      allow write: if canWriteCommercialDocs();
     }
 
     match /purchase_orders/{id} {
-      allow read: if canReadCommercialDocuments() || sameCustomerId(resource.data.customerId);
-      allow write: if canWriteCommercialDocuments();
+      allow read: if canReadCommercialDocs() || sameCustomerId(resource.data.customerId);
+      allow write: if canWriteCommercialDocs();
     }
 
     match /rate_conditions/{id} {
-      allow read: if canReadCommercialDocuments();
-      allow write: if canWriteCommercialDocuments();
+      allow read: if canReadCommercialDocs();
+      allow write: if canWriteCommercialDocs();
     }
 
     match /profit_estimates/{id} {
-      allow read: if canReadCommercialDocuments();
-      allow write: if canWriteCommercialDocuments();
+      allow read: if canReadCommercialDocs();
+      allow write: if canWriteCommercialDocs();
     }
 
     // ---------------------------------------------------------------------
@@ -912,29 +845,25 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     match /waves/{id} {
       allow read: if canReadOpsScheduling() || sameCustomerId(resource.data.customerId);
-      allow create: if canCreateOpsScheduling();
-      allow update: if canEditOpsScheduling();
+      allow create, update: if canWriteOpsScheduling();
       allow delete: if canDeleteOpsScheduling();
     }
 
     match /mobilizations/{id} {
       allow read: if canReadOpsScheduling() || sameCustomerId(resource.data.customerId);
-      allow create: if canCreateOpsScheduling();
-      allow update: if canEditOpsScheduling();
+      allow create, update: if canWriteOpsScheduling();
       allow delete: if canDeleteOpsScheduling();
     }
 
     match /assignments/{id} {
       allow read: if canReadOpsScheduling() || sameCustomerId(resource.data.customerId);
-      allow create: if canCreateOpsScheduling();
-      allow update: if canEditOpsScheduling();
+      allow create, update: if canWriteOpsScheduling();
       allow delete: if canDeleteOpsScheduling();
     }
 
     match /worker_wave_acceptances/{id} {
       allow read: if canReadOpsScheduling() || sameCustomerId(resource.data.customerId);
-      allow create: if canCreateOpsScheduling();
-      allow update: if canEditOpsScheduling();
+      allow create, update: if canWriteOpsScheduling();
       allow delete: if canDeleteOpsScheduling();
     }
 
@@ -943,8 +872,7 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     match /workers/{id} {
       allow read: if canReadWorkers() || isClientUser();
-      allow create: if canCreateWorkers();
-      allow update: if canEditWorkers();
+      allow create, update: if canWriteWorkers();
       allow delete: if canDeleteWorkers();
     }
 
@@ -957,22 +885,19 @@ service cloud.firestore {
 
     match /labor_cost_contract_terms/{id} {
       allow read: if canReadLaborCostContractTerms();
-      allow create: if canCreateLaborCostContractTerms();
-      allow update: if canEditLaborCostContractTerms();
+      allow create, update: if canWriteLaborCostContractTerms();
       allow delete: if canDeleteLaborCostContractTerms();
     }
 
     match /office_staff/{id} {
       allow read: if canReadOfficeStaff();
-      allow create: if canCreateOfficeStaff();
-      allow update: if canEditOfficeStaff();
+      allow create, update: if canWriteWorkers();
       allow delete: if canDeleteOfficeStaff();
     }
 
     match /worker_document_catalog/{id} {
       allow read: if canReadWorkerDocumentCatalog();
-      allow create: if canCreateWorkerDocumentCatalog();
-      allow update: if canEditWorkerDocumentCatalog();
+      allow create, update: if canWriteWorkerDocumentCatalog();
       allow delete: if canDeleteWorkerDocumentCatalog();
     }
 
@@ -1033,14 +958,14 @@ service cloud.firestore {
 
     match /daily_timesheets/{id} {
       allow read: if canReadTimesheetsInternal() || sameCustomerId(resource.data.customerId);
-      allow create: if canCreateDailyTimesheet();
-      allow update: if canUpdateDailyTimesheet() && !dailyTimesheetLocked(resource.data);
+      allow create: if canWriteDailyTimesheet();
+      allow update: if canWriteDailyTimesheet() && !dailyTimesheetLocked(resource.data);
       allow delete: if canApprovePayroll();
     }
 
     match /exception_requests/{id} {
       allow read: if canReadTimesheetsInternal();
-      allow write: if canAccessHR();
+      allow write: if canWriteExceptionRequests();
     }
 
     // Payroll prep reads profiles (payroll-service); HR may maintain — was unreachable under /{document=**} admin-only.
@@ -1057,87 +982,79 @@ service cloud.firestore {
       allow read: if canReadVendors();
       allow create: if canCreateVendors();
       allow update: if canEditVendors();
-      allow delete: if canDeleteVendors();
+      allow delete: if canDeleteStoreProcurement();
     }
 
     match /purchases/{purchaseId} {
       allow read: if canReadPurchases();
-      allow create: if canCreatePurchases();
-      allow update: if canEditPurchases();
-      allow delete: if canDeletePurchases();
+      allow create, update: if canWritePurchases();
+      allow delete: if canDeleteStoreProcurement();
     }
 
     match /purchases/{purchaseId}/{document=**} {
       allow read: if canReadPurchases();
-      allow create: if canCreatePurchases();
-      allow update: if canEditPurchases();
-      allow delete: if canDeletePurchases();
+      allow create, update: if canWritePurchases();
+      allow delete: if canDeleteStoreProcurement();
     }
 
     match /store_items/{id} {
       allow read: if canReadStoreInventory();
-      allow create: if canCreateStoreInventory();
-      allow update: if canEditStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_transactions/{id} {
       allow read: if canReadStoreInventory();
-      allow create: if canCreateStoreInventory();
-      allow update: if canEditStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_receipts/{id} {
       allow read: if canReadStoreInventory();
-      allow create: if canCreateStoreInventory();
-      allow update: if canEditStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_issue_slips/{id} {
       allow read: if canReadStoreInventory();
-      allow create: if canCreateStoreInventory();
-      allow update: if canEditStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_return_slips/{id} {
       allow read: if canReadStoreInventory();
-      allow create: if canCreateStoreInventory();
-      allow update: if canEditStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_writeoffs/{id} {
       allow read: if canReadStoreInventory();
-      allow create: if canCreateStoreInventory();
-      allow update: if canEditStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     // Line items under slips (receive/issue/return/writeoff) — app writes subcollection "items"; was admin-only via catch-all.
     match /store_receipts/{receiptId}/{document=**} {
       allow read: if canReadStoreInventory();
-      allow create, update: if canCreateStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_issue_slips/{slipId}/{document=**} {
       allow read: if canReadStoreInventory();
-      allow create, update: if canCreateStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_return_slips/{returnId}/{document=**} {
       allow read: if canReadStoreInventory();
-      allow create, update: if canCreateStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
     match /store_writeoffs/{writeoffId}/{document=**} {
       allow read: if canReadStoreInventory();
-      allow create, update: if canCreateStoreInventory();
+      allow create, update: if canWriteStoreInventory();
       allow delete: if canDeleteStoreInventory();
     }
 
@@ -1191,25 +1108,61 @@ service cloud.firestore {
       allow write: if canWriteAccountingDocs();
     }
 
+    // (3 cont.) number_sequences: compose pillar checks (no new policy here)
+    function canUseCommercialSequence(seqId) {
+      return (seqId in ['customer', 'customer_po', 'quotation', 'sales_term']
+          && (isAdminUser() || isSalesUser() || isOperationsPillarStaff()))
+        || (seqId == 'main_contract' && canWriteCommercialDocs());
+    }
+
+    function canUseOpsSequence(seqId) {
+      return seqId in ['wave', 'assignment']
+        && (isAdminUser() || isOperationsPillarStaff() || isHrManager() || isHrOfficer());
+    }
+
+    function canUseHrMasterSequence(seqId) {
+      return (seqId == 'worker' && canWriteWorkers())
+        || (seqId == 'office_staff' && canWriteWorkers())
+        || (seqId == 'position' && canCreatePositions())
+        || (seqId == 'cost_term' && canWriteLaborCostContractTerms());
+    }
+
+    function canUseHrPayrollSequence(seqId) {
+      return seqId in ['payroll_run', 'office_payroll_run']
+        && (isAdminUser() || isOperationsPillarStaff() || isHrManager() || isHrOfficer() || isPayrollOfficer());
+    }
+
+    function canUseAccountingSequence(seqId) {
+      return seqId in ['billing_note', 'tax_invoice', 'receipt', 'ap_bill', 'ar', 'ap', 'cashbook_entry', 'bank_account']
+        && canWriteAccountingDocs();
+    }
+
+    function canUseProcurementSequence(seqId) {
+      return (seqId == 'vendor' && canCreateVendors()) || (seqId == 'purchase' && canWritePurchases());
+    }
+
+    function canUseStoreInventorySequence(seqId) {
+      return seqId in ['store_receive', 'store_issue', 'store_return', 'store_writeoff']
+        && canWriteStoreInventory();
+    }
+
+    function canReadWriteNumberSequence(seqId) {
+      return canManageSystem()
+        || canUseCommercialSequence(seqId)
+        || canUseOpsSequence(seqId)
+        || canUseHrMasterSequence(seqId)
+        || canUseHrPayrollSequence(seqId)
+        || canUseAccountingSequence(seqId)
+        || (seqId == 'executive_payroll_run' && canManagePayrollFinancial())
+        || canUseProcurementSequence(seqId)
+        || canUseStoreInventorySequence(seqId);
+    }
+
     // ---------------------------------------------------------------------
     // SYSTEM
     // ---------------------------------------------------------------------
     match /number_sequences/{id} {
-      allow read, write: if canManageSystem()
-        || (canAccessSales() && id in ['customer', 'customer_po', 'quotation', 'sales_term'])
-        || (canAccessOperations() && id in ['wave', 'assignment'])
-        || (id == 'worker' && canCreateWorkers())
-        || (id == 'office_staff' && canCreateOfficeStaff())
-        || (id == 'position' && canCreatePositions())
-        || (id == 'cost_term' && canCreateLaborCostContractTerms())
-        || (canAccessHR() && id in ['payroll_run', 'office_payroll_run'])
-        || (canWriteAccountingDocs()
-          && id in ['billing_note', 'tax_invoice', 'receipt', 'ap_bill', 'ar', 'ap', 'cashbook_entry', 'bank_account'])
-        || (canManagePayrollFinancial() && id == 'executive_payroll_run')
-        || (id == 'vendor' && canCreateVendors())
-        || (id == 'purchase' && canCreatePurchases())
-        || (id in ['store_receive', 'store_issue', 'store_return', 'store_writeoff'] && canCreateStoreInventory())
-        || (id == 'main_contract' && canWriteCommercialDocuments());
+      allow read, write: if canReadWriteNumberSequence(id);
     }
 
     // permission_profiles (Set 1: admin CRUD + own-row read for matrix onSnapshot)
@@ -1239,14 +1192,14 @@ service cloud.firestore {
     // AUDIT / APPROVALS / CLIENT PORTAL
     // ---------------------------------------------------------------------
     match /audit_logs/{id} {
-      allow read: if canManageSystem() || internalReadNonStoreOfficer();
+      allow read: if canManageSystem() || (isEligibleInternal() && !isStoreOfficer());
       allow create: if isSignedIn();
       allow update, delete: if false;
     }
 
     match /approvals/{id} {
-      allow read: if internalRead() || isClientUser();
-      allow write: if canAccessHR() || canAccessOperations() || canManageSystem();
+      allow read: if canReadApprovals();
+      allow write: if canWriteApprovals();
     }
 
     match /client_portal/{document=**} {
@@ -1259,8 +1212,7 @@ service cloud.firestore {
     // ---------------------------------------------------------------------
     match /workers/{workerId}/{document=**} {
       allow read: if canReadWorkers() || isClientUser();
-      allow create: if canCreateWorkers();
-      allow update, delete: if canEditWorkers();
+      allow create, update, delete: if canWriteWorkers();
     }
 
     match /positions/{positionId}/{document=**} {
@@ -1275,8 +1227,8 @@ service cloud.firestore {
     }
 
     match /main_contracts/{contractId}/{document=**} {
-      allow read: if canReadCommercialDocuments();
-      allow write: if canWriteCommercialDocuments();
+      allow read: if canReadCommercialDocs();
+      allow write: if canWriteCommercialDocs();
     }
 
     match /quotations/{quotationId}/{document=**} {
@@ -1287,10 +1239,10 @@ service cloud.firestore {
     }
 
     match /purchase_orders/{purchaseOrderId}/{document=**} {
-      allow read: if canReadCommercialDocuments()
+      allow read: if canReadCommercialDocs()
         || (isClientUser()
             && get(/databases/$(database)/documents/purchase_orders/$(purchaseOrderId)).data.customerId == userCustomerId());
-      allow write: if canWriteCommercialDocuments();
+      allow write: if canWriteCommercialDocs();
     }
 
     match /billing_notes/{billingNoteId}/{document=**} {
@@ -1359,7 +1311,7 @@ service cloud.firestore {
     match /{path=**}/po_lines/{lineId} {
       allow read: if path.matches('^purchase_orders/[^/]+$')
         && (
-          canReadCommercialDocuments()
+          canReadCommercialDocs()
           || (isClientUser()
             && get(/databases/$(database)/documents/$(path)).data.customerId == userCustomerId())
         );
@@ -1367,8 +1319,8 @@ service cloud.firestore {
 
     // App: only main_contracts/{id}/position_rates (no collectionGroup query today; rule for parity + future).
     match /{path=**}/position_rates/{rateId} {
-      allow read: if path.matches('^main_contracts/[^/]+$') && canReadCommercialDocuments();
-      allow write: if path.matches('^main_contracts/[^/]+$') && canWriteCommercialDocuments();
+      allow read: if path.matches('^main_contracts/[^/]+$') && canReadCommercialDocs();
+      allow write: if path.matches('^main_contracts/[^/]+$') && canWriteCommercialDocs();
     }
 
     // Subcollections named "lines": payslip history uses collectionGroup("lines") on payroll + office (+ executive).
@@ -1385,4 +1337,3 @@ service cloud.firestore {
     }
   }
 }
-

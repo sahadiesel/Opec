@@ -6,9 +6,9 @@
  * Keep in sync with firestore.rules: roleKey() (assignedRoleKey, lowercase canonical), Set 4 HR helpers,
  * Set 5 payroll (canPreparePayroll includes hr_manager/hr_officer; canApprovePayroll includes hr_manager;
  * canReadWorkerPayrollStack / office / payment_export / timesheets helpers),
- * Set 6 store (canReadVendors/Purchases/StoreInventory + create/edit/delete splits for vendors/purchases/store_*),
+ * Set 6 store (procurementReadCore/procurementWriteCore; vendors create/edit split; purchases canWritePurchases; canDeleteStoreProcurement; canWriteStoreInventory),
  * Set 7 accounting (canReadAccountingInternal, canWriteAccountingDocs excludes accounting_officer),
- * Set 8 system (number_sequences `main_contract` ↔ canWriteCommercialDocuments; system read by docId),
+ * Set 8 system (number_sequences `main_contract` ↔ canWriteCommercialDocs; system read by docId),
  * Set 9 collection groups (po_lines, position_rates, lines) + worker_payment_profiles + store slip subs; catch-all admin-only,
  * Set 7 accounting (canReadAccountingInternal, canWriteAccountingDocs; isAccountingManager/Officer + profile doc id),
  * canAccessOperations/HR, and useAppUser (no localStorage RBAC after user-doc errors).
