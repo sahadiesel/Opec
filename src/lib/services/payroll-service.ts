@@ -405,7 +405,7 @@ export class PayrollService {
       const rateParts: string[] = [];
       if (usedPackageLaborCost) {
         rateParts.push(
-          'work_day: package_labor (8+OT; holiday wrap / Sun+SunOT)',
+          'work_day: package_labor (8h+overflow×OT; ot15/20/30 tiers; holiday / Sun+SunOT)',
         );
       }
       if (conditionIds.size > 0) {

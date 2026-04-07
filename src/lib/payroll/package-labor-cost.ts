@@ -8,6 +8,13 @@ import type { DailyTimesheet, MainContract } from '@/lib/types';
 /** ชม.ทำงานปกติตามกฎหมายแรงงาน (วันทำงานทั่วไป) */
 export const THAI_LEGAL_NORMAL_HOURS_PER_DAY = 8;
 
+/** ตัวคูณ OT ตาม tier บน timesheet (ฝั่งต้นทุน — ฐาน = hourly จากแพ็ก) */
+export const PAYROLL_OT_TIER_MULT = {
+  OT_1_5: 1.5,
+  OT_2_0: 2,
+  OT_3_0: 3,
+} as const;
+
 export type StatedPackageHours = 8 | 12;
 
 export interface DeriveHourlyInput {
@@ -136,18 +143,67 @@ export interface WorkDayPackageCostResult {
   amount: number;
   hourlyNormal: number;
   totalWorkedHours: number;
+  /** ชม.ปกติในกรอบ 8 ชม.แรก (จากฟิลด์ normalHours) */
   normalPaidHours: number;
+  /** ชม.ที่คิดแบบ OT: เกิน 8 ใน normalHours + ot15 + ot20 + ot30 */
   otPaidHours: number;
   restDay: RestDayResolution;
   mode: 'weekday_split' | 'public_holiday_wrap' | 'weekly_rest_split';
 }
 
+function parseWorkHours(ts: DailyTimesheet): {
+  nh: number;
+  o15: number;
+  o20: number;
+  o30: number;
+  legalNormal: number;
+  overflowNormal: number;
+  tierOtHours: number;
+} {
+  const nh = Math.max(0, ts.normalHours || 0);
+  const o15 = Math.max(0, ts.ot15Hours || 0);
+  const o20 = Math.max(0, ts.ot20Hours || 0);
+  const o30 = Math.max(0, ts.ot30Hours || 0);
+  const cap = THAI_LEGAL_NORMAL_HOURS_PER_DAY;
+  const legalNormal = Math.min(nh, cap);
+  const overflowNormal = Math.max(0, nh - cap);
+  return {
+    nh,
+    o15,
+    o20,
+    o30,
+    legalNormal,
+    overflowNormal,
+    tierOtHours: o15 + o20 + o30,
+  };
+}
+
+/**
+ * ยอดฐานก่อนคูณวันหยุด: กรอบ 8 ชม.ปกติ + ส่วนเกินใน normal × ตัวคูณ OT สัญญา + OT แยก tier
+ */
+function computeBaseWorkAmount(
+  h: number,
+  otContract: number,
+  w: ReturnType<typeof parseWorkHours>,
+): { normalPart: number; overflowPart: number; tierPart: number } {
+  const tierPart =
+    h *
+    (w.o15 * PAYROLL_OT_TIER_MULT.OT_1_5 +
+      w.o20 * PAYROLL_OT_TIER_MULT.OT_2_0 +
+      w.o30 * PAYROLL_OT_TIER_MULT.OT_3_0);
+  const normalPart = w.legalNormal * h;
+  const overflowPart = w.overflowNormal * h * otContract;
+  return { normalPart, overflowPart, tierPart };
+}
+
 /**
  * ค่าจ้าง work_day จากแพ็กต้นทุน + ชม.ทำงานจริง
  *
- * - วันปกติ: 8 ชม.แรก × ฐานชม. + เกิน × ฐาน × ตัวคูณ OT (สัญญา/PO)
- * - วันหยุดในปฏิทินสัญญา: (ยอดแบบวันปกติ) × publicHoliday
- * - เสาร์–อาทิตย์ / อาทิตย์: 8 ชม.แรก × ฐาน × Sunday + เกิน × ฐาน × OT × Sunday OT
+ * - กรอบ 8 ชม.แรกจาก normalHours × ฐานชม.
+ * - normalHours เกิน 8: ส่วนเกิน × ฐาน × ตัวคูณ OT สัญญา/PO (โครงเดิมเมื่อไม่แยก tier)
+ * - ot15 / ot20 / ot30: × 1.5 / × 2 / × 3 ของฐานชม. (ไม่ซ้อนกับตัวคูณ OT สัญญา — tier เป็นตัวกำหนดอัตราแล้ว)
+ * - วันหยุดในปฏิทิน: คูณทั้งยอดฐาน × publicHoliday
+ * - เสาร์–อาทิตย์: ส่วนปกติ × Sunday; ส่วน overflow + ทุก tier × Sunday OT
  */
 export function computeWorkDayCostFromPackage(
   input: WorkDayPackageCostInput,
@@ -158,41 +214,46 @@ export function computeWorkDayCostFromPackage(
     otAfterShiftMultiplier: input.otAfterShiftMultiplier,
   });
 
-  const T = totalWorkedHoursFromTimesheet(input.timesheet);
+  const w = parseWorkHours(input.timesheet);
+  const T = Math.min(24, w.nh + w.o15 + w.o20 + w.o30);
   const rest = resolveCostRestDay(input.timesheet.date, input.mainContract);
+  const otContract = Math.max(0, input.otAfterShiftMultiplier);
 
-  const cap = THAI_LEGAL_NORMAL_HOURS_PER_DAY;
-  const normalPaid = Math.min(T, cap);
-  const otPaid = Math.max(0, T - cap);
-  const otMult = Math.max(0, input.otAfterShiftMultiplier);
+  const { normalPart, overflowPart, tierPart } = computeBaseWorkAmount(
+    h,
+    otContract,
+    w,
+  );
 
   let baseAmount: number;
   let mode: WorkDayPackageCostResult['mode'];
 
   if (!rest.active) {
-    baseAmount = normalPaid * h + otPaid * h * otMult;
+    baseAmount = normalPart + overflowPart + tierPart;
     mode = 'weekday_split';
   } else if (rest.kind === 'public_holiday') {
     const wrap = Math.max(0, rest.publicHolidayWrap ?? 1);
-    baseAmount =
-      (normalPaid * h + otPaid * h * otMult) * wrap;
+    baseAmount = (normalPart + overflowPart + tierPart) * wrap;
     mode = 'public_holiday_wrap';
   } else {
     const nM = Math.max(0, rest.weeklyNormalMult ?? 1);
     const oM = Math.max(0, rest.weeklyOtMult ?? 1);
     baseAmount =
-      normalPaid * h * nM + otPaid * h * otMult * oM;
+      normalPart * nM +
+      overflowPart * oM +
+      tierPart * oM;
     mode = 'weekly_rest_split';
   }
 
   const amount = roundMoney(baseAmount);
+  const otPaidHours = w.overflowNormal + w.tierOtHours;
 
   return {
     amount,
     hourlyNormal: h,
     totalWorkedHours: T,
-    normalPaid,
-    otPaid,
+    normalPaidHours: w.legalNormal,
+    otPaidHours,
     restDay: rest,
     mode,
   };
