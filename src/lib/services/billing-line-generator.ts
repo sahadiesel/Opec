@@ -17,7 +17,11 @@ import type {
   PurchaseOrder,
   SalesContractTerm,
   RateCondition,
+  MainContract,
 } from '@/lib/types';
+import { derivePackageNormalHourlyRate, PACKAGE_OT_TIER_MULT } from '@/lib/commercial/package-hourly-rate';
+import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
+import { resolveSellRestDay, type SellRestDayResolution } from '@/lib/commercial/sell-rest-day';
 import { resolveActiveSalesContractTerm } from '@/lib/services/contract-resolver';
 import {
   resolveApplicableSalesRateCondition,
@@ -71,6 +75,154 @@ const DEFAULT_OT_MULT = { ot15: 1.5, ot20: 2.0, ot30: 3.0 } as const;
 
 function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function applySellRestMultiplier(
+  amount: number,
+  rest: SellRestDayResolution,
+  bucket: 'normal' | 'ot',
+): number {
+  if (!rest.active) return amount;
+  if (rest.kind === 'public_holiday') {
+    return amount * Math.max(0, rest.publicHolidayWrap ?? 1);
+  }
+  const m =
+    bucket === 'normal'
+      ? Math.max(0, rest.weeklyNormalMult ?? 1)
+      : Math.max(0, rest.weeklyOtMult ?? 1);
+  return amount * m;
+}
+
+/**
+ * work_day จากแพ็กขาย PO (sellRateSnapshot) สมมาตรกับ payroll: แพ็ก 8/12 + ตัวคูณขาย + tier + วันพิเศษฝั่งขาย
+ * - ตัวคูณขาย OT ≤ 1: เก็บรายวันแบบแบน (ไม่แยก OT) × ตัวคูณวันหยุดขาย
+ * - ตัวคูณขาย OT > 1: แยก 8 ชม. + overflow normal + ot15/20/30 เหมือนฝั่งต้นทุน
+ */
+function workDayFromPackageBilling(
+  ts: DailyTimesheet,
+  poLine: POLine,
+  mainContract: MainContract | undefined,
+  map: Map<string, LineAcc>,
+  warnings: string[],
+) {
+  const sellRate = Number(poLine.sellRateSnapshot || 0);
+  if (sellRate <= 0) return;
+
+  const sellOtMult =
+    Number(poLine.sellOtRulesSnapshot?.afterShift) ||
+    Number(mainContract?.rateMultiplierPolicy?.sell?.otAfterShift) ||
+    1;
+
+  const statedHours = poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
+  const sellRest = resolveSellRestDay(ts.date, mainContract);
+  const w = ts.workerNameSnapshot;
+  const wid = ts.workerId;
+  const pos = ts.positionId;
+  const tid = [ts.id];
+
+  if (sellOtMult <= 1) {
+    let amt = sellRate;
+    if (sellRest.active && sellRest.kind === 'public_holiday') {
+      amt *= Math.max(0, sellRest.publicHolidayWrap ?? 1);
+    } else if (sellRest.active && sellRest.kind === 'weekly_rest') {
+      amt *= Math.max(0, sellRest.weeklyNormalMult ?? 1);
+    }
+    pushAcc(map, accKey(wid, pos, 'work_day', amt), {
+      workerId: wid,
+      workerName: w,
+      positionId: pos,
+      eventType: 'work_day',
+      timesheetIds: tid,
+      amount: amt,
+      quantity: 1,
+    });
+    return;
+  }
+
+  const h = derivePackageNormalHourlyRate(sellRate, statedHours, sellOtMult);
+  if (h <= 0) {
+    warnings.push(`${w} (${ts.date}): ไม่สามารถคำนวณฐานชม.ขายจากแพ็ก — ข้าม`);
+    return;
+  }
+
+  const wh = parseWorkDayHours(ts);
+  const normalPart0 = wh.legalNormal * h;
+  const overflowPart0 = wh.overflowNormal * h * sellOtMult;
+  const tier15 = wh.o15 * h * PACKAGE_OT_TIER_MULT.OT_1_5;
+  const tier20 = wh.o20 * h * PACKAGE_OT_TIER_MULT.OT_2_0;
+  const tier30 = wh.o30 * h * PACKAGE_OT_TIER_MULT.OT_3_0;
+
+  const normalPart = applySellRestMultiplier(normalPart0, sellRest, 'normal');
+  const overflowPart = applySellRestMultiplier(overflowPart0, sellRest, 'ot');
+  const t15 = applySellRestMultiplier(tier15, sellRest, 'ot');
+  const t20 = applySellRestMultiplier(tier20, sellRest, 'ot');
+  const t30 = applySellRestMultiplier(tier30, sellRest, 'ot');
+
+  if (wh.legalNormal > 0 && normalPart > 0) {
+    const q = wh.legalNormal;
+    const up = normalPart / q;
+    pushAcc(map, accKey(wid, pos, 'work_day', up), {
+      workerId: wid,
+      workerName: w,
+      positionId: pos,
+      eventType: 'work_day',
+      timesheetIds: tid,
+      amount: normalPart,
+      quantity: q,
+    });
+  }
+  if (wh.overflowNormal > 0 && overflowPart > 0) {
+    const q = wh.overflowNormal;
+    const up = overflowPart / q;
+    pushAcc(map, accKey(wid, pos, 'sell_overflow_normal', up), {
+      workerId: wid,
+      workerName: w,
+      positionId: pos,
+      eventType: 'sell_overflow_normal',
+      timesheetIds: tid,
+      amount: overflowPart,
+      quantity: q,
+    });
+  }
+  if (wh.o15 > 0 && t15 > 0) {
+    const q = wh.o15;
+    const up = t15 / q;
+    pushAcc(map, accKey(wid, pos, 'ot_1.5', up), {
+      workerId: wid,
+      workerName: w,
+      positionId: pos,
+      eventType: 'ot_1.5',
+      timesheetIds: tid,
+      amount: t15,
+      quantity: q,
+    });
+  }
+  if (wh.o20 > 0 && t20 > 0) {
+    const q = wh.o20;
+    const up = t20 / q;
+    pushAcc(map, accKey(wid, pos, 'ot_2.0', up), {
+      workerId: wid,
+      workerName: w,
+      positionId: pos,
+      eventType: 'ot_2.0',
+      timesheetIds: tid,
+      amount: t20,
+      quantity: q,
+    });
+  }
+  if (wh.o30 > 0 && t30 > 0) {
+    const q = wh.o30;
+    const up = t30 / q;
+    pushAcc(map, accKey(wid, pos, 'ot_3.0', up), {
+      workerId: wid,
+      workerName: w,
+      positionId: pos,
+      eventType: 'ot_3.0',
+      timesheetIds: tid,
+      amount: t30,
+      quantity: q,
+    });
+  }
 }
 
 function accKey(
@@ -443,17 +595,18 @@ function descriptionForLine(acc: LineAcc): string {
       return `${w} — สแตนด์บาย (${q} วัน)`;
     case 'travel_day':
       return `${w} — วันเดินทาง (${q} วัน)`;
+    case 'sell_overflow_normal':
+      return `${w} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย) (${q} ชม.)`;
     default:
       return `${w} — ${acc.eventType} (${q} หน่วย)`;
   }
 }
 
 /**
- * Generates billing note lines from approved timesheets using **sales contract terms + rate conditions**.
- * PO line sell snapshots are used only as **fallback** when no matching sales rate exists for that row.
+ * Generates billing note lines from approved timesheets.
  *
- * work_day + OT: วันปกติจากเงื่อนไข work_day (หน่วยวัน); OT คิดจาก daily anchor เดียวกันและตัวคูณเริ่มต้น 1.5 / 2 / 3
- * (ถ้าเงื่อนไขเป็น HOUR จะรวมชั่วโมงในบรรทัดเดียวตาม sales calculator)
+ * **work_day** + `sellRateSnapshot` > 0: แพ็กขาย 8/12 ชม. + ตัวคูณขาย (PO/สัญญา) สมมาตร payroll — ก่อน rate conditions
+ * อื่นๆ / work_day ไม่มีราคา PO: sales terms + rate conditions; PO snapshot เป็น fallback
  */
 export async function generateBillingLines(
   db: Firestore,
@@ -471,6 +624,14 @@ export async function generateBillingLines(
     return { lines: [], totalAmount: 0, timesheetCount: 0, warnings };
   }
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+
+  let mainContract: MainContract | undefined;
+  if (po.contractId) {
+    const mcSnap = await getDoc(doc(db, 'main_contracts', po.contractId));
+    if (mcSnap.exists()) {
+      mainContract = { ...(mcSnap.data() as MainContract), id: mcSnap.id };
+    }
+  }
 
   const tsConstraints = [
     where('purchaseOrderId', '==', poId),
@@ -547,11 +708,26 @@ export async function generateBillingLines(
       ? rateConditions.filter((c) => c.parentId === term.id)
       : [];
 
+    if (
+      ts.eventType === 'work_day' &&
+      poLine &&
+      Number(poLine.sellRateSnapshot || 0) > 0
+    ) {
+      workDayFromPackageBilling(
+        ts,
+        poLine,
+        mainContract,
+        accMap,
+        warnings,
+      );
+      continue;
+    }
+
     if (!term) {
       if (ts.eventType === 'work_day') {
         if (poLine) {
           warnings.push(
-            `${ts.workerNameSnapshot} (${ts.date}): ไม่พบ sales term ที่ใช้ได้ — ใช้ราคา snapshot จาก PO line`,
+            `${ts.workerNameSnapshot} (${ts.date}): ไม่พบ sales term ที่ใช้ได้ — ใช้ราคา snapshot จาก PO line (legacy)`,
           );
           workDayFromPoLine(ts, poLine, accMap);
         } else {

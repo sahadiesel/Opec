@@ -4,18 +4,22 @@
  */
 
 import type { DailyTimesheet, MainContract } from '@/lib/types';
+import {
+  LEGAL_NORMAL_HOURS_PER_DAY,
+  PACKAGE_OT_TIER_MULT,
+  derivePackageNormalHourlyRate,
+} from '@/lib/commercial/package-hourly-rate';
+import type { StatedPackageHours } from '@/lib/commercial/package-hourly-rate';
+import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
+import type { ParsedWorkDayHours } from '@/lib/commercial/package-work-day-hours';
 
-/** ชม.ทำงานปกติตามกฎหมายแรงงาน (วันทำงานทั่วไป) */
-export const THAI_LEGAL_NORMAL_HOURS_PER_DAY = 8;
+/** @deprecated ใช้ LEGAL_NORMAL_HOURS_PER_DAY */
+export const THAI_LEGAL_NORMAL_HOURS_PER_DAY = LEGAL_NORMAL_HOURS_PER_DAY;
 
-/** ตัวคูณ OT ตาม tier บน timesheet (ฝั่งต้นทุน — ฐาน = hourly จากแพ็ก) */
-export const PAYROLL_OT_TIER_MULT = {
-  OT_1_5: 1.5,
-  OT_2_0: 2,
-  OT_3_0: 3,
-} as const;
+/** @deprecated ใช้ PACKAGE_OT_TIER_MULT */
+export const PAYROLL_OT_TIER_MULT = PACKAGE_OT_TIER_MULT;
 
-export type StatedPackageHours = 8 | 12;
+export type { StatedPackageHours };
 
 export interface DeriveHourlyInput {
   /** ต้นทุนรายวันตามแพ็ก (เช่น costBaselineSnapshot) */
@@ -26,27 +30,12 @@ export interface DeriveHourlyInput {
   otAfterShiftMultiplier: number;
 }
 
-/**
- * ฐานค่าจ้างต่อชม.ปกติ (ก่อนคูณวันพิเศษ)
- * - แพ็ก 8 ชม.: แพ็ก / 8
- * - แพ็ก 12 ชม.: แพ็ก / (8 + 4×ot) เพราะ 12 = 8 normal + 4 OT ตามกฎหมาย
- */
 export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
-  const pkg = Math.max(0, input.costPackagePerDay);
-  if (pkg <= 0) return 0;
-
-  const ot = Math.max(0, input.otAfterShiftMultiplier);
-
-  if (input.statedHours === 8) {
-    return pkg / THAI_LEGAL_NORMAL_HOURS_PER_DAY;
-  }
-
-  // แพ็ก 12 ชม. = 8 ชม.ปกติ + (12−8) ชม. OT
-  const otHoursInPackage = 12 - THAI_LEGAL_NORMAL_HOURS_PER_DAY;
-  const denom =
-    THAI_LEGAL_NORMAL_HOURS_PER_DAY + otHoursInPackage * ot;
-  if (denom <= 0) return 0;
-  return pkg / denom;
+  return derivePackageNormalHourlyRate(
+    input.costPackagePerDay,
+    input.statedHours,
+    input.otAfterShiftMultiplier,
+  );
 }
 
 export interface RestDayResolution {
@@ -151,46 +140,19 @@ export interface WorkDayPackageCostResult {
   mode: 'weekday_split' | 'public_holiday_wrap' | 'weekly_rest_split';
 }
 
-function parseWorkHours(ts: DailyTimesheet): {
-  nh: number;
-  o15: number;
-  o20: number;
-  o30: number;
-  legalNormal: number;
-  overflowNormal: number;
-  tierOtHours: number;
-} {
-  const nh = Math.max(0, ts.normalHours || 0);
-  const o15 = Math.max(0, ts.ot15Hours || 0);
-  const o20 = Math.max(0, ts.ot20Hours || 0);
-  const o30 = Math.max(0, ts.ot30Hours || 0);
-  const cap = THAI_LEGAL_NORMAL_HOURS_PER_DAY;
-  const legalNormal = Math.min(nh, cap);
-  const overflowNormal = Math.max(0, nh - cap);
-  return {
-    nh,
-    o15,
-    o20,
-    o30,
-    legalNormal,
-    overflowNormal,
-    tierOtHours: o15 + o20 + o30,
-  };
-}
-
 /**
  * ยอดฐานก่อนคูณวันหยุด: กรอบ 8 ชม.ปกติ + ส่วนเกินใน normal × ตัวคูณ OT สัญญา + OT แยก tier
  */
 function computeBaseWorkAmount(
   h: number,
   otContract: number,
-  w: ReturnType<typeof parseWorkHours>,
+  w: ParsedWorkDayHours,
 ): { normalPart: number; overflowPart: number; tierPart: number } {
   const tierPart =
     h *
-    (w.o15 * PAYROLL_OT_TIER_MULT.OT_1_5 +
-      w.o20 * PAYROLL_OT_TIER_MULT.OT_2_0 +
-      w.o30 * PAYROLL_OT_TIER_MULT.OT_3_0);
+    (w.o15 * PACKAGE_OT_TIER_MULT.OT_1_5 +
+      w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0 +
+      w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
   const normalPart = w.legalNormal * h;
   const overflowPart = w.overflowNormal * h * otContract;
   return { normalPart, overflowPart, tierPart };
@@ -214,7 +176,7 @@ export function computeWorkDayCostFromPackage(
     otAfterShiftMultiplier: input.otAfterShiftMultiplier,
   });
 
-  const w = parseWorkHours(input.timesheet);
+  const w = parseWorkDayHours(input.timesheet);
   const T = Math.min(24, w.nh + w.o15 + w.o20 + w.o30);
   const rest = resolveCostRestDay(input.timesheet.date, input.mainContract);
   const otContract = Math.max(0, input.otAfterShiftMultiplier);
