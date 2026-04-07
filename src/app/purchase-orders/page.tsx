@@ -85,6 +85,7 @@ function CustomerPOsPageContent() {
     poCode: getPreviewPattern('customer_po'),
     customerId: '',
     contractId: '',
+    serviceAgreementNo: '',
     quotationId: '',
     customerPONumber: '',
     customerPoIssueDate: Date.now(),
@@ -134,11 +135,17 @@ function CustomerPOsPageContent() {
   useEffect(() => {
     if (newPO.poType !== 'contract') return;
     const selectedContract = activeContracts?.find((c) => c.id === newPO.contractId);
-    if (!selectedContract) return;
-    if (newPO.customerId !== selectedContract.customerId) {
-      setNewPO((prev) => ({ ...prev, customerId: selectedContract.customerId }));
+    if (!selectedContract) {
+      setNewPO((prev) => (prev.serviceAgreementNo ? { ...prev, serviceAgreementNo: '' } : prev));
+      return;
     }
-  }, [newPO.poType, newPO.contractId, activeContracts, newPO.customerId]);
+    const nextSa = selectedContract.serviceAgreementNo ?? '';
+    const nextCust = selectedContract.customerId;
+    setNewPO((prev) => {
+      if (prev.customerId === nextCust && (prev.serviceAgreementNo ?? '') === nextSa) return prev;
+      return { ...prev, customerId: nextCust, serviceAgreementNo: nextSa };
+    });
+  }, [newPO.poType, newPO.contractId, activeContracts]);
 
   useEffect(() => {
     if (newPO.poType !== 'quotation') return;
@@ -318,6 +325,7 @@ function CustomerPOsPageContent() {
                       contractId: '',
                       quotationId: '',
                       customerId: '',
+                      serviceAgreementNo: '',
                     })}
                     value={(newPO.poType as any) || 'contract'}
                   >
@@ -331,7 +339,7 @@ function CustomerPOsPageContent() {
                 <div className="grid gap-2">
                   <Label>อ้างอิงสัญญาหลัก</Label>
                   <Select
-                    onValueChange={v => setNewPO({...newPO, contractId: v})}
+                    onValueChange={v => setNewPO({ ...newPO, contractId: v })}
                     value={newPO.contractId || ''}
                     disabled={newPO.poType !== 'contract'}
                   >
@@ -342,6 +350,17 @@ function CustomerPOsPageContent() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {newPO.poType === 'contract' && (
+                    <>
+                      <Label className="text-muted-foreground pt-1">Service agreement No. (จากสัญญา)</Label>
+                      <Input
+                        readOnly
+                        className="bg-muted font-mono text-sm h-10"
+                        value={(activeContracts?.find((c) => c.id === newPO.contractId)?.serviceAgreementNo ?? '').trim()}
+                        placeholder={newPO.contractId ? '— ยังไม่ระบุในสัญญาหลัก —' : 'เลือกสัญญาหลักก่อน'}
+                      />
+                    </>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label>อ้างอิงใบเสนอราคา</Label>

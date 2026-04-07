@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { doc, DocumentReference, DocumentData, setDoc } from 'firebase/firestore';
+import { doc, DocumentReference, DocumentData, getDocFromServer, setDoc } from 'firebase/firestore';
 import { useFirestore, useUser } from '@/firebase';
 import { useDoc } from '@/firebase/firestore/use-doc';
 import type { User } from '@/lib/types';
@@ -43,7 +43,11 @@ export function useAppUser() {
     }
   }, [firestoreUser]);
 
-  /** First-time Auth user: create default internal Firestore profile (matches firestore.rules bootstrap). */
+  /**
+   * First-time Auth user with no Firestore profile: create a minimal default internal user.
+   * Never use merge: true — it overwrote existing admins (role → operations_officer) when the
+   * client hook briefly saw no doc or raced with the first snapshot.
+   */
   useEffect(() => {
     if (!firestore || !authUser?.uid) return;
     if (docLoading) return;
@@ -56,30 +60,40 @@ export function useAppUser() {
     bootstrapAttempted.current = true;
 
     const uid = authUser.uid;
-    const now = Date.now();
-    const payload = sanitizeFirestorePayload({
-      id: uid,
-      email: authUser.email || '',
-      displayName: authUser.displayName || 'User',
-      phone: '',
-      userType: 'internal' as const,
-      user_type: 'internal',
-      status: 'active',
-      role: 'operations_officer',
-      assignedRoleKey: 'operations_officer' as const,
-      assignedRoleKeys: ['operations_officer'] as const,
-      department: 'operations',
-      level: 'officer' as const,
-      roleIds: [],
-      isActive: true,
-      approvalStatus: 'ACTIVE' as const,
-      createdAt: now,
-      updatedAt: now,
-    });
+    const ref = doc(firestore, 'users', uid);
 
-    setDoc(doc(firestore, 'users', uid), payload, { merge: true }).catch(() => {
-      bootstrapAttempted.current = false;
-    });
+    (async () => {
+      try {
+        const snap = await getDocFromServer(ref);
+        if (snap.exists()) {
+          bootstrapAttempted.current = false;
+          return;
+        }
+        const now = Date.now();
+        const payload = sanitizeFirestorePayload({
+          id: uid,
+          email: authUser.email || '',
+          displayName: authUser.displayName || 'User',
+          phone: '',
+          userType: 'internal' as const,
+          user_type: 'internal',
+          status: 'active',
+          role: 'operations_officer',
+          assignedRoleKey: 'operations_officer' as const,
+          assignedRoleKeys: ['operations_officer'] as const,
+          department: 'operations',
+          level: 'officer' as const,
+          roleIds: [],
+          isActive: true,
+          approvalStatus: 'ACTIVE' as const,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await setDoc(ref, payload);
+      } catch {
+        bootstrapAttempted.current = false;
+      }
+    })();
   }, [firestore, authUser, docLoading, firestoreUser, userDocError]);
 
   /**

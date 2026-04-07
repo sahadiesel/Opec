@@ -13,6 +13,7 @@ import {
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
   isClient,
+  isPrimaryHrOfficer,
 } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
@@ -33,6 +34,20 @@ export function sidebarMatrixVisibilityForPath(_user: User, _pathname: string): 
   return null;
 }
 
+/** เมนูเตรียมจ่าย / อนุมัติ payroll — ไม่แสดงให้ hr_officer */
+function hrOfficerExcludedFromHrNavItem(user: User, item: HrNavItem): boolean {
+  if (!isPrimaryHrOfficer(user)) return false;
+  const full = item.href;
+  const base = full.split('#')[0];
+  if (full.includes('#hr-action-queue')) return true;
+  if (base.startsWith('/hr/payroll-workbench')) return true;
+  if (base.startsWith('/hr/payroll-approval')) return true;
+  if (base.startsWith('/timesheets')) return true;
+  if (base.startsWith('/payroll/')) return true;
+  if (base === '/office-payroll' || base.startsWith('/office-payroll/')) return true;
+  return false;
+}
+
 export function canViewHrHubItem(
   user: User,
   profile: PermissionProfile | null,
@@ -40,6 +55,7 @@ export function canViewHrHubItem(
   item: HrNavItem
 ): boolean {
   if (admin) return true;
+  if (hrOfficerExcludedFromHrNavItem(user, item)) return false;
   const byMatrix = sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
   if (byMatrix !== null) return byMatrix;
   if (canView(user, item.key, profile)) return true;

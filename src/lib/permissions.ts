@@ -17,6 +17,7 @@ import {
   getEffectiveAccessLevel,
   getPrimaryLegacyRole,
   isHrManager,
+  canManageWaveRecords,
   isOperationManager,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
@@ -66,6 +67,7 @@ export {
   getEffectiveAccessLevel,
   getPrimaryLegacyRole,
   isHrManager,
+  canManageWaveRecords,
   isOperationManager,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
@@ -221,7 +223,10 @@ type BasePermissionAction = 'view' | 'create' | 'edit' | 'delete' | 'approve';
 const MODULE_KEY_SET = new Set<ModuleKey>(SYSTEM_MODULES.map((m) => m.key));
 const MODULE_KEYS_WITHOUT_DOMAIN_ALIAS: ReadonlySet<string> = new Set(['payroll_runs', 'payslips']);
 
-/** HR Officer: daily HR prep / master data only — no commercial, no payroll runs or registries. */
+/**
+ * HR Officer: ทะเบียนลูกจ้าง (workers) สร้าง/แก้ไขได้ — ไม่มี commercial, ไม่มี payroll/timesheets,
+ * ไม่มีทะเบียนพนักงานออฟฟิศ / office payroll
+ */
 const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
   'customers',
   'quotations',
@@ -232,7 +237,6 @@ const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
   'profit_estimates',
   'office_staff',
   'office_payroll',
-  'workers',
   'timesheets',
   'worker_payroll',
   'payroll_runs',
@@ -348,6 +352,16 @@ export function getPermissions(
 
   if (ACCOUNTING_ONLY_MODULE_KEYS.has(moduleKey)) {
     return isSimpleAccounting(u) ? clonePermission(FULL_ACCESS) : clonePermission(NO_ACCESS);
+  }
+
+  /** HR Officer: จัดการทะเบียนเอกสารกลางได้ แต่ไม่ลบ (manager/admin ผ่าน FULL_ACCESS ด้านล่าง) */
+  if (isPrimaryHrOfficer(u) && moduleKey === 'worker_documents') {
+    return clonePermission(OFFICER_ACCESS);
+  }
+
+  /** HR Officer: ทะเบียนลูกจ้าง — สร้าง/แก้ไข ไม่ลบรายการหลัก (ลบตามนโยบาย manager/admin) */
+  if (isPrimaryHrOfficer(u) && moduleKey === 'workers') {
+    return clonePermission(OFFICER_ACCESS);
   }
 
   if (isPrimaryHrOfficer(u) && HR_OFFICER_BLOCKED_MODULE_KEYS.has(moduleKey)) {

@@ -63,13 +63,18 @@ export function runPermissionLogicSuite(): ValidationSummary {
   );
 
   const hrOfficer = createMockUser(['hr_officer'], 'hr', 'officer');
-  const hrBlockedWorkers = getPermissions(hrOfficer, 'workers');
+  const hrWorkers = getPermissions(hrOfficer, 'workers');
   const hrHub = getPermissions(hrOfficer, 'hr_hub');
   const hrAccessToAccounting = getPermissions(hrOfficer, 'billing_notes');
   assert(
     'HR Officer Isolation',
-    !hrBlockedWorkers.view && hrHub.view && !hrAccessToAccounting.view,
-    'HR Officer should use HR hub / master data only — no worker registry or accounting finance'
+    hrWorkers.view &&
+      hrWorkers.create &&
+      hrWorkers.edit &&
+      !hrWorkers.delete &&
+      hrHub.view &&
+      !hrAccessToAccounting.view,
+    'HR Officer should manage workers (create/edit, no delete) + HR hub / master data, no accounting finance'
   );
 
   const hybridUser = createMockUser(['operations_officer', 'hr_officer'], 'operations', 'officer');

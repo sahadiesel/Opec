@@ -141,6 +141,33 @@ service cloud.firestore {
         && (d.approvalStatus == 'ACTIVE' || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')));
     }
 
+    // Self-service signup on home page: Auth user creates own Firestore profile, then signs out; admin approves in Users UI.
+    function selfRegistrationPendingCreateValid(uid) {
+      let d = request.resource.data;
+      return isOwner(uid)
+        && d.id == uid
+        && d.userType == 'internal'
+        && d.isActive == false
+        && d.approvalStatus == 'PENDING'
+        && ('email' in d) && d.email is string && d.email.size() > 0
+        && ('displayName' in d) && d.displayName is string && d.displayName.size() > 0
+        && ('phone' in d) && d.phone is string && d.phone.size() > 0
+        && d.department == 'operations'
+        && d.level == 'viewer'
+        && ('roleIds' in d) && d.roleIds is list && d.roleIds.size() == 0
+        && ('createdAt' in d) && d.createdAt is int
+        && ('updatedAt' in d) && d.updatedAt is int
+        && !('assignedRoleKey' in d)
+        && !('assignedRoleKeys' in d)
+        && !('permissionProfileKey' in d)
+        && !('permissionProfileKeys' in d)
+        && !('role' in d)
+        && !('accessGroup' in d)
+        && !('departmentGroup' in d)
+        && !('customerId' in d)
+        && !('portalRole' in d);
+    }
+
     function clientPortalUserActive() {
       return hasUserDoc()
         && isCustomerPortalData(userData())
@@ -153,6 +180,7 @@ service cloud.firestore {
       allow list: if isAdmin() || isOperationsPillarExecutive();
       allow create: if isAdmin()
         || (isOwner(userId) && bootstrapUserCreateValid(userId))
+        || (isOwner(userId) && selfRegistrationPendingCreateValid(userId))
         || (isOperationsPillarExecutive() && isCustomerPortalUserCreate(userId));
       allow update: if isAdmin()
         || (isOwner(userId) && !userSecurityFieldChanges())
@@ -307,6 +335,9 @@ service cloud.firestore {
     }
 
     match /mobilizations/{id} {
+      allow read, write: if isInternalUser();
+    }
+    match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
       allow read, write: if isInternalUser();
     }
 

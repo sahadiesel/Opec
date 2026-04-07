@@ -17,12 +17,14 @@ import {
   FileSearch,
   History,
   Info,
-  Receipt,
+  Package,
+  HardHat,
+  Wrench,
 } from 'lucide-react';
-import { WorkerPayslipHistory } from '@/components/payroll/worker-payslip-history';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { computeWorkerStoreEquipmentReadiness } from '@/lib/store/mobilization-fulfillment';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import {
@@ -35,9 +37,13 @@ import {
   User as AppUser,
   Position,
   PositionCertificateRequirement,
+  PositionPPERequirement,
+  PositionToolRequirement,
   ReadinessStatus,
   WorkerDocumentCatalogItem,
   DrugTestPanelConfig,
+  Assignment,
+  WorkerStoreEquipmentReadiness,
 } from '@/lib/types';
 import {
   computeDrugPanelWorkerFields,
@@ -48,14 +54,13 @@ import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
-import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
-
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import { WorkerCertsTab } from './_components/worker-certs-tab';
 import { WorkerMedicalTab } from './_components/worker-medical-tab';
 import { WorkerDrugTab } from './_components/worker-drug-tab';
 import { WorkerDocsTab } from './_components/worker-docs-tab';
 import { WorkerWorklogTab } from './_components/worker-worklog-tab';
+import { WorkerPositionStoreTab } from './_components/worker-position-store-tab';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -95,6 +100,12 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   const { data: drugPanelConfig } = useDoc<DrugTestPanelConfig>(drugPanelRef as any);
   const workerTimesheetsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'daily_timesheets') : null), [firestore]);
   const { data: workerTimesheetsAll } = useCollection<DailyTimesheet>(workerTimesheetsQuery as any);
+
+  const workerMobsQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'mobilizations'), where('workerId', '==', id), where('deploymentStatus', '!=', 'CLOSED'));
+  }, [firestore, id]);
+  const { data: workerMobilizations } = useCollection<Assignment>(workerMobsQuery as any);
 
   const panelSubstances = drugPanelConfig?.substances ?? [];
 
@@ -138,7 +149,6 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
   const { payroll } = usePermissions(currentUser);
   const canEditWorker = useMatrixGuards ? canAccess(currentUser, 'workers', 'edit') : payroll('worker', 'edit');
-  const canOpenPayslipTab = canViewPayrollPerFirestoreRules(currentUser);
 
   // --- Business logic: save master (unchanged) ---
   const handleSaveMaster = () => {
@@ -258,6 +268,38 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
     const complianceAlertLevel = compliance.level;
 
+    let storeEquipmentReadiness: WorkerStoreEquipmentReadiness = 'na';
+    try {
+      const mobsSnap = await getDocs(
+        query(
+          collection(firestore, 'mobilizations'),
+          where('workerId', '==', worker.id),
+          where('deploymentStatus', '!=', 'CLOSED'),
+        ),
+      );
+      const openMobs = mobsSnap.docs.map((d) => ({ ...d.data(), id: d.id } as Assignment));
+      const posReqCache = new Map<string, { ppe: PositionPPERequirement[]; tools: PositionToolRequirement[] }>();
+      const loadPositionReqs = async (positionId: string) => {
+        if (posReqCache.has(positionId)) return posReqCache.get(positionId)!;
+        const ppeRef = collection(firestore, 'positions', positionId, 'ppe_requirements');
+        const toolRef = collection(firestore, 'positions', positionId, 'tool_requirements');
+        const [ppeSnap, toolSnap] = await Promise.all([getDocs(ppeRef), getDocs(toolRef)]);
+        const ppe = ppeSnap.docs.map((d) => ({ ...d.data(), id: d.id } as PositionPPERequirement));
+        const tools = toolSnap.docs.map((d) => ({ ...d.data(), id: d.id } as PositionToolRequirement));
+        const v = { ppe, tools };
+        posReqCache.set(positionId, v);
+        return v;
+      };
+      storeEquipmentReadiness = await computeWorkerStoreEquipmentReadiness(
+        firestore,
+        worker.id,
+        openMobs,
+        async (pid) => loadPositionReqs(pid),
+      );
+    } catch (e) {
+      console.error(e);
+    }
+
     if (
       worker.readinessStatus !== newStatus ||
       (worker.complianceAlertLevel || 'ok') !== complianceAlertLevel ||
@@ -265,7 +307,8 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       worker.drugPanelSummaryKind !== drugFields.drugPanelSummaryKind ||
       worker.drugPanelSummaryText !== drugFields.drugPanelSummaryText ||
       Number(worker.drugPanelPassedCount ?? -1) !== drugFields.drugPanelPassedCount ||
-      Number(worker.drugPanelTotalCount ?? -1) !== drugFields.drugPanelTotalCount
+      Number(worker.drugPanelTotalCount ?? -1) !== drugFields.drugPanelTotalCount ||
+      (worker.storeEquipmentReadiness || 'na') !== storeEquipmentReadiness
     ) {
       updateDocumentNonBlocking(workerRef!, {
         readinessStatus: newStatus,
@@ -276,6 +319,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         drugPanelSummaryText: drugFields.drugPanelSummaryText,
         drugPanelPassedCount: drugFields.drugPanelPassedCount,
         drugPanelTotalCount: drugFields.drugPanelTotalCount,
+        storeEquipmentReadiness,
       });
     }
   };
@@ -286,12 +330,14 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     }
   }, [
     worker?.currentPositionId,
+    worker?.id,
     certs?.length,
     medicals?.length,
     drugTests?.length,
     workerDocs?.length,
     workerDocCatalog?.length,
     panelSubstances.length,
+    workerMobilizations?.length,
   ]);
 
   // --- Render ---
@@ -342,6 +388,11 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
               ) : (
                 <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> {worker.readinessStatus}</Badge>
               )}
+              {worker.readinessStatus === 'READY' && worker.storeEquipmentReadiness === 'pending' && (
+                <Badge variant="outline" className="gap-1 border-amber-500 text-amber-900 bg-amber-50">
+                  <Package className="h-3 w-3" /> คลัง: PPE/อุปกรณ์ค้าง
+                </Badge>
+              )}
             </div>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
               <Info className="h-4 w-4" /> <strong>Worker Payroll</strong> — ประวัติลูกจ้าง, ใบรับรอง และข้อมูลประกอบ timesheet
@@ -371,13 +422,11 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
             <TabsTrigger value="drug" className="gap-2 py-2 px-6"><AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)</TabsTrigger>
             <TabsTrigger value="docs" className="gap-2 py-2 px-6"><FileSearch className="h-4 w-4" /> เอกสาร (Docs)</TabsTrigger>
             <TabsTrigger value="worklog" className="gap-2 py-2 px-6"><History className="h-4 w-4" /> ประวัติชั่วโมงงาน</TabsTrigger>
-            <TabsTrigger
-              value="payslips"
-              className="gap-2 py-2 px-6"
-              disabled={!canOpenPayslipTab}
-              title={!canOpenPayslipTab ? 'คุณไม่มีสิทธ์ในการทำรายการ' : undefined}
-            >
-              <Receipt className="h-4 w-4" /> สลิปเงินเดือน
+            <TabsTrigger value="ppe_list" className="gap-2 py-2 px-6">
+              <HardHat className="h-4 w-4" /> รายการ PPE
+            </TabsTrigger>
+            <TabsTrigger value="tools_list" className="gap-2 py-2 px-6">
+              <Wrench className="h-4 w-4" /> รายการอุปกรณ์
             </TabsTrigger>
           </TabsList>
 
@@ -405,8 +454,22 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
             <WorkerWorklogTab workLogRows={workLogRows} totalWorkedHours={totalWorkedHours} />
           </TabsContent>
 
-          <TabsContent value="payslips" className="mt-6">
-            <WorkerPayslipHistory workerId={id} currentUser={currentUser} />
+          <TabsContent value="ppe_list" className="mt-6">
+            <WorkerPositionStoreTab
+              firestore={firestore!}
+              worker={worker}
+              mobilizations={workerMobilizations}
+              kind="ppe"
+            />
+          </TabsContent>
+
+          <TabsContent value="tools_list" className="mt-6">
+            <WorkerPositionStoreTab
+              firestore={firestore!}
+              worker={worker}
+              mobilizations={workerMobilizations}
+              kind="tool"
+            />
           </TabsContent>
         </Tabs>
       </div>

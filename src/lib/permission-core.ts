@@ -6,7 +6,7 @@
 
 import type { BusinessRoleKey, DeptType, User } from './types';
 import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
-import { isActiveForApp, isInternalTypeUser } from './simple-tier-model';
+import { isActiveForApp, isInternalTypeUser, isSimpleAdmin } from './simple-tier-model';
 
 // ---------------------------------------------------------------------------
 // Canonical types
@@ -174,15 +174,12 @@ function isFutureAccessLevel(value: unknown): value is CoreAccessLevel {
   return value === 'admin' || value === 'manager' || value === 'officer' || value === 'viewer';
 }
 
-/** Primary business role: assignedRoleKey first; else permissionProfileKey or permissionProfileKeys[0] only. */
+/**
+ * Primary business role: assignedRoleKey / assignedRoleKeys[0] before legacy `role` scalar,
+ * then permission profile ids. (Legacy `role` last — avoids stale scalar overwriting canonical keys.)
+ */
 export function getPrimaryLegacyRole(user: Partial<User> | null): string | null {
   if (!user) return null;
-  const fromRoleField =
-    typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : null;
-  if (fromRoleField) {
-    const normalizedField = normalizeAssignedPrimaryRole(fromRoleField);
-    if (normalizedField) return normalizedField;
-  }
   const fromAssigned =
     typeof user.assignedRoleKey === 'string' && user.assignedRoleKey.trim() !== ''
       ? user.assignedRoleKey
@@ -201,6 +198,13 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
   const fromKeysNorm = normalizeAssignedPrimaryRole(fromAssignedKeys0);
   if (fromKeysNorm === 'payroll_officer') return 'payroll_officer';
   if (fromKeysNorm) return fromKeysNorm;
+
+  const fromRoleField =
+    typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : null;
+  if (fromRoleField) {
+    const normalizedField = normalizeAssignedPrimaryRole(fromRoleField);
+    if (normalizedField) return normalizedField;
+  }
 
   const fromProfileKey =
     typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
@@ -412,6 +416,17 @@ export function isSystemAdmin(user: User | null): boolean {
 export function isHrManager(user: User | null): boolean {
   if (!user) return false;
   return getPrimaryLegacyRole(user) === 'hr_manager';
+}
+
+/** ลบ Wave ใน UI (รายการ/ยืนยัน) — แอดมิน / ผู้จัดการปฏิบัติการ / ผู้จัดการ HR (ไม่รวม hr_officer) */
+export function canManageWaveRecords(user: User | null): boolean {
+  if (!user) return false;
+  return (
+    isSystemAdmin(user) ||
+    isSimpleAdmin(user) ||
+    isOperationManager(user) ||
+    isHrManager(user)
+  );
 }
 
 export function isOperationManager(user: User | null): boolean {

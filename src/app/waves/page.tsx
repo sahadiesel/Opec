@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -19,12 +19,15 @@ import {
   Users,
   MapPin,
   ArrowRight,
-  Loader2
+  Loader2,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { Wave, User, Customer, PurchaseOrder, POLine, WaveStatus } from '@/lib/types';
+import { Wave, Customer, PurchaseOrder, POLine, WaveStatus, Position } from '@/lib/types';
+import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -32,19 +35,86 @@ import {
   DialogDescription, 
   DialogFooter, 
   DialogHeader, 
-  DialogTitle, 
-  DialogTrigger 
+  DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
-import { collection, doc, collectionGroup } from 'firebase/firestore';
+import { canView, canEdit, canManageWaveRecords } from '@/lib/permissions';
+import { collection, collectionGroup, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+
+/** รวม plannedWorkers ของเวฟที่ผูก PO line เดียวกัน — ไม่นับเวฟ CLOSED; `excludeWaveId` สำหรับโหมดแก้ไข */
+function sumPlannedWorkersForPoLine(
+  waveList: Wave[] | null | undefined,
+  poId: string,
+  poLineId: string,
+  excludeWaveId?: string | null
+): number {
+  if (!waveList?.length) return 0;
+  return waveList.reduce((acc, w) => {
+    if (excludeWaveId && w.id === excludeWaveId) return acc;
+    if (w.poId !== poId || w.poLineId !== poLineId) return acc;
+    if (w.status === 'CLOSED') return acc;
+    return acc + (Number(w.plannedWorkers) || 0);
+  }, 0);
+}
+
+/** จำนวนคนที่ยังวางแผนในเวฟได้เพิ่มสำหรับ PO line นี้ (หรือแก้ไขเวฟเดิมเมื่อส่ง excludeWaveId) */
+function remainingQuotaForPoLine(
+  line: POLine,
+  waveList: Wave[] | null | undefined,
+  excludeWaveId?: string | null
+): number {
+  if (line.status !== 'active') return 0;
+  const cap = Math.max(0, Number(line.quantity) || 0);
+  const used = sumPlannedWorkersForPoLine(waveList, line.poId, line.id, excludeWaveId);
+  return Math.max(0, cap - used);
+}
+
+function plannedUsedForPoLine(
+  line: POLine,
+  waveList: Wave[] | null | undefined,
+  excludeWaveId?: string | null
+): number {
+  return sumPlannedWorkersForPoLine(waveList, line.poId, line.id, excludeWaveId);
+}
+
+function poLinePositionLabel(line: POLine, positions: Position[] | null | undefined): string {
+  const pos = positions?.find((p) => p.id === line.positionId);
+  if (pos) return positionListPrimaryName(pos as PositionDoc);
+  return line.positionId || '—';
+}
+
+function poLinePositionCode(line: POLine, positions: Position[] | null | undefined): string {
+  const pos = positions?.find((p) => p.id === line.positionId);
+  const code = pos?.positionCode?.trim();
+  if (code) return code;
+  return line.positionId ? `ID:${line.positionId.slice(0, 8)}…` : '—';
+}
+
+const defaultNewWaveState = (): Partial<Wave> => ({
+  waveCode: getPreviewPattern('wave'),
+  status: 'PLANNING',
+  plannedWorkers: 1,
+  siteLocation: '',
+  rotationPattern: '28/28',
+  notes: '',
+});
 
 export default function WavesPage() {
   const router = useRouter();
@@ -52,6 +122,9 @@ export default function WavesPage() {
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const canEditWavesRow = useMemo(() => canEdit(currentUser ?? null, 'waves'), [currentUser]);
+  const canDeleteWaveRow = useMemo(() => canManageWaveRecords(currentUser ?? null), [currentUser]);
 
   const isStaff = useMemo(
     () => !!currentUser && canView(currentUser, 'waves'),
@@ -83,25 +156,95 @@ export default function WavesPage() {
   }, [firestore, isStaff]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newWave, setNewWave] = useState<Partial<Wave>>({
-    waveCode: getPreviewPattern('wave'),
-    status: 'PLANNING',
-    plannedWorkers: 1,
-    siteLocation: '',
-    rotationPattern: '28/28',
-    notes: ''
-  });
+  const positionsQuery = useMemoFirebase(() => {
+    if (!firestore || !isStaff) return null;
+    return collection(firestore, 'positions');
+  }, [firestore, isStaff]);
+  const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const [waveFormOpen, setWaveFormOpen] = useState(false);
+  const [editingWave, setEditingWave] = useState<Wave | null>(null);
+  const [isSavingWave, setIsSavingWave] = useState(false);
+  const [wavePendingDelete, setWavePendingDelete] = useState<Wave | null>(null);
+  const [isDeletingWave, setIsDeletingWave] = useState(false);
+  const [newWave, setNewWave] = useState<Partial<Wave>>(() => defaultNewWaveState());
+
+  const quotaExcludeWaveId = editingWave?.id ?? null;
+
+  const eligiblePoLinesForCreate = useMemo(() => {
+    if (!newWave.poId || !allPOLines?.length) return [];
+    const list = allPOLines.filter((l) => l.poId === newWave.poId);
+    const withRemaining = list.filter((l) => remainingQuotaForPoLine(l, waves, quotaExcludeWaveId) > 0);
+    return [...withRemaining].sort((a, b) => {
+      const na = poLinePositionLabel(a, allPositions);
+      const nb = poLinePositionLabel(b, allPositions);
+      if (na !== nb) return na.localeCompare(nb, 'th');
+      return poLinePositionCode(a, allPositions).localeCompare(poLinePositionCode(b, allPositions), 'th');
+    });
+  }, [newWave.poId, allPOLines, allPositions, waves, quotaExcludeWaveId]);
+
+  const selectedPoLineForCreate = useMemo(() => {
+    if (!newWave.poId || !newWave.poLineId || !allPOLines?.length) return undefined;
+    return allPOLines.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
+  }, [newWave.poId, newWave.poLineId, allPOLines]);
+
+  const remainingForSelectedPoLine = useMemo(() => {
+    if (!selectedPoLineForCreate) return 0;
+    return remainingQuotaForPoLine(selectedPoLineForCreate, waves, quotaExcludeWaveId);
+  }, [selectedPoLineForCreate, waves, quotaExcludeWaveId]);
+
+  const quotaCapForSelected = selectedPoLineForCreate
+    ? Math.max(0, Number(selectedPoLineForCreate.quantity) || 0)
+    : 0;
+  const usedForSelected = selectedPoLineForCreate
+    ? plannedUsedForPoLine(selectedPoLineForCreate, waves, quotaExcludeWaveId)
+    : 0;
+
+  useEffect(() => {
+    if (!waveFormOpen || !newWave.poId || !newWave.poLineId || !allPOLines?.length) return;
+    const line = allPOLines.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
+    if (!line) return;
+    const rem = remainingQuotaForPoLine(line, waves, quotaExcludeWaveId);
+    setNewWave((prev) => {
+      if (prev.poLineId !== line.id || prev.poId !== line.poId) return prev;
+      if (rem <= 0) return { ...prev, poLineId: '', plannedWorkers: 1 };
+      const pw = Number(prev.plannedWorkers) || 0;
+      if (pw > rem) return { ...prev, plannedWorkers: rem };
+      return prev;
+    });
+  }, [waveFormOpen, newWave.poId, newWave.poLineId, allPOLines, waves, quotaExcludeWaveId]);
 
   const handleCreate = async () => {
-    if (!firestore || !currentUser) return;
+    if (!firestore || !currentUser || editingWave) return;
     if (!newWave.poId || !newWave.poLineId) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือก PO และ PO Line" });
       return;
     }
+    const line = allPOLines?.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
+    if (!line) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ถูกต้อง", description: "ไม่พบ PO Line ที่เลือก" });
+      return;
+    }
+    const remaining = remainingQuotaForPoLine(line, waves, null);
+    const planned = Number(newWave.plannedWorkers) || 0;
+    if (remaining <= 0) {
+      toast({
+        variant: "destructive",
+        title: "โควต้าเต็ม",
+        description: "รายการ PO Line นี้ไม่เหลือโควต้าสำหรับเปิดเวฟเพิ่ม",
+      });
+      return;
+    }
+    if (planned < 1 || planned > remaining) {
+      toast({
+        variant: "destructive",
+        title: "จำนวนคนไม่ถูกต้อง",
+        description: `ต้องอยู่ระหว่าง 1 และ ${remaining} คน (โควต้าที่เหลือ)`,
+      });
+      return;
+    }
 
-    setIsCreating(true);
+    setIsSavingWave(true);
     try {
       // Atomic Number Generation
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'wave', { actor: currentUser.displayName });
@@ -121,15 +264,114 @@ export default function WavesPage() {
         updatedBy: currentUser.id
       });
 
-      setIsCreateOpen(false);
+      setWaveFormOpen(false);
+      setEditingWave(null);
+      setNewWave(defaultNewWaveState());
       toast({ title: "สร้างเวฟงานสำเร็จ", description: `รหัสเวฟ: ${finalNo}` });
       if (docRef) router.push(`/waves/${docRef.id}`);
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างเวฟงานได้" });
     } finally {
-      setIsCreating(false);
+      setIsSavingWave(false);
     }
+  };
+
+  const handleUpdateWave = async () => {
+    if (!firestore || !currentUser || !editingWave) return;
+    if (!newWave.poId || !newWave.poLineId) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือก PO และ PO Line" });
+      return;
+    }
+    const line = allPOLines?.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
+    if (!line) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ถูกต้อง", description: "ไม่พบ PO Line ที่เลือก" });
+      return;
+    }
+    const remaining = remainingQuotaForPoLine(line, waves, editingWave.id);
+    const planned = Number(newWave.plannedWorkers) || 0;
+    if (remaining <= 0) {
+      toast({
+        variant: "destructive",
+        title: "โควต้าเต็ม",
+        description: "รายการ PO Line นี้ไม่เหลือโควต้าสำหรับจำนวนคนที่ตั้งไว้",
+      });
+      return;
+    }
+    if (planned < 1 || planned > remaining) {
+      toast({
+        variant: "destructive",
+        title: "จำนวนคนไม่ถูกต้อง",
+        description: `ต้องอยู่ระหว่าง 1 และ ${remaining} คน (โควต้าที่เหลือเมื่อไม่นับเวฟนี้)`,
+      });
+      return;
+    }
+    if (planned < Number(editingWave.assignedWorkers || 0)) {
+      toast({
+        variant: "destructive",
+        title: "จำนวนคนต่ำเกินไป",
+        description: `มีการมอบหมายแล้ว ${editingWave.assignedWorkers} คน — ต้องตั้งแผนไม่ต่ำกว่านี้`,
+      });
+      return;
+    }
+
+    setIsSavingWave(true);
+    try {
+      const po = allPOs?.find((p) => p.id === newWave.poId);
+      const waveRef = doc(firestore, 'waves', editingWave.id);
+      await updateDoc(waveRef, {
+        siteLocation: newWave.siteLocation ?? '',
+        poId: newWave.poId,
+        poLineId: newWave.poLineId,
+        startDate: newWave.startDate ?? '',
+        endDate: newWave.endDate ?? '',
+        plannedWorkers: planned,
+        rotationPattern: newWave.rotationPattern ?? '28/28',
+        notes: newWave.notes ?? '',
+        customerId: po?.customerId ?? editingWave.customerId ?? '',
+        projectName: po?.projectName ?? po?.title ?? newWave.projectName ?? '',
+        updatedAt: Date.now(),
+        updatedBy: currentUser.id,
+      });
+      setWaveFormOpen(false);
+      setEditingWave(null);
+      setNewWave(defaultNewWaveState());
+      toast({ title: "บันทึกการแก้ไขเวฟแล้ว", description: editingWave.waveCode });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกการแก้ไขได้" });
+    } finally {
+      setIsSavingWave(false);
+    }
+  };
+
+  const handleConfirmDeleteWave = async () => {
+    if (!firestore || !wavePendingDelete) return;
+    setIsDeletingWave(true);
+    try {
+      await deleteDoc(doc(firestore, 'waves', wavePendingDelete.id));
+      toast({
+        title: 'ลบเวฟงานแล้ว',
+        description: `รหัส ${wavePendingDelete.waveCode}`,
+      });
+      setWavePendingDelete(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองใหม่อีกครั้ง',
+      });
+    } finally {
+      setIsDeletingWave(false);
+    }
+  };
+
+  const positionLabelForWave = (wave: Wave): string => {
+    const line = allPOLines?.find((l) => l.id === wave.poLineId && l.poId === wave.poId);
+    if (!line?.positionId) return '';
+    const pos = allPositions?.find((p) => p.id === line.positionId);
+    return pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId;
   };
 
   const getStatusBadge = (status: WaveStatus) => {
@@ -194,22 +436,48 @@ export default function WavesPage() {
             <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isStaff && isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!isStaff}>
-                <Plus className="h-5 w-5" /> สร้างเวฟงานใหม่ (Create Wave)
-              </Button>
-            </DialogTrigger>
+          <Button
+            className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
+            disabled={!isStaff}
+            onClick={() => {
+              setEditingWave(null);
+              setNewWave(defaultNewWaveState());
+              setWaveFormOpen(true);
+            }}
+          >
+            <Plus className="h-5 w-5" /> สร้างเวฟงานใหม่ (Create Wave)
+          </Button>
+
+          <Dialog
+            open={isStaff && waveFormOpen}
+            onOpenChange={(open) => {
+              setWaveFormOpen(open);
+              if (!open) {
+                setEditingWave(null);
+                setNewWave(defaultNewWaveState());
+              }
+            }}
+          >
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>สร้างรอบการทำงานใหม่ (New Deployment Wave)</DialogTitle>
-                <DialogDescription>ระบุข้อมูลพื้นฐานและเชื่อมต่อเข้ากับ Customer PO เพื่อเริ่มวางแผนส่งคน</DialogDescription>
+                <DialogTitle>
+                  {editingWave ? 'แก้ไขรอบการทำงาน (Edit Deployment Wave)' : 'สร้างรอบการทำงานใหม่ (New Deployment Wave)'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editingWave
+                    ? 'อัปเดตสถานที่ วันที่ PO/โควต้า และจำนวนคนตามแผน — รหัสเวฟเดิมคงเดิม'
+                    : 'ระบุข้อมูลพื้นฐานและเชื่อมต่อเข้ากับ Customer PO เพื่อเริ่มวางแผนส่งคน'}
+                </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 py-4">
                 <div className="grid gap-2">
                   <Label>รหัสเวฟงาน (Wave Code)</Label>
                   <Input value={newWave.waveCode} disabled className="bg-muted font-mono font-bold text-primary" />
-                  <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
+                  <p className="text-[10px] text-muted-foreground italic">
+                    {editingWave
+                      ? '* รหัสเวฟไม่เปลี่ยนเมื่อแก้ไข'
+                      : '* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก'}
+                  </p>
                 </div>
                 <div className="grid gap-2">
                   <Label>สถานที่ปฏิบัติงาน (Site / Location)</Label>
@@ -217,7 +485,12 @@ export default function WavesPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>เลือก Customer PO</Label>
-                  <Select onValueChange={v => setNewWave({...newWave, poId: v, poLineId: ''})}>
+                  <Select
+                    value={newWave.poId || undefined}
+                    onValueChange={(v) =>
+                      setNewWave({ ...newWave, poId: v, poLineId: '', plannedWorkers: 1 })
+                    }
+                  >
                     <SelectTrigger><SelectValue placeholder="เลือก PO..." /></SelectTrigger>
                     <SelectContent>
                       {allPOs?.map(po => (
@@ -228,12 +501,37 @@ export default function WavesPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>เลือกโควต้า (PO Line)</Label>
-                  <Select onValueChange={v => setNewWave({...newWave, poLineId: v})} disabled={!newWave.poId}>
+                  <Select
+                    value={newWave.poLineId || undefined}
+                    onValueChange={(v) => {
+                      const line = allPOLines?.find((l) => l.id === v && l.poId === newWave.poId);
+                      const rem = line ? remainingQuotaForPoLine(line, waves, quotaExcludeWaveId) : 0;
+                      setNewWave({
+                        ...newWave,
+                        poLineId: v,
+                        plannedWorkers: rem > 0 ? rem : 1,
+                      });
+                    }}
+                    disabled={!newWave.poId}
+                  >
                     <SelectTrigger><SelectValue placeholder="เลือกรายการสั่งจอง..." /></SelectTrigger>
                     <SelectContent>
-                      {allPOLines?.filter(l => l.poId === newWave.poId).map(line => (
-                        <SelectItem key={line.id} value={line.id}>ID: {line.id.substring(0,8)} - Position: {line.positionId}</SelectItem>
-                      ))}
+                      {eligiblePoLinesForCreate.length === 0 && newWave.poId ? (
+                        <div className="px-2 py-3 text-sm text-muted-foreground text-center">
+                          ไม่มีรายการที่เหลือโควต้า (ครบตาม PO หรือถูกจองในเวฟอื่นหมดแล้ว)
+                        </div>
+                      ) : (
+                        eligiblePoLinesForCreate.map((line) => {
+                          const rem = remainingQuotaForPoLine(line, waves, quotaExcludeWaveId);
+                          const code = poLinePositionCode(line, allPositions);
+                          const name = poLinePositionLabel(line, allPositions);
+                          return (
+                            <SelectItem key={line.id} value={line.id}>
+                              {code} — {name} · เหลือ {rem} คน
+                            </SelectItem>
+                          );
+                        })
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -255,7 +553,36 @@ export default function WavesPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label>จำนวนคนงานที่วางแผน (Planned)</Label>
-                  <Input type="number" min="1" value={newWave.plannedWorkers} onChange={e => setNewWave({...newWave, plannedWorkers: parseInt(e.target.value)})} />
+                  <Input
+                    type="number"
+                    min={1}
+                    max={remainingForSelectedPoLine > 0 ? remainingForSelectedPoLine : undefined}
+                    disabled={!selectedPoLineForCreate || remainingForSelectedPoLine <= 0}
+                    value={newWave.plannedWorkers ?? 1}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (Number.isNaN(n)) {
+                        setNewWave({ ...newWave, plannedWorkers: 1 });
+                        return;
+                      }
+                      const cap =
+                        remainingForSelectedPoLine > 0 ? remainingForSelectedPoLine : 1;
+                      setNewWave({
+                        ...newWave,
+                        plannedWorkers: Math.min(Math.max(1, n), cap),
+                      });
+                    }}
+                  />
+                  {selectedPoLineForCreate && remainingForSelectedPoLine > 0 ? (
+                    <p className="text-[10px] text-muted-foreground">
+                      โควต้า PO line: {quotaCapForSelected} คน · จองในเวฟอื่นแล้ว: {usedForSelected} คน ·
+                      เปิดเวฟนี้ได้ไม่เกิน {remainingForSelectedPoLine} คน
+                    </p>
+                  ) : newWave.poId ? (
+                    <p className="text-[10px] text-muted-foreground">
+                      เลือกรายการ PO line ที่ยังมีโควต้า เพื่อกำหนดจำนวนคนอัตโนมัติ
+                    </p>
+                  ) : null}
                 </div>
                 <div className="grid gap-2">
                   <Label>รูปแบบกะงาน (Rotation)</Label>
@@ -263,10 +590,31 @@ export default function WavesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
-                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  ยืนยันการสร้าง (Confirm)
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setWaveFormOpen(false);
+                    setEditingWave(null);
+                    setNewWave(defaultNewWaveState());
+                  }}
+                  disabled={isSavingWave}
+                >
+                  ยกเลิก
+                </Button>
+                <Button
+                  onClick={() => (editingWave ? void handleUpdateWave() : void handleCreate())}
+                  className="bg-primary font-bold"
+                  disabled={
+                    isSavingWave ||
+                    !newWave.poId ||
+                    !newWave.poLineId ||
+                    remainingForSelectedPoLine <= 0 ||
+                    (Number(newWave.plannedWorkers) || 0) < 1 ||
+                    (Number(newWave.plannedWorkers) || 0) > remainingForSelectedPoLine
+                  }
+                >
+                  {isSavingWave ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  {editingWave ? 'บันทึกการแก้ไข (Save)' : 'ยืนยันการสร้าง (Confirm)'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -294,6 +642,7 @@ export default function WavesPage() {
                 <TableBody>
                   {waves?.map((wave) => {
                     const customer = customers?.find(c => c.id === wave.customerId);
+                    const positionLabel = positionLabelForWave(wave);
                     return (
                       <TableRow 
                         key={wave.id} 
@@ -307,9 +656,18 @@ export default function WavesPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col">
+                          <div className="flex flex-col gap-1 min-w-0 max-w-[320px]">
                             <span className="font-bold text-sm">{customer?.name || '...'}</span>
-                            <span className="text-xs text-muted-foreground truncate max-w-[200px]">{wave.projectName}</span>
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="text-xs text-muted-foreground truncate min-w-0 flex-1">{wave.projectName}</span>
+                              {positionLabel ? (
+                                <Badge variant="secondary" className="shrink-0 text-[10px] font-medium px-1.5 py-0 h-5 normal-case">
+                                  {positionLabel}
+                                </Badge>
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground/70 shrink-0">ตำแหน่ง: —</span>
+                              )}
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -331,7 +689,60 @@ export default function WavesPage() {
                         </TableCell>
                         <TableCell>{getStatusBadge(wave.status)}</TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                          <div
+                            className="flex items-center justify-end gap-0.5"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {canEditWavesRow && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-primary"
+                                title="แก้ไขข้อมูลเวฟ (PO / สถานที่ / วันที่)"
+                                onClick={() => {
+                                  setEditingWave(wave);
+                                  setNewWave({
+                                    waveCode: wave.waveCode,
+                                    status: wave.status,
+                                    plannedWorkers: wave.plannedWorkers,
+                                    assignedWorkers: wave.assignedWorkers,
+                                    siteLocation: wave.siteLocation ?? '',
+                                    rotationPattern: wave.rotationPattern ?? '28/28',
+                                    notes: wave.notes ?? '',
+                                    poId: wave.poId,
+                                    poLineId: wave.poLineId,
+                                    startDate: wave.startDate,
+                                    endDate: wave.endDate,
+                                    customerId: wave.customerId,
+                                    projectName: wave.projectName,
+                                  });
+                                  setWaveFormOpen(true);
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {canDeleteWaveRow && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                title="ลบเวฟ (ผู้จัดการ/แอดมิน)"
+                                onClick={() => setWavePendingDelete(wave)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="group-hover:text-primary"
+                              title="เปิดรายละเอียด"
+                              onClick={() => router.push(`/waves/${wave.id}`)}
+                            >
+                              <ChevronRight className="h-5 w-5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -375,6 +786,52 @@ export default function WavesPage() {
             </div>
           </CardContent>
         </Card>
+
+        <AlertDialog
+          open={wavePendingDelete != null}
+          onOpenChange={(open) => {
+            if (!open && !isDeletingWave) setWavePendingDelete(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบเวฟงาน?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2 text-left text-sm">
+                  <p>
+                    การลบจะนำรายการเวฟออกจากระบบถาวร ควรตรวจสอบว่าไม่มีการมอบหมายงานหรือข้อมูลที่ยังอ้างอิงเวฟนี้อยู่
+                    (ตามนโยบายปิดเวฟ — ควรปิดสถานะแทนการลบหากมีงานค้าง)
+                  </p>
+                  {wavePendingDelete && (
+                    <p className="font-mono font-semibold text-foreground">
+                      {wavePendingDelete.waveCode}
+                    </p>
+                  )}
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingWave}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={isDeletingWave}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDeleteWave();
+                }}
+              >
+                {isDeletingWave ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin inline" />
+                    กำลังลบ…
+                  </>
+                ) : (
+                  'ลบ'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

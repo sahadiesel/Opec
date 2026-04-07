@@ -442,6 +442,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const customer = customers?.find(c => c.id === po.customerId);
   const poAssignments = allAssignments || [];
+  const displayServiceAgreementNo = (
+    (po.serviceAgreementNo || contract?.serviceAgreementNo || '').trim() || ''
+  );
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -460,7 +463,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               <p className="text-muted-foreground flex items-center gap-4 mt-1 text-sm">
                 <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
                 {isContractBasedPO ? (
-                  <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '—'}</span>
+                  <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="flex items-center gap-1">
+                      <FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '—'}
+                    </span>
+                    {displayServiceAgreementNo ? (
+                      <span className="font-mono text-muted-foreground">SA No.: {displayServiceAgreementNo}</span>
+                    ) : null}
+                  </span>
                 ) : (
                   <span className="flex items-center gap-1 text-xs">
                     <FileText className="h-3.5 w-3.5" /> ใบเสนอราคา: {quotation?.quotationNo || po.quotationId || '—'}
@@ -514,6 +524,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <Label className="font-bold">เลขที่ Customer PO (PO Code)</Label>
                     <Input disabled={!isEditing} value={isEditing ? (editedPO.poCode || '') : (po.poCode || '')} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
                   </div>
+                  {isContractBasedPO && (
+                    <div className="space-y-2 md:col-span-2">
+                      <Label className="font-bold">Service agreement No. (จากสัญญา / snapshot บน PO)</Label>
+                      <Input
+                        disabled
+                        className="bg-muted font-mono"
+                        value={displayServiceAgreementNo || '—'}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        ค่าที่บันทึกบน PO ตอนสร้าง; ถ้า PO เก่าไม่มี snapshot จะแสดงจากสัญญาปัจจุบันเมื่อมี
+                      </p>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label className="font-bold">เลขที่เอกสาร PO ของลูกค้า (External Ref)</Label>
                     <Input

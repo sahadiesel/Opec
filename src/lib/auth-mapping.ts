@@ -207,9 +207,11 @@ export const isClientUser = (user: Partial<User> | null) => {
 };
 
 export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
+  const u = normalizeCurrentUserPermissions(user);
+  /** Match gates in permission-core / sidebar (accessGroup admin, profile system_admin, etc.). */
+  if (u && isSystemAdmin(u)) return 'system_admin';
   const p = primaryBusinessRoleFromUser(user);
   if (p) return p;
-  const u = normalizeCurrentUserPermissions(user);
   const fromProfileId =
     normalizePermissionProfileDocumentId(u?.permissionProfileKey ?? '') ||
     normalizePermissionProfileDocumentId(u?.permissionProfileKeys?.[0] ?? '');

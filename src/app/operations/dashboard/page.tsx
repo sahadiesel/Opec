@@ -22,23 +22,26 @@ import {
   CheckCircle2,
   XCircle,
   Activity,
-  RotateCcw
+  RotateCcw,
+  Coins,
+  PackageSearch,
 } from 'lucide-react';
 import { 
-  User, 
   Assignment, 
   Wave, 
   Worker,
-  Position,
-  ExceptionRequest
+  ExceptionRequest,
+  PayrollBatch,
+  OfficePayrollRun,
+  Purchase,
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, where, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, limit } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
-import { canSeeOperationsPillarUi } from '@/lib/permissions';
+import { canApprovePurchaseAsManager, canSeeOperationsPillarUi } from '@/lib/permissions';
 import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -56,6 +59,12 @@ export default function OperationsDashboardPage() {
     const level = getEffectiveAccessLevel(currentUser);
     return level === 'officer' || level === 'viewer';
   }, [currentUser]);
+
+  /** ผู้จัดการปฏิบัติการ / หัวหน้าเสา operations (อนุมัติใบสั่งซื้อ + payroll ตาม matrix) */
+  const showManagerApprovalQueue = useMemo(
+    () => Boolean(currentUser && canApprovePurchaseAsManager(currentUser)),
+    [currentUser]
+  );
 
   // --- Operations Data Queries ---
   
@@ -88,11 +97,85 @@ export default function OperationsDashboardPage() {
   }, [firestore, isOperationsAuthorized]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
+  const pendingPurchasesQuery = useMemoFirebase(() => {
+    if (!firestore || !isOperationsAuthorized || viewerOnly || !showManagerApprovalQueue) return null;
+    return query(
+      collection(firestore, 'purchases'),
+      where('status', 'in', ['PENDING_APPROVAL', 'RETURNED_FOR_REVISION']),
+      limit(30)
+    );
+  }, [firestore, isOperationsAuthorized, viewerOnly, showManagerApprovalQueue]);
+  const { data: pendingPurchases } = useCollection<Purchase>(pendingPurchasesQuery as any);
+
+  const pendingPayrollBatchesQuery = useMemoFirebase(() => {
+    if (!firestore || !isOperationsAuthorized || viewerOnly || !showManagerApprovalQueue) return null;
+    return query(
+      collection(firestore, 'payroll_batches'),
+      where('status', 'in', ['GENERATED', 'HR_REVIEWED']),
+      limit(30)
+    );
+  }, [firestore, isOperationsAuthorized, viewerOnly, showManagerApprovalQueue]);
+  const { data: pendingPayrollBatches } = useCollection<PayrollBatch>(pendingPayrollBatchesQuery as any);
+
+  const pendingOfficePayrollQuery = useMemoFirebase(() => {
+    if (!firestore || !isOperationsAuthorized || viewerOnly || !showManagerApprovalQueue) return null;
+    return query(collection(firestore, 'office_payroll_runs'), where('status', '==', 'CALCULATED'), limit(30));
+  }, [firestore, isOperationsAuthorized, viewerOnly, showManagerApprovalQueue]);
+  const { data: pendingOfficePayrollRuns } = useCollection<OfficePayrollRun>(pendingOfficePayrollQuery as any);
+
   // --- Computed Operations Stats ---
 
   const urgentTasks = useMemo(() => {
     const tasks: any[] = [];
-    
+
+    // 0. Manager approval: purchases (คลังส่งขออนุมัติ)
+    if (showManagerApprovalQueue && !viewerOnly) {
+      const purchaseList = [...(pendingPurchases || [])].sort(
+        (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)
+      );
+      purchaseList.slice(0, 15).forEach((p) => {
+        tasks.push({
+          id: `purchase-${p.id}`,
+          type: 'อนุมัติใบสั่งซื้อ/จ้าง',
+          label: `${p.purchaseNo || p.id} · ฿${Number(p.totalAmount || 0).toLocaleString('th-TH')}`,
+          status: p.status === 'RETURNED_FOR_REVISION' ? 'ส่งแก้แล้ว' : 'รออนุมัติ',
+          link: `/purchases/${p.id}`,
+          priority: 'high',
+          icon: PackageSearch,
+        });
+      });
+
+      const officeRuns = [...(pendingOfficePayrollRuns || [])].sort((a, b) =>
+        (b.payrollMonth || '').localeCompare(a.payrollMonth || '')
+      );
+      officeRuns.slice(0, 10).forEach((r) => {
+        tasks.push({
+          id: `office-payroll-${r.id}`,
+          type: 'อนุมัติเงินเดือนพนักงาน',
+          label: `${r.payrollRunNo || r.id} · งวด ${r.payrollMonth || '—'}`,
+          status: 'CALCULATED',
+          link: `/office-payroll/${r.id}`,
+          priority: 'high',
+          icon: Coins,
+        });
+      });
+
+      const batches = [...(pendingPayrollBatches || [])].sort(
+        (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)
+      );
+      batches.slice(0, 10).forEach((b) => {
+        tasks.push({
+          id: `worker-payroll-${b.id}`,
+          type: 'อนุมัติจ่ายคนงาน',
+          label: `Batch · ${b.totalWorkers ?? 0} คน · สุทธิ ฿${Number(b.netAmount || 0).toLocaleString('th-TH')}`,
+          status: b.status,
+          link: `/payroll/batches/${b.id}`,
+          priority: 'high',
+          icon: Coins,
+        });
+      });
+    }
+
     // 1. Exception Requests (Assignment Changes)
     pendingExceptions?.forEach(req => {
       tasks.push({
@@ -134,7 +217,16 @@ export default function OperationsDashboardPage() {
     });
 
     return tasks;
-  }, [assignments, pendingExceptions, allWorkers]);
+  }, [
+    assignments,
+    pendingExceptions,
+    allWorkers,
+    showManagerApprovalQueue,
+    viewerOnly,
+    pendingPurchases,
+    pendingOfficePayrollRuns,
+    pendingPayrollBatches,
+  ]);
 
   const stats = useMemo(() => {
     if (!assignments || !waves) return { activeAsgn: 0, activeWaves: 0, pendingMob: 0, changeReqs: 0, expiringSoon: 0, blocked: 0 };
@@ -212,7 +304,7 @@ export default function OperationsDashboardPage() {
                     <CardDescription>
                       {viewerOnly
                         ? 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทนปฏิบัติการได้'
-                        : 'รายการงานด่วนและคำขอเปลี่ยนแปลงจากลูกค้าที่ต้องจัดการ'}
+                        : 'งานอนุมัติ (เงินเดือน/ค่าจ้าง, ใบสั่งซื้อ) รวมถึงงานด่วนปฏิบัติการและคำขอเปลี่ยนแปลงจากลูกค้า'}
                     </CardDescription>
                   </div>
                   <Badge variant="secondary" className="font-bold">{urgentTasks.length} รายการ</Badge>

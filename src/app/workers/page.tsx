@@ -251,32 +251,6 @@ export default function WorkersPage() {
     }
   };
 
-  const getDrugPanelCell = (worker: Worker) => {
-    const kind = worker.drugPanelSummaryKind ?? 'none_panel';
-    const text = worker.drugPanelSummaryText ?? '—';
-    if (kind === 'none_panel') {
-      return (
-        <Badge variant="outline" className="text-muted-foreground font-mono text-[10px]">
-          {text}
-        </Badge>
-      );
-    }
-    if (kind === 'pass') {
-      return <Badge className="bg-green-600 hover:bg-green-600 text-white font-bold border-0">{text}</Badge>;
-    }
-    if (kind === 'partial') {
-      return (
-        <Badge className="bg-orange-500 hover:bg-orange-500 text-white font-bold border-0 whitespace-nowrap">
-          {text}
-        </Badge>
-      );
-    }
-    if (kind === 'positive') {
-      return <Badge variant="destructive" className="font-bold">{text}</Badge>;
-    }
-    return <Badge variant="destructive" className="font-bold bg-red-600 hover:bg-red-600 border-0">{text}</Badge>;
-  };
-
   const getReadinessBadge = (status: ReadinessStatus) => {
     switch (status) {
       case 'READY': return <Badge className="bg-green-600 text-white"><CheckCircle2 className="h-3 w-3 mr-1" /> READY</Badge>;
@@ -287,6 +261,24 @@ export default function WorkersPage() {
       case 'BLOCKED': return <Badge variant="destructive"><ShieldAlert className="h-3 w-3 mr-1" /> BLOCKED</Badge>;
       default: return <Badge variant="secondary"><FileQuestion className="h-3 w-3 mr-1" /> PENDING</Badge>;
     }
+  };
+
+  /** คอลัมป์เดียว: สถานะความพร้อม + ข้อความแผงสารเสพติดเมื่อไม่ผ่าน */
+  const renderReadinessCell = (worker: Worker) => {
+    const kind = worker.drugPanelSummaryKind ?? 'none_panel';
+    const drugText = (worker.drugPanelSummaryText ?? '').trim();
+    const showDrugHint =
+      worker.readinessStatus === 'DRUG_TEST_EXPIRED' ||
+      kind === 'positive' ||
+      kind === 'partial';
+    return (
+      <div className="flex flex-col gap-1 items-start max-w-[240px]">
+        {getReadinessBadge(worker.readinessStatus)}
+        {showDrugHint && drugText ? (
+          <span className="text-[10px] leading-snug text-destructive font-medium">{drugText}</span>
+        ) : null}
+      </div>
+    );
   };
 
   if (isUserLoading || userLoading || isPermLoading || !currentUser) return null;
@@ -428,8 +420,7 @@ export default function WorkersPage() {
                     <TableHead className="font-bold py-4 pl-6">รหัส / ชื่อคนงาน (Field Worker)</TableHead>
                     <TableHead className="font-bold">ชั่วโมงสะสม (Total Hours)</TableHead>
                     <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
-                    <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
-                    <TableHead className="font-bold">สารเสพติด (แผง)</TableHead>
+                    <TableHead className="font-bold min-w-[200px]">ความพร้อม (Readiness)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
                     <TableHead className="text-right font-bold pr-6">การจัดการ</TableHead>
                   </TableRow>
@@ -455,8 +446,7 @@ export default function WorkersPage() {
                             {position?.positionName || position?.positionNameTh || worker.currentPositionId || 'N/A'}
                           </Badge>
                         </TableCell>
-                        <TableCell>{getReadinessBadge(worker.readinessStatus)}</TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()}>{getDrugPanelCell(worker)}</TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>{renderReadinessCell(worker)}</TableCell>
                         <TableCell>
                           <Badge variant={worker.workerStatus === 'AVAILABLE' ? 'outline' : 'secondary'} className={worker.workerStatus === 'AVAILABLE' ? 'text-green-600 border-green-200' : ''}>
                             {worker.workerStatus.toUpperCase()}
@@ -489,7 +479,7 @@ export default function WorkersPage() {
                   })}
                   {(!filteredWorkers || filteredWorkers.length === 0) && !isCollectionLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -48,6 +48,18 @@ import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/services/assignment-overlap';
+import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
+
+function waveRequiredPositionLabel(
+  wave: Wave,
+  polines: POLine[] | null | undefined,
+  positions: Position[] | null | undefined
+): string {
+  const line = polines?.find((l) => l.id === wave.poLineId && l.poId === wave.poId);
+  if (!line?.positionId) return '';
+  const pos = positions?.find((p) => p.id === line.positionId);
+  return pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId;
+}
 
 export default function AssignmentsPage() {
   const router = useRouter();
@@ -97,19 +109,6 @@ export default function AssignmentsPage() {
   );
   const { data: allSalesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
 
-  const occupiedWorkerIds = useMemo(
-    () => getOccupiedWorkerIds(assignments || []),
-    [assignments],
-  );
-
-  const availableWorkers = useMemo(
-    () =>
-      (allWorkers || []).filter(
-        (w) => w.readinessStatus === 'READY' && !occupiedWorkerIds.has(w.id),
-      ),
-    [allWorkers, occupiedWorkerIds],
-  );
-
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
@@ -117,6 +116,35 @@ export default function AssignmentsPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
+
+  const occupiedWorkerIds = useMemo(
+    () => getOccupiedWorkerIds(assignments || []),
+    [assignments],
+  );
+
+  const selectedWave = useMemo(
+    () => (selectedWaveId ? allWaves?.find((w) => w.id === selectedWaveId) : undefined),
+    [allWaves, selectedWaveId],
+  );
+
+  const targetPositionIdForSelectedWave = useMemo(() => {
+    if (!selectedWave || !allPOLines?.length) return '';
+    const line = allPOLines.find((l) => l.id === selectedWave.poLineId && l.poId === selectedWave.poId);
+    return line?.positionId || '';
+  }, [selectedWave, allPOLines]);
+
+  const availableWorkers = useMemo(() => {
+    return (allWorkers || []).filter((w) => {
+      if (w.readinessStatus !== 'READY') return false;
+      if (occupiedWorkerIds.has(w.id)) return false;
+      if (!selectedWaveId || !targetPositionIdForSelectedWave) return false;
+      return w.currentPositionId === targetPositionIdForSelectedWave;
+    });
+  }, [allWorkers, occupiedWorkerIds, selectedWaveId, targetPositionIdForSelectedWave]);
+
+  useEffect(() => {
+    setSelectedWorkerId('');
+  }, [selectedWaveId]);
 
   const handleCreateAssignment = async () => {
     if (!canCreateAssignments) {
@@ -345,26 +373,55 @@ export default function AssignmentsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                     <div className="space-y-2 md:col-span-2">
                       <Label className="font-bold">เลือกรอบการทำงาน (Active Wave)</Label>
-                      <Select onValueChange={setSelectedWaveId}>
+                      <Select value={selectedWaveId || undefined} onValueChange={setSelectedWaveId}>
                         <SelectTrigger className="h-11"><SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." /></SelectTrigger>
                         <SelectContent>
-                          {allWaves?.filter(w => w.status !== 'CLOSED').map(wave => (
-                            <SelectItem key={wave.id} value={wave.id}>{wave.waveCode} | {wave.projectName}</SelectItem>
-                          ))}
+                          {allWaves?.filter(w => w.status !== 'CLOSED').map((wave) => {
+                            const posLbl = waveRequiredPositionLabel(wave, allPOLines, allPositions);
+                            return (
+                              <SelectItem key={wave.id} value={wave.id}>
+                                {wave.waveCode} | {posLbl ? `${posLbl} · ` : ''}
+                                {wave.projectName}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
-                      <Select onValueChange={setSelectedWorkerId}>
-                        <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงานที่ว่างและพร้อม..." /></SelectTrigger>
+                      <Select
+                        value={selectedWorkerId || undefined}
+                        onValueChange={setSelectedWorkerId}
+                        disabled={!selectedWaveId || !targetPositionIdForSelectedWave}
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue
+                            placeholder={
+                              !selectedWaveId
+                                ? 'เลือก Wave ก่อน'
+                                : !targetPositionIdForSelectedWave
+                                  ? 'Wave นี้ไม่มีตำแหน่งจาก PO line'
+                                  : 'เลือกคนงานตำแหน่งเดียวกับ Wave และสถานะ READY'
+                            }
+                          />
+                        </SelectTrigger>
                         <SelectContent>
-                          {availableWorkers.map(w => (
-                            <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName} ({w.workerCode})</SelectItem>
-                          ))}
+                          {availableWorkers.map((w) => {
+                            const p = allPositions?.find((x) => x.id === w.currentPositionId);
+                            const pn = p?.positionName || p?.positionNameTh || w.currentPositionId || '—';
+                            return (
+                              <SelectItem key={w.id} value={w.id}>
+                                {w.firstName} {w.lastName} ({w.workerCode}) — {pn}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
-                      <p className="text-[10px] text-muted-foreground italic">* แสดงเฉพาะคนงาน READY ที่ยังไม่มีงานมอบหมายซ้อน — คนที่ถูก Assign อยู่จะไม่ปรากฏจนกว่าจะ Demobilize/Close</p>
+                      <p className="text-[10px] text-muted-foreground italic">
+                        * หลังเลือก Wave ระบบจะแสดงเฉพาะลูกจ้างที่ตำแหน่งตรงกับโควต้าเวฟนั้น สถานะความพร้อม READY (เอกสาร/แพทย์/แผงสารเสพติดผ่านตามทะเบียน)
+                        และยังไม่ถูกมอบหมายซ้อน
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>

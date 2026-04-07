@@ -50,6 +50,31 @@ export type ReadinessStatus =
   | 'DOCUMENT_EXPIRED'    // เอกสารระบุตัวตนหมดอายุ
   | 'BLOCKED';            // ระงับการส่งตัว (วินัย/อื่นๆ)
 
+/** สถานะเบิก PPE/อุปกรณ์ตามงานมอบหมาย (ไม่ใช่ readinessStatus — ใช้แสดงคำเตือน/แท็บคลัง) */
+export type WorkerStoreEquipmentReadiness = 'na' | 'pending' | 'complete';
+
+export type PositionRequirementKind = 'ppe' | 'tool';
+
+/** บรรทัดความครบเบิกต่อ mobilization + รายการในตำแหน่ง — เก็บใต้ `mobilizations/{id}/fulfillment_lines` */
+export type RequirementFulfillmentLineStatus = 'PENDING' | 'PARTIAL' | 'ISSUED' | 'WAIVED' | 'RETURNED';
+
+export interface MobilizationRequirementFulfillmentLine {
+  id: string;
+  kind: PositionRequirementKind;
+  positionRequirementId: string;
+  quantityRequired: number;
+  quantityIssued: number;
+  status: RequirementFulfillmentLineStatus;
+  storeItemId?: string;
+  lastIssueSlipId?: string;
+  lastIssueNo?: string;
+  waivedAt?: number;
+  waivedBy?: string;
+  returnedAt?: number;
+  updatedAt: number;
+  updatedBy?: string;
+}
+
 /** Employment Status for Workers (ลูกจ้าง) */
 export type WorkerStatus = 
   | 'AVAILABLE'           // ว่างงาน/พร้อมรับงาน
@@ -342,6 +367,8 @@ export interface Worker {
   jobMode: JobMode;
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
+  /** สรุปจากงานมอบหมายที่เปิด: คลังยังต้องเบิก PPE/อุปกรณ์หรือไม่ */
+  storeEquipmentReadiness?: WorkerStoreEquipmentReadiness;
   complianceAlertLevel?: 'ok' | 'warning' | 'blocked';
   nearestExpiryInDays?: number | null;
   nearestExpiryAt?: number | null;
@@ -643,6 +670,8 @@ export interface PurchaseOrder {
   /** contract = based on active contract, quotation = based on approved/sent quotation */
   poType?: 'contract' | 'quotation';
   contractId: string;
+  /** Snapshot จากสัญญาหลัก ณ เวลาสร้าง PO (Service Agreement No. ฝั่งลูกค้า) */
+  serviceAgreementNo?: string;
   quotationId?: string;
   customerId: string;
   title: string;
