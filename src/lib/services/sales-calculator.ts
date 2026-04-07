@@ -92,9 +92,12 @@ export function calculateDailySalesValue(
 }
 
 /**
- * Helper to extract the relevant numeric unit from the timesheet based on requested UnitType.
+ * Billable quantity for a timesheet row under a sales rate condition (e.g. DAY=1, HOUR=sum hours).
  */
-function resolveQuantityForUnit(timesheet: DailyTimesheet, unitType: RateConditionUnitType): number {
+export function resolveQuantityForUnit(
+  timesheet: DailyTimesheet,
+  unitType: RateConditionUnitType,
+): number {
   if (timesheet.quantityOverride !== undefined && timesheet.quantityOverride !== null) {
     return timesheet.quantityOverride;
   }
