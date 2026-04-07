@@ -30,6 +30,19 @@ export function isMobilizationInStoreFulfillmentScope(a: Pick<Assignment, 'deplo
   return DEPLOYMENT_STATUSES_FOR_STORE_FULFILLMENT.includes(a.deploymentStatus as DeploymentStatus);
 }
 
+/** ใช้ใน query แทน `deploymentStatus != 'CLOSED'` — ลดปัญหา client/list และสอดคล้องขอบเขต “ยังไม่ปิด” */
+export const MOBILIZATION_STATUSES_NOT_CLOSED: DeploymentStatus[] = [
+  'DRAFT',
+  'READINESS_CHECK',
+  'CLIENT_SUBMITTED',
+  'CLIENT_APPROVED',
+  'CONFIRMED',
+  'READY_TO_MOB',
+  'MOBILIZING',
+  'ACTIVE',
+  'DEMOBILIZED',
+];
+
 export function appliesPpeRequirement(req: PositionPPERequirement): boolean {
   return !!req.required;
 }

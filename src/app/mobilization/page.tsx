@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,16 +21,18 @@ import {
   Briefcase
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, User, Position, Wave } from '@/lib/types';
+import { Assignment, Worker, User, Position, Wave, PurchaseOrder } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 
 export default function MobilizationPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -56,6 +58,16 @@ export default function MobilizationPage() {
   const wavesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'waves') : null), [firestore, isAuthorized]);
   const { data: allWaves } = useCollection<Wave>(wavesQuery as any);
 
+  const poQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null), [firestore, isAuthorized]);
+  const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
+
+  const [mobTableSearch, setMobTableSearch] = useState('');
+  const filterPoId = (searchParams.get('poId') || '').trim() || null;
+  const filterPO = useMemo(
+    () => (filterPoId && allPOs?.length ? allPOs.find((p) => p.id === filterPoId) : undefined),
+    [filterPoId, allPOs]
+  );
+
   // Filter for workers in mobilization pipeline
   const mobilizationList = useMemo(() => {
     if (!assignments) return [];
@@ -66,6 +78,24 @@ export default function MobilizationPage() {
       a.deploymentStatus !== 'ACTIVE'
     );
   }, [assignments]);
+
+  const displayedMobilization = useMemo(() => {
+    let list = mobilizationList;
+    if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
+    const q = mobTableSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((a) => {
+      const worker = allWorkers?.find((w) => w.id === a.workerId);
+      const wave = allWaves?.find((w) => w.id === a.waveId);
+      const name = `${worker?.firstName || ''} ${worker?.lastName || ''}`.toLowerCase();
+      return (
+        name.includes(q) ||
+        (a.projectName || '').toLowerCase().includes(q) ||
+        (wave?.waveCode || '').toLowerCase().includes(q) ||
+        (a.assignmentNo || '').toLowerCase().includes(q)
+      );
+    });
+  }, [mobilizationList, filterPoId, mobTableSearch, allWorkers, allWaves]);
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
@@ -112,17 +142,29 @@ export default function MobilizationPage() {
               </AlertDescription>
             </Alert>
 
+            <PoFilterContextBanner
+              poId={filterPoId}
+              po={filterPO}
+              listBasePath="/mobilization"
+              moduleLabel="Mobilization"
+            />
+
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="ค้นหาคนงาน, โครงการ หรือรหัสเวฟ..." className="pl-9 h-11" />
+                  <Input
+                    placeholder="ค้นหาคนงาน, โครงการ หรือรหัสเวฟ..."
+                    className="pl-9 h-11"
+                    value={mobTableSearch}
+                    onChange={(e) => setMobTableSearch(e.target.value)}
+                  />
                 </div>
                 <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
               </div>
               <div className="flex gap-2">
                 <Badge variant="outline" className="px-4 h-11 flex items-center gap-2 border-primary/20 bg-primary/5 text-primary font-bold">
-                  <HardHat className="h-4 w-4" /> กำลังเตรียมการ: {mobilizationList.length} ราย
+                  <HardHat className="h-4 w-4" /> แสดงในตาราง: {displayedMobilization.length} ราย
                 </Badge>
               </div>
             </div>
@@ -144,7 +186,7 @@ export default function MobilizationPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {mobilizationList.map((asgn) => {
+                      {displayedMobilization.map((asgn) => {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
                         const pos = allPositions?.find(p => p.id === asgn.positionId);
                         const wave = allWaves?.find(w => w.id === asgn.waveId);
@@ -193,10 +235,20 @@ export default function MobilizationPage() {
                           </TableRow>
                         );
                       })}
-                      {!isAssignmentsLoading && mobilizationList.length === 0 && (
+                      {!isAssignmentsLoading && displayedMobilization.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">
-                            ยังไม่มีรายการเตรียมความพร้อมในขณะนี้ เมื่อ Assignment พร้อมแล้ว ระบบจะแสดงรายการที่นี่
+                          <TableCell colSpan={6} className="text-center py-20 text-muted-foreground text-sm">
+                            {mobilizationList.length === 0 ? (
+                              <span className="italic">
+                                ยังไม่มีรายการเตรียมความพร้อมในขณะนี้ เมื่อ Assignment เข้าขั้นตอนนี้ ระบบจะแสดงรายการที่นี่
+                              </span>
+                            ) : (
+                              <span>
+                                ไม่มีรายการที่ตรงกับการกรอง
+                                {filterPoId ? ' (PO นี้)' : ''}
+                                {mobTableSearch.trim() ? ' หรือคำค้นหา' : ''}
+                              </span>
+                            )}
                           </TableCell>
                         </TableRow>
                       )}

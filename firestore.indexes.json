@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "mobilizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workerId", "order": "ASCENDING" },
+        { "fieldPath": "deploymentStatus", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

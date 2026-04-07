@@ -22,9 +22,12 @@ import {
   Wrench,
 } from 'lucide-react';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
-import { computeWorkerStoreEquipmentReadiness } from '@/lib/store/mobilization-fulfillment';
+import {
+  computeWorkerStoreEquipmentReadiness,
+  MOBILIZATION_STATUSES_NOT_CLOSED,
+} from '@/lib/store/mobilization-fulfillment';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import {
@@ -67,44 +70,87 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export default function WorkerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: firebaseUser, isUserLoading: authHydrationLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
   const canViewWorkerProfile = useMatrixGuards ? canAccess(currentUser, 'workers', 'view') : canView(currentUser, 'workers');
 
+  /** ห้าม subscribe Firestore ก่อน Auth + โปรไฟล์พร้อม — ไม่งั้น rules จะ deny list (หน้า /workers รอแบบนี้อยู่แล้ว) */
+  const dataLayerReady = Boolean(
+    firestore &&
+      !authHydrationLoading &&
+      firebaseUser &&
+      !userLoading &&
+      currentUser &&
+      canViewWorkerProfile,
+  );
+
   // --- Data queries (unchanged) ---
-  const workerRef = useMemoFirebase(() => (firestore ? doc(firestore, 'workers', id) : null), [firestore, id]);
+  const workerRef = useMemoFirebase(
+    () => (dataLayerReady ? doc(firestore!, 'workers', id) : null),
+    [firestore, id, dataLayerReady],
+  );
   const { data: worker, isLoading: isWorkerLoading } = useDoc<Worker>(workerRef as any);
 
-  const certsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers', id, 'certificates') : null), [firestore, id]);
+  const certsQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'workers', id, 'certificates') : null),
+    [firestore, id, dataLayerReady],
+  );
   const { data: certs } = useCollection<WorkerCertificate>(certsQuery as any);
 
-  const medicalsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers', id, 'medical_records') : null), [firestore, id]);
+  const medicalsQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'workers', id, 'medical_records') : null),
+    [firestore, id, dataLayerReady],
+  );
   const { data: medicals } = useCollection<WorkerMedicalRecord>(medicalsQuery as any);
 
-  const drugTestsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers', id, 'drug_tests') : null), [firestore, id]);
+  const drugTestsQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'workers', id, 'drug_tests') : null),
+    [firestore, id, dataLayerReady],
+  );
   const { data: drugTests } = useCollection<WorkerDrugTest>(drugTestsQuery as any);
 
-  const docsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers', id, 'documents') : null), [firestore, id]);
+  const docsQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'workers', id, 'documents') : null),
+    [firestore, id, dataLayerReady],
+  );
   const { data: workerDocs } = useCollection<WorkerDocument>(docsQuery as any);
 
-  const positionsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'positions') : null), [firestore]);
+  const positionsQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'positions') : null),
+    [firestore, dataLayerReady],
+  );
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
-  const workerDocCatalogQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'worker_document_catalog') : null), [firestore]);
+  const workerDocCatalogQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'worker_document_catalog') : null),
+    [firestore, dataLayerReady],
+  );
   const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
 
   const drugPanelRef = useMemoFirebase(
-    () => (firestore ? doc(firestore, DRUG_TEST_PANEL_DOC_PATH[0], DRUG_TEST_PANEL_DOC_PATH[1]) : null),
-    [firestore]
+    () =>
+      dataLayerReady ? doc(firestore!, DRUG_TEST_PANEL_DOC_PATH[0], DRUG_TEST_PANEL_DOC_PATH[1]) : null,
+    [firestore, dataLayerReady],
   );
   const { data: drugPanelConfig } = useDoc<DrugTestPanelConfig>(drugPanelRef as any);
-  const workerTimesheetsQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'daily_timesheets') : null), [firestore]);
+  const workerTimesheetsQuery = useMemoFirebase(
+    () =>
+      dataLayerReady
+        ? query(collection(firestore!, 'daily_timesheets'), where('workerId', '==', id))
+        : null,
+    [firestore, id, dataLayerReady],
+  );
   const { data: workerTimesheetsAll } = useCollection<DailyTimesheet>(workerTimesheetsQuery as any);
 
   const workerMobsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
-    return query(collection(firestore, 'mobilizations'), where('workerId', '==', id), where('deploymentStatus', '!=', 'CLOSED'));
-  }, [firestore, id]);
+    if (!dataLayerReady) return null;
+    return query(
+      collection(firestore!, 'mobilizations'),
+      where('workerId', '==', id),
+      where('deploymentStatus', 'in', [...MOBILIZATION_STATUSES_NOT_CLOSED]),
+    );
+  }, [firestore, id, dataLayerReady]);
   const { data: workerMobilizations } = useCollection<Assignment>(workerMobsQuery as any);
 
   const panelSubstances = drugPanelConfig?.substances ?? [];
@@ -115,8 +161,8 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
   // --- Derived data (unchanged) ---
   const workerTimesheets = useMemo(() => {
-    return (workerTimesheetsAll || []).filter((t) => t.workerId === id);
-  }, [workerTimesheetsAll, id]);
+    return workerTimesheetsAll || [];
+  }, [workerTimesheetsAll]);
 
   const workLogRows = useMemo(() => {
     const grouped = new Map<string, { assignmentId: string; projectName: string; startDate: string; endDate: string; totalHours: number }>();
@@ -274,7 +320,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         query(
           collection(firestore, 'mobilizations'),
           where('workerId', '==', worker.id),
-          where('deploymentStatus', '!=', 'CLOSED'),
+          where('deploymentStatus', 'in', [...MOBILIZATION_STATUSES_NOT_CLOSED]),
         ),
       );
       const openMobs = mobsSnap.docs.map((d) => ({ ...d.data(), id: d.id } as Assignment));
@@ -341,11 +387,20 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
   ]);
 
   // --- Render ---
-  if (userLoading || isWorkerLoading || !worker || !currentUser) {
+  if (authHydrationLoading || userLoading) {
     return (
-      <AppShell user={currentUser} onLogout={() => {}}>
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
-          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลคนงาน (Loading Worker Data)...</div>
+          <div className="animate-pulse text-muted-foreground">กำลังตรวจสอบสิทธิ์…</div>
+        </div>
+      </AppShell>
+    );
+  }
+  if (!firebaseUser || !currentUser) {
+    return (
+      <AppShell user={currentUser as AppUser} onLogout={() => {}}>
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <div className="animate-pulse text-muted-foreground">กำลังโหลดโปรไฟล์ผู้ใช้…</div>
         </div>
       </AppShell>
     );
@@ -354,6 +409,15 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
     return (
       <AppShell user={currentUser as AppUser} onLogout={() => {}}>
         <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (isWorkerLoading || !worker) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="flex items-center justify-center min-h-[50vh]">
+          <div className="animate-pulse text-muted-foreground">กำลังโหลดข้อมูลคนงาน (Loading Worker Data)...</div>
+        </div>
       </AppShell>
     );
   }

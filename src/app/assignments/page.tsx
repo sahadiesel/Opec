@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -49,6 +49,7 @@ import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/services/assignment-overlap';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
+import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 
 function waveRequiredPositionLabel(
   wave: Wave,
@@ -63,6 +64,7 @@ function waveRequiredPositionLabel(
 
 export default function AssignmentsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -116,6 +118,38 @@ export default function AssignmentsPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
+  const [assignmentTableSearch, setAssignmentTableSearch] = useState('');
+
+  const filterPoId = (searchParams.get('poId') || '').trim() || null;
+  const filterPO = useMemo(
+    () => (filterPoId && allPOs?.length ? allPOs.find((p) => p.id === filterPoId) : undefined),
+    [filterPoId, allPOs]
+  );
+
+  const wavesForDialog = useMemo(() => {
+    const list = (allWaves || []).filter((w) => w.status !== 'CLOSED');
+    if (!filterPoId) return list;
+    return list.filter((w) => w.poId === filterPoId);
+  }, [allWaves, filterPoId]);
+
+  const displayedAssignments = useMemo(() => {
+    let list = assignments || [];
+    if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
+    const q = assignmentTableSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((a) => {
+      const worker = allWorkers?.find((w) => w.id === a.workerId);
+      const wave = allWaves?.find((w) => w.id === a.waveId);
+      const name = `${worker?.firstName || ''} ${worker?.lastName || ''}`.toLowerCase();
+      return (
+        name.includes(q) ||
+        (a.assignmentNo || '').toLowerCase().includes(q) ||
+        (a.projectName || '').toLowerCase().includes(q) ||
+        (wave?.waveCode || '').toLowerCase().includes(q) ||
+        (allPOs?.find((p) => p.id === a.poId)?.poCode || '').toLowerCase().includes(q)
+      );
+    });
+  }, [assignments, filterPoId, assignmentTableSearch, allWorkers, allWaves, allPOs]);
 
   const occupiedWorkerIds = useMemo(
     () => getOccupiedWorkerIds(assignments || []),
@@ -232,17 +266,19 @@ export default function AssignmentsPage() {
       return;
     }
 
+    // ใช้ resolveActiveSalesContractTerm: ลำดับ PO ตรงกันก่อน แล้วจึง fallback ลูกค้า + ช่วงวันที่
+    // ห้ามบังคับ purchaseOrderId === wave.poId ซ้ำ — จะตัด fallback ที่ resolver ตั้งใจให้ใช้ได้
     const termRes = resolveActiveSalesContractTerm(allSalesTerms || [], {
       poId: wave.poId,
       customerId: wave.customerId,
       date: startDate,
     });
-    if (!termRes.isMatch || !termRes.data || termRes.data.purchaseOrderId !== wave.poId) {
+    if (!termRes.isMatch || !termRes.data) {
       toast({
         variant: 'destructive',
-        title: 'ยังไม่มีเงื่อนไขการขายสำหรับ PO นี้',
+        title: 'ยังไม่มีเงื่อนไขการขายที่ใช้ได้',
         description:
-          'ต้องมี Sales Contract Term สถานะ ACTIVE ที่ผูกกับ PO นี้และคลุมวันเริ่มงาน ก่อนมอบหมาย (สร้างจากหน้า PO หรือเมนูเงื่อนไขการขาย)',
+          'ต้องมี Sales Contract Term สถานะ ACTIVE ที่ผูกกับ PO นี้หรือลูกค้าเดียวกัน และช่วงวันที่ (effective–end) ครอบคลุมวันเริ่มงาน — ตรวจในเมนูเงื่อนไขการขายหรือหน้า PO',
       });
       return;
     }
@@ -350,11 +386,23 @@ export default function AssignmentsPage() {
               </AlertDescription>
             </Alert>
 
+            <PoFilterContextBanner
+              poId={filterPoId}
+              po={filterPO}
+              listBasePath="/assignments"
+              moduleLabel="Assignments"
+            />
+
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="ค้นหาตามลูกจ้าง, Wave หรือรหัส PO..." className="pl-9 h-11" />
+                  <Input
+                    placeholder="ค้นหาตามลูกจ้าง, Wave หรือรหัส PO..."
+                    className="pl-9 h-11"
+                    value={assignmentTableSearch}
+                    onChange={(e) => setAssignmentTableSearch(e.target.value)}
+                  />
                 </div>
                 <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
               </div>
@@ -376,15 +424,23 @@ export default function AssignmentsPage() {
                       <Select value={selectedWaveId || undefined} onValueChange={setSelectedWaveId}>
                         <SelectTrigger className="h-11"><SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." /></SelectTrigger>
                         <SelectContent>
-                          {allWaves?.filter(w => w.status !== 'CLOSED').map((wave) => {
-                            const posLbl = waveRequiredPositionLabel(wave, allPOLines, allPositions);
-                            return (
-                              <SelectItem key={wave.id} value={wave.id}>
-                                {wave.waveCode} | {posLbl ? `${posLbl} · ` : ''}
-                                {wave.projectName}
-                              </SelectItem>
-                            );
-                          })}
+                          {wavesForDialog.length === 0 ? (
+                            <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                              {filterPoId
+                                ? 'ยังไม่มี Wave ที่เปิดอยู่สำหรับ PO นี้ — สร้าง Wave จากเมนู Waves ก่อน'
+                                : 'ยังไม่มี Wave ที่เปิดอยู่'}
+                            </div>
+                          ) : (
+                            wavesForDialog.map((wave) => {
+                              const posLbl = waveRequiredPositionLabel(wave, allPOLines, allPositions);
+                              return (
+                                <SelectItem key={wave.id} value={wave.id}>
+                                  {wave.waveCode} | {posLbl ? `${posLbl} · ` : ''}
+                                  {wave.projectName}
+                                </SelectItem>
+                              );
+                            })
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -469,7 +525,7 @@ export default function AssignmentsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {assignments?.map((asgn) => {
+                      {displayedAssignments.map((asgn) => {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
                         const wave = allWaves?.find(w => w.id === asgn.waveId);
                         
@@ -506,6 +562,21 @@ export default function AssignmentsPage() {
                           </TableRow>
                         );
                       })}
+                      {!isAssignmentsLoading && displayedAssignments.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center py-16 text-muted-foreground text-sm">
+                            {!assignments || assignments.length === 0 ? (
+                              <span className="italic">ยังไม่มีรายการมอบหมายในระบบ</span>
+                            ) : (
+                              <span>
+                                ไม่มีรายการที่ตรงกับการกรอง
+                                {filterPoId ? ' (PO นี้)' : ''}
+                                {assignmentTableSearch.trim() ? ' หรือคำค้นหา' : ''}
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
                     </TableBody>
                   </Table>
                 )}

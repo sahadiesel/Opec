@@ -72,6 +72,7 @@ import {
   canSeeAccountingPillarUi,
 } from '@/lib/permissions';
 import type { CSSProperties, ReactNode } from 'react';
+import { PoStaffingQueueCard } from '@/components/dashboard/po-staffing-queue-card';
 
 /** Same Storage image as login form — keep all pre-dashboard full-screen states visually consistent. */
 const LOGIN_BG_URL = PlaceHolderImages.find((img) => img.id === 'login-bg')?.imageUrl ?? '';
@@ -104,6 +105,7 @@ export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [authSlowHint, setAuthSlowHint] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -134,7 +136,7 @@ export default function Home() {
 
   const firestore = useFirestore();
   const auth = useAuth();
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { user: firebaseUser, isUserLoading, userError } = useUser();
   const { toast } = useToast();
   
   const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
@@ -145,6 +147,11 @@ export default function Home() {
   const latestUserDoc = useMemo(() => {
     return rawUserDoc ? normalizeCurrentUserPermissions(rawUserDoc) : null;
   }, [rawUserDoc]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setAuthSlowHint(true), 20_000);
+    return () => window.clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     setIsLoaded(true);
@@ -451,9 +458,15 @@ export default function Home() {
   if (!isLoaded || isUserLoading) {
     return (
       <LoginStageBackdrop>
-        <div className="relative z-10 flex flex-col items-center justify-center gap-3">
+        <div className="relative z-10 flex max-w-md flex-col items-center justify-center gap-3 px-4 text-center">
           <Loader2 className="h-10 w-10 animate-spin text-primary" />
           <p className="text-sm text-white/85">กำลังเตรียมระบบ…</p>
+          {authSlowHint && (
+            <p className="text-xs text-white/60">
+              ถ้ารอนานเกินไป: ตรวจว่ารัน <span className="font-mono">npm run dev</span> ตามพอร์ตในเทอร์มินัล (ค่าเริ่มต้น 9003) แล้วลองรีเฟรช
+              (Ctrl+Shift+R) หรือตรวจเครือข่าย / VPN
+            </p>
+          )}
         </div>
       </LoginStageBackdrop>
     );
@@ -491,6 +504,14 @@ export default function Home() {
       <LoginStageBackdrop>
         <Card className="relative z-10 w-full max-w-md border-t-8 border-t-primary bg-white shadow-2xl">
           <CardHeader className="space-y-1 text-center">
+            {userError && (
+              <Alert variant="destructive" className="mb-4 text-left">
+                <AlertTitle>เชื่อมต่อระบบไม่สำเร็จ</AlertTitle>
+                <AlertDescription className="text-sm">
+                  {userError.message}
+                </AlertDescription>
+              </Alert>
+            )}
             <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
               <ShieldCheck className="h-10 w-10 text-primary" />
             </div>
@@ -802,6 +823,15 @@ export default function Home() {
             </CardContent>
           </Card>
         </div>
+
+        <PoStaffingQueueCard
+          enabled={
+            showHrUi ||
+            showOpsUi ||
+            check('customer_pos', 'view') ||
+            isSystemAdmin(latestUserDoc)
+          }
+        />
 
         {/* Action Grid */}
         <div className="space-y-6">

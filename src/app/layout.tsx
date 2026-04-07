@@ -1,8 +1,6 @@
-import type {Metadata} from 'next';
+import type { Metadata } from 'next';
 import './globals.css';
-import { Toaster } from '@/components/ui/toaster';
-import { FirebaseClientProvider } from '@/firebase/client-provider';
-import { FixStuckUI } from '@/components/FixStuckUI';
+import { ClientRoot } from './client-root';
 
 export const metadata: Metadata = {
   title: 'OPEC OpsFlow - Manpower Supply Management',
@@ -22,11 +20,7 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       <body className="font-body antialiased">
-        <FirebaseClientProvider>
-          <FixStuckUI />
-          {children}
-          <Toaster />
-        </FirebaseClientProvider>
+        <ClientRoot>{children}</ClientRoot>
       </body>
     </html>
   );

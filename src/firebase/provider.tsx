@@ -76,17 +76,47 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
 
     setUserAuthState({ user: null, isUserLoading: true, userError: null }); // Reset on auth instance change
 
+    let safetyTimer: ReturnType<typeof window.setTimeout> | undefined;
+    const clearSafety = () => {
+      if (safetyTimer !== undefined) {
+        window.clearTimeout(safetyTimer);
+        safetyTimer = undefined;
+      }
+    };
+
+    /** ถ้า onAuthStateChanged ค้าง (เครือข่าย/VPN/ไฟร์วอลล์) หน้าแรกจะไม่ค้างที่ "กำลังเตรียมระบบ" ตลอดไป */
+    safetyTimer = window.setTimeout(() => {
+      setUserAuthState((prev) =>
+        prev.isUserLoading
+          ? {
+              user: prev.user,
+              isUserLoading: false,
+              userError:
+                prev.userError ??
+                new Error(
+                  'Firebase Auth ไม่ตอบภายใน 15 วินาที — ตรวจสอบอินเทอร์เน็ต VPN หรือไฟร์วอลล์ แล้วรีเฟรชหน้า',
+                ),
+            }
+          : prev,
+      );
+    }, 15_000);
+
     const unsubscribe = onAuthStateChanged(
       auth,
-      (firebaseUser) => { // Auth state determined
+      (firebaseUser) => {
+        clearSafety();
         setUserAuthState({ user: firebaseUser, isUserLoading: false, userError: null });
       },
-      (error) => { // Auth listener error
+      (error) => {
+        clearSafety();
         console.error("FirebaseProvider: onAuthStateChanged error:", error);
         setUserAuthState({ user: null, isUserLoading: false, userError: error });
-      }
+      },
     );
-    return () => unsubscribe(); // Cleanup
+    return () => {
+      clearSafety();
+      unsubscribe();
+    };
   }, [auth]); // Depends on the auth instance
 
   // Memoize the context value

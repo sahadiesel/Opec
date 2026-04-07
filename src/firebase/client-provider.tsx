@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useMemo, type ReactNode } from 'react';
+import React, { useEffect, useMemo, type ReactNode } from 'react';
+import { enableNetwork } from 'firebase/firestore';
 import { FirebaseProvider } from '@/firebase/provider';
 import { initializeFirebase } from '@/firebase';
 
@@ -13,6 +14,15 @@ export function FirebaseClientProvider({ children }: FirebaseClientProviderProps
     // Initialize Firebase on the client side, once per component mount.
     return initializeFirebase();
   }, []); // Empty dependency array ensures this runs only once on mount
+
+  useEffect(() => {
+    const fs = firebaseServices.firestore;
+    const onOnline = () => {
+      void enableNetwork(fs).catch(() => {});
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [firebaseServices.firestore]);
 
   return (
     <FirebaseProvider

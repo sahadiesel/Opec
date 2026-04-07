@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -57,6 +57,7 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 
 /** รวม plannedWorkers ของเวฟที่ผูก PO line เดียวกัน — ไม่นับเวฟ CLOSED; `excludeWaveId` สำหรับโหมดแก้ไข */
 function sumPlannedWorkersForPoLine(
@@ -118,6 +119,7 @@ const defaultNewWaveState = (): Partial<Wave> => ({
 
 export default function WavesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
@@ -168,6 +170,13 @@ export default function WavesPage() {
   const [wavePendingDelete, setWavePendingDelete] = useState<Wave | null>(null);
   const [isDeletingWave, setIsDeletingWave] = useState(false);
   const [newWave, setNewWave] = useState<Partial<Wave>>(() => defaultNewWaveState());
+  const [waveTableSearch, setWaveTableSearch] = useState('');
+
+  const filterPoId = (searchParams.get('poId') || '').trim() || null;
+  const filterPO = useMemo(
+    () => (filterPoId && allPOs?.length ? allPOs.find((p) => p.id === filterPoId) : undefined),
+    [filterPoId, allPOs]
+  );
 
   const quotaExcludeWaveId = editingWave?.id ?? null;
 
@@ -374,6 +383,25 @@ export default function WavesPage() {
     return pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId;
   };
 
+  const displayedWaves = useMemo(() => {
+    let list = waves || [];
+    if (filterPoId) list = list.filter((w) => w.poId === filterPoId);
+    const q = waveTableSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((w) => {
+      const customer = customers?.find((c) => c.id === w.customerId);
+      const line = allPOLines?.find((l) => l.id === w.poLineId && l.poId === w.poId);
+      const pos = line?.positionId ? allPositions?.find((p) => p.id === line.positionId) : undefined;
+      const posLbl = pos ? positionListPrimaryName(pos as PositionDoc).toLowerCase() : '';
+      return (
+        (w.waveCode || '').toLowerCase().includes(q) ||
+        (w.projectName || '').toLowerCase().includes(q) ||
+        (customer?.name || '').toLowerCase().includes(q) ||
+        posLbl.includes(q)
+      );
+    });
+  }, [waves, filterPoId, waveTableSearch, customers, allPOLines, allPositions]);
+
   const getStatusBadge = (status: WaveStatus) => {
     switch (status) {
       case 'PLANNING': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">PLANNING</Badge>;
@@ -426,12 +454,24 @@ export default function WavesPage() {
           </AlertDescription>
         </Alert>
 
+        <PoFilterContextBanner
+          poId={filterPoId}
+          po={filterPO}
+          listBasePath="/waves"
+          moduleLabel="Waves"
+        />
+
         {/* Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหารหัสเวฟ, ชื่อลูกค้า หรือโครงการ..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหารหัสเวฟ, ชื่อลูกค้า หรือโครงการ..."
+                className="pl-9 h-11"
+                value={waveTableSearch}
+                onChange={(e) => setWaveTableSearch(e.target.value)}
+              />
             </div>
             <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
@@ -441,7 +481,10 @@ export default function WavesPage() {
             disabled={!isStaff}
             onClick={() => {
               setEditingWave(null);
-              setNewWave(defaultNewWaveState());
+              setNewWave({
+                ...defaultNewWaveState(),
+                ...(filterPoId ? { poId: filterPoId } : {}),
+              });
               setWaveFormOpen(true);
             }}
           >
@@ -640,7 +683,7 @@ export default function WavesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {waves?.map((wave) => {
+                  {displayedWaves.map((wave) => {
                     const customer = customers?.find(c => c.id === wave.customerId);
                     const positionLabel = positionLabelForWave(wave);
                     return (
@@ -747,10 +790,19 @@ export default function WavesPage() {
                       </TableRow>
                     );
                   })}
-                  {(!waves || waves.length === 0) && !isWavesLoading && (
+                  {!isWavesLoading && displayedWaves.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
-                        ยังไม่มีเวฟงานในระบบ เริ่มต้นโดยกด 'สร้างเวฟงาน' เพื่อวางแผนการส่งคนลงงาน
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground">
+                        {!waves || waves.length === 0 ? (
+                          <span className="italic">ยังไม่มีเวฟงานในระบบ เริ่มต้นโดยกด &quot;สร้างเวฟงาน&quot; เพื่อวางแผนการส่งคนลงงาน</span>
+                        ) : (
+                          <span>
+                            ไม่มีแถวที่ตรงกับการกรอง
+                            {filterPoId ? ' (PO นี้)' : ''}
+                            {waveTableSearch.trim() ? ' หรือคำค้นหา' : ''}
+                            — ลองล้างการกรองหรือปรับคำค้นหา
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   )}

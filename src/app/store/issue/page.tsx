@@ -48,6 +48,7 @@ import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { pickDefaultStoreItemForPpe, pickDefaultStoreItemForTool } from '@/lib/store/position-issue-match';
 import {
   MOBILIZATION_FULFILLMENT_SUBCOLLECTION,
+  MOBILIZATION_STATUSES_NOT_CLOSED,
   appliesPpeRequirement,
   appliesToolRequirement,
   fulfillmentLineDocId,
@@ -105,7 +106,10 @@ export default function IssueItemsPage() {
 
   const allMobsQuery = useMemoFirebase(() => {
     if (!firestore || !canAccess) return null;
-    return query(collection(firestore, 'mobilizations'), where('deploymentStatus', '!=', 'CLOSED'));
+    return query(
+      collection(firestore, 'mobilizations'),
+      where('deploymentStatus', 'in', [...MOBILIZATION_STATUSES_NOT_CLOSED]),
+    );
   }, [firestore, canAccess]);
   const { data: allMobilizations } = useCollection<Assignment>(allMobsQuery as any);
 

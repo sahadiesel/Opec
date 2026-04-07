@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 9002",
-    "dev:turbo": "next dev --turbopack -p 9002",
+    "dev": "next dev --turbopack -p 9003",
+    "dev:webpack": "next dev -p 9003",
+    "dev:turbo": "next dev --turbopack -p 9003",
+    "dev:9002": "next dev --turbopack -p 9002",
+    "free:9002": "npx --yes kill-port 9002",
     "genkit:dev": "genkit start -- tsx src/ai/dev.ts",
     "genkit:watch": "genkit start -- tsx --watch src/ai/dev.ts",
     "build": "NODE_ENV=production next build",

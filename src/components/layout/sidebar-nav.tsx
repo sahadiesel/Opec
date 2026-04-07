@@ -436,6 +436,78 @@ export function SidebarNav({
 
           if (visibleItems.length === 0) return null;
 
+          const staffingBasePaths = ['/waves', '/assignments', '/mobilization'];
+          const staffingItems =
+            group.label === 'งานปฏิบัติการ (Operations)'
+              ? visibleItems.filter((item) => staffingBasePaths.includes(item.href.split('?')[0]))
+              : [];
+          const restItems =
+            group.label === 'งานปฏิบัติการ (Operations)' && staffingItems.length > 0
+              ? visibleItems.filter((item) => !staffingBasePaths.includes(item.href.split('?')[0]))
+              : visibleItems;
+
+          if (group.label === 'งานปฏิบัติการ (Operations)' && staffingItems.length > 0) {
+            const isStaffingOpen = staffingItems.some((it) => pathMatches(pathname, it.href));
+            return (
+              <SidebarGroup key={group.label} className="py-2">
+                <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
+                  {group.label}
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    <Collapsible defaultOpen={isStaffingOpen} className="group">
+                      <SidebarMenuItem>
+                        <CollapsibleTrigger asChild>
+                          <SidebarMenuButton tooltip="Wave → มอบหมาย → เตรียมส่งตัว" className="transition-all duration-200">
+                            <Waves className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-semibold text-xs tracking-tight">จัดคนงานตาม PO</span>
+                            <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                          </SidebarMenuButton>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <SidebarMenuSub>
+                            {staffingItems.map((item) => {
+                              const active = pathMatches(pathname, item.href);
+                              return (
+                                <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
+                                  <SidebarMenuSubButton asChild isActive={active} size="sm">
+                                    <Link href={item.href}>
+                                      <item.icon
+                                        className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                      />
+                                      <span>{item.title}</span>
+                                    </Link>
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              );
+                            })}
+                          </SidebarMenuSub>
+                        </CollapsibleContent>
+                      </SidebarMenuItem>
+                    </Collapsible>
+                    {restItems.map((item) => (
+                      <SidebarMenuItem key={`${item.key}-${item.href}`}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={pathMatches(pathname, item.href)}
+                          tooltip={item.title}
+                          className={`transition-all duration-200 ${pathMatches(pathname, item.href) ? 'font-bold' : ''}`}
+                        >
+                          <Link href={item.href}>
+                            <item.icon
+                              className={`h-4 w-4 ${pathMatches(pathname, item.href) ? 'text-primary' : 'text-muted-foreground'}`}
+                            />
+                            <span className="font-semibold text-xs tracking-tight">{item.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            );
+          }
+
           return (
             <SidebarGroup key={group.label} className="py-2">
               <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
@@ -444,7 +516,7 @@ export function SidebarNav({
 
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {visibleItems.map((item) => (
+                  {restItems.map((item) => (
                     <SidebarMenuItem key={`${item.key}-${item.href}`}>
                       <SidebarMenuButton
                         asChild

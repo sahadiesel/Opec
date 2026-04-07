@@ -35,7 +35,8 @@ import {
   BarChart3,
   Percent,
   Scale,
-  ChevronRight
+  ChevronRight,
+  ClipboardList
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -62,7 +63,8 @@ import {
   SalesContractTerm,
   LaborCostContractTerm,
   RateCondition,
-  Quotation
+  Quotation,
+  Wave
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -74,6 +76,11 @@ import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete } from '@/lib/permissions';
 import { sortPositionRatesByDisplayName, sortPositionsByDisplayName } from '@/lib/position-display';
+import {
+  aggregateActiveLineTotals,
+  assignmentCountsTowardQuota,
+  buildPoFulfillmentByLine,
+} from '@/lib/ops/po-fulfillment-read-model';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -103,6 +110,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     return query(collection(firestore, 'mobilizations'), where('poId', '==', id));
   }, [firestore, id, canViewPo]);
   const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
+
+  const wavesQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewPo) return null;
+    return query(collection(firestore, 'waves'), where('poId', '==', id));
+  }, [firestore, id, canViewPo]);
+  const { data: poWaves } = useCollection<Wave>(wavesQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'customers') : null), [firestore, canViewPo]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
@@ -134,6 +147,20 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const workersQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'workers') : null), [firestore, canViewPo]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
+
+  const fulfillmentRows = useMemo(
+    () => buildPoFulfillmentByLine(poLines, allAssignments, poWaves, id),
+    [poLines, allAssignments, poWaves, id]
+  );
+  const fulfillmentTotals = useMemo(() => aggregateActiveLineTotals(fulfillmentRows), [fulfillmentRows]);
+  const hasActiveSalesTerm = useMemo(
+    () => !!(salesTerms || []).some((t) => t.status === 'ACTIVE'),
+    [salesTerms]
+  );
+  const hasActiveLaborCostTerm = useMemo(
+    () => !!(costTerms || []).some((t) => t.status === 'ACTIVE'),
+    [costTerms]
+  );
 
   const conditionsQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'rate_conditions') : null), [firestore, canViewPo]);
   const { data: allConditions } = useCollection<RateCondition>(conditionsQuery as any);
@@ -502,6 +529,128 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
+        {isContractBasedPO && (
+          <Card className="border-primary/25 shadow-sm overflow-hidden">
+            <CardHeader className="space-y-3 border-b bg-muted/30 pb-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <ClipboardList className="h-5 w-5 text-primary shrink-0" />
+                    สรุปสถานะเติมโควต้า (Ops / HR)
+                  </CardTitle>
+                  <CardDescription className="text-xs max-w-3xl leading-relaxed">
+                    มุมมองอ่านอย่างเดียว (ขั้นที่ 1) — รวมจาก PO Lines, Waves และ Mobilizations ที่ผูก PO นี้
+                    เพื่อดูว่ายังต้องสร้าง Wave / มอบหมายคน / เตรียมส่งตัวหรือไม่ โดยไม่เปลี่ยน flow เดิมของระบบ
+                  </CardDescription>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={hasActiveSalesTerm ? 'default' : 'outline'} className="text-[10px]">
+                    Sales Term: {hasActiveSalesTerm ? 'ACTIVE มี' : 'ยังไม่มี ACTIVE'}
+                  </Badge>
+                  <Badge variant={hasActiveLaborCostTerm ? 'default' : 'outline'} className="text-[10px]">
+                    Labor cost: {hasActiveLaborCostTerm ? 'ACTIVE มี' : 'ยังไม่มี ACTIVE'}
+                  </Badge>
+                  <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                    <Link href={`/waves?poId=${encodeURIComponent(id)}`}>Waves</Link>
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                    <Link href={`/assignments?poId=${encodeURIComponent(id)}`}>Assignments</Link>
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                    <Link href={`/mobilization?poId=${encodeURIComponent(id)}`}>Mobilization</Link>
+                  </Button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                <StatCard
+                  title="โควต้ารวม (active)"
+                  value={fulfillmentTotals.required}
+                  sub="จาก PO Lines"
+                  icon={Users}
+                  colorClass="border-l-blue-500"
+                />
+                <StatCard
+                  title="มอบหมายแล้ว"
+                  value={fulfillmentTotals.assigned}
+                  sub="Mobilization ยังไม่ปิด"
+                  icon={CheckCircle2}
+                  colorClass="border-l-emerald-500"
+                />
+                <StatCard
+                  title="ว่าง (slots)"
+                  value={fulfillmentTotals.openSlots}
+                  sub="ต้องหาคนเพิ่ม"
+                  icon={AlertCircle}
+                  colorClass="border-l-amber-500"
+                />
+                <StatCard
+                  title="จำนวน Wave"
+                  value={fulfillmentTotals.waveCount}
+                  sub="เอกสาร waves"
+                  icon={Briefcase}
+                  colorClass="border-l-violet-500"
+                />
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader className="bg-muted/20">
+                  <TableRow>
+                    <TableHead className="pl-6">ตำแหน่ง / บรรทัด</TableHead>
+                    <TableHead className="text-center">สถานะบรรทัด</TableHead>
+                    <TableHead className="text-center">โควต้า</TableHead>
+                    <TableHead className="text-center">มอบหมาย</TableHead>
+                    <TableHead className="text-center">ว่าง</TableHead>
+                    <TableHead className="text-center">Waves</TableHead>
+                    <TableHead className="text-center pr-6">แผนใน Wave</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {fulfillmentRows.length > 0 ? (
+                    fulfillmentRows.map((row) => {
+                      const pos = allPositions?.find((p) => p.id === row.positionId);
+                      const posName = (pos?.positionName || pos?.positionNameTh) || row.positionId;
+                      return (
+                        <TableRow key={row.lineId}>
+                          <TableCell className="pl-6 py-3 font-medium text-primary">{posName}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant="outline" className="text-[10px] uppercase">
+                              {row.lineStatus}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-center font-semibold">{row.requiredQty}</TableCell>
+                          <TableCell className="text-center">{row.assignedCount}</TableCell>
+                          <TableCell className="text-center">
+                            {row.lineStatus === 'active' ? (
+                              row.remainingSlots > 0 ? (
+                                <Badge className="bg-amber-100 text-amber-800 border-amber-200">{row.remainingSlots}</Badge>
+                              ) : (
+                                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">0</Badge>
+                              )
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center">{row.waveCount}</TableCell>
+                          <TableCell className="text-center pr-6 text-muted-foreground text-sm">
+                            {row.plannedWorkersInWaves || 0}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-10 text-muted-foreground text-sm">
+                        ยังไม่มี PO Line — เพิ่มจากแท็บ PO Lines (โควต้า)
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
         <Tabs defaultValue="lines" className="w-full">
           <TabsList className="grid grid-cols-5 w-full md:w-[900px] h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6">ข้อมูลหัว PO</TabsTrigger>
@@ -729,7 +878,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <TableBody>
                     {poLines?.map(line => {
                       const pos = allPositions?.find(p => p.id === line.positionId);
-                      const assignedCount = poAssignments.filter(a => a.poLineId === line.id && ['DRAFT', 'READY', 'MOBILIZING', 'ACTIVE'].includes(a.deploymentStatus)).length;
+                      const assignedCount = poAssignments.filter(
+                        (a) => a.poLineId === line.id && assignmentCountsTowardQuota(a.deploymentStatus)
+                      ).length;
                       const remaining = line.quantity - assignedCount;
                       
                       return (
@@ -1006,10 +1157,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             </p>
                             <div className="flex flex-wrap justify-center gap-2 pt-1">
                               <Button variant="outline" size="sm" asChild>
-                                <Link href="/waves">Waves (เวฟ)</Link>
+                                <Link href={`/waves?poId=${encodeURIComponent(id)}`}>Waves (เวฟ)</Link>
                               </Button>
                               <Button variant="outline" size="sm" asChild>
-                                <Link href="/assignments">Assignments (การมอบหมาย)</Link>
+                                <Link href={`/assignments?poId=${encodeURIComponent(id)}`}>Assignments (การมอบหมาย)</Link>
                               </Button>
                             </div>
                           </div>
