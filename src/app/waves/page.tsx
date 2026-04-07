@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -177,6 +177,23 @@ export default function WavesPage() {
     () => (filterPoId && allPOs?.length ? allPOs.find((p) => p.id === filterPoId) : undefined),
     [filterPoId, allPOs]
   );
+
+  const wantOpenNewWaveFromPo = searchParams.get('newWave') === '1';
+  const newWaveAutoOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (!wantOpenNewWaveFromPo) {
+      newWaveAutoOpenRef.current = false;
+      return;
+    }
+    if (!isStaff || !filterPoId) return;
+    if (newWaveAutoOpenRef.current) return;
+    newWaveAutoOpenRef.current = true;
+    setEditingWave(null);
+    setNewWave({ ...defaultNewWaveState(), poId: filterPoId });
+    setWaveFormOpen(true);
+    router.replace(`/waves?poId=${encodeURIComponent(filterPoId)}`, { scroll: false });
+  }, [wantOpenNewWaveFromPo, isStaff, filterPoId, router]);
 
   const quotaExcludeWaveId = editingWave?.id ?? null;
 

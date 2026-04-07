@@ -36,7 +36,9 @@ import {
   Percent,
   Scale,
   ChevronRight,
-  ClipboardList
+  ClipboardList,
+  ListOrdered,
+  ArrowRight
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -161,6 +163,26 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     () => !!(costTerms || []).some((t) => t.status === 'ACTIVE'),
     [costTerms]
   );
+
+  const staffingOrchestrationHint = useMemo(() => {
+    if (!po || (po.poType || 'contract') !== 'contract') return '';
+    if (po.status !== 'active') {
+      return 'PO ยังไม่ Active — เมื่อเปิดใช้แล้วค่อยดำเนินการเติมโควต้า';
+    }
+    if (fulfillmentTotals.required <= 0) {
+      return 'ยังไม่มีบรรทัดโควต้า — เพิ่มจากแท็บ PO Lines (โควต้า)';
+    }
+    if (fulfillmentTotals.openSlots <= 0) {
+      return 'โควต้าเต็มตามที่ติดตาม — ตรวจ Wave / Mobilization ตามปกติ';
+    }
+    if (fulfillmentTotals.waveCount === 0) {
+      return 'แนะนำ: เริ่มจากสร้าง Wave (ขั้นตอนที่ 1)';
+    }
+    if (fulfillmentTotals.assigned < fulfillmentTotals.required) {
+      return 'มี Wave แล้ว — มอบหมายคนงาน (ขั้นตอนที่ 2)';
+    }
+    return 'ตรวจความพร้อมและเตรียมส่งตัว (ขั้นตอนที่ 3)';
+  }, [po, fulfillmentTotals]);
 
   const conditionsQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'rate_conditions') : null), [firestore, canViewPo]);
   const { data: allConditions } = useCollection<RateCondition>(conditionsQuery as any);
@@ -551,7 +573,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     Labor cost: {hasActiveLaborCostTerm ? 'ACTIVE มี' : 'ยังไม่มี ACTIVE'}
                   </Badge>
                   <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
-                    <Link href={`/waves?poId=${encodeURIComponent(id)}`}>Waves</Link>
+                    <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>+ Wave</Link>
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 text-xs px-2" asChild>
+                    <Link href={`/waves?poId=${encodeURIComponent(id)}`}>รายการ</Link>
                   </Button>
                   <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
                     <Link href={`/assignments?poId=${encodeURIComponent(id)}`}>Assignments</Link>
@@ -647,6 +672,78 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   )}
                 </TableBody>
               </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {isContractBasedPO && (
+          <Card className="border-emerald-500/25 shadow-sm overflow-hidden">
+            <CardHeader className="border-b bg-emerald-500/5 pb-4">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <ListOrdered className="h-5 w-5 text-emerald-700 shrink-0" />
+                ลำดับเติมโควต้า (ขั้นที่ 3 — Orchestration)
+              </CardTitle>
+              <CardDescription className="text-xs max-w-3xl leading-relaxed">
+                ใช้ flow เดิมของระบบ (สร้าง Wave → มอบหมาย → Mobilization) โดยลิงก์จาก PO นี้ — ไม่เปลี่ยนวิธีบันทึกใน Firestore
+              </CardDescription>
+              {staffingOrchestrationHint ? (
+                <p className="text-sm font-medium text-emerald-900/90 pt-2 flex items-start gap-2">
+                  <ArrowRight className="h-4 w-4 shrink-0 mt-0.5" />
+                  {staffingOrchestrationHint}
+                </p>
+              ) : null}
+            </CardHeader>
+            <CardContent className="p-4 md:p-6">
+              <ol className="grid grid-cols-1 md:grid-cols-3 gap-4 list-none">
+                <li className="rounded-lg border bg-card p-4 space-y-3 shadow-sm">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white text-xs">
+                      1
+                    </span>
+                    สร้าง Wave
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    เปิดรอบงานและเลือก PO line ที่ยังมีโควต้า — ระบบจะเปิดฟอร์มสร้างเวฟให้พร้อมเลือก PO นี้
+                  </p>
+                  <Button className="w-full font-bold bg-emerald-700 hover:bg-emerald-800" asChild>
+                    <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>
+                      ไปสร้าง Wave <ChevronRight className="h-4 w-4 ml-1" />
+                    </Link>
+                  </Button>
+                </li>
+                <li className="rounded-lg border bg-card p-4 space-y-3 shadow-sm">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white text-xs">
+                      2
+                    </span>
+                    มอบหมายคนงาน
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    เลือก Wave ของ PO นี้แล้วผูกลูกจ้างที่ตำแหน่งและความพร้อมตรงตามเกณฑ์
+                  </p>
+                  <Button variant="outline" className="w-full font-bold border-emerald-600 text-emerald-800" asChild>
+                    <Link href={`/assignments?poId=${encodeURIComponent(id)}`}>
+                      ไป Assignments <ChevronRight className="h-4 w-4 ml-1" />
+                    </Link>
+                  </Button>
+                </li>
+                <li className="rounded-lg border bg-card p-4 space-y-3 shadow-sm">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white text-xs">
+                      3
+                    </span>
+                    เตรียมส่งตัว
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    ตรวจความพร้อมก่อนลงหน้างาน (Mobilization) ตาม mobilization ที่ผูก PO นี้
+                  </p>
+                  <Button variant="outline" className="w-full font-bold" asChild>
+                    <Link href={`/mobilization?poId=${encodeURIComponent(id)}`}>
+                      ไป Mobilization <ChevronRight className="h-4 w-4 ml-1" />
+                    </Link>
+                  </Button>
+                </li>
+              </ol>
             </CardContent>
           </Card>
         )}
