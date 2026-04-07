@@ -36,6 +36,7 @@ import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
 } from '@/lib/payroll/d8';
+import { computeWorkDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
 
 export interface PayrollPreflightZeroWorker {
   workerId: string;
@@ -331,6 +332,7 @@ export class PayrollService {
       const laborTermIds = new Set<string>();
       const conditionIds = new Set<string>();
       let usedContractFallback = false;
+      let usedPackageLaborCost = false;
 
       for (const ts of workerTs) {
         const contract = allCostTerms.find(ct => 
@@ -352,12 +354,35 @@ export class PayrollService {
             const poLine = poLineById.get(ts.poLineId) || {};
             const baseCost = Number(poLine?.costBaselineSnapshot || 0);
             const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
-            const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, fallbackPolicy);
-            if (fallbackCost > 0) {
-              workerGross += fallbackCost;
+            const mainContract = contractMap.get(ts.contractId);
+
+            if (ts.eventType === 'work_day' && baseCost > 0) {
+              const statedHours =
+                poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
+              const otMult =
+                Number(poLine.costOtRulesSnapshot?.afterShift) ||
+                Number(fallbackPolicy?.otAfterShift) ||
+                1.5;
+              const pkg = computeWorkDayCostFromPackage({
+                timesheet: ts,
+                costPackagePerDay: baseCost,
+                statedHours,
+                otAfterShiftMultiplier: otMult,
+                mainContract,
+              });
+              usedPackageLaborCost = true;
+              workerGross += pkg.amount;
               eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-              earningsBreakdown[`${ts.eventType}_policy`] =
-                (earningsBreakdown[`${ts.eventType}_policy`] || 0) + fallbackCost;
+              earningsBreakdown.work_day_package =
+                (earningsBreakdown.work_day_package || 0) + pkg.amount;
+            } else {
+              const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, fallbackPolicy);
+              if (fallbackCost > 0) {
+                workerGross += fallbackCost;
+                eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
+                earningsBreakdown[`${ts.eventType}_policy`] =
+                  (earningsBreakdown[`${ts.eventType}_policy`] || 0) + fallbackCost;
+              }
             }
           }
         }
@@ -366,9 +391,11 @@ export class PayrollService {
       const rateSummary =
         conditionIds.size > 0
           ? `rate_conditions: ${[...conditionIds].join(', ')}`
-          : usedContractFallback || laborTermIds.size > 0
-            ? `labor_cost_term + contract policy fallback (terms: ${[...laborTermIds].join(', ') || '—'})`
-            : 'no_applicable_labor_term';
+          : usedPackageLaborCost
+            ? `package_labor_cost (8+OT split / rest flat) + labor terms: ${[...laborTermIds].join(', ') || '—'}`
+            : usedContractFallback || laborTermIds.size > 0
+              ? `labor_cost_term + contract policy fallback (terms: ${[...laborTermIds].join(', ') || '—'})`
+              : 'no_applicable_labor_term';
 
       const resolvedPolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'worker');
       const d8Line = computeWorkerPayrollLineD8({
