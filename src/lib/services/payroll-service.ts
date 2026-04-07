@@ -342,60 +342,86 @@ export class PayrollService {
         
         if (contract) {
           laborTermIds.add(contract.id);
-          const condition = resolveApplicableCostRateCondition(allConditions, ts, contract);
-          if (condition) {
-            conditionIds.add(condition.id);
-            const cost = calculateDailyLaborCost(ts, condition, 0);
-            workerGross += cost;
-            eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-            earningsBreakdown[ts.eventType] = (earningsBreakdown[ts.eventType] || 0) + cost;
-          } else {
-            usedContractFallback = true;
-            const poLine = poLineById.get(ts.poLineId) || {};
-            const baseCost = Number(poLine?.costBaselineSnapshot || 0);
-            const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
-            const mainContract = contractMap.get(ts.contractId);
+          const poLine = poLineById.get(ts.poLineId) || {};
+          const baseCost = Number(poLine?.costBaselineSnapshot || 0);
+          const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
+          const mainContract = contractMap.get(ts.contractId);
 
-            if (ts.eventType === 'work_day' && baseCost > 0) {
-              const statedHours =
-                poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
-              const otMult =
-                Number(poLine.costOtRulesSnapshot?.afterShift) ||
-                Number(fallbackPolicy?.otAfterShift) ||
-                1.5;
-              const pkg = computeWorkDayCostFromPackage({
-                timesheet: ts,
-                costPackagePerDay: baseCost,
-                statedHours,
-                otAfterShiftMultiplier: otMult,
-                mainContract,
-              });
-              usedPackageLaborCost = true;
-              workerGross += pkg.amount;
+          /** work_day ใช้สูตรแพ็กต้นทุน (PO + สัญญา) เป็นหลัก — ไม่แข่งกับ rate_condition */
+          const useWorkDayPackage =
+            ts.eventType === 'work_day' && baseCost > 0;
+
+          if (useWorkDayPackage) {
+            const statedHours =
+              poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
+            const otMult =
+              Number(poLine.costOtRulesSnapshot?.afterShift) ||
+              Number(fallbackPolicy?.otAfterShift) ||
+              1.5;
+            const pkg = computeWorkDayCostFromPackage({
+              timesheet: ts,
+              costPackagePerDay: baseCost,
+              statedHours,
+              otAfterShiftMultiplier: otMult,
+              mainContract,
+            });
+            usedPackageLaborCost = true;
+            workerGross += pkg.amount;
+            eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
+            earningsBreakdown.work_day_package =
+              (earningsBreakdown.work_day_package || 0) + pkg.amount;
+          } else {
+            const condition = resolveApplicableCostRateCondition(
+              allConditions,
+              ts,
+              contract,
+            );
+            if (condition) {
+              conditionIds.add(condition.id);
+              const cost = calculateDailyLaborCost(ts, condition, 0);
+              workerGross += cost;
               eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-              earningsBreakdown.work_day_package =
-                (earningsBreakdown.work_day_package || 0) + pkg.amount;
+              earningsBreakdown[ts.eventType] =
+                (earningsBreakdown[ts.eventType] || 0) + cost;
             } else {
-              const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, fallbackPolicy);
+              usedContractFallback = true;
+              const fallbackCost = resolvePolicyFallbackCost(
+                ts,
+                baseCost,
+                fallbackPolicy,
+              );
               if (fallbackCost > 0) {
                 workerGross += fallbackCost;
                 eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
                 earningsBreakdown[`${ts.eventType}_policy`] =
-                  (earningsBreakdown[`${ts.eventType}_policy`] || 0) + fallbackCost;
+                  (earningsBreakdown[`${ts.eventType}_policy`] || 0) +
+                  fallbackCost;
               }
             }
           }
         }
       }
 
+      const rateParts: string[] = [];
+      if (usedPackageLaborCost) {
+        rateParts.push(
+          'work_day: package_labor (8+OT; holiday wrap / Sun+SunOT)',
+        );
+      }
+      if (conditionIds.size > 0) {
+        rateParts.push(`rate_conditions: ${[...conditionIds].join(', ')}`);
+      }
+      if (rateParts.length === 0 && usedContractFallback) {
+        rateParts.push(
+          `policy_fallback (terms: ${[...laborTermIds].join(', ') || '—'})`,
+        );
+      }
       const rateSummary =
-        conditionIds.size > 0
-          ? `rate_conditions: ${[...conditionIds].join(', ')}`
-          : usedPackageLaborCost
-            ? `package_labor_cost (8+OT; holiday wrap / Sun+SunOT) + labor terms: ${[...laborTermIds].join(', ') || '—'}`
-            : usedContractFallback || laborTermIds.size > 0
-              ? `labor_cost_term + contract policy fallback (terms: ${[...laborTermIds].join(', ') || '—'})`
-              : 'no_applicable_labor_term';
+        rateParts.length > 0
+          ? rateParts.join(' | ')
+          : laborTermIds.size > 0
+            ? `labor_terms_only: ${[...laborTermIds].join(', ')}`
+            : 'no_applicable_labor_term';
 
       const resolvedPolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'worker');
       const d8Line = computeWorkerPayrollLineD8({
