@@ -392,7 +392,7 @@ export class PayrollService {
         conditionIds.size > 0
           ? `rate_conditions: ${[...conditionIds].join(', ')}`
           : usedPackageLaborCost
-            ? `package_labor_cost (8+OT split / rest flat) + labor terms: ${[...laborTermIds].join(', ') || '—'}`
+            ? `package_labor_cost (8+OT; holiday wrap / Sun+SunOT) + labor terms: ${[...laborTermIds].join(', ') || '—'}`
             : usedContractFallback || laborTermIds.size > 0
               ? `labor_cost_term + contract policy fallback (terms: ${[...laborTermIds].join(', ') || '—'})`
               : 'no_applicable_labor_term';

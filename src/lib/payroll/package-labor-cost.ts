@@ -44,27 +44,39 @@ export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
 
 export interface RestDayResolution {
   active: boolean;
-  /** ตัวคูณวันหยุด/วันอาทิตย์ (ฝั่งต้นทุน) */
-  multiplier: number;
   kind: 'none' | 'public_holiday' | 'weekly_rest';
+  /**
+   * วันหยุดในปฏิทินสัญญา (ฝั่งต้นทุน): คูณทั้งยอดหลังแยก 8 ชม. + OT ตามกฎหมาย
+   * (ใช้ rateMultiplierPolicy.cost.publicHoliday)
+   */
+  publicHolidayWrap?: number;
+  /**
+   * เสาร์–อาทิตย์ / อาทิตย์อย่างเดียว: ตัวคูณชม.ในกรอบ 8 ชม.แรก (Sunday)
+   */
+  weeklyNormalMult?: number;
+  /**
+   * ชม.เกิน 8: ฐาน × ตัวคูณ OT สัญญา × ค่านี้ (Sunday OT — ถ้าว่างใช้เท่า Sunday)
+   */
+  weeklyOtMult?: number;
 }
 
 /**
- * วันหยุดตามปฏิทินสัญญา (cost) หรือ weekly rest pattern
+ * วันหยุดตามปฏิทินสัญญา (contractCostCalendarHolidays) หรือ weekly rest (contractCostWeeklyRestPattern)
+ * ตัวคูณอ่านจาก rateMultiplierPolicy.cost ตามที่กำหนดในหน้าสัญญา
  */
 export function resolveCostRestDay(
   dateStr: string,
   contract: MainContract | undefined,
 ): RestDayResolution {
   const cost = contract?.rateMultiplierPolicy?.cost;
-  if (!cost) return { active: false, multiplier: 1, kind: 'none' };
+  if (!cost) return { active: false, kind: 'none' };
 
   const holidays = contract.contractCostCalendarHolidays || [];
   if (holidays.some((h) => h.date === dateStr)) {
     return {
       active: true,
-      multiplier: Number(cost.publicHoliday ?? 1),
       kind: 'public_holiday',
+      publicHolidayWrap: Number(cost.publicHoliday ?? 1),
     };
   }
 
@@ -72,28 +84,33 @@ export function resolveCostRestDay(
   const y = parts[0];
   const m = parts[1];
   const d = parts[2];
-  if (!y || !m || !d) return { active: false, multiplier: 1, kind: 'none' };
+  if (!y || !m || !d) return { active: false, kind: 'none' };
 
   const local = new Date(y, m - 1, d);
   const dow = local.getDay();
 
   const pattern = contract.contractCostWeeklyRestPattern || 'none';
+  const sunday = Number(cost.sunday ?? 1);
+  const sundayOt = Number(cost.sundayOt ?? cost.sunday ?? 1);
+
   if (pattern === 'sunday_only' && dow === 0) {
     return {
       active: true,
-      multiplier: Number(cost.sunday ?? 1),
       kind: 'weekly_rest',
+      weeklyNormalMult: sunday,
+      weeklyOtMult: sundayOt,
     };
   }
   if (pattern === 'sat_sun' && (dow === 0 || dow === 6)) {
     return {
       active: true,
-      multiplier: Number(cost.sunday ?? 1),
       kind: 'weekly_rest',
+      weeklyNormalMult: sunday,
+      weeklyOtMult: sundayOt,
     };
   }
 
-  return { active: false, multiplier: 1, kind: 'none' };
+  return { active: false, kind: 'none' };
 }
 
 function roundMoney(n: number): number {
@@ -122,14 +139,15 @@ export interface WorkDayPackageCostResult {
   normalPaidHours: number;
   otPaidHours: number;
   restDay: RestDayResolution;
-  mode: 'weekday_split' | 'rest_day_flat_premium';
+  mode: 'weekday_split' | 'public_holiday_wrap' | 'weekly_rest_split';
 }
 
 /**
  * ค่าจ้าง work_day จากแพ็กต้นทุน + ชม.ทำงานจริง
  *
- * - วันปกติ (ไม่ใช่วันพิเศษ หรือตัวคูณวันพิเศษ ≤ 1): แบ่ง 8 ชม.แรกที่ฐานชม. + เกินที่ฐาน×ot
- * - วันพิเศษที่ตัวคูณ > 1: จ่าย **ทุกชม.** ที่ `hourly × ตัวคูณวัน` (ไม่ซ้อน ot อีกชั้น — ตามตัวอย่างอาทิตย์ 200×1.5×12)
+ * - วันปกติ: 8 ชม.แรก × ฐานชม. + เกิน × ฐาน × ตัวคูณ OT (สัญญา/PO)
+ * - วันหยุดในปฏิทินสัญญา: (ยอดแบบวันปกติ) × publicHoliday
+ * - เสาร์–อาทิตย์ / อาทิตย์: 8 ชม.แรก × ฐาน × Sunday + เกิน × ฐาน × OT × Sunday OT
  */
 export function computeWorkDayCostFromPackage(
   input: WorkDayPackageCostInput,
@@ -143,26 +161,31 @@ export function computeWorkDayCostFromPackage(
   const T = totalWorkedHoursFromTimesheet(input.timesheet);
   const rest = resolveCostRestDay(input.timesheet.date, input.mainContract);
 
-  if (rest.active && rest.multiplier > 1) {
-    const amount = roundMoney(T * h * rest.multiplier);
-    return {
-      amount,
-      hourlyNormal: h,
-      totalWorkedHours: T,
-      normalPaidHours: T,
-      otPaidHours: 0,
-      restDay: rest,
-      mode: 'rest_day_flat_premium',
-    };
-  }
-
   const cap = THAI_LEGAL_NORMAL_HOURS_PER_DAY;
   const normalPaid = Math.min(T, cap);
   const otPaid = Math.max(0, T - cap);
   const otMult = Math.max(0, input.otAfterShiftMultiplier);
-  const amount = roundMoney(
-    normalPaid * h + otPaid * h * otMult,
-  );
+
+  let baseAmount: number;
+  let mode: WorkDayPackageCostResult['mode'];
+
+  if (!rest.active) {
+    baseAmount = normalPaid * h + otPaid * h * otMult;
+    mode = 'weekday_split';
+  } else if (rest.kind === 'public_holiday') {
+    const wrap = Math.max(0, rest.publicHolidayWrap ?? 1);
+    baseAmount =
+      (normalPaid * h + otPaid * h * otMult) * wrap;
+    mode = 'public_holiday_wrap';
+  } else {
+    const nM = Math.max(0, rest.weeklyNormalMult ?? 1);
+    const oM = Math.max(0, rest.weeklyOtMult ?? 1);
+    baseAmount =
+      normalPaid * h * nM + otPaid * h * otMult * oM;
+    mode = 'weekly_rest_split';
+  }
+
+  const amount = roundMoney(baseAmount);
 
   return {
     amount,
@@ -171,6 +194,6 @@ export function computeWorkDayCostFromPackage(
     normalPaid,
     otPaid,
     restDay: rest,
-    mode: 'weekday_split',
+    mode,
   };
 }
