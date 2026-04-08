@@ -29,6 +29,7 @@ import {
   FileBadge,
   PackageSearch,
   Inbox,
+  Banknote,
   LockKeyhole,
   Settings,
   FileSignature,
@@ -86,6 +87,7 @@ const ACCOUNTING_MAIN_ITEMS: NavItem[] = [
   { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
   { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
   { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
+  { key: 'accounts_payable', title: 'ตรวจสอบรายจ่าย (ใบรับวางบิล)', href: '/accounting/outgoing-review', icon: Banknote },
   { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
   { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
   { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
@@ -207,8 +209,8 @@ function navGroupsForUser(user: User): NavGroup[] {
       if (g.label === 'งานปฏิบัติการ (Operations)') {
         return {
           ...g,
+          /* หน้าหลักไป /store อยู่แล้วที่ภาพรวม — ไม่ซ้ำลิงก์คลังที่นี่ */
           items: [
-            { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
             {
               key: 'store_inventory',
               title: 'รับวางบิล (Vendor billing)',
@@ -437,17 +439,29 @@ export function SidebarNav({
           if (visibleItems.length === 0) return null;
 
           const staffingBasePaths = ['/waves', '/assignments', '/mobilization'];
+          const storeBillingExactHrefs = ['/store', '/store/vendor-bills'];
           const staffingItems =
             group.label === 'งานปฏิบัติการ (Operations)'
               ? visibleItems.filter((item) => staffingBasePaths.includes(item.href.split('?')[0]))
               : [];
+          const storeBillingItems =
+            group.label === 'งานปฏิบัติการ (Operations)'
+              ? visibleItems.filter((item) => storeBillingExactHrefs.includes(item.href.split('?')[0]))
+              : [];
           const restItems =
-            group.label === 'งานปฏิบัติการ (Operations)' && staffingItems.length > 0
-              ? visibleItems.filter((item) => !staffingBasePaths.includes(item.href.split('?')[0]))
+            group.label === 'งานปฏิบัติการ (Operations)'
+              ? visibleItems.filter(
+                  (item) =>
+                    !staffingBasePaths.includes(item.href.split('?')[0]) &&
+                    !storeBillingExactHrefs.includes(item.href.split('?')[0]),
+                )
               : visibleItems;
 
-          if (group.label === 'งานปฏิบัติการ (Operations)' && staffingItems.length > 0) {
+          if (group.label === 'งานปฏิบัติการ (Operations)') {
             const isStaffingOpen = staffingItems.some((it) => pathMatches(pathname, it.href));
+            const isStoreBillingOpen = storeBillingItems.some((it) => pathMatches(pathname, it.href));
+            const singleStoreBilling = storeBillingItems.length === 1 ? storeBillingItems[0] : null;
+            const SingleStoreBillingIcon = singleStoreBilling?.icon;
             return (
               <SidebarGroup key={group.label} className="py-2">
                 <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
@@ -455,36 +469,90 @@ export function SidebarNav({
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    <Collapsible defaultOpen={isStaffingOpen} className="group">
-                      <SidebarMenuItem>
-                        <CollapsibleTrigger asChild>
-                          <SidebarMenuButton tooltip="Wave → มอบหมาย → เตรียมส่งตัว" className="transition-all duration-200">
-                            <Waves className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-semibold text-xs tracking-tight">จัดคนงานตาม PO</span>
-                            <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
-                          </SidebarMenuButton>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                          <SidebarMenuSub>
-                            {staffingItems.map((item) => {
-                              const active = pathMatches(pathname, item.href);
-                              return (
-                                <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
-                                  <SidebarMenuSubButton asChild isActive={active} size="sm">
-                                    <Link href={item.href}>
-                                      <item.icon
-                                        className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
-                                      />
-                                      <span>{item.title}</span>
-                                    </Link>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              );
-                            })}
-                          </SidebarMenuSub>
-                        </CollapsibleContent>
+                    {staffingItems.length > 0 ? (
+                      <Collapsible defaultOpen={isStaffingOpen} className="group">
+                        <SidebarMenuItem>
+                          <CollapsibleTrigger asChild>
+                            <SidebarMenuButton tooltip="Wave → มอบหมาย → เตรียมส่งตัว" className="transition-all duration-200">
+                              <Waves className="h-4 w-4 text-muted-foreground" />
+                              <span className="font-semibold text-xs tracking-tight">จัดคนงานตาม PO</span>
+                              <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                            </SidebarMenuButton>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <SidebarMenuSub>
+                              {staffingItems.map((item) => {
+                                const active = pathMatches(pathname, item.href);
+                                return (
+                                  <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
+                                    <SidebarMenuSubButton asChild isActive={active} size="sm">
+                                      <Link href={item.href}>
+                                        <item.icon
+                                          className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                        />
+                                        <span>{item.title}</span>
+                                      </Link>
+                                    </SidebarMenuSubButton>
+                                  </SidebarMenuSubItem>
+                                );
+                              })}
+                            </SidebarMenuSub>
+                          </CollapsibleContent>
+                        </SidebarMenuItem>
+                      </Collapsible>
+                    ) : null}
+                    {singleStoreBilling && SingleStoreBillingIcon ? (
+                      <SidebarMenuItem key={`${singleStoreBilling.key}-${singleStoreBilling.href}`}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={pathMatches(pathname, singleStoreBilling.href)}
+                          tooltip={singleStoreBilling.title}
+                          className={`transition-all duration-200 ${pathMatches(pathname, singleStoreBilling.href) ? 'font-bold' : ''}`}
+                        >
+                          <Link href={singleStoreBilling.href}>
+                            <SingleStoreBillingIcon
+                              className={`h-4 w-4 ${pathMatches(pathname, singleStoreBilling.href) ? 'text-primary' : 'text-muted-foreground'}`}
+                            />
+                            <span className="font-semibold text-xs tracking-tight">{singleStoreBilling.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
                       </SidebarMenuItem>
-                    </Collapsible>
+                    ) : null}
+                    {storeBillingItems.length > 1 ? (
+                      <Collapsible defaultOpen={isStoreBillingOpen} className="group">
+                        <SidebarMenuItem>
+                          <CollapsibleTrigger asChild>
+                            <SidebarMenuButton
+                              tooltip="คลังอุปกรณ์และรับวางบิลคู่ค้า"
+                              className="transition-all duration-200"
+                            >
+                              <Warehouse className="h-4 w-4 text-muted-foreground" />
+                              <span className="font-semibold text-xs tracking-tight">คลัง / วางบิลคู่ค้า</span>
+                              <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                            </SidebarMenuButton>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <SidebarMenuSub>
+                              {storeBillingItems.map((item) => {
+                                const active = pathMatches(pathname, item.href);
+                                return (
+                                  <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
+                                    <SidebarMenuSubButton asChild isActive={active} size="sm">
+                                      <Link href={item.href}>
+                                        <item.icon
+                                          className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                        />
+                                        <span>{item.title}</span>
+                                      </Link>
+                                    </SidebarMenuSubButton>
+                                  </SidebarMenuSubItem>
+                                );
+                              })}
+                            </SidebarMenuSub>
+                          </CollapsibleContent>
+                        </SidebarMenuItem>
+                      </Collapsible>
+                    ) : null}
                     {restItems.map((item) => (
                       <SidebarMenuItem key={`${item.key}-${item.href}`}>
                         <SidebarMenuButton

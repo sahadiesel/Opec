@@ -47,6 +47,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { formatStoredDateThaiBE } from '@/lib/date-thai';
 
 export default function ClientBillingViewPage() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -240,7 +241,9 @@ export default function ClientBillingViewPage() {
                                 {isSettled && <span title="Settled - Locked"><Lock className="h-3 w-3 text-amber-600" aria-hidden /></span>}
                               </div>
                             </TableCell>
-                            <TableCell className="text-xs font-medium text-muted-foreground">{inv.issueDate}</TableCell>
+                            <TableCell className="text-xs font-medium text-muted-foreground">
+                              {formatStoredDateThaiBE(inv.issueDate)}
+                            </TableCell>
                             <TableCell className="text-right font-bold">฿ {inv.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                             <TableCell className="text-right font-black text-primary">฿ {outstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                             <TableCell>

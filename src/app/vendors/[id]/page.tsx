@@ -26,6 +26,12 @@ import {
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
 import { Vendor, VendorType, User } from '@/lib/types';
+
+function normalizeVendorPaymentTerms(raw: string | undefined | null): 'Cash' | 'Credit' {
+  const s = (raw || '').trim().toLowerCase();
+  if (s === 'cash' || s === 'เงินสด') return 'Cash';
+  return 'Credit';
+}
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -60,7 +66,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     phone: '',
     email: '',
     address: '',
-    paymentTerms: 'Credit',
+    paymentTerms: 'Credit' as const,
     creditDays: 30,
     defaultCurrency: 'THB',
     bankAccountName: '',
@@ -78,6 +84,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         ...vendorData,
         branchType: vendorData.branchType || ((vendorData.branchNo || '00000') === '00000' ? 'head_office' : 'branch'),
         branchNo: (vendorData.branchNo || '00000') === '00000' ? '' : (vendorData.branchNo || ''),
+        paymentTerms: normalizeVendorPaymentTerms(vendorData.paymentTerms),
       });
     }
   }, [vendorData]);
@@ -281,7 +288,20 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>รูปแบบการชำระเงิน</Label>
-                    <Input value={formData.paymentTerms} onChange={e => setFormData({...formData, paymentTerms: e.target.value})} placeholder="เช่น Credit, Cash, Transfer" />
+                    <Select
+                      value={normalizeVendorPaymentTerms(formData.paymentTerms)}
+                      onValueChange={(v: 'Cash' | 'Credit') =>
+                        setFormData({ ...formData, paymentTerms: v })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="เลือกรูปแบบการชำระเงิน" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Cash">Cash — เงินสด</SelectItem>
+                        <SelectItem value="Credit">Credit — เครดิต</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <Label>จำนวนวันเครดิต (Credit Days)</Label>

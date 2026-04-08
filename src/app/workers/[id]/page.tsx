@@ -453,9 +453,14 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
                 <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> {worker.readinessStatus}</Badge>
               )}
               {worker.readinessStatus === 'READY' && worker.storeEquipmentReadiness === 'pending' && (
-                <Badge variant="outline" className="gap-1 border-amber-500 text-amber-900 bg-amber-50">
-                  <Package className="h-3 w-3" /> คลัง: PPE/อุปกรณ์ค้าง
-                </Badge>
+                <>
+                  <Badge variant="outline" className="gap-1 border-amber-500 text-amber-900 bg-amber-50">
+                    <Package className="h-3 w-3" /> คลัง: PPE/อุปกรณ์ค้าง
+                  </Badge>
+                  <Button variant="outline" size="sm" className="h-8 text-xs border-amber-500 text-amber-900" asChild>
+                    <Link href="/store/issue">ไปเบิกคลัง</Link>
+                  </Button>
+                </>
               )}
             </div>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
@@ -522,7 +527,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
             <WorkerPositionStoreTab
               firestore={firestore!}
               worker={worker}
-              mobilizations={workerMobilizations}
+              mobilizations={workerMobilizations ?? undefined}
               kind="ppe"
             />
           </TabsContent>
@@ -531,7 +536,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
             <WorkerPositionStoreTab
               firestore={firestore!}
               worker={worker}
-              mobilizations={workerMobilizations}
+              mobilizations={workerMobilizations ?? undefined}
               kind="tool"
             />
           </TabsContent>

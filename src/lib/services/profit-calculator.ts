@@ -13,6 +13,7 @@ import {
   JobMode,
   RateConditionEventType
 } from '@/lib/types';
+import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
 import { calculateDailySalesValue, resolveApplicableSalesRateCondition } from './sales-calculator';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
 import { parseISO, eachDayOfInterval, format, isWithinInterval, startOfDay } from 'date-fns';
@@ -70,7 +71,8 @@ export class ProfitCalculatorService {
       // 1. Resolve Revenue
       const salesCond = resolveApplicableSalesRateCondition(allConditions, mockTs, salesContract);
       if (salesCond) {
-        totalRevenue += calculateDailySalesValue(mockTs, salesCond, 0) * wave.plannedWorkers;
+        totalRevenue +=
+          calculateDailySalesValue(mockTs, salesCond, 0) * totalPlannedWorkersOnWave(wave);
       } else {
         unresolvedSales++;
       }
@@ -78,7 +80,8 @@ export class ProfitCalculatorService {
       // 2. Resolve Cost
       const costCond = resolveApplicableCostRateCondition(allConditions, mockTs, costContract);
       if (costCond) {
-        totalCost += calculateDailyLaborCost(mockTs, costCond, 0) * wave.plannedWorkers;
+        totalCost +=
+          calculateDailyLaborCost(mockTs, costCond, 0) * totalPlannedWorkersOnWave(wave);
       } else {
         unresolvedCost++;
       }
@@ -99,7 +102,7 @@ export class ProfitCalculatorService {
       estimatedLaborCost: totalCost,
       estimatedGrossProfit: grossProfit,
       estimatedGrossMarginPercent: margin,
-      calculationBasisSummary: `Wave simulation: ${wave.plannedWorkers} workers over ${days.length} days.`,
+      calculationBasisSummary: `Wave simulation: ${totalPlannedWorkersOnWave(wave)} workers over ${days.length} days.`,
       generatedAt: Date.now(),
       generatedBy: user.displayName
     };

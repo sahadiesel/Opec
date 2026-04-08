@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -20,19 +21,48 @@ import {
   Info,
   Loader2,
   ShieldAlert,
-  UserX
+  UserX,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position, SalesContractTerm } from '@/lib/types';
-import { resolveActiveSalesContractTerm } from '@/lib/services/contract-resolver';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatStoredDateRangeThaiBE,
+} from '@/lib/date-thai';
+import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
-import { collection, doc, increment, updateDoc, collectionGroup } from 'firebase/firestore';
+import { canAccess, canView, canEdit, canDelete, isMatrixControlledRole } from '@/lib/permissions';
+import {
+  collection,
+  doc,
+  increment,
+  updateDoc,
+  collectionGroup,
+  getDocs,
+  writeBatch,
+} from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { 
   Dialog, 
   DialogContent, 
@@ -50,16 +80,24 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/services/assignment-overlap';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
+import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
+import { normalizeWaveAllocations, plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
+import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
+import { MOBILIZATION_FULFILLMENT_SUBCOLLECTION } from '@/lib/store/mobilization-fulfillment';
 
 function waveRequiredPositionLabel(
   wave: Wave,
   polines: POLine[] | null | undefined,
   positions: Position[] | null | undefined
 ): string {
-  const line = polines?.find((l) => l.id === wave.poLineId && l.poId === wave.poId);
-  if (!line?.positionId) return '';
-  const pos = positions?.find((p) => p.id === line.positionId);
-  return pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId;
+  const labels: string[] = [];
+  for (const a of normalizeWaveAllocations(wave)) {
+    const line = polines?.find((l) => l.id === a.poLineId && l.poId === wave.poId);
+    if (!line?.positionId) continue;
+    const pos = positions?.find((p) => p.id === line.positionId);
+    labels.push(pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId);
+  }
+  return labels.join(' · ');
 }
 
 export default function AssignmentsPage() {
@@ -72,6 +110,18 @@ export default function AssignmentsPage() {
   const useMatrixGuards = isMatrixControlledRole(currentUser);
   const canViewAssignments = useMatrixGuards ? canAccess(currentUser, 'assignments', 'view') : canView(currentUser, 'assignments');
   const canCreateAssignments = useMatrixGuards ? canAccess(currentUser, 'assignments', 'create') : canViewAssignments;
+  const canEditAssignments = useMemo(
+    () =>
+      !!currentUser &&
+      (useMatrixGuards ? canAccess(currentUser, 'assignments', 'edit') : canEdit(currentUser, 'assignments')),
+    [currentUser, useMatrixGuards]
+  );
+  const canDeleteAssignments = useMemo(
+    () =>
+      !!currentUser &&
+      (useMatrixGuards ? canAccess(currentUser, 'assignments', 'delete') : canDelete(currentUser, 'assignments')),
+    [currentUser, useMatrixGuards]
+  );
 
   const isAuthorized = useMemo(
     () => !!currentUser && canViewAssignments,
@@ -105,16 +155,14 @@ export default function AssignmentsPage() {
   }, [firestore, isAuthorized]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
 
-  const salesTermsQuery = useMemoFirebase(
-    () => (firestore && isAuthorized ? collection(firestore, 'sales_contract_terms') : null),
-    [firestore, isAuthorized]
-  );
-  const { data: allSalesTerms } = useCollection<SalesContractTerm>(salesTermsQuery as any);
-
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [assignmentPendingDelete, setAssignmentPendingDelete] = useState<Assignment | null>(null);
+  const [isDeletingAssignment, setIsDeletingAssignment] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedWaveId, setSelectedWaveId] = useState('');
+  /** เมื่อเวฟมีหลาย PO line — เลือกบรรทัดก่อนมอบหมาย */
+  const [selectedPoLineId, setSelectedPoLineId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -161,11 +209,20 @@ export default function AssignmentsPage() {
     [allWaves, selectedWaveId],
   );
 
+  const selectedWaveAllocations = useMemo(
+    () => (selectedWave ? normalizeWaveAllocations(selectedWave) : []),
+    [selectedWave],
+  );
+
+  const needPickPoLineForAssign = selectedWaveAllocations.length > 1;
+
   const targetPositionIdForSelectedWave = useMemo(() => {
-    if (!selectedWave || !allPOLines?.length) return '';
-    const line = allPOLines.find((l) => l.id === selectedWave.poLineId && l.poId === selectedWave.poId);
+    if (!selectedWave || !allPOLines?.length || !selectedPoLineId) return '';
+    const line = allPOLines.find(
+      (l) => l.id === selectedPoLineId && l.poId === selectedWave.poId
+    );
     return line?.positionId || '';
-  }, [selectedWave, allPOLines]);
+  }, [selectedWave, allPOLines, selectedPoLineId]);
 
   const availableWorkers = useMemo(() => {
     return (allWorkers || []).filter((w) => {
@@ -178,7 +235,13 @@ export default function AssignmentsPage() {
 
   useEffect(() => {
     setSelectedWorkerId('');
-  }, [selectedWaveId]);
+    setSelectedPoLineId('');
+    if (!selectedWave) return;
+    const allocs = normalizeWaveAllocations(selectedWave);
+    if (allocs.length === 1) {
+      setSelectedPoLineId(allocs[0].poLineId);
+    }
+  }, [selectedWaveId, selectedWave]);
 
   const handleCreateAssignment = async () => {
     if (!canCreateAssignments) {
@@ -193,6 +256,16 @@ export default function AssignmentsPage() {
     const worker = allWorkers?.find(w => w.id === selectedWorkerId);
     const wave = allWaves?.find(w => w.id === selectedWaveId);
     if (!worker || !wave) return;
+
+    const waveAllocsCheck = normalizeWaveAllocations(wave);
+    if (waveAllocsCheck.length > 1 && !selectedPoLineId.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'เลือกบรรทัด PO / ตำแหน่ง',
+        description: 'เวฟนี้มีหลายโควต้า — เลือกว่าจะมอบหมายเข้าบรรทัดใด',
+      });
+      return;
+    }
 
     // --- SUITABILITY VALIDATIONS ---
     
@@ -232,7 +305,7 @@ export default function AssignmentsPage() {
       toast({
         variant: 'destructive',
         title: 'คนงานมีงานมอบหมายอยู่แล้ว (Already Assigned)',
-        description: `${worker.firstName} ${worker.lastName} ถูกมอบหมายอยู่ในโครงการ "${first.projectName}" (${first.assignmentNo}) ช่วง ${first.startDate} – ${first.endDate} ต้องรอจบภารกิจ (Demobilize/Close) ก่อนมอบหมายใหม่`,
+        description: `${worker.firstName} ${worker.lastName} ถูกมอบหมายอยู่ในโครงการ "${first.projectName}" (${first.assignmentNo}) ช่วง ${formatStoredDateRangeThaiBE(first.startDate, first.endDate)} ต้องรอจบภารกิจ (Demobilize/Close) ก่อนมอบหมายใหม่`,
       });
       return;
     }
@@ -248,8 +321,61 @@ export default function AssignmentsPage() {
       });
       return;
     }
-    const poLine = allPOLines?.find(l => l.id === wave.poLineId);
-    const targetPositionId = poLine?.positionId || wave.poLineId;
+    const waveAllocs = normalizeWaveAllocations(wave);
+    const effectivePoLineId =
+      waveAllocs.length === 1 ? waveAllocs[0].poLineId : selectedPoLineId.trim();
+    if (!effectivePoLineId) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่พบบรรทัด PO',
+        description: 'เวฟนี้ยังไม่มีโควต้าที่ใช้มอบหมายได้ — ตรวจการตั้งค่าเวฟ',
+      });
+      return;
+    }
+    const slot = waveAllocs.find((a) => a.poLineId === effectivePoLineId);
+    if (!slot || slot.plannedWorkers < 1) {
+      toast({
+        variant: 'destructive',
+        title: 'บรรทัดไม่อยู่ในแผนเวฟ',
+        description: 'เลือกบรรทัดที่มีโควต้าในเวฟนี้เท่านั้น',
+      });
+      return;
+    }
+    const cap = plannedOnWaveForPoLine(wave, effectivePoLineId);
+    const assignedOnSlot = (assignments || []).filter(
+      (a) =>
+        a.waveId === wave.id &&
+        a.poLineId === effectivePoLineId &&
+        assignmentCountsTowardQuota(a.deploymentStatus)
+    ).length;
+    if (assignedOnSlot >= cap) {
+      toast({
+        variant: 'destructive',
+        title: 'ครบโควต้าบรรทัดนี้ในเวฟแล้ว',
+        description: `วางแผน ${cap} คนสำหรับบรรทัดนี้ — เพิ่มแผนในเวฟหรือเลือกบรรทัดอื่น`,
+      });
+      return;
+    }
+
+    const poLine = resolvePoLineForWave(allPOLines, wave.poId, effectivePoLineId);
+    if (!poLine) {
+      toast({
+        variant: 'destructive',
+        title: 'PO Line ไม่ตรงกับเวฟ',
+        description:
+          'ไม่พบบรรทัด PO ที่ผูกกับเวฟนี้และ PO เดียวกัน หรือบรรทัดไม่ active — ตรวจข้อมูลเวฟและ PO',
+      });
+      return;
+    }
+    if (!poLine.positionId?.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'PO Line ไม่มีตำแหน่ง',
+        description: 'บรรทัด PO นี้ยังไม่มี positionId — แก้ที่หน้า Customer PO ก่อนมอบหมาย',
+      });
+      return;
+    }
+    const targetPositionId = poLine.positionId;
     const position = allPositions?.find(p => p.id === targetPositionId);
     const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
 
@@ -266,23 +392,7 @@ export default function AssignmentsPage() {
       return;
     }
 
-    // ใช้ resolveActiveSalesContractTerm: ลำดับ PO ตรงกันก่อน แล้วจึง fallback ลูกค้า + ช่วงวันที่
-    // ห้ามบังคับ purchaseOrderId === wave.poId ซ้ำ — จะตัด fallback ที่ resolver ตั้งใจให้ใช้ได้
-    const termRes = resolveActiveSalesContractTerm(allSalesTerms || [], {
-      poId: wave.poId,
-      customerId: wave.customerId,
-      date: startDate,
-    });
-    if (!termRes.isMatch || !termRes.data) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังไม่มีเงื่อนไขการขายที่ใช้ได้',
-        description:
-          'ต้องมี Sales Contract Term สถานะ ACTIVE ที่ผูกกับ PO นี้หรือลูกค้าเดียวกัน และช่วงวันที่ (effective–end) ครอบคลุมวันเริ่มงาน — ตรวจในเมนูเงื่อนไขการขายหรือหน้า PO',
-      });
-      return;
-    }
-    const salesContractTermId = termRes.data.id;
+    // ราคา/โควต้า/ระยะเวลาอยู่ที่สัญญา + PO แล้ว — ไม่บังคับ sales_contract_terms แยกอีกชั้น
 
     setIsCreating(true);
     try {
@@ -299,9 +409,8 @@ export default function AssignmentsPage() {
         id: newMobRef.id,
         assignmentNo: finalNo, // Apply unique sequential code
         workerId: selectedWorkerId,
-        poLineId: wave.poLineId,
+        poLineId: effectivePoLineId,
         poId: wave.poId,
-        salesContractTermId,
         contractId: po?.contractId || '',
         waveId: selectedWaveId,
         positionId: position?.id || poLine?.positionId || '', 
@@ -342,6 +451,44 @@ export default function AssignmentsPage() {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกการมอบหมายได้" });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const confirmDeleteAssignment = async () => {
+    if (!firestore || !assignmentPendingDelete) return;
+    setIsDeletingAssignment(true);
+    try {
+      const id = assignmentPendingDelete.id;
+      const waveId = assignmentPendingDelete.waveId?.trim();
+      const linesSnap = await getDocs(
+        collection(firestore, 'mobilizations', id, MOBILIZATION_FULFILLMENT_SUBCOLLECTION)
+      );
+      const batch = writeBatch(firestore);
+      for (const d of linesSnap.docs) {
+        batch.delete(d.ref);
+      }
+      batch.delete(doc(firestore, 'mobilizations', id));
+      if (waveId) {
+        batch.update(doc(firestore, 'waves', waveId), {
+          assignedWorkers: increment(-1),
+          updatedAt: Date.now(),
+        });
+      }
+      await batch.commit();
+      toast({
+        title: 'ลบการมอบหมายแล้ว',
+        description: assignmentPendingDelete.assignmentNo || id,
+      });
+      setAssignmentPendingDelete(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: 'ไม่สามารถลบรายการมอบหมายได้',
+      });
+    } finally {
+      setIsDeletingAssignment(false);
     }
   };
 
@@ -444,21 +591,61 @@ export default function AssignmentsPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    {selectedWave && needPickPoLineForAssign ? (
+                      <div className="space-y-2 md:col-span-2">
+                        <Label className="font-bold">เลือกโควต้า / บรรทัด PO (ในเวฟนี้)</Label>
+                        <Select value={selectedPoLineId || undefined} onValueChange={setSelectedPoLineId}>
+                          <SelectTrigger className="h-11">
+                            <SelectValue placeholder="เลือกตำแหน่งที่จะมอบหมาย..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {selectedWaveAllocations.map((a) => {
+                              const line = allPOLines?.find(
+                                (l) => l.id === a.poLineId && l.poId === selectedWave.poId
+                              );
+                              const pos = line?.positionId
+                                ? allPositions?.find((p) => p.id === line.positionId)
+                                : undefined;
+                              const name = pos
+                                ? positionListPrimaryName(pos as PositionDoc)
+                                : line?.positionId || a.poLineId;
+                              const used = (assignments || []).filter(
+                                (x) =>
+                                  x.waveId === selectedWave.id &&
+                                  x.poLineId === a.poLineId &&
+                                  assignmentCountsTowardQuota(x.deploymentStatus)
+                              ).length;
+                              return (
+                                <SelectItem key={a.poLineId} value={a.poLineId}>
+                                  {name} · แผน {a.plannedWorkers} · มอบหมายแล้ว {used}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                     <div className="space-y-2 md:col-span-2">
                       <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
                       <Select
                         value={selectedWorkerId || undefined}
                         onValueChange={setSelectedWorkerId}
-                        disabled={!selectedWaveId || !targetPositionIdForSelectedWave}
+                        disabled={
+                          !selectedWaveId ||
+                          !targetPositionIdForSelectedWave ||
+                          (needPickPoLineForAssign && !selectedPoLineId)
+                        }
                       >
                         <SelectTrigger className="h-11">
                           <SelectValue
                             placeholder={
                               !selectedWaveId
                                 ? 'เลือก Wave ก่อน'
-                                : !targetPositionIdForSelectedWave
-                                  ? 'Wave นี้ไม่มีตำแหน่งจาก PO line'
-                                  : 'เลือกคนงานตำแหน่งเดียวกับ Wave และสถานะ READY'
+                                : needPickPoLineForAssign && !selectedPoLineId
+                                  ? 'เลือกบรรทัด PO ในเวฟก่อน'
+                                  : !targetPositionIdForSelectedWave
+                                    ? 'Wave นี้ไม่มีตำแหน่งจาก PO line'
+                                    : 'เลือกคนงานตำแหน่งเดียวกับ Wave และสถานะ READY'
                             }
                           />
                         </SelectTrigger>
@@ -498,7 +685,14 @@ export default function AssignmentsPage() {
                   </div>
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                      <Button onClick={handleCreateAssignment} className="bg-primary font-bold" disabled={isCreating}>
+                      <Button
+                        onClick={handleCreateAssignment}
+                        className="bg-primary font-bold"
+                        disabled={
+                          isCreating ||
+                          (needPickPoLineForAssign && !!selectedWaveId && !selectedPoLineId)
+                        }
+                      >
                         {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                         ยืนยันการมอบหมาย (Confirm)
                       </Button>
@@ -513,6 +707,7 @@ export default function AssignmentsPage() {
                 {isAssignmentsLoading ? (
                   <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลการมอบหมาย...</div>
                 ) : (
+                  <TooltipProvider delayDuration={400}>
                   <Table>
                     <TableHeader className="bg-muted/50">
                       <TableRow>
@@ -547,7 +742,7 @@ export default function AssignmentsPage() {
                             <TableCell>
                               <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-bold">
                                 <Calendar className="h-3.5 w-3.5" />
-                                {asgn.startDate} - {asgn.endDate}
+                                {formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}
                               </div>
                             </TableCell>
                             <TableCell>
@@ -556,8 +751,63 @@ export default function AssignmentsPage() {
                               </Badge>
                             </TableCell>
                             <TableCell>{getDeploymentStatusBadge(asgn.deploymentStatus)}</TableCell>
-                            <TableCell className="text-right pr-6">
-                              <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                            <TableCell
+                              className="text-right pr-6"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="flex flex-nowrap items-center justify-end gap-0.5">
+                                {canEditAssignments && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
+                                        <Link href={`/assignments/${asgn.id}`}>
+                                          <Pencil className="h-4 w-4" />
+                                          <span className="sr-only">แก้ไขการมอบหมาย</span>
+                                        </Link>
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      <p>แก้ไขการมอบหมาย</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {canDeleteAssignments && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="destructive"
+                                        size="icon"
+                                        className="h-8 w-8 shrink-0"
+                                        onClick={() => setAssignmentPendingDelete(asgn)}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                        <span className="sr-only">ลบการมอบหมาย</span>
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      <p>ลบการมอบหมาย</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 shrink-0 text-muted-foreground group-hover:text-primary"
+                                      asChild
+                                    >
+                                      <Link href={`/assignments/${asgn.id}`}>
+                                        <ChevronRight className="h-4 w-4" />
+                                        <span className="sr-only">รายละเอียดการมอบหมาย</span>
+                                      </Link>
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    <p>รายละเอียดการมอบหมาย</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -579,9 +829,48 @@ export default function AssignmentsPage() {
                       )}
                     </TableBody>
                   </Table>
+                  </TooltipProvider>
                 )}
               </CardContent>
             </Card>
+
+            <AlertDialog
+              open={!!assignmentPendingDelete}
+              onOpenChange={(open) => {
+                if (!open && !isDeletingAssignment) setAssignmentPendingDelete(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>ลบการมอบหมายนี้?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {assignmentPendingDelete
+                      ? `จะลบรายการ ${assignmentPendingDelete.assignmentNo || assignmentPendingDelete.id} และปรับจำนวนคนใน Wave ให้สอดคล้อง — การกระทำนี้ไม่สามารถยกเลิกได้`
+                      : null}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isDeletingAssignment}>ยกเลิก</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    disabled={isDeletingAssignment}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void confirmDeleteAssignment();
+                    }}
+                  >
+                    {isDeletingAssignment ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2 inline" />
+                        กำลังลบ…
+                      </>
+                    ) : (
+                      'ลบ'
+                    )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </>
         )}
       </div>

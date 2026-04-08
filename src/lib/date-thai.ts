@@ -81,6 +81,54 @@ export function formatYmdLocalThaiBE(ymd: string | null | undefined, empty: stri
   return formatDateThaiBE(ms);
 }
 
+/** ช่วงวันที่เก็บเป็น yyyy-mm-dd (local) → dd/mm พ.ศ. - dd/mm พ.ศ. */
+export function formatYmdRangeThaiBE(
+  start: string | null | undefined,
+  end: string | null | undefined,
+  empty: string = '—',
+): string {
+  const a = htmlDateValueToTimestampMs(start?.trim() || '');
+  const b = htmlDateValueToTimestampMs(end?.trim() || '');
+  return formatDateRangeThaiBE(
+    a != null ? a : undefined,
+    b != null ? b : undefined,
+    empty,
+  );
+}
+
+function formatPartForStoredDisplay(input: Date | number | string | null | undefined): string {
+  if (input == null || input === '') return '';
+  if (typeof input === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.trim())) {
+    return formatYmdLocalThaiBE(input, '');
+  }
+  return formatDateThaiBE(input as Date | number | string);
+}
+
+/**
+ * แสดงวันที่ที่เก็บเป็น yyyy-mm-dd (local), timestamp (ms), Date, หรือ ISO string → dd/mm/yyyy พ.ศ.
+ */
+export function formatStoredDateThaiBE(
+  input: Date | number | string | null | undefined,
+  empty: string = '—',
+): string {
+  const p = formatPartForStoredDisplay(input);
+  return p === '' ? empty : p;
+}
+
+/** ช่วงวันที่สำหรับข้อมูลที่อาจเป็น yyyy-mm-dd หรือ timestamp */
+export function formatStoredDateRangeThaiBE(
+  start: Date | number | string | null | undefined,
+  end: Date | number | string | null | undefined,
+  empty: string = '—',
+): string {
+  const a = formatPartForStoredDisplay(start);
+  const b = formatPartForStoredDisplay(end);
+  if (!a && !b) return empty;
+  if (!a) return b;
+  if (!b) return a;
+  return `${a} - ${b}`;
+}
+
 /** แปลง yyyy-mm-dd (local) → timestamp เที่ยงวัน — ใช้กับ DatePickerThaiBE โดยเก็บสตริงเดิมใน Firestore */
 export function htmlDateValueToTimestampMs(iso: string | null | undefined): number | undefined {
   if (iso == null || iso === '') return undefined;

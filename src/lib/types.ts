@@ -697,6 +697,8 @@ export interface POLine {
   id: string;
   poId: string;
   positionId: string;
+  /** สถานที่ปฏิบัติงานตามที่ลูกค้าระบุต่อบรรทัด (แยกจาก site ของ Wave) */
+  workLocation?: string;
   quantity: number;
   startDate: number;
   endDate: number;
@@ -762,7 +764,7 @@ export interface Assignment {
   assignmentNo: string;
   workerId: string;
   waveId: string;
-  /** Required for new mobilizations: links to sales_contract_terms doc; enforced in Firestore rules on create */
+  /** ไม่บังคับ: ลิงก์ sales_contract_terms แบบเก่า — การมอบหมายใหม่ใช้ PO + contractId เป็นหลัก */
   salesContractTermId?: string;
   poId: string;
   poLineId: string;
@@ -799,6 +801,12 @@ export interface Assignment {
 
 export type ChecklistItemStatus = 'pass' | 'fail' | 'warning' | 'missing';
 
+/** โควต้าต่อบรรทัด PO ภายในเวฟเดียว (หลายตำแหน่งใน 1 เวฟ) */
+export interface WaveLineAllocation {
+  poLineId: string;
+  plannedWorkers: number;
+}
+
 export interface Wave {
   id: string;
   waveCode: string;
@@ -813,6 +821,8 @@ export interface Wave {
   plannedWorkers: number;
   assignedWorkers: number;
   rotationPattern: string;
+  /** ถ้ามี: แตกโควต้าตาม PO line; ถ้าไม่มีใช้ poLineId + plannedWorkers แบบเดิม */
+  lineAllocations?: WaveLineAllocation[];
   mobilizationDate?: string;
   notes?: string;
   createdAt: number;
@@ -1508,15 +1518,27 @@ export interface Purchase {
   status: PurchaseStatus;
   /** แบบที่ 1 เลือกจากคลัง / แบบที่ 2 สั่งจ้างคีย์มือ */
   purchaseLineMode?: PurchaseLineEntryMode;
+  /** งานจ้างเหมา — แสดง/คำนวณหัก ณ ที่จ่ายตามงวด (ฐาน = ยอดงวด) */
+  supplierWithholdingEnabled?: boolean;
+  /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
+  supplierWithholdingRatePercent?: number;
   notes?: string;
+  /** UNPAID | PARTIAL | PAID — sync จากงวดชำระ */
   paymentStatus?: string;
   storeReceiptStatus?: string;
+  /** ผู้สร้าง PO (จัดซื้อ) */
+  createdByUid?: string;
+  createdByName?: string;
   approvalRequestedAt?: number;
   approvalDecidedAt?: number;
   approvalDecisionByUid?: string;
   approvalDecisionByName?: string;
   approvalComment?: string | null;
   rejectionReason?: string | null;
+  /** ยืนยันว่าส่ง PO/เอกสารให้คู่ค้าแล้ว (หลัง APPROVED → ISSUED) */
+  issuedAt?: number;
+  issuedByUid?: string;
+  issuedByName?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -1544,6 +1566,35 @@ export interface PurchaseLine {
   createdAt: number;
 }
 
+/** งวดชำระเงินตาม PO จัดซื้อ — เก็บใต้ purchases/{id}/payment_milestones */
+export type PurchasePaymentMilestoneStatus = 'OPEN' | 'PAID' | 'WAIVED';
+
+export interface PurchasePaymentMilestone {
+  id: string;
+  purchaseId: string;
+  sequence: number;
+  label: string;
+  amount: number;
+  status: PurchasePaymentMilestoneStatus;
+  /** ค่า input type="date" */
+  dueDate?: string;
+  paidAt?: number;
+  paidByUid?: string;
+  paidByName?: string;
+  waivedAt?: number;
+  waivedByUid?: string;
+  waivedByName?: string;
+  notes?: string;
+  /** ลิงก์ไป purchase_vendor_bills เมื่อสร้างใบรับวางบิลต่องวด */
+  vendorBillId?: string;
+  /** แผนกสโตร์ยืนยันรับมอบงาน/สินค้าต่องวด (ลำดับงวด 1→2→3) */
+  goodsReceivedAt?: number;
+  goodsReceivedByUid?: string;
+  goodsReceivedByName?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
 export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PAID';
 
@@ -1551,6 +1602,12 @@ export interface PurchaseVendorBill {
   id: string;
   receiptNo: string;
   purchaseId: string;
+  /** snapshot ณ สร้าง/ส่ง — ใช้แยกเวิร์กโฟลว์เงินสด vs เครดิต */
+  purchaseType?: PurchaseType;
+  /** ผูกกับงวดชำระ (ถ้ามี) */
+  milestoneId?: string;
+  /** ยอดในใบนี้ — ถ้าไม่ระบุให้ใช้ยอดสุทธิทั้งใบสั่งซื้อ (ของเก่า) */
+  billAmount?: number;
   /** สำหรับแสดงผล */
   purchaseNo?: string;
   vendorId: string;
@@ -1563,6 +1620,9 @@ export interface PurchaseVendorBill {
   paidAt?: number;
   paidByUid?: string;
   paidByName?: string;
+  /** รายการ cashbook ที่สร้างตอนบันทึกจ่าย (Step 5) */
+  cashbookEntryId?: string;
+  cashbookEntryNo?: string;
   notes?: string;
   createdAt: number;
   updatedAt: number;
@@ -1580,7 +1640,8 @@ export interface Vendor {
   phone?: string;
   email?: string;
   address?: string;
-  paymentTerms?: string;
+  /** รูปแบบการชำระเงิน: เงินสด / เครดิต (เก็บเป็นข้อความ Cash | Credit) */
+  paymentTerms?: 'Cash' | 'Credit' | string;
   creditDays?: number;
   defaultCurrency?: string;
   bankAccountName?: string;

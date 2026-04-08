@@ -27,7 +27,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 
 export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -102,7 +102,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันที่ออกเอกสาร:</Label>
-                  <p className="font-medium flex items-center gap-2"><Calendar className="h-4 w-4" /> {invoice.issueDate}</p>
+                  <p className="font-medium flex items-center gap-2"><Calendar className="h-4 w-4" /> {formatStoredDateThaiBE(invoice.issueDate)}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">อ้างอิงใบวางบิล:</Label>

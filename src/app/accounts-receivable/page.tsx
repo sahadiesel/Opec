@@ -26,6 +26,7 @@ import { canView } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { formatStoredDateThaiBE } from '@/lib/date-thai';
 
 export default function AccountsReceivablePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -159,7 +160,7 @@ export default function AccountsReceivablePage() {
                         <TableCell className="font-mono text-xs font-bold text-primary">{item.documentNo}</TableCell>
                         <TableCell>
                           <div className="flex flex-col text-[10px]">
-                            <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-2.5 w-2.5" /> {item.issueDate}</span>
+                            <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-2.5 w-2.5" /> {formatStoredDateThaiBE(item.issueDate)}</span>
                             <span className="flex items-center gap-1 font-bold text-red-600"><Clock className="h-2.5 w-2.5" /> Due: {item.dueDate}</span>
                           </div>
                         </TableCell>

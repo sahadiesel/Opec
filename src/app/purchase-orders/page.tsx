@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter, Loader2 } from 'lucide-react';
+import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter, Loader2, Pencil, CheckCircle2, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PurchaseOrder, User, Customer, MainContract, Quotation } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -23,15 +24,21 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, where } from 'firebase/firestore';
+import { collection, query, where, doc, updateDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { formatDateRangeThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate } from '@/lib/permissions';
+import { canView, canCreate, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
 
 function computePoOperationalWindow(
   poType: 'contract' | 'quotation' | undefined,
@@ -76,6 +83,10 @@ function CustomerPOsPageContent() {
     () => !!currentUser && canCreate(currentUser, 'customer_pos'),
     [currentUser]
   );
+  const canApprovePO = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
+  const isAdminUser = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+
+  const [listActionId, setListActionId] = useState<string | null>(null);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -224,6 +235,46 @@ function CustomerPOsPageContent() {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างใบสั่งซื้อได้" });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const approvePoFromList = async (poId: string) => {
+    if (!firestore || !currentUser || !canApprovePO) return;
+    setListActionId(poId);
+    try {
+      await updateDoc(doc(firestore, 'purchase_orders', poId), { status: 'active', updatedAt: Date.now() });
+      toast({ title: 'อนุมัติ PO แล้ว', description: 'สถานะ Active — สร้าง Wave ได้' });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'อนุมัติไม่สำเร็จ' });
+    } finally {
+      setListActionId(null);
+    }
+  };
+
+  const deletePendingPoFromList = async (po: PurchaseOrder) => {
+    if (!firestore || !currentUser || !isAdminUser || po.status !== 'pending') return;
+    if (
+      !confirm(
+        `ลบ ${po.poCode} ถาวร?\n\nรวมบรรทัดโควต้า — ใช้เมื่อลงทะเบียนผิด (Pending เท่านั้น)`,
+      )
+    ) {
+      return;
+    }
+    setListActionId(po.id);
+    try {
+      const linesCol = collection(firestore, 'purchase_orders', po.id, 'po_lines');
+      const snap = await getDocs(linesCol);
+      const batch = writeBatch(firestore);
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      batch.delete(doc(firestore, 'purchase_orders', po.id));
+      await batch.commit();
+      toast({ title: 'ลบ PO แล้ว', description: po.poCode });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ' });
+    } finally {
+      setListActionId(null);
     }
   };
 
@@ -417,6 +468,7 @@ function CustomerPOsPageContent() {
             {isPOLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลใบสั่งซื้อ (Loading Customer POs)...</div>
             ) : (
+              <TooltipProvider delayDuration={400}>
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
@@ -469,8 +521,83 @@ function CustomerPOsPageContent() {
                             {po.status.toUpperCase()}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
+                        <TableCell
+                          className="text-right pr-6"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex flex-nowrap items-center justify-end gap-0.5">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
+                                  <Link href={`/purchase-orders/${po.id}`}>
+                                    <Pencil className="h-4 w-4" />
+                                    <span className="sr-only">แก้ไข Customer PO</span>
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>แก้ไข Customer PO</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            {po.status === 'pending' && canApprovePO && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex shrink-0">
+                                    <Button
+                                      size="icon"
+                                      className="h-8 w-8 shrink-0 bg-emerald-600 hover:bg-emerald-700"
+                                      disabled={listActionId === po.id}
+                                      onClick={() => void approvePoFromList(po.id)}
+                                    >
+                                      {listActionId === po.id ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                      )}
+                                      <span className="sr-only">อนุมัติ PO (Active)</span>
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <p>อนุมัติ PO — สถานะ Active (สร้าง Wave ได้)</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            {po.status === 'pending' && isAdminUser && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex shrink-0">
+                                    <Button
+                                      variant="destructive"
+                                      size="icon"
+                                      className="h-8 w-8 shrink-0"
+                                      disabled={listActionId === po.id}
+                                      onClick={() => void deletePendingPoFromList(po)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                      <span className="sr-only">ลบ PO ที่ยัง Pending</span>
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <p>ลบ PO ที่ยัง Pending (เฉพาะแอดมิน)</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" asChild>
+                                  <Link href={`/purchase-orders/${po.id}`}>
+                                    <ChevronRight className="h-4 w-4" />
+                                    <span className="sr-only">รายละเอียด PO</span>
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>รายละเอียด PO</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -482,6 +609,7 @@ function CustomerPOsPageContent() {
                   )}
                 </TableBody>
               </Table>
+              </TooltipProvider>
             )}
           </CardContent>
         </Card>

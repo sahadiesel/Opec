@@ -33,7 +33,7 @@ import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod } from '@/lib/types
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { canAccess, canGeneratePayslips, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 
@@ -234,7 +234,9 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                   </div>
                   <div className="flex justify-between text-sm border-b pb-2">
                     <span className="text-muted-foreground">Date Range:</span>
-                    <span className="font-bold">{period?.startDate} to {period?.endDate}</span>
+                    <span className="font-bold">
+                      {formatStoredDateRangeThaiBE(period?.startDate, period?.endDate)}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm border-b pb-2">
                     <span className="text-muted-foreground">Work Mode Scope:</span>

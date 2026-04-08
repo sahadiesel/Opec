@@ -1,5 +1,6 @@
 'use client';
 
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -44,8 +45,12 @@ export function WorkerWorklogTab({ workLogRows, totalWorkedHours }: WorkerWorklo
             {workLogRows.map((row) => (
               <TableRow key={`${row.assignmentId}-${row.startDate}-${row.endDate}`}>
                 <TableCell className="pl-6 font-mono text-xs">{row.assignmentId || '-'}</TableCell>
-                <TableCell className="text-xs">{row.startDate || '-'}</TableCell>
-                <TableCell className="text-xs">{row.endDate || '-'}</TableCell>
+                <TableCell className="text-xs">
+                  {row.startDate ? formatYmdLocalThaiBE(row.startDate) : '-'}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {row.endDate ? formatYmdLocalThaiBE(row.endDate) : '-'}
+                </TableCell>
                 <TableCell className="text-right pr-6 font-bold text-primary">{Number(row.totalHours || 0).toLocaleString()} ชม.</TableCell>
               </TableRow>
             ))}

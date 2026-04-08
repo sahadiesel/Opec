@@ -23,6 +23,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { PayrollBatch, PayrollPeriod, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -186,7 +187,9 @@ export default function PayrollBatchesPage() {
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกรอบเดือนที่ต้องการจ่าย..." /></SelectTrigger>
                     <SelectContent>
                       {periods?.filter(p => p.status === 'OPEN' || p.status === 'PROCESSING').map(p => (
-                        <SelectItem key={p.id} value={p.id}>{p.label} ({p.startDate} ถึง {p.endDate})</SelectItem>
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.label} ({formatStoredDateRangeThaiBE(p.startDate, p.endDate)})
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

@@ -1,4 +1,5 @@
 import type { Assignment, DeploymentStatus, POLine, Wave } from '@/lib/types';
+import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
 
 /** Mobilization ที่ยังถือว่าจองโควต้า (ยังไม่ปิด/ถอนกำลัง) */
 const DEPLOYMENT_RELEASED_FROM_QUOTA: DeploymentStatus[] = ['DEMOBILIZED', 'CLOSED'];
@@ -10,6 +11,7 @@ export function assignmentCountsTowardQuota(status: DeploymentStatus): boolean {
 export interface PoLineFulfillmentRow {
   lineId: string;
   positionId: string;
+  workLocation?: string;
   lineStatus: POLine['status'];
   requiredQty: number;
   assignedCount: number;
@@ -35,8 +37,13 @@ export function buildPoFulfillmentByLine(
         a.poLineId === line.id &&
         assignmentCountsTowardQuota(a.deploymentStatus)
     ).length;
-    const lineWaves = wv.filter((w) => w.poId === poId && w.poLineId === line.id);
-    const plannedWorkersInWaves = lineWaves.reduce((s, w) => s + (Number(w.plannedWorkers) || 0), 0);
+    const lineWaves = wv.filter(
+      (w) => w.poId === poId && plannedOnWaveForPoLine(w, line.id) > 0
+    );
+    const plannedWorkersInWaves = lineWaves.reduce(
+      (s, w) => s + plannedOnWaveForPoLine(w, line.id),
+      0
+    );
     const requiredQty = line.status === 'active' ? line.quantity : 0;
     const remainingSlots =
       line.status === 'active' ? Math.max(0, line.quantity - assignedCount) : 0;
@@ -44,6 +51,7 @@ export function buildPoFulfillmentByLine(
     return {
       lineId: line.id,
       positionId: line.positionId,
+      workLocation: line.workLocation,
       lineStatus: line.status,
       requiredQty: line.quantity,
       assignedCount,

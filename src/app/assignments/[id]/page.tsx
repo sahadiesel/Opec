@@ -37,8 +37,9 @@ import {
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { doc, getDoc, collection, query, where } from 'firebase/firestore';
+import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { 
   Assignment, 
   Worker, 
@@ -110,6 +111,19 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     );
   }, [firestore, id]);
   const { data: pendingRequests } = useCollection<ExceptionRequest>(requestsQuery as any);
+
+  const positionsQuery = useMemoFirebase(
+    () => (firestore && canViewAssignments ? collection(firestore, 'positions') : null),
+    [firestore, canViewAssignments]
+  );
+  const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const positionDisplayName = useMemo(() => {
+    const pid = assignment?.positionId?.trim();
+    if (!pid) return '—';
+    const pos = allPositions?.find((p) => p.id === pid);
+    return pos ? positionListPrimaryName(pos as PositionDoc) : pid;
+  }, [assignment?.positionId, allPositions]);
 
   const isOpsOrSalesManager = useMemo(() => {
     if (!currentUser) return false;
@@ -256,7 +270,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <Label className="text-xs uppercase text-muted-foreground">ตำแหน่ง (Position):</Label>
-                    <p className="font-bold">{assignment.positionId}</p>
+                    <p className="font-bold">{positionDisplayName}</p>
                   </div>
                   <div>
                     <Label className="text-xs uppercase text-muted-foreground">โครงการ (Project):</Label>
@@ -264,11 +278,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   </div>
                   <div>
                     <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน:</Label>
-                    <p className="font-bold">{assignment.startDate}</p>
+                    <p className="font-bold">{formatYmdLocalThaiBE(assignment.startDate)}</p>
                   </div>
                   <div>
                     <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด:</Label>
-                    <p className="font-bold">{assignment.endDate}</p>
+                    <p className="font-bold">{formatYmdLocalThaiBE(assignment.endDate)}</p>
                   </div>
                 </div>
               </CardContent>

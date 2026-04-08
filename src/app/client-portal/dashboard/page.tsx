@@ -44,6 +44,7 @@ import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { isClient } from '@/lib/permissions';
 import { differenceInDays, parseISO, startOfDay } from 'date-fns';
 import { Separator } from '@/components/ui/separator';
+import { formatStoredDateThaiBE } from '@/lib/date-thai';
 
 export default function ClientDashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -224,7 +225,7 @@ export default function ClientDashboardPage() {
                       <div key={inv.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
                         <div className="space-y-0.5">
                           <p className="font-bold text-primary font-mono">{inv.taxInvoiceNo}</p>
-                          <p className="text-[10px] text-muted-foreground">{inv.issueDate}</p>
+                          <p className="text-[10px] text-muted-foreground">{formatStoredDateThaiBE(inv.issueDate)}</p>
                         </div>
                         <div className="text-right">
                           <p className="font-black text-primary">฿{inv.totalAmount.toLocaleString()}</p>

@@ -122,7 +122,11 @@ export default function AccountsPayablePage() {
           <Info className="h-5 w-5 text-amber-800" />
           <AlertTitle className="font-bold text-amber-950">ใบรับวางบิลจากคลัง</AlertTitle>
           <AlertDescription className="text-sm text-amber-900">
-            เมื่อเจ้าหน้าที่คลังส่งเอกสารจากเมนู «รับวางบิล» รายการจะปรากฏที่นี่ (เลข VBR-) การบันทึกสถานะ «จ่ายแล้ว» ทำที่หน้ารายละเอียดใบรับวางบิล
+            เมื่อคลังส่งเอกสารจากเมนู «รับวางบิล» รายการจะปรากฏที่นี่ — คิวตรวจสอบก่อนจ่ายอยู่ที่เมนู{' '}
+            <Link href="/accounting/outgoing-review" className="font-semibold underline">
+              ตรวจสอบรายจ่าย
+            </Link>
+            การบันทึกจ่ายและลง cashbook ทำที่หน้ารายละเอียดใบรับวางบิล
           </AlertDescription>
         </Alert>
 

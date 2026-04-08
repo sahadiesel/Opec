@@ -25,8 +25,12 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { Wave, Customer, PurchaseOrder, POLine, WaveStatus, Position } from '@/lib/types';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatYmdRangeThaiBE,
+} from '@/lib/date-thai';
+import { Assignment, Wave, Customer, PurchaseOrder, POLine, WaveStatus, Position, WaveLineAllocation } from '@/lib/types';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -58,22 +62,12 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
-
-/** รวม plannedWorkers ของเวฟที่ผูก PO line เดียวกัน — ไม่นับเวฟ CLOSED; `excludeWaveId` สำหรับโหมดแก้ไข */
-function sumPlannedWorkersForPoLine(
-  waveList: Wave[] | null | undefined,
-  poId: string,
-  poLineId: string,
-  excludeWaveId?: string | null
-): number {
-  if (!waveList?.length) return 0;
-  return waveList.reduce((acc, w) => {
-    if (excludeWaveId && w.id === excludeWaveId) return acc;
-    if (w.poId !== poId || w.poLineId !== poLineId) return acc;
-    if (w.status === 'CLOSED') return acc;
-    return acc + (Number(w.plannedWorkers) || 0);
-  }, 0);
-}
+import {
+  deriveSiteLocationFromAllocations,
+  normalizeWaveAllocations,
+  sumPlannedForPoLineAcrossWaves,
+} from '@/lib/ops/wave-allocation';
+import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
 
 /** จำนวนคนที่ยังวางแผนในเวฟได้เพิ่มสำหรับ PO line นี้ (หรือแก้ไขเวฟเดิมเมื่อส่ง excludeWaveId) */
 function remainingQuotaForPoLine(
@@ -83,16 +77,22 @@ function remainingQuotaForPoLine(
 ): number {
   if (line.status !== 'active') return 0;
   const cap = Math.max(0, Number(line.quantity) || 0);
-  const used = sumPlannedWorkersForPoLine(waveList, line.poId, line.id, excludeWaveId);
+  const used = sumPlannedForPoLineAcrossWaves(waveList, line.poId, line.id, excludeWaveId);
   return Math.max(0, cap - used);
 }
 
-function plannedUsedForPoLine(
-  line: POLine,
-  waveList: Wave[] | null | undefined,
-  excludeWaveId?: string | null
+function countAssignedOnWaveLine(
+  mobs: Assignment[] | null | undefined,
+  waveId: string,
+  poLineId: string
 ): number {
-  return sumPlannedWorkersForPoLine(waveList, line.poId, line.id, excludeWaveId);
+  if (!mobs?.length) return 0;
+  return mobs.filter(
+    (a) =>
+      a.waveId === waveId &&
+      a.poLineId === poLineId &&
+      assignmentCountsTowardQuota(a.deploymentStatus)
+  ).length;
 }
 
 function poLinePositionLabel(line: POLine, positions: Position[] | null | undefined): string {
@@ -111,9 +111,9 @@ function poLinePositionCode(line: POLine, positions: Position[] | null | undefin
 const defaultNewWaveState = (): Partial<Wave> => ({
   waveCode: getPreviewPattern('wave'),
   status: 'PLANNING',
-  plannedWorkers: 1,
+  plannedWorkers: 0,
+  poLineId: '',
   siteLocation: '',
-  rotationPattern: '28/28',
   notes: '',
 });
 
@@ -164,12 +164,20 @@ export default function WavesPage() {
   }, [firestore, isStaff]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
+  const mobilizationsQuery = useMemoFirebase(() => {
+    if (!firestore || !isStaff) return null;
+    return collection(firestore, 'mobilizations');
+  }, [firestore, isStaff]);
+  const { data: allMobilizations } = useCollection<Assignment>(mobilizationsQuery as any);
+
   const [waveFormOpen, setWaveFormOpen] = useState(false);
   const [editingWave, setEditingWave] = useState<Wave | null>(null);
   const [isSavingWave, setIsSavingWave] = useState(false);
   const [wavePendingDelete, setWavePendingDelete] = useState<Wave | null>(null);
   const [isDeletingWave, setIsDeletingWave] = useState(false);
   const [newWave, setNewWave] = useState<Partial<Wave>>(() => defaultNewWaveState());
+  /** จำนวนคนต่อ PO line ในฟอร์มเวฟ (หลายบรรทัดใน 1 เวฟ) */
+  const [allocationInputs, setAllocationInputs] = useState<Record<string, number>>({});
   const [waveTableSearch, setWaveTableSearch] = useState('');
 
   const filterPoId = (searchParams.get('poId') || '').trim() || null;
@@ -177,6 +185,13 @@ export default function WavesPage() {
     () => (filterPoId && allPOs?.length ? allPOs.find((p) => p.id === filterPoId) : undefined),
     [filterPoId, allPOs]
   );
+
+  /** สร้างเวฟใหม่ได้เฉพาะ PO ที่อนุมัติแล้ว (active) */
+  const activePOsForNewWave = useMemo(
+    () => (allPOs || []).filter((p) => p.status === 'active'),
+    [allPOs],
+  );
+  const filterPoAllowsNewWave = !filterPoId || filterPO?.status === 'active';
 
   const wantOpenNewWaveFromPo = searchParams.get('newWave') === '1';
   const newWaveAutoOpenRef = useRef(false);
@@ -187,117 +202,191 @@ export default function WavesPage() {
       return;
     }
     if (!isStaff || !filterPoId) return;
+    if (filterPO && filterPO.status !== 'active') {
+      toast({
+        variant: 'destructive',
+        title: 'ยังสร้างเวฟไม่ได้',
+        description: 'Customer PO ต้องได้รับการอนุมัติ (สถานะ Active) ก่อน — ไปที่หน้า PO แล้วกดอนุมัติ',
+      });
+      router.replace(`/waves?poId=${encodeURIComponent(filterPoId)}`, { scroll: false });
+      return;
+    }
     if (newWaveAutoOpenRef.current) return;
     newWaveAutoOpenRef.current = true;
     setEditingWave(null);
+    setAllocationInputs({});
     setNewWave({ ...defaultNewWaveState(), poId: filterPoId });
     setWaveFormOpen(true);
     router.replace(`/waves?poId=${encodeURIComponent(filterPoId)}`, { scroll: false });
-  }, [wantOpenNewWaveFromPo, isStaff, filterPoId, router]);
+  }, [wantOpenNewWaveFromPo, isStaff, filterPoId, filterPO, router, toast]);
 
   const quotaExcludeWaveId = editingWave?.id ?? null;
 
   const eligiblePoLinesForCreate = useMemo(() => {
     if (!newWave.poId || !allPOLines?.length) return [];
     const list = allPOLines.filter((l) => l.poId === newWave.poId);
-    const withRemaining = list.filter((l) => remainingQuotaForPoLine(l, waves, quotaExcludeWaveId) > 0);
-    return [...withRemaining].sort((a, b) => {
+    const byRemaining = (l: POLine) =>
+      remainingQuotaForPoLine(l, waves, quotaExcludeWaveId) > 0;
+    let candidates = list.filter((l) => l.status === 'active' && byRemaining(l));
+    const editingLineIds =
+      editingWave ? normalizeWaveAllocations(editingWave).map((a) => a.poLineId) : [];
+    for (const lid of editingLineIds) {
+      const cur = list.find((l) => l.id === lid);
+      if (cur && !candidates.some((c) => c.id === cur.id)) {
+        candidates = [...candidates, cur];
+      }
+    }
+    return [...candidates].sort((a, b) => {
       const na = poLinePositionLabel(a, allPositions);
       const nb = poLinePositionLabel(b, allPositions);
       if (na !== nb) return na.localeCompare(nb, 'th');
       return poLinePositionCode(a, allPositions).localeCompare(poLinePositionCode(b, allPositions), 'th');
     });
-  }, [newWave.poId, allPOLines, allPositions, waves, quotaExcludeWaveId]);
+  }, [newWave.poId, allPOLines, allPositions, waves, quotaExcludeWaveId, editingWave]);
 
-  const selectedPoLineForCreate = useMemo(() => {
-    if (!newWave.poId || !newWave.poLineId || !allPOLines?.length) return undefined;
-    return allPOLines.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
-  }, [newWave.poId, newWave.poLineId, allPOLines]);
+  const allocationDraftEntries = useMemo((): WaveLineAllocation[] => {
+    return eligiblePoLinesForCreate
+      .map((line) => ({
+        poLineId: line.id,
+        plannedWorkers: Math.max(0, Math.floor(allocationInputs[line.id] ?? 0)),
+      }))
+      .filter((x) => x.plannedWorkers > 0);
+  }, [eligiblePoLinesForCreate, allocationInputs]);
 
-  const remainingForSelectedPoLine = useMemo(() => {
-    if (!selectedPoLineForCreate) return 0;
-    return remainingQuotaForPoLine(selectedPoLineForCreate, waves, quotaExcludeWaveId);
-  }, [selectedPoLineForCreate, waves, quotaExcludeWaveId]);
+  const derivedWaveSiteLocation = useMemo(() => {
+    if (!newWave.poId || !allPOLines?.length) return '';
+    return deriveSiteLocationFromAllocations(allocationDraftEntries, allPOLines, newWave.poId);
+  }, [newWave.poId, allPOLines, allocationDraftEntries]);
 
-  const quotaCapForSelected = selectedPoLineForCreate
-    ? Math.max(0, Number(selectedPoLineForCreate.quantity) || 0)
-    : 0;
-  const usedForSelected = selectedPoLineForCreate
-    ? plannedUsedForPoLine(selectedPoLineForCreate, waves, quotaExcludeWaveId)
-    : 0;
+  const totalPlannedFromInputs = useMemo(
+    () => allocationDraftEntries.reduce((s, a) => s + a.plannedWorkers, 0),
+    [allocationDraftEntries]
+  );
 
-  useEffect(() => {
-    if (!waveFormOpen || !newWave.poId || !newWave.poLineId || !allPOLines?.length) return;
-    const line = allPOLines.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
-    if (!line) return;
-    const rem = remainingQuotaForPoLine(line, waves, quotaExcludeWaveId);
-    setNewWave((prev) => {
-      if (prev.poLineId !== line.id || prev.poId !== line.poId) return prev;
-      if (rem <= 0) return { ...prev, poLineId: '', plannedWorkers: 1 };
-      const pw = Number(prev.plannedWorkers) || 0;
-      if (pw > rem) return { ...prev, plannedWorkers: rem };
-      return prev;
-    });
-  }, [waveFormOpen, newWave.poId, newWave.poLineId, allPOLines, waves, quotaExcludeWaveId]);
+  const waveFormCanSubmit = useMemo(() => {
+    if (!newWave.poId) return false;
+    if (totalPlannedFromInputs < 1) return false;
+    for (const line of eligiblePoLinesForCreate) {
+      const n = Math.max(0, Math.floor(allocationInputs[line.id] ?? 0));
+      if (n < 1) continue;
+      const rem = remainingQuotaForPoLine(line, waves, quotaExcludeWaveId);
+      if (n > rem) return false;
+    }
+    if (!eligiblePoLinesForCreate.some((line) => Math.floor(allocationInputs[line.id] ?? 0) >= 1)) {
+      return false;
+    }
+    if (editingWave && allMobilizations?.length) {
+      for (const line of eligiblePoLinesForCreate) {
+        const n = Math.floor(allocationInputs[line.id] ?? 0);
+        const asg = countAssignedOnWaveLine(allMobilizations, editingWave.id, line.id);
+        if (n < asg) return false;
+      }
+    }
+    return true;
+  }, [
+    newWave.poId,
+    totalPlannedFromInputs,
+    eligiblePoLinesForCreate,
+    allocationInputs,
+    waves,
+    quotaExcludeWaveId,
+    editingWave,
+    allMobilizations,
+  ]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser || editingWave) return;
-    if (!newWave.poId || !newWave.poLineId) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือก PO และ PO Line" });
+    if (!newWave.poId) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาเลือก Customer PO' });
       return;
     }
-    const line = allPOLines?.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
-    if (!line) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ถูกต้อง", description: "ไม่พบ PO Line ที่เลือก" });
-      return;
-    }
-    const remaining = remainingQuotaForPoLine(line, waves, null);
-    const planned = Number(newWave.plannedWorkers) || 0;
-    if (remaining <= 0) {
+    const headerPoCreate = allPOs?.find((p) => p.id === newWave.poId);
+    if (!headerPoCreate || headerPoCreate.status !== 'active') {
       toast({
-        variant: "destructive",
-        title: "โควต้าเต็ม",
-        description: "รายการ PO Line นี้ไม่เหลือโควต้าสำหรับเปิดเวฟเพิ่ม",
+        variant: 'destructive',
+        title: 'PO ยังไม่ Active',
+        description: 'อนุมัติ Customer PO ให้เป็น Active ก่อนสร้างเวฟ',
       });
       return;
     }
-    if (planned < 1 || planned > remaining) {
+
+    const allocations: WaveLineAllocation[] = [];
+    for (const line of eligiblePoLinesForCreate) {
+      const n = Math.max(0, Math.floor(allocationInputs[line.id] ?? 0));
+      if (n < 1) continue;
+      if (line.status !== 'active') {
+        toast({
+          variant: 'destructive',
+          title: 'PO Line ไม่ active',
+          description: 'ไม่สามารถใช้บรรทัดที่ยกเลิก/ปิดแล้วในเวฟ',
+        });
+        return;
+      }
+      if (!line.positionId?.trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีตำแหน่งในบรรทัด PO',
+          description: `แก้บรรทัด PO (${poLinePositionLabel(line, allPositions)}) ให้มีตำแหน่งงานก่อน`,
+        });
+        return;
+      }
+      const remaining = remainingQuotaForPoLine(line, waves, null);
+      if (n > remaining) {
+        toast({
+          variant: 'destructive',
+          title: 'เกินโควต้า',
+          description: `${poLinePositionLabel(line, allPositions)}: วางได้ไม่เกิน ${remaining} คน`,
+        });
+        return;
+      }
+      allocations.push({ poLineId: line.id, plannedWorkers: n });
+    }
+
+    if (allocations.length < 1) {
       toast({
-        variant: "destructive",
-        title: "จำนวนคนไม่ถูกต้อง",
-        description: `ต้องอยู่ระหว่าง 1 และ ${remaining} คน (โควต้าที่เหลือ)`,
+        variant: 'destructive',
+        title: 'ยังไม่ได้ระบุจำนวนคน',
+        description: 'กรอกจำนวนคนตามบรรทัด PO อย่างน้อย 1 บรรทัด',
       });
       return;
     }
+
+    const totalPlanned = allocations.reduce((s, a) => s + a.plannedWorkers, 0);
+    const siteLoc = deriveSiteLocationFromAllocations(allocations, allPOLines, newWave.poId);
 
     setIsSavingWave(true);
     try {
-      // Atomic Number Generation
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'wave', { actor: currentUser.displayName });
 
-      const po = allPOs?.find(p => p.id === newWave.poId);
+      const po = allPOs?.find((p) => p.id === newWave.poId);
       const waveRef = collection(firestore, 'waves');
-      
+
       const docRef = await addDocumentNonBlocking(waveRef, {
         ...newWave,
         waveCode: finalNo,
+        lineAllocations: allocations,
+        poLineId: allocations[0].poLineId,
+        plannedWorkers: totalPlanned,
+        siteLocation: siteLoc,
+        rotationPattern: '',
         customerId: po?.customerId || '',
         projectName: po?.projectName || po?.title || '',
         assignedWorkers: 0,
         createdAt: Date.now(),
         createdBy: currentUser.id,
         updatedAt: Date.now(),
-        updatedBy: currentUser.id
+        updatedBy: currentUser.id,
       });
 
       setWaveFormOpen(false);
       setEditingWave(null);
+      setAllocationInputs({});
       setNewWave(defaultNewWaveState());
-      toast({ title: "สร้างเวฟงานสำเร็จ", description: `รหัสเวฟ: ${finalNo}` });
+      toast({ title: 'สร้างเวฟงานสำเร็จ', description: `รหัสเวฟ: ${finalNo}` });
       if (docRef) router.push(`/waves/${docRef.id}`);
     } catch (e) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างเวฟงานได้" });
+      toast({ variant: 'destructive', title: 'Error', description: 'ไม่สามารถสร้างเวฟงานได้' });
     } finally {
       setIsSavingWave(false);
     }
@@ -305,54 +394,115 @@ export default function WavesPage() {
 
   const handleUpdateWave = async () => {
     if (!firestore || !currentUser || !editingWave) return;
-    if (!newWave.poId || !newWave.poLineId) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือก PO และ PO Line" });
+    if (!newWave.poId) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาเลือก Customer PO' });
       return;
     }
-    const line = allPOLines?.find((l) => l.id === newWave.poLineId && l.poId === newWave.poId);
-    if (!line) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ถูกต้อง", description: "ไม่พบ PO Line ที่เลือก" });
-      return;
-    }
-    const remaining = remainingQuotaForPoLine(line, waves, editingWave.id);
-    const planned = Number(newWave.plannedWorkers) || 0;
-    if (remaining <= 0) {
+    const headerPoUpdate = allPOs?.find((p) => p.id === newWave.poId);
+    if (!headerPoUpdate || headerPoUpdate.status !== 'active') {
       toast({
-        variant: "destructive",
-        title: "โควต้าเต็ม",
-        description: "รายการ PO Line นี้ไม่เหลือโควต้าสำหรับจำนวนคนที่ตั้งไว้",
+        variant: 'destructive',
+        title: 'PO ยังไม่ Active',
+        description: 'อนุมัติ Customer PO ให้เป็น Active ก่อนบันทึกเวฟ',
       });
       return;
     }
-    if (planned < 1 || planned > remaining) {
+
+    const prevAllocs = normalizeWaveAllocations(editingWave);
+    const allocations: WaveLineAllocation[] = [];
+
+    for (const line of eligiblePoLinesForCreate) {
+      const n = Math.max(0, Math.floor(allocationInputs[line.id] ?? 0));
+      if (n < 1) {
+        const had = prevAllocs.some((a) => a.poLineId === line.id);
+        if (had) {
+          const asg = countAssignedOnWaveLine(allMobilizations, editingWave.id, line.id);
+          if (asg > 0) {
+            toast({
+              variant: 'destructive',
+              title: 'ลดโควต้าบรรทัดนี้ไม่ได้',
+              description: `มีการมอบหมายแล้ว ${asg} คนใน ${poLinePositionLabel(line, allPositions)} — ต้องถอนมอบหมายก่อน`,
+            });
+            return;
+          }
+        }
+        continue;
+      }
+
+      if (line.status !== 'active') {
+        toast({
+          variant: 'destructive',
+          title: 'PO Line ไม่ active',
+          description: 'เปลี่ยนเป็นบรรทัดที่ active หรือเปิดใช้บรรทัดนี้ใหม่ที่หน้า PO',
+        });
+        return;
+      }
+      if (!line.positionId?.trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีตำแหน่งในบรรทัด PO',
+          description: 'แก้บรรทัด PO ให้มีตำแหน่งงานก่อนบันทึก',
+        });
+        return;
+      }
+
+      const remaining = remainingQuotaForPoLine(line, waves, editingWave.id);
+      if (n > remaining) {
+        toast({
+          variant: 'destructive',
+          title: 'เกินโควต้า',
+          description: `${poLinePositionLabel(line, allPositions)}: วางได้ไม่เกิน ${remaining} คน`,
+        });
+        return;
+      }
+
+      const asg = countAssignedOnWaveLine(allMobilizations, editingWave.id, line.id);
+      if (n < asg) {
+        toast({
+          variant: 'destructive',
+          title: 'จำนวนต่ำกว่าที่มอบหมายแล้ว',
+          description: `${poLinePositionLabel(line, allPositions)}: มอบหมายแล้ว ${asg} คน`,
+        });
+        return;
+      }
+
+      allocations.push({ poLineId: line.id, plannedWorkers: n });
+    }
+
+    if (allocations.length < 1) {
       toast({
-        variant: "destructive",
-        title: "จำนวนคนไม่ถูกต้อง",
-        description: `ต้องอยู่ระหว่าง 1 และ ${remaining} คน (โควต้าที่เหลือเมื่อไม่นับเวฟนี้)`,
+        variant: 'destructive',
+        title: 'ยังไม่ได้ระบุจำนวนคน',
+        description: 'กรอกจำนวนคนตามบรรทัด PO อย่างน้อย 1 บรรทัด',
       });
       return;
     }
-    if (planned < Number(editingWave.assignedWorkers || 0)) {
+
+    const totalPlanned = allocations.reduce((s, a) => s + a.plannedWorkers, 0);
+    if (totalPlanned < Number(editingWave.assignedWorkers || 0)) {
       toast({
-        variant: "destructive",
-        title: "จำนวนคนต่ำเกินไป",
-        description: `มีการมอบหมายแล้ว ${editingWave.assignedWorkers} คน — ต้องตั้งแผนไม่ต่ำกว่านี้`,
+        variant: 'destructive',
+        title: 'จำนวนคนต่ำเกินไป',
+        description: `มีการมอบหมายแล้ว ${editingWave.assignedWorkers} คน — ต้องตั้งแผนรวมไม่ต่ำกว่านี้`,
       });
       return;
     }
+
+    const siteLoc = deriveSiteLocationFromAllocations(allocations, allPOLines, newWave.poId);
 
     setIsSavingWave(true);
     try {
       const po = allPOs?.find((p) => p.id === newWave.poId);
       const waveRef = doc(firestore, 'waves', editingWave.id);
       await updateDoc(waveRef, {
-        siteLocation: newWave.siteLocation ?? '',
+        siteLocation: siteLoc,
         poId: newWave.poId,
-        poLineId: newWave.poLineId,
+        poLineId: allocations[0].poLineId,
+        lineAllocations: allocations,
         startDate: newWave.startDate ?? '',
         endDate: newWave.endDate ?? '',
-        plannedWorkers: planned,
-        rotationPattern: newWave.rotationPattern ?? '28/28',
+        plannedWorkers: totalPlanned,
+        rotationPattern: editingWave.rotationPattern?.trim() || '',
         notes: newWave.notes ?? '',
         customerId: po?.customerId ?? editingWave.customerId ?? '',
         projectName: po?.projectName ?? po?.title ?? newWave.projectName ?? '',
@@ -361,11 +511,12 @@ export default function WavesPage() {
       });
       setWaveFormOpen(false);
       setEditingWave(null);
+      setAllocationInputs({});
       setNewWave(defaultNewWaveState());
-      toast({ title: "บันทึกการแก้ไขเวฟแล้ว", description: editingWave.waveCode });
+      toast({ title: 'บันทึกการแก้ไขเวฟแล้ว', description: editingWave.waveCode });
     } catch (e) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกการแก้ไขได้" });
+      toast({ variant: 'destructive', title: 'Error', description: 'ไม่สามารถบันทึกการแก้ไขได้' });
     } finally {
       setIsSavingWave(false);
     }
@@ -394,10 +545,14 @@ export default function WavesPage() {
   };
 
   const positionLabelForWave = (wave: Wave): string => {
-    const line = allPOLines?.find((l) => l.id === wave.poLineId && l.poId === wave.poId);
-    if (!line?.positionId) return '';
-    const pos = allPositions?.find((p) => p.id === line.positionId);
-    return pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId;
+    const labels: string[] = [];
+    for (const a of normalizeWaveAllocations(wave)) {
+      const line = allPOLines?.find((l) => l.id === a.poLineId && l.poId === wave.poId);
+      if (!line?.positionId) continue;
+      const pos = allPositions?.find((p) => p.id === line.positionId);
+      labels.push(pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId);
+    }
+    return labels.join(' · ');
   };
 
   const displayedWaves = useMemo(() => {
@@ -407,9 +562,7 @@ export default function WavesPage() {
     if (!q) return list;
     return list.filter((w) => {
       const customer = customers?.find((c) => c.id === w.customerId);
-      const line = allPOLines?.find((l) => l.id === w.poLineId && l.poId === w.poId);
-      const pos = line?.positionId ? allPositions?.find((p) => p.id === line.positionId) : undefined;
-      const posLbl = pos ? positionListPrimaryName(pos as PositionDoc).toLowerCase() : '';
+      const posLbl = positionLabelForWave(w).toLowerCase();
       return (
         (w.waveCode || '').toLowerCase().includes(q) ||
         (w.projectName || '').toLowerCase().includes(q) ||
@@ -478,6 +631,17 @@ export default function WavesPage() {
           moduleLabel="Waves"
         />
 
+        {filterPoId && filterPO && filterPO.status !== 'active' && (
+          <Alert variant="destructive" className="bg-destructive/5 border-destructive/30">
+            <AlertCircle className="h-5 w-5" />
+            <AlertTitle>PO ยังไม่ได้อนุมัติ</AlertTitle>
+            <AlertDescription className="text-sm">
+              สถานะปัจจุบัน: <strong>{filterPO.status.toUpperCase()}</strong> — ไปที่หน้า Customer PO แล้วกด{' '}
+              <strong>อนุมัติ (Active)</strong> ก่อนจึงจะสร้างเวฟได้
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
@@ -495,9 +659,23 @@ export default function WavesPage() {
           
           <Button
             className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
-            disabled={!isStaff}
+            disabled={!isStaff || !filterPoAllowsNewWave}
+            title={
+              !filterPoAllowsNewWave
+                ? 'PO นี้ยัง Pending — อนุมัติที่หน้า Customer PO ให้เป็น Active ก่อน'
+                : undefined
+            }
             onClick={() => {
+              if (!filterPoAllowsNewWave) {
+                toast({
+                  variant: 'destructive',
+                  title: 'ยังสร้างเวฟไม่ได้',
+                  description: 'อนุมัติ Customer PO (สถานะ Active) ก่อนสร้างเวฟ',
+                });
+                return;
+              }
               setEditingWave(null);
+              setAllocationInputs({});
               setNewWave({
                 ...defaultNewWaveState(),
                 ...(filterPoId ? { poId: filterPoId } : {}),
@@ -514,22 +692,26 @@ export default function WavesPage() {
               setWaveFormOpen(open);
               if (!open) {
                 setEditingWave(null);
+                setAllocationInputs({});
                 setNewWave(defaultNewWaveState());
               }
             }}
           >
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingWave ? 'แก้ไขรอบการทำงาน (Edit Deployment Wave)' : 'สร้างรอบการทำงานใหม่ (New Deployment Wave)'}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingWave
-                    ? 'อัปเดตสถานที่ วันที่ PO/โควต้า และจำนวนคนตามแผน — รหัสเวฟเดิมคงเดิม'
-                    : 'ระบุข้อมูลพื้นฐานและเชื่อมต่อเข้ากับ Customer PO เพื่อเริ่มวางแผนส่งคน'}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid grid-cols-2 gap-4 py-4">
+            <DialogContent className="grid max-h-[min(92dvh,56rem)] w-[calc(100vw-1.5rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:rounded-lg">
+              <div className="border-b px-6 py-4 pr-14">
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingWave ? 'แก้ไขรอบการทำงาน (Edit Deployment Wave)' : 'สร้างรอบการทำงานใหม่ (New Deployment Wave)'}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {editingWave
+                      ? 'อัปเดตวันที่ โควต้าต่อบรรทัด PO และจำนวนคนตามแผน — รหัสเวฟเดิมคงเดิม'
+                      : 'เลือก Customer PO แล้วกำหนดจำนวนคนต่อบรรทัด PO ได้หลายตำแหน่งในเวฟเดียว — สถานที่ปฏิบัติงานดึงจาก workLocation ของแต่ละบรรทัด'}
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+              <div className="min-h-0 overflow-y-auto overscroll-y-contain px-6 py-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
                   <Label>รหัสเวฟงาน (Wave Code)</Label>
                   <Input value={newWave.waveCode} disabled className="bg-muted font-mono font-bold text-primary" />
@@ -539,61 +721,104 @@ export default function WavesPage() {
                       : '* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก'}
                   </p>
                 </div>
-                <div className="grid gap-2">
-                  <Label>สถานที่ปฏิบัติงาน (Site / Location)</Label>
-                  <Input placeholder="เช่น Erawan Platform" value={newWave.siteLocation} onChange={e => setNewWave({...newWave, siteLocation: e.target.value})} />
+                <div className="grid gap-2 md:col-span-2">
+                  <Label>สถานที่ปฏิบัติงาน (จาก PO line)</Label>
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm min-h-[40px]">
+                    {derivedWaveSiteLocation ? (
+                      <span className="font-medium">{derivedWaveSiteLocation}</span>
+                    ) : (
+                      <span className="text-muted-foreground italic">
+                        กำหนดจำนวนคนตามบรรทัด PO ที่มี workLocation — ระบบจะแสดงสถานที่อัตโนมัติ
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="grid gap-2">
+                <div className="grid gap-2 md:col-span-2">
                   <Label>เลือก Customer PO</Label>
                   <Select
                     value={newWave.poId || undefined}
-                    onValueChange={(v) =>
-                      setNewWave({ ...newWave, poId: v, poLineId: '', plannedWorkers: 1 })
-                    }
+                    onValueChange={(v) => {
+                      setAllocationInputs({});
+                      setNewWave({ ...newWave, poId: v, poLineId: '', plannedWorkers: 0 });
+                    }}
                   >
                     <SelectTrigger><SelectValue placeholder="เลือก PO..." /></SelectTrigger>
                     <SelectContent>
-                      {allPOs?.map(po => (
-                        <SelectItem key={po.id} value={po.id}>{po.poCode} - {po.title}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label>เลือกโควต้า (PO Line)</Label>
-                  <Select
-                    value={newWave.poLineId || undefined}
-                    onValueChange={(v) => {
-                      const line = allPOLines?.find((l) => l.id === v && l.poId === newWave.poId);
-                      const rem = line ? remainingQuotaForPoLine(line, waves, quotaExcludeWaveId) : 0;
-                      setNewWave({
-                        ...newWave,
-                        poLineId: v,
-                        plannedWorkers: rem > 0 ? rem : 1,
-                      });
-                    }}
-                    disabled={!newWave.poId}
-                  >
-                    <SelectTrigger><SelectValue placeholder="เลือกรายการสั่งจอง..." /></SelectTrigger>
-                    <SelectContent>
-                      {eligiblePoLinesForCreate.length === 0 && newWave.poId ? (
-                        <div className="px-2 py-3 text-sm text-muted-foreground text-center">
-                          ไม่มีรายการที่เหลือโควต้า (ครบตาม PO หรือถูกจองในเวฟอื่นหมดแล้ว)
-                        </div>
+                      {(editingWave ? allPOs : activePOsForNewWave)?.length ? (
+                        (editingWave ? allPOs : activePOsForNewWave)!.map((po) => (
+                          <SelectItem key={po.id} value={po.id}>
+                            {po.poCode} - {po.title}
+                          </SelectItem>
+                        ))
                       ) : (
-                        eligiblePoLinesForCreate.map((line) => {
-                          const rem = remainingQuotaForPoLine(line, waves, quotaExcludeWaveId);
-                          const code = poLinePositionCode(line, allPositions);
-                          const name = poLinePositionLabel(line, allPositions);
-                          return (
-                            <SelectItem key={line.id} value={line.id}>
-                              {code} — {name} · เหลือ {rem} คน
-                            </SelectItem>
-                          );
-                        })
+                        <div className="px-2 py-3 text-sm text-muted-foreground text-center">
+                          {editingWave ? 'ไม่มี PO' : 'ไม่มี PO ที่ Active — อนุมัติ PO ก่อน'}
+                        </div>
                       )}
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="grid gap-2 md:col-span-2">
+                  <Label>โควต้าตามบรรทัด PO (หลายตำแหน่งใน 1 เวฟ)</Label>
+                  {!newWave.poId ? (
+                    <p className="text-sm text-muted-foreground">เลือก PO ก่อน</p>
+                  ) : eligiblePoLinesForCreate.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      ไม่มีบรรทัดที่เหลือโควต้า (ครบตาม PO หรือถูกจองในเวฟอื่นหมดแล้ว)
+                    </p>
+                  ) : (
+                    <div className="rounded-md border divide-y max-h-[240px] overflow-y-auto">
+                      {eligiblePoLinesForCreate.map((line) => {
+                        const rem = remainingQuotaForPoLine(line, waves, quotaExcludeWaveId);
+                        const code = poLinePositionCode(line, allPositions);
+                        const name = poLinePositionLabel(line, allPositions);
+                        const wl = (line.workLocation || '').trim();
+                        const val = Math.max(0, Math.floor(allocationInputs[line.id] ?? 0));
+                        return (
+                          <div key={line.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
+                            <div className="flex-1 min-w-[200px]">
+                              <div className="font-medium">
+                                {code} — {name}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                เหลือวางแผนได้ {rem} คน
+                                {wl ? ` · ${wl}` : ''}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-muted-foreground whitespace-nowrap">จำนวน</span>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={rem}
+                                className="w-20 h-9"
+                                value={val || ''}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  if (raw === '') {
+                                    setAllocationInputs((prev) => ({ ...prev, [line.id]: 0 }));
+                                    return;
+                                  }
+                                  const n = parseInt(raw, 10);
+                                  if (Number.isNaN(n)) return;
+                                  setAllocationInputs((prev) => ({
+                                    ...prev,
+                                    [line.id]: Math.max(0, Math.min(rem, n)),
+                                  }));
+                                }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {newWave.poId && eligiblePoLinesForCreate.length > 0 ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      รวมที่วางแผนในเวฟนี้: <strong>{totalPlannedFromInputs}</strong> คน
+                    </p>
+                  ) : null}
                 </div>
                 <div className="grid gap-2">
                   <Label>วันที่เริ่มงาน (Start Date)</Label>
@@ -611,50 +836,16 @@ export default function WavesPage() {
                     onChange={(ms) => setNewWave({ ...newWave, endDate: timestampToHtmlDateValue(ms) })}
                   />
                 </div>
-                <div className="grid gap-2">
-                  <Label>จำนวนคนงานที่วางแผน (Planned)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={remainingForSelectedPoLine > 0 ? remainingForSelectedPoLine : undefined}
-                    disabled={!selectedPoLineForCreate || remainingForSelectedPoLine <= 0}
-                    value={newWave.plannedWorkers ?? 1}
-                    onChange={(e) => {
-                      const n = parseInt(e.target.value, 10);
-                      if (Number.isNaN(n)) {
-                        setNewWave({ ...newWave, plannedWorkers: 1 });
-                        return;
-                      }
-                      const cap =
-                        remainingForSelectedPoLine > 0 ? remainingForSelectedPoLine : 1;
-                      setNewWave({
-                        ...newWave,
-                        plannedWorkers: Math.min(Math.max(1, n), cap),
-                      });
-                    }}
-                  />
-                  {selectedPoLineForCreate && remainingForSelectedPoLine > 0 ? (
-                    <p className="text-[10px] text-muted-foreground">
-                      โควต้า PO line: {quotaCapForSelected} คน · จองในเวฟอื่นแล้ว: {usedForSelected} คน ·
-                      เปิดเวฟนี้ได้ไม่เกิน {remainingForSelectedPoLine} คน
-                    </p>
-                  ) : newWave.poId ? (
-                    <p className="text-[10px] text-muted-foreground">
-                      เลือกรายการ PO line ที่ยังมีโควต้า เพื่อกำหนดจำนวนคนอัตโนมัติ
-                    </p>
-                  ) : null}
-                </div>
-                <div className="grid gap-2">
-                  <Label>รูปแบบกะงาน (Rotation)</Label>
-                  <Input placeholder="เช่น 28/28" value={newWave.rotationPattern} onChange={e => setNewWave({...newWave, rotationPattern: e.target.value})} />
-                </div>
               </div>
-              <DialogFooter>
+              </div>
+              <div className="border-t bg-background px-6 py-4">
+              <DialogFooter className="gap-2 sm:gap-0">
                 <Button
                   variant="outline"
                   onClick={() => {
                     setWaveFormOpen(false);
                     setEditingWave(null);
+                    setAllocationInputs({});
                     setNewWave(defaultNewWaveState());
                   }}
                   disabled={isSavingWave}
@@ -664,19 +855,13 @@ export default function WavesPage() {
                 <Button
                   onClick={() => (editingWave ? void handleUpdateWave() : void handleCreate())}
                   className="bg-primary font-bold"
-                  disabled={
-                    isSavingWave ||
-                    !newWave.poId ||
-                    !newWave.poLineId ||
-                    remainingForSelectedPoLine <= 0 ||
-                    (Number(newWave.plannedWorkers) || 0) < 1 ||
-                    (Number(newWave.plannedWorkers) || 0) > remainingForSelectedPoLine
-                  }
+                  disabled={isSavingWave || !waveFormCanSubmit}
                 >
                   {isSavingWave ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   {editingWave ? 'บันทึกการแก้ไข (Save)' : 'ยืนยันการสร้าง (Confirm)'}
                 </Button>
               </DialogFooter>
+              </div>
             </DialogContent>
           </Dialog>
         </div>
@@ -712,7 +897,11 @@ export default function WavesPage() {
                         <TableCell className="py-4">
                           <div className="flex flex-col">
                             <span className="font-bold text-base text-primary">{wave.waveCode}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">Pattern: {wave.rotationPattern}</span>
+                            {wave.rotationPattern?.trim() ? (
+                              <span className="text-[10px] text-muted-foreground uppercase">
+                                Pattern: {wave.rotationPattern}
+                              </span>
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -739,7 +928,7 @@ export default function WavesPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                             <Calendar className="h-3.5 w-3.5" />
-                            {wave.startDate} - {wave.endDate}
+                            {formatYmdRangeThaiBE(wave.startDate, wave.endDate)}
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
@@ -761,13 +950,17 @@ export default function WavesPage() {
                                 title="แก้ไขข้อมูลเวฟ (PO / สถานที่ / วันที่)"
                                 onClick={() => {
                                   setEditingWave(wave);
+                                  const rec: Record<string, number> = {};
+                                  for (const a of normalizeWaveAllocations(wave)) {
+                                    rec[a.poLineId] = a.plannedWorkers;
+                                  }
+                                  setAllocationInputs(rec);
                                   setNewWave({
                                     waveCode: wave.waveCode,
                                     status: wave.status,
                                     plannedWorkers: wave.plannedWorkers,
                                     assignedWorkers: wave.assignedWorkers,
                                     siteLocation: wave.siteLocation ?? '',
-                                    rotationPattern: wave.rotationPattern ?? '28/28',
                                     notes: wave.notes ?? '',
                                     poId: wave.poId,
                                     poLineId: wave.poLineId,

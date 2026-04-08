@@ -93,6 +93,14 @@ export default function StoreDashboardPage() {
     };
   }, [items]);
 
+  /** ช่องว่าง Readiness vs คลัง: HR ผ่านแล้วแต่ยังมีบรรทัด PPE/เครื่องมือตาม mobilization ไม่ครบ */
+  const readyButStorePendingCount = useMemo(() => {
+    if (!workers?.length) return 0;
+    return workers.filter(
+      (w) => w.readinessStatus === 'READY' && w.storeEquipmentReadiness === 'pending',
+    ).length;
+  }, [workers]);
+
   const stockAlerts = useMemo(() => {
     if (!items) return [];
     return items.filter(i => i.currentStock <= i.minimumStock && i.active);
@@ -274,14 +282,36 @@ export default function StoreDashboardPage() {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-6">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           <StatCard title="รายการอุปกรณ์" value={stats.total} sub="Total Catalog Items" icon={Package} colorClass="border-l-slate-400" />
           <StatCard title="PPE Active" value={stats.activePPE} sub="Safety Eq. Types" icon={HardHat} colorClass="border-l-orange-500" />
           <StatCard title="เครื่องมือ Active" value={stats.activeTools} sub="Tools & Assets" icon={Hammer} colorClass="border-l-blue-500" />
           <StatCard title="สินค้าใกล้หมด" value={stats.low} sub="Low Stock Alerts" icon={AlertTriangle} colorClass={stats.low > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
+          <StatCard
+            title="คลังค้าง (คนงาน READY)"
+            value={readyButStorePendingCount}
+            sub="รอเบิก/Waive ตาม mobilization"
+            icon={ClipboardList}
+            colorClass={readyButStorePendingCount > 0 ? 'border-l-amber-600' : 'border-l-slate-200'}
+          />
           <StatCard title="รายการค้างคืน" value={pendingReturns.length} sub="Pending Returns" icon={Users} colorClass="border-l-amber-600" />
           <StatCard title="ยอดค้างรวม" value={pendingReturns.reduce((sum, r) => sum + r.totalQty, 0)} sub="Items in Field" icon={TrendingDown} colorClass="border-l-indigo-600" />
         </div>
+
+        {readyButStorePendingCount > 0 && (
+          <Alert className="border-amber-300 bg-amber-50/80 text-amber-950 shadow-sm">
+            <AlertCircle className="h-5 w-5 text-amber-600" />
+            <AlertTitle className="font-bold">ช่องว่างความพร้อม vs คลัง</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+              <span>
+                มี {readyButStorePendingCount} คนที่สถานะ HR พร้อม (READY) แต่ยังมีรายการ PPE/อุปกรณ์ตามงานมอบหมายที่ยังไม่ครบ — ไปที่{' '}
+                <Link href="/store/issue" className="font-bold underline underline-offset-2 text-primary">
+                  เบิกอุปกรณ์ (โหมด Field)
+                </Link>
+              </span>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card className="border-primary/20 shadow-md overflow-hidden">
           <CardHeader className="bg-primary/5 border-b">

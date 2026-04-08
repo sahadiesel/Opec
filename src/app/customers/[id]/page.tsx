@@ -41,7 +41,7 @@ import {
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { isSystemAdmin, isOperationsPillarExecutive } from '@/lib/permission-core';
-import { formatDateRangeThaiBE } from '@/lib/date-thai';
+import { formatDateRangeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { doc, collection, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { 
   Customer, 
@@ -786,7 +786,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                       <TableRow key={quo.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/quotations/${quo.id}`)}>
                         <TableCell className="pl-6 font-mono font-bold text-primary">{quo.quotationNo}</TableCell>
                         <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
-                        <TableCell className="text-xs">{quo.issueDate}</TableCell>
+                        <TableCell className="text-xs">{formatStoredDateThaiBE(quo.issueDate)}</TableCell>
                         <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                         <TableCell>
                           <Badge variant={quo.status === 'accepted' ? 'default' : 'outline'} className={quo.status === 'accepted' ? 'bg-green-600 text-white border-none' : ''}>

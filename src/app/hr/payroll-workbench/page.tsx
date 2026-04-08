@@ -39,6 +39,7 @@ import { isHRStaff, canView } from '@/lib/permissions';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
+import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import {
   assignmentInWaveBoard,
   assignmentOverlapsPeriod,
@@ -306,7 +307,9 @@ export default function HrPayrollWorkbenchPage() {
       .sort((a, b) => a.label.localeCompare(b.label, 'th'));
 
     return {
-      periodLabel: focusPeriod.label || `${focusPeriod.startDate} – ${focusPeriod.endDate}`,
+      periodLabel:
+        focusPeriod.label ||
+        formatStoredDateRangeThaiBE(focusPeriod.startDate, focusPeriod.endDate),
       totalWorkers: totalWorkerCount,
       withTs: withTsAll,
       complete: completeAll,

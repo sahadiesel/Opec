@@ -23,7 +23,8 @@ import {
   Package,
   Save,
   Loader2,
-  ChevronRight
+  ChevronRight,
+  Plus,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -35,6 +36,7 @@ import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase
 import { doc, collection, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Wave, User, Customer, Assignment, Worker } from '@/lib/types';
+import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -127,8 +129,24 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <StatCard title="คนงานที่วางแผน (Planned)" value={wave.plannedWorkers} sub="Workers" icon={Users} colorClass="border-l-blue-600" />
-          <StatCard title="มอบหมายแล้ว (Assigned)" value={wave.assignedWorkers} sub={`${Math.round((wave.assignedWorkers/wave.plannedWorkers)*100)}% of plan`} icon={CheckCircle2} colorClass="border-l-green-600" />
+          <StatCard
+            title="คนงานที่วางแผน (Planned)"
+            value={totalPlannedWorkersOnWave(wave)}
+            sub="Workers"
+            icon={Users}
+            colorClass="border-l-blue-600"
+          />
+          <StatCard
+            title="มอบหมายแล้ว (Assigned)"
+            value={wave.assignedWorkers}
+            sub={`${
+              totalPlannedWorkersOnWave(wave) > 0
+                ? Math.round((wave.assignedWorkers / totalPlannedWorkersOnWave(wave)) * 100)
+                : 0
+            }% of plan`}
+            icon={CheckCircle2}
+            colorClass="border-l-green-600"
+          />
           <StatCard title="รอยืนยันความพร้อม" value="-" sub="Readiness check" icon={ClipboardCheck} colorClass="border-l-amber-500" />
           <StatCard title="อุปกรณ์ค้างคืน" value="0" sub="Equipment" icon={Package} colorClass="border-l-slate-400" />
         </div>
@@ -209,5 +227,3 @@ function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
     </Card>
   );
 }
-
-import { Plus } from 'lucide-react';

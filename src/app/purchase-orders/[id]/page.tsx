@@ -2,13 +2,19 @@
 'use client';
 
 import { useState, use, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { formatDateRangeThaiBE, formatDateThaiBE } from '@/lib/date-thai';
+import {
+  formatDateRangeThaiBE,
+  formatDateThaiBE,
+  formatYmdLocalThaiBE,
+  formatStoredDateRangeThaiBE,
+} from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +44,8 @@ import {
   ChevronRight,
   ClipboardList,
   ListOrdered,
-  ArrowRight
+  ArrowRight,
+  Pencil,
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -50,7 +57,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, collection, query, where, updateDoc, addDoc } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, addDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   PurchaseOrder, 
@@ -76,7 +83,7 @@ import { Separator } from '@/components/ui/separator';
 import { ProfitAnalysisTab } from '@/components/commercial/profit-analysis-tab';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canEdit, canDelete } from '@/lib/permissions';
+import { canView, canEdit, canDelete, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
 import { sortPositionRatesByDisplayName, sortPositionsByDisplayName } from '@/lib/position-display';
 import {
   aggregateActiveLineTotals,
@@ -86,12 +93,15 @@ import {
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
   const canViewPo = useMemo(() => canView(currentUser, 'customer_pos'), [currentUser]);
   const canEditPo = useMemo(() => canEdit(currentUser, 'customer_pos'), [currentUser]);
   const canDeletePo = useMemo(() => canDelete(currentUser, 'customer_pos'), [currentUser]);
+  const canApprovePo = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
+  const isAdminUser = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
 
   const poRef = useMemoFirebase(() => (firestore && canViewPo ? doc(firestore, 'purchase_orders', id) : null), [firestore, id, canViewPo]);
   const { data: po, isLoading: isPOLoading } = useDoc<PurchaseOrder>(poRef as any);
@@ -195,11 +205,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const [newLine, setNewLine] = useState<Partial<POLine>>({ 
     quantity: 1,
     status: 'active',
+    workLocation: '',
     sellRateSnapshot: 0,
     costBaselineSnapshot: 0,
     billingUnitSnapshot: 'daily',
     overtimeRuleSnapshot: '1.5x of Hourly Rate',
   });
+
+  const [isApprovingPo, setIsApprovingPo] = useState(false);
+  const [isDeletingPoDoc, setIsDeletingPoDoc] = useState(false);
+  const [isEditLineOpen, setIsEditLineOpen] = useState(false);
+  const [editLineDraft, setEditLineDraft] = useState<POLine | null>(null);
+  const [isSavingLine, setIsSavingLine] = useState(false);
 
   const [isCreatingSalesTerm, setIsCreatingSalesTerm] = useState(false);
   const [newSalesTerm, setNewSalesTerm] = useState<Partial<SalesContractTerm>>({
@@ -247,6 +264,120 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     });
 
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูล Customer PO ถูกอัปเดตแล้ว" });
+  };
+
+  const handleApprovePO = async () => {
+    if (!canApprovePo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะผู้จัดการ/แอดมินที่อนุมัติ PO ได้' });
+      return;
+    }
+    if (!poRef || !firestore || !currentUser || !po || po.status !== 'pending') return;
+    setIsApprovingPo(true);
+    try {
+      await updateDoc(poRef, { status: 'active', updatedAt: Date.now() });
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'UPDATE',
+        entityType: 'PurchaseOrder',
+        entityId: id,
+        entityLabel: po.poCode,
+        changedFields: ['status'],
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: 'Approved PO → active',
+      });
+      toast({ title: 'อนุมัติ PO แล้ว', description: 'สถานะเป็น Active — เปิดสร้าง Wave ได้' });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'อนุมัติไม่สำเร็จ', description: 'ลองใหม่หรือตรวจสิทธิ์ Firestore' });
+    } finally {
+      setIsApprovingPo(false);
+    }
+  };
+
+  const handleDeleteEntirePO = async () => {
+    if (!isAdminUser) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ลบ PO ทั้งฉบับได้เฉพาะ System Admin' });
+      return;
+    }
+    if (!firestore || !currentUser || !po || po.status !== 'pending') return;
+    if (
+      !confirm(
+        `ลบ PO ${po.poCode} ถาวร?\n\nรวมบรรทัดโควต้าทั้งหมด — ใช้ได้เฉพาะ PO ที่ยัง Pending และยังไม่ควรมี Wave/มอบหมาย`,
+      )
+    ) {
+      return;
+    }
+    if ((poWaves?.length || 0) > 0 || (allAssignments?.length || 0) > 0) {
+      if (
+        !confirm(
+          'ตรวจพบ Wave หรือ Mobilization ผูก PO นี้ — การลบอาจทำให้ข้อมูลอ้างอิงเสีย\n\nยืนยันลบต่อหรือไม่?',
+        )
+      ) {
+        return;
+      }
+    }
+    setIsDeletingPoDoc(true);
+    try {
+      const linesCol = collection(firestore, 'purchase_orders', id, 'po_lines');
+      const snap = await getDocs(linesCol);
+      const batch = writeBatch(firestore);
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      batch.delete(doc(firestore, 'purchase_orders', id));
+      await batch.commit();
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'DELETE',
+        entityType: 'PurchaseOrder',
+        entityId: id,
+        entityLabel: po.poCode,
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: 'Deleted pending PO and lines',
+      });
+      toast({ title: 'ลบ PO แล้ว', description: po.poCode });
+      router.push('/purchase-orders');
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: 'ตรวจสอบข้อมูลหรือสิทธิ์' });
+    } finally {
+      setIsDeletingPoDoc(false);
+    }
+  };
+
+  const handleSaveEditedLine = async () => {
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ไม่มีสิทธิ์แก้ไขบรรทัด PO' });
+      return;
+    }
+    if (!firestore || !editLineDraft || !currentUser) return;
+    const qty = Math.max(1, Math.floor(Number(editLineDraft.quantity) || 1));
+    const lineRef = doc(firestore, 'purchase_orders', id, 'po_lines', editLineDraft.id);
+    setIsSavingLine(true);
+    try {
+      await updateDoc(lineRef, {
+        quantity: qty,
+        workLocation: (editLineDraft.workLocation || '').trim(),
+        startDate: editLineDraft.startDate,
+        endDate: editLineDraft.endDate,
+        status: editLineDraft.status,
+        updatedAt: Date.now(),
+      });
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'UPDATE',
+        entityType: 'POLine',
+        entityId: editLineDraft.id,
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: `Updated PO line qty/location/status`,
+      });
+      toast({ title: 'บันทึกบรรทัดแล้ว' });
+      setIsEditLineOpen(false);
+      setEditLineDraft(null);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ' });
+    } finally {
+      setIsSavingLine(false);
+    }
   };
 
   const handleAddLine = async () => {
@@ -307,10 +438,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       if (sellOtRulesSnapshot) linePayload.sellOtRulesSnapshot = sellOtRulesSnapshot;
       if (costOtRulesSnapshot) linePayload.costOtRulesSnapshot = costOtRulesSnapshot;
       if (normalWorkHoursSnapshot) linePayload.normalWorkHoursSnapshot = normalWorkHoursSnapshot;
+      const wl = (newLine.workLocation || '').trim();
+      if (wl) linePayload.workLocation = wl;
       const lineRef = await addDoc(poLinesQuery, linePayload);
       const lineId = lineRef.id;
 
-      if (isContractBasedPO) {
+      if (isContractBasedPO && po?.status === 'active') {
         const { code: waveNo } = await generateNextDocumentCode(firestore, 'wave', { actor: currentUser.displayName });
         const tsStart = newLine.startDate || po?.startDate || Date.now();
         const tsEnd = newLine.endDate || po?.endDate || Date.now();
@@ -319,10 +452,13 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             waveCode: waveNo,
             poId: id,
             poLineId: lineId,
+            lineAllocations: [
+              { poLineId: lineId, plannedWorkers: Number(newLine.quantity) || 1 },
+            ],
             customerId: po?.customerId || '',
             projectName: po?.projectName || po?.title || '',
-            siteLocation: '',
-            rotationPattern: '28/28',
+            siteLocation: wl,
+            rotationPattern: '',
             startDate: new Date(tsStart).toISOString().split('T')[0],
             endDate: new Date(tsEnd).toISOString().split('T')[0],
             status: 'PLANNING',
@@ -346,6 +482,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             description: 'บันทึก PO Line แล้ว แต่สร้าง Wave แรกไม่สำเร็จ กรุณาสร้าง Wave จากเมนู Waves',
           });
         }
+      } else if (isContractBasedPO && po?.status !== 'active') {
+        toast({
+          title: 'เพิ่ม PO Line สำเร็จ',
+          description: 'PO ยัง Pending — อนุมัติเป็น Active ก่อน ระบบจึงจะสร้าง Wave อัตโนมัติได้ (หรือสร้าง Wave จากเมนู Waves หลังอนุมัติ)',
+        });
       } else {
         toast({
           title: 'เพิ่ม PO Line สำเร็จ',
@@ -368,6 +509,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       setNewLine({
         quantity: 1,
         status: 'active',
+        workLocation: '',
         sellRateSnapshot: 0,
         costBaselineSnapshot: 0,
         billingUnitSnapshot: 'daily',
@@ -452,7 +594,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   };
 
   const deleteLine = (lineId: string) => {
-    if (!canDeletePo) {
+    if (!canEditPo && !canDeletePo) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบรายการ PO' });
       return;
     }
@@ -491,6 +633,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const customer = customers?.find(c => c.id === po.customerId);
   const poAssignments = allAssignments || [];
+  const poReadyForOps = po.status === 'active';
   const displayServiceAgreementNo = (
     (po.serviceAgreementNo || contract?.serviceAgreementNo || '').trim() || ''
   );
@@ -539,7 +682,28 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
+            {po.status === 'pending' && canApprovePo && (
+              <Button
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700 h-10"
+                disabled={isApprovingPo}
+                onClick={() => void handleApprovePO()}
+              >
+                {isApprovingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                อนุมัติ PO (Active)
+              </Button>
+            )}
+            {po.status === 'pending' && isAdminUser && (
+              <Button
+                variant="destructive"
+                className="h-10"
+                disabled={isDeletingPoDoc}
+                onClick={() => void handleDeleteEntirePO()}
+              >
+                {isDeletingPoDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                ลบ PO (Pending)
+              </Button>
+            )}
             <Button variant="outline" onClick={() => { setEditedPO(po); setIsEditing(!isEditing); }}>
               {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
             </Button>
@@ -572,9 +736,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <Badge variant={hasActiveLaborCostTerm ? 'default' : 'outline'} className="text-[10px]">
                     Labor cost: {hasActiveLaborCostTerm ? 'ACTIVE มี' : 'ยังไม่มี ACTIVE'}
                   </Badge>
-                  <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
-                    <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>+ Wave</Link>
-                  </Button>
+                  {poReadyForOps ? (
+                    <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                      <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>+ Wave</Link>
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" className="h-8 text-xs" disabled title="อนุมัติ PO ให้ Active ก่อน">
+                      + Wave
+                    </Button>
+                  )}
                   <Button variant="ghost" size="sm" className="h-8 text-xs px-2" asChild>
                     <Link href={`/waves?poId=${encodeURIComponent(id)}`}>รายการ</Link>
                   </Button>
@@ -622,6 +792,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <TableHeader className="bg-muted/20">
                   <TableRow>
                     <TableHead className="pl-6">ตำแหน่ง / บรรทัด</TableHead>
+                    <TableHead>สถานที่ (บรรทัด)</TableHead>
                     <TableHead className="text-center">สถานะบรรทัด</TableHead>
                     <TableHead className="text-center">โควต้า</TableHead>
                     <TableHead className="text-center">มอบหมาย</TableHead>
@@ -638,6 +809,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       return (
                         <TableRow key={row.lineId}>
                           <TableCell className="pl-6 py-3 font-medium text-primary">{posName}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground max-w-[200px]">
+                            {(row.workLocation || '').trim() || '—'}
+                          </TableCell>
                           <TableCell className="text-center">
                             <Badge variant="outline" className="text-[10px] uppercase">
                               {row.lineStatus}
@@ -665,7 +839,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     })
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-10 text-muted-foreground text-sm">
+                      <TableCell colSpan={8} className="text-center py-10 text-muted-foreground text-sm">
                         ยังไม่มี PO Line — เพิ่มจากแท็บ PO Lines (โควต้า)
                       </TableCell>
                     </TableRow>
@@ -705,11 +879,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     เปิดรอบงานและเลือก PO line ที่ยังมีโควต้า — ระบบจะเปิดฟอร์มสร้างเวฟให้พร้อมเลือก PO นี้
                   </p>
-                  <Button className="w-full font-bold bg-emerald-700 hover:bg-emerald-800" asChild>
-                    <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>
-                      ไปสร้าง Wave <ChevronRight className="h-4 w-4 ml-1" />
-                    </Link>
-                  </Button>
+                  {poReadyForOps ? (
+                    <Button className="w-full font-bold bg-emerald-700 hover:bg-emerald-800" asChild>
+                      <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>
+                        ไปสร้าง Wave <ChevronRight className="h-4 w-4 ml-1" />
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button className="w-full font-bold" disabled variant="secondary">
+                      อนุมัติ PO ก่อนสร้าง Wave
+                    </Button>
+                  )}
                 </li>
                 <li className="rounded-lg border bg-card p-4 space-y-3 shadow-sm">
                   <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm">
@@ -832,14 +1012,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">สถานะใบสั่งซื้อ</Label>
-                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as any})} value={isEditing ? (editedPO.status || 'pending') : (po.status || 'pending')}>
+                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as PurchaseOrder['status']})} value={isEditing ? (editedPO.status || 'pending') : (po.status || 'pending')}>
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
+                        {(po.status === 'active' || (isEditing && editedPO.status === 'active')) && (
+                          <SelectItem value="active">Active</SelectItem>
+                        )}
                         <SelectItem value="closed">Closed</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      เปลี่ยนเป็น <strong>Active</strong> ได้จากปุ่ม <strong>อนุมัติ PO</strong> (ผู้จัดการ/แอดมิน) — ไม่เลือก Active จากรายการนี้เมื่อยัง Pending
+                    </p>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -864,6 +1049,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     </Badge>
                   )}
                 </div>
+                <div className="flex flex-wrap gap-2 justify-end shrink-0">
                 <Dialog open={isAddLineOpen} onOpenChange={setIsAddLineOpen}>
                   <DialogTrigger asChild>
                     <Button className="gap-2 h-10 px-6 font-bold shadow-sm"><Plus className="h-4 w-4" /> เพิ่มรายการจองตำแหน่ง</Button>
@@ -918,6 +1104,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                         <Label className="font-bold">จำนวนคนงานที่ต้องการ (Quantity)</Label>
                         <Input type="number" min="1" value={Number(newLine.quantity ?? 1)} onChange={e => setNewLine({...newLine, quantity: Number(e.target.value) || 1})} className="h-11" />
                       </div>
+                      <div className="grid gap-2">
+                        <Label className="font-bold">สถานที่ปฏิบัติงาน (Work location)</Label>
+                        <Input
+                          placeholder="เช่น BD3-F1 / Erawan Platform — แยกต่อบรรทัดถ้าลูกค้าระบุหลาย site"
+                          value={newLine.workLocation || ''}
+                          onChange={(e) => setNewLine({ ...newLine, workLocation: e.target.value })}
+                          className="h-11"
+                        />
+                      </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="grid gap-2">
                           <Label className="font-bold text-xs">วันที่เริ่ม (รายบรรทัด)</Label>
@@ -959,12 +1154,106 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+
+                <Dialog
+                  open={isEditLineOpen}
+                  onOpenChange={(o) => {
+                    setIsEditLineOpen(o);
+                    if (!o) setEditLineDraft(null);
+                  }}
+                >
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>แก้ไขบรรทัด PO</DialogTitle>
+                      <DialogDescription>แก้จำนวน สถานที่ วันที่ และสถานะบรรทัด</DialogDescription>
+                    </DialogHeader>
+                    {editLineDraft && (
+                      <div className="grid gap-4 py-4">
+                        <div className="grid gap-2">
+                          <Label className="font-bold">จำนวน (Quantity)</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={editLineDraft.quantity}
+                            onChange={(e) =>
+                              setEditLineDraft({ ...editLineDraft, quantity: Math.max(1, Number(e.target.value) || 1) })
+                            }
+                            className="h-11"
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label className="font-bold">สถานที่ปฏิบัติงาน</Label>
+                          <Input
+                            value={editLineDraft.workLocation || ''}
+                            onChange={(e) => setEditLineDraft({ ...editLineDraft, workLocation: e.target.value })}
+                            className="h-11"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="grid gap-2">
+                            <Label className="text-xs font-bold">วันเริ่ม (บรรทัด)</Label>
+                            <DatePickerThaiBE
+                              value={editLineDraft.startDate}
+                              onChange={(ms) => setEditLineDraft({ ...editLineDraft, startDate: ms })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label className="text-xs font-bold">วันสิ้นสุด (บรรทัด)</Label>
+                            <DatePickerThaiBE
+                              value={editLineDraft.endDate}
+                              onChange={(ms) => setEditLineDraft({ ...editLineDraft, endDate: ms })}
+                            />
+                          </div>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label className="font-bold">สถานะบรรทัด</Label>
+                          <Select
+                            value={editLineDraft.status}
+                            onValueChange={(v) =>
+                              setEditLineDraft({ ...editLineDraft, status: v as POLine['status'] })
+                            }
+                          >
+                            <SelectTrigger className="h-11">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="active">Active</SelectItem>
+                              <SelectItem value="cancelled">Cancelled</SelectItem>
+                              <SelectItem value="completed">Completed</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    )}
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setIsEditLineOpen(false);
+                          setEditLineDraft(null);
+                        }}
+                      >
+                        ยกเลิก
+                      </Button>
+                      <Button
+                        className="bg-primary font-bold"
+                        onClick={() => void handleSaveEditedLine()}
+                        disabled={isSavingLine || !editLineDraft}
+                      >
+                        {isSavingLine ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                        บันทึก
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+                </div>
               </CardHeader>
               <CardContent className="p-0 border-t">
                 <Table>
                   <TableHeader className="bg-muted/30">
                     <TableRow>
                       <TableHead className="pl-6">ตำแหน่งงาน (Position)</TableHead>
+                      <TableHead>สถานที่ (Location)</TableHead>
                       <TableHead className="text-center">โควต้า (Req)</TableHead>
                       <TableHead className="text-center">มอบหมายแล้ว (Asgn)</TableHead>
                       <TableHead className="text-center">คงเหลือ (Slots)</TableHead>
@@ -991,6 +1280,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                               </span>
                             </div>
                           </TableCell>
+                          <TableCell className="text-sm text-muted-foreground max-w-[220px]">
+                            {(line.workLocation || '').trim() || '—'}
+                          </TableCell>
                           <TableCell className="text-center font-black">{line.quantity}</TableCell>
                           <TableCell className="text-center">
                             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 px-3">
@@ -1015,16 +1307,34 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                             </div>
                           </TableCell>
                           <TableCell className="text-right pr-6">
-                            <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteLine(line.id)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex justify-end gap-1">
+                              {canEditPo && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  title="แก้ไขบรรทัด"
+                                  onClick={() => {
+                                    setEditLineDraft({ ...line });
+                                    setIsEditLineOpen(true);
+                                  }}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {(canEditPo || canDeletePo) && (
+                                <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteLine(line.id)}>
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
                     })}
                     {!poLines?.length && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ยังไม่มีรายการสั่งจองในใบสั่งซื้อนี้</TableCell>
+                        <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ยังไม่มีรายการสั่งจองในใบสั่งซื้อนี้</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -1090,8 +1400,8 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           <Badge className="bg-green-600 h-5 text-[9px]">{term.status}</Badge>
                         </div>
                         <div className="flex justify-between items-center text-xs font-medium text-slate-600">
-                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> From: {term.effectiveDate}</span>
-                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> To: {term.endDate}</span>
+                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> From: {formatYmdLocalThaiBE(term.effectiveDate)}</span>
+                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> To: {formatYmdLocalThaiBE(term.endDate)}</span>
                         </div>
                       </div>
                       <div className="w-full text-blue-700 font-bold text-xs h-8 flex items-center justify-center border border-blue-100 rounded-md bg-blue-50/20">
@@ -1137,7 +1447,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           </div>
                           
                           <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 mb-4">
-                            <span><Calendar className="h-2.5 w-2.5 inline mr-1" /> Valid: {term.effectiveDate} ถึง {term.endDate}</span>
+                            <span><Calendar className="h-2.5 w-2.5 inline mr-1" /> Valid: {formatYmdLocalThaiBE(term.effectiveDate)} ถึง {formatYmdLocalThaiBE(term.endDate)}</span>
                           </div>
 
                           <div className="w-full text-orange-700 font-bold text-xs h-8 flex items-center justify-center border border-orange-200 rounded-md bg-orange-50/30">
@@ -1228,7 +1538,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                               <Badge variant="outline" className="text-[10px] font-bold bg-white">{(pos?.positionName || pos?.positionNameTh) || asgn.positionId}</Badge>
                             </TableCell>
                             <TableCell className="text-xs font-medium">
-                              {asgn.startDate} - {asgn.endDate}
+                              {formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}
                             </TableCell>
                             <TableCell>
                               <Badge variant="secondary" className="capitalize text-[10px] font-black uppercase tracking-tighter">{asgn.deploymentStatus}</Badge>

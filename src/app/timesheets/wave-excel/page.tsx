@@ -11,7 +11,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatStoredDateRangeThaiBE,
+} from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import {
@@ -533,7 +537,7 @@ export default function WaveExcelEntryPage() {
                 <SelectContent>
                   {periods?.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
-                      {p.label || p.id} ({p.startDate} – {p.endDate})
+                      {p.label || p.id} ({formatStoredDateRangeThaiBE(p.startDate, p.endDate)})
                     </SelectItem>
                   ))}
                 </SelectContent>

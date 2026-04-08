@@ -58,7 +58,11 @@ import {
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatYmdLocalThaiBE,
+} from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -313,7 +317,8 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
                         <div className="flex flex-col">
                           <span className="font-bold text-sm text-primary">{EVENT_TYPE_LABELS[c.eventType]}</span>
                           <span className="text-[10px] text-muted-foreground uppercase flex items-center gap-1">
-                            <Calendar className="h-2.5 w-2.5" /> {c.effectiveDate} {c.endDate ? `to ${c.endDate}` : '(No Expiry)'}
+                            <Calendar className="h-2.5 w-2.5" /> {formatYmdLocalThaiBE(c.effectiveDate)}{' '}
+                            {c.endDate ? `ถึง ${formatYmdLocalThaiBE(c.endDate)}` : '(ไม่มีวันหมดอายุ)'}
                           </span>
                         </div>
                       </TableCell>

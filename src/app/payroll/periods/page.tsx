@@ -21,7 +21,11 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatYmdLocalThaiBE,
+} from '@/lib/date-thai';
 import { PayrollPeriod, PayrollPeriodStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -219,8 +223,8 @@ export default function PayrollPeriodsPage() {
                           <span className="text-[10px] text-muted-foreground uppercase">Period ID: {p.id.substring(0,8)}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="font-medium text-xs">{p.startDate}</TableCell>
-                      <TableCell className="font-medium text-xs">{p.endDate}</TableCell>
+                      <TableCell className="font-medium text-xs">{formatYmdLocalThaiBE(p.startDate)}</TableCell>
+                      <TableCell className="font-medium text-xs">{formatYmdLocalThaiBE(p.endDate)}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px]">{p.cycleType}</Badge></TableCell>
                       <TableCell>{getStatusBadge(p.status)}</TableCell>
                       <TableCell className="text-right pr-6">

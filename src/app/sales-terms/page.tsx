@@ -21,7 +21,11 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatYmdLocalThaiBE,
+} from '@/lib/date-thai';
 import { SalesContractTerm, User, Customer, PurchaseOrder, SalesContractStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -285,7 +289,7 @@ export default function SalesTermsPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-medium">
                             <Calendar className="h-3 w-3" />
-                            {term.effectiveDate} ถึง {term.endDate}
+                            {formatYmdLocalThaiBE(term.effectiveDate)} ถึง {formatYmdLocalThaiBE(term.endDate)}
                           </div>
                         </TableCell>
                         <TableCell>

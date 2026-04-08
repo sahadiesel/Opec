@@ -104,6 +104,8 @@ export default function PurchasesPage() {
         amountBeforeTax: 0,
         vatAmount: 0,
         totalAmount: 0,
+        createdByUid: currentUser.id,
+        createdByName: currentUser.displayName || currentUser.email || '',
         createdAt: Date.now(),
         updatedAt: Date.now()
       });

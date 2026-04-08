@@ -20,8 +20,10 @@ import {
   ArrowRight,
   Info,
   Loader2,
-  Users
+  Users,
+  Package,
 } from 'lucide-react';
+import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -276,6 +278,16 @@ export default function WorkersPage() {
         {getReadinessBadge(worker.readinessStatus)}
         {showDrugHint && drugText ? (
           <span className="text-[10px] leading-snug text-destructive font-medium">{drugText}</span>
+        ) : null}
+        {worker.readinessStatus === 'READY' && worker.storeEquipmentReadiness === 'pending' ? (
+          <Link
+            href="/store/issue"
+            className="text-[10px] leading-snug font-semibold text-amber-800 inline-flex items-center gap-1 hover:underline underline-offset-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Package className="h-3 w-3 shrink-0" />
+            คลัง: PPE/อุปกรณ์ค้าง — ไปเบิกตามงานมอบหมาย
+          </Link>
         ) : null}
       </div>
     );

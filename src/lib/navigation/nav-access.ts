@@ -77,6 +77,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/worker-document-catalog', 'worker_documents'],
   ['/accounts-receivable', 'accounts_receivable'],
   ['/accounts-payable', 'accounts_payable'],
+  ['/accounting/outgoing-review', 'accounts_payable'],
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
   ['/bank-accounts', 'bank_accounts'],

@@ -24,7 +24,11 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatYmdRangeThaiBE,
+} from '@/lib/date-thai';
 import { LaborCostContractTerm, User, Customer, PurchaseOrder, LaborCostContractStatus, LaborScopeType, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -327,7 +331,7 @@ export default function LaborCostTermsPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-medium">
                             <Calendar className="h-3 w-3" />
-                            {term.effectiveDate} - {term.endDate}
+                            {formatYmdRangeThaiBE(term.effectiveDate, term.endDate)}
                           </div>
                         </TableCell>
                         <TableCell>{getStatusBadge(term.status)}</TableCell>

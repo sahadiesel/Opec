@@ -20,7 +20,11 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatStoredDateThaiBE,
+} from '@/lib/date-thai';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -285,7 +289,7 @@ export default function TaxInvoicesPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Calendar className="h-3 w-3" />
-                            {inv.issueDate}
+                            {formatStoredDateThaiBE(inv.issueDate)}
                           </div>
                         </TableCell>
                         <TableCell className="text-right font-black text-primary">

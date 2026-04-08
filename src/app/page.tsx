@@ -71,29 +71,28 @@ import {
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
 } from '@/lib/permissions';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { PoStaffingQueueCard } from '@/components/dashboard/po-staffing-queue-card';
 
 /** Same Storage image as login form — keep all pre-dashboard full-screen states visually consistent. */
 const LOGIN_BG_URL = PlaceHolderImages.find((img) => img.id === 'login-bg')?.imageUrl ?? '';
-const loginShellBackgroundStyle: CSSProperties | undefined = LOGIN_BG_URL
-  ? {
-      backgroundImage: `url(${LOGIN_BG_URL})`,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center top',
-      backgroundRepeat: 'no-repeat',
-    }
-  : undefined;
 
 function LoginStageBackdrop({ children }: { children: ReactNode }) {
   return (
     <div
-      className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-slate-950 p-4"
-      style={loginShellBackgroundStyle}
+      className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-sky-100 p-4"
       data-ai-hint="offshore oil rig"
     >
+      {LOGIN_BG_URL ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-0 bg-cover bg-top bg-no-repeat brightness-[1.08] saturate-[1.12] contrast-[1.02]"
+          style={{ backgroundImage: `url(${LOGIN_BG_URL})` }}
+          aria-hidden
+        />
+      ) : null}
+      {/* เบาลงมากจากเดิม — คง vignette นิดหน่อยให้การ์ดอ่านง่าย ไม่กลบสีต้นฉบับ */}
       <div
-        className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-slate-950/50 via-slate-950/30 to-slate-950/55"
+        className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-b from-slate-900/15 via-transparent to-slate-900/20"
         aria-hidden
       />
       {children}
@@ -877,10 +876,7 @@ export default function Home() {
                 {(check('hr_hub', 'view') || check('positions', 'view') || check('workers', 'view')) && (
                   <ShortcutGroup title="HR — ภาพรวมและตั้งค่า" icon={Users} color="border-l-orange-500">
                     {check('hr_hub', 'view') && (
-                      <>
-                        <ShortcutLink href="/hr/dashboard" label="HR Dashboard" sub="ภาพรวม" />
-                        <ShortcutLink href="/hr/settings" label="ตั้งค่า HR" sub="ภาษี · ประกันสังคม" />
-                      </>
+                      <ShortcutLink href="/hr/settings" label="ตั้งค่า HR" sub="ภาษี · ประกันสังคม" />
                     )}
                     {check('positions', 'view') && (
                       <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
@@ -895,9 +891,6 @@ export default function Home() {
 
             {showSalesUi && (
               <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
-                {(check('customers', 'view') || check('quotations', 'view')) && (
-                  <ShortcutLink href="/sales/dashboard" label="Sales Dashboard" sub="ภาพรวมงานขาย" />
-                )}
                 {check('customers', 'view') && (
                   <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
                 )}
@@ -912,9 +905,6 @@ export default function Home() {
 
             {showOpsUi && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
-                {(check('waves', 'view') || check('assignments', 'view') || check('mobilization', 'view')) && (
-                  <ShortcutLink href="/operations/dashboard" label="Operations Dashboard" sub="ภาพรวมปฏิบัติการ" />
-                )}
                 {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
                 {check('assignments', 'view') && (
                   <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
@@ -927,7 +917,6 @@ export default function Home() {
 
             {showAccountingUi && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
-                <ShortcutLink href="/accounting/dashboard" label="Accounting Dashboard" sub="ภาพรวมบัญชี" />
                 {check('billing_notes', 'view') && (
                   <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
                 )}

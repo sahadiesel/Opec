@@ -76,7 +76,8 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
 
     setUserAuthState({ user: null, isUserLoading: true, userError: null }); // Reset on auth instance change
 
-    let safetyTimer: ReturnType<typeof window.setTimeout> | undefined;
+    /** ในเบราว์เซอร์ setTimeout คืน number — แยกจากโมดูล Node ที่คืน Timeout */
+    let safetyTimer: number | undefined;
     const clearSafety = () => {
       if (safetyTimer !== undefined) {
         window.clearTimeout(safetyTimer);

@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import Link from 'next/link';
 
 export default function ClientManpowerPage() {
@@ -204,7 +205,7 @@ export default function ClientManpowerPage() {
                             <TableCell className="text-xs font-medium text-muted-foreground">
                               <div className="flex items-center gap-1.5">
                                 <Calendar className="h-3 w-3" />
-                                {asgn.startDate} - {asgn.endDate}
+                                {formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}
                               </div>
                             </TableCell>
                             <TableCell>

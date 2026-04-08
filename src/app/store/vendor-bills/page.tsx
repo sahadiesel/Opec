@@ -16,7 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Plus, ChevronRight, FileText, Loader2, PackageSearch } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy, where } from 'firebase/firestore';
+import { collection, query, orderBy, where, getDocs } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import {
@@ -111,6 +111,15 @@ export default function StoreVendorBillsPage() {
     if (!p) return;
     setCreating(true);
     try {
+      const milestoneSnap = await getDocs(collection(firestore, 'purchases', selectedPurchaseId, 'payment_milestones'));
+      if (!milestoneSnap.empty) {
+        toast({
+          variant: 'destructive',
+          title: 'ใบสั่งซื้อนี้มีแผนงวดชำระ',
+          description: 'สร้างใบรับวางบิลทีละงวดจากหน้ารายละเอียดใบสั่งซื้อ (การซื้อ)',
+        });
+        return;
+      }
       const { code } = await generateNextDocumentCode(firestore, 'purchase_vendor_bill', {
         actor: currentUser.displayName,
       });
@@ -119,7 +128,9 @@ export default function StoreVendorBillsPage() {
         receiptNo: code,
         purchaseId: p.id,
         purchaseNo: p.purchaseNo,
+        purchaseType: p.purchaseType,
         vendorId: p.vendorId,
+        billAmount: p.totalAmount,
         billingReceivedDate: p.purchaseDate,
         plannedPaymentDate: p.purchaseDate,
         status: 'DRAFT' as PurchaseVendorBillStatus,
@@ -160,7 +171,7 @@ export default function StoreVendorBillsPage() {
               <FileText className="h-8 w-8" /> รับวางบิล (Vendor billing)
             </h1>
             <p className="text-muted-foreground mt-1">
-              อ้างอิงใบสั่งซื้อที่อนุมัติแล้ว — บันทึกวันรับวางบิล / วันจ่ายเงิน ส่งแผนกบัญชี และติดตามสถานะจ่าย
+              บันทึกฉบับร่างได้ — เมื่อกดส่งบัญชี (มียืนยัน) ถือว่าตรวจรับสินค้า/งานตามงวดแล้ว และไปคิว «ตรวจสอบรายจ่าย» / เจ้าหนี้
             </p>
           </div>
           <div className="flex gap-2">
@@ -180,7 +191,7 @@ export default function StoreVendorBillsPage() {
                 <DialogHeader>
                   <DialogTitle>เลือกใบสั่งซื้อ (อนุมัติแล้ว)</DialogTitle>
                   <DialogDescription>
-                    แต่ละใบสั่งซื้อสร้างได้หนึ่งใบรับวางบิล — ถ้าไม่มีในรายการ ให้ไปอนุมัติใบสั่งซื้อที่เมนูการซื้อก่อน
+                    แบบเต็มใบ: แต่ละใบสั่งซื้อสร้างได้หนึ่งใบ (เมื่อ PO ยังไม่มีแผนงวดชำระ) — ถ้า PO มีงวดแล้ว ให้สร้างใบทีละงวดจากหน้ารายละเอียดใบสั่งซื้อ
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-2 py-2">
@@ -236,6 +247,7 @@ export default function StoreVendorBillsPage() {
                     <TableHead className="pl-6">เลขที่ใบรับวางบิล</TableHead>
                     <TableHead>ใบสั่งซื้อ</TableHead>
                     <TableHead>คู่ค้า</TableHead>
+                    <TableHead>ยอดในใบ</TableHead>
                     <TableHead>วันรับวางบิล</TableHead>
                     <TableHead>วันจ่าย (แผน)</TableHead>
                     <TableHead>สถานะ</TableHead>
@@ -256,6 +268,15 @@ export default function StoreVendorBillsPage() {
                           {b.purchaseNo || b.purchaseId}
                         </TableCell>
                         <TableCell>{v?.vendorName || '—'}</TableCell>
+                        <TableCell className="text-right text-sm">
+                          {b.billAmount != null && b.billAmount > 0 ? (
+                            <span className="font-mono font-medium">
+                              ฿{b.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground italic">ตาม PO</span>
+                          )}
+                        </TableCell>
                         <TableCell>{b.billingReceivedDate}</TableCell>
                         <TableCell>{b.plannedPaymentDate}</TableCell>
                         <TableCell>{statusBadge(b.status)}</TableCell>
@@ -269,7 +290,7 @@ export default function StoreVendorBillsPage() {
                   })}
                   {(!bills || bills.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-16 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-16 text-muted-foreground">
                         ยังไม่มีใบรับวางบิล
                       </TableCell>
                     </TableRow>

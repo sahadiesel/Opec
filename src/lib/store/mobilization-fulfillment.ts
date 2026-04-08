@@ -1,5 +1,5 @@
 import type { Firestore } from 'firebase/firestore';
-import { collection, doc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDocs, query, updateDoc, where } from 'firebase/firestore';
 import type {
   Assignment,
   DeploymentStatus,
@@ -125,6 +125,45 @@ export async function computeWorkerStoreEquipmentReadiness(
     }
   }
   return 'complete';
+}
+
+/**
+ * อัปเดตฟิลด์ `storeEquipmentReadiness` บนเอกสารคนงานให้สอดคล้องกับ fulfillment ปัจจุบัน
+ * (เรียกหลังเบิก/ไม่ประสงค์เบิกที่คลัง — ไม่ต้องเปิดหน้าโปรไฟล์คนงานถึงจะเห็นสถานะใหม่ในรายการ)
+ */
+export async function syncWorkerStoreEquipmentReadinessToFirestore(
+  firestore: Firestore,
+  workerId: string,
+): Promise<WorkerStoreEquipmentReadiness> {
+  if (!workerId?.trim()) return 'na';
+  const mobsSnap = await getDocs(
+    query(
+      collection(firestore, 'mobilizations'),
+      where('workerId', '==', workerId),
+      where('deploymentStatus', 'in', [...MOBILIZATION_STATUSES_NOT_CLOSED]),
+    ),
+  );
+  const openMobs = mobsSnap.docs.map((d) => ({ ...d.data(), id: d.id } as Assignment));
+  const posReqCache = new Map<string, { ppe: PositionPPERequirement[]; tools: PositionToolRequirement[] }>();
+  const loadPositionReqs = async (positionId: string) => {
+    if (posReqCache.has(positionId)) return posReqCache.get(positionId)!;
+    const ppeRef = collection(firestore, 'positions', positionId, 'ppe_requirements');
+    const toolRef = collection(firestore, 'positions', positionId, 'tool_requirements');
+    const [ppeSnap, toolSnap] = await Promise.all([getDocs(ppeRef), getDocs(toolRef)]);
+    const ppe = ppeSnap.docs.map((d) => ({ ...d.data(), id: d.id } as PositionPPERequirement));
+    const tools = toolSnap.docs.map((d) => ({ ...d.data(), id: d.id } as PositionToolRequirement));
+    const v = { ppe, tools };
+    posReqCache.set(positionId, v);
+    return v;
+  };
+  const value = await computeWorkerStoreEquipmentReadiness(
+    firestore,
+    workerId,
+    openMobs,
+    async (pid) => loadPositionReqs(pid),
+  );
+  await updateDoc(doc(firestore, 'workers', workerId), { storeEquipmentReadiness: value });
+  return value;
 }
 
 export function thaiFulfillmentLabel(

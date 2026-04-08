@@ -56,6 +56,7 @@ import {
   isMobilizationInStoreFulfillmentScope,
   loadFulfillmentMap,
   nextStatusAfterIssue,
+  syncWorkerStoreEquipmentReadinessToFirestore,
 } from '@/lib/store/mobilization-fulfillment';
 import type { MobilizationRequirementFulfillmentLine, PositionRequirementKind } from '@/lib/types';
 
@@ -311,6 +312,9 @@ export default function IssueItemsPage() {
         { merge: true },
       );
       await batch.commit();
+      void syncWorkerStoreEquipmentReadinessToFirestore(firestore, asgn.workerId).catch((err) =>
+        console.error('syncWorkerStoreEquipmentReadinessToFirestore', err),
+      );
       toast({ title: 'บันทึกแล้ว', description: 'ทำเครื่องหมายว่าไม่ประสงค์เบิก / มีของส่วนตัว' });
       setQueueRefreshTick((t) => t + 1);
     } catch (e) {
@@ -434,6 +438,9 @@ export default function IssueItemsPage() {
       );
 
       await batch.commit();
+      void syncWorkerStoreEquipmentReadinessToFirestore(firestore, asgn.workerId).catch((err) =>
+        console.error('syncWorkerStoreEquipmentReadinessToFirestore', err),
+      );
       toast({ title: 'เบิกสำเร็จ', description: `เลขที่ใบเบิก ${finalNo} · ${formatStoreItemLabel(item)} × ${qty}` });
       setFieldLineQty((prev) => ({ ...prev, [key]: String(Math.max(0, remaining - qty)) }));
       setQueueRefreshTick((t) => t + 1);
