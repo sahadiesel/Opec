@@ -2,18 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import type { Firestore } from 'firebase/firestore';
-import { collection, documentId, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import type { Worker } from '@/lib/types';
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 /**
- * โหลดเฉพาะ worker ตาม id (สูงสุด 10 ต่อ query ตามข้อจำกัด Firestore `in`)
- * — เหมาะกับพอร์ทัลลูกค้าที่ไม่สามารถ list ทั้ง workers ได้
+ * โหลด worker ทีละเอกสารด้วย getDoc — ถ้า worker หนึ่งคนไม่ผ่านกฎ security คนอื่นยังโหลดได้
+ * (แบตช์ `where(documentId(), 'in', …)` ล้มทั้งก้อนถ้ามีสัก doc ไม่มีสิทธิ์)
  */
 export function useWorkersByIds(firestore: Firestore | null, ids: string[]) {
   const [byId, setById] = useState<Map<string, Worker>>(new Map());
@@ -30,17 +24,18 @@ export function useWorkersByIds(firestore: Firestore | null, ids: string[]) {
 
     (async () => {
       const m = new Map<string, Worker>();
-      for (const part of chunk(unique, 10)) {
-        const q = query(collection(firestore, 'workers'), where(documentId(), 'in', part));
-        try {
-          const snap = await getDocs(q);
-          snap.docs.forEach((d) => {
-            m.set(d.id, { ...(d.data() as object), id: d.id } as Worker);
-          });
-        } catch (e) {
-          console.error('useWorkersByIds', e);
-        }
-      }
+      await Promise.all(
+        unique.map(async (workerId) => {
+          try {
+            const snap = await getDoc(doc(firestore, 'workers', workerId));
+            if (snap.exists()) {
+              m.set(workerId, { ...(snap.data() as object), id: workerId } as Worker);
+            }
+          } catch {
+            /* permission-denied or network — skip this worker */
+          }
+        })
+      );
       if (!cancelled) setById(m);
     })();
 

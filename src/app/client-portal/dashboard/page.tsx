@@ -8,7 +8,6 @@ import {
   HardHat,
   Clock,
   FileEdit,
-  Receipt,
   ChevronRight,
   AlertCircle,
   Wallet,
@@ -23,13 +22,12 @@ import { usePortalLocale } from '@/contexts/portal-locale-context';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import type { LucideIcon } from 'lucide-react';
 
-const TILES: { href: string; key: PortalDictKey; icon: LucideIcon }[] = [
-  { href: '/client-portal/contracts', key: 'contracts', icon: FileText },
-  { href: '/client-portal/pos', key: 'pos', icon: ShoppingCart },
-  { href: '/client-portal/workers', key: 'workers', icon: HardHat },
-  { href: '/client-portal/timesheets', key: 'timesheets', icon: Clock },
-  { href: '/client-portal/draft-invoices', key: 'draftInvoices', icon: FileEdit },
-  { href: '/client-portal/invoices-receipts', key: 'documents', icon: Receipt },
+const TILES: { id: string; href: string; key: PortalDictKey; icon: LucideIcon }[] = [
+  { id: 'contracts', href: '/client-portal/contracts', key: 'contracts', icon: FileText },
+  { id: 'pos', href: '/client-portal/contracts', key: 'pos', icon: ShoppingCart },
+  { id: 'workers', href: '/client-portal/workers', key: 'workers', icon: HardHat },
+  { id: 'timesheets', href: '/client-portal/timesheets', key: 'timesheets', icon: Clock },
+  { id: 'accounting', href: '/client-portal/accounting', key: 'accounting', icon: FileEdit },
 ];
 
 export default function ClientDashboardPage() {
@@ -106,9 +104,9 @@ export default function ClientDashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {TILES.map(({ href, key, icon: Icon }) => (
+        {TILES.map(({ id, href, key, icon: Icon }) => (
           <Link
-            key={href}
+            key={id}
             href={href}
             className="group flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-primary/30 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900/40"
           >
@@ -133,7 +131,7 @@ export default function ClientDashboardPage() {
           {t('waves')}
         </Link>
         <Link
-          href="/client-portal/billing"
+          href="/client-portal/accounting?tab=billing"
           className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
         >
           <Wallet className="h-4 w-4" />

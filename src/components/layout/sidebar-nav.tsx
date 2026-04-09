@@ -205,9 +205,9 @@ const navGroups: NavGroup[] = [
     audience: 'client',
     items: [
       { key: 'client_portal', title: 'หน้าหลัก (Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
-      { key: 'client_portal', title: 'ประวัติกำลังพล (Personnel)', href: '/client-portal/waves', icon: HardHat },
+      { key: 'client_portal', title: 'ประวัติกำลังพล (Personnel)', href: '/client-portal/workers', icon: HardHat },
       { key: 'client_portal', title: 'หลักฐานการลงเวลา (Activity)', href: '/client-portal/timesheets', icon: Clock },
-      { key: 'client_portal', title: 'การเงินและวางบิล (Billing)', href: '/client-portal/billing', icon: FileBarChart },
+      { key: 'client_portal', title: 'การเงินและวางบิล (Billing)', href: '/client-portal/accounting?tab=billing', icon: FileBarChart },
     ],
   },
 ];

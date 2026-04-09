@@ -85,7 +85,7 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
       }
     };
 
-    /** ถ้า onAuthStateChanged ค้าง (เครือข่าย/VPN/ไฟร์วอลล์) หน้าแรกจะไม่ค้างที่ "กำลังเตรียมระบบ" ตลอดไป */
+    /** ถ้า onAuthStateChanged ค้าง (เครือข่าย/VPN/ไฟร์วอลล์) หน้าแรกจะไม่ค้างที่ "กำลังเตรียมระบบ" ตลอดไป — สอดคล้องกับ escape ใน `app/page.tsx` (~12s) */
     safetyTimer = window.setTimeout(() => {
       setUserAuthState((prev) =>
         prev.isUserLoading
@@ -95,12 +95,12 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
               userError:
                 prev.userError ??
                 new Error(
-                  'Firebase Auth ไม่ตอบภายใน 15 วินาที — ตรวจสอบอินเทอร์เน็ต VPN หรือไฟร์วอลล์ แล้วรีเฟรชหน้า',
+                  'Firebase Auth ไม่ตอบภายใน 12 วินาที — ตรวจสอบอินเทอร์เน็ต VPN หรือไฟร์วอลล์ แล้วรีเฟรชหน้า',
                 ),
             }
           : prev,
       );
-    }, 15_000);
+    }, 12_000);
 
     const unsubscribe = onAuthStateChanged(
       auth,

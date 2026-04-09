@@ -405,10 +405,13 @@ function AssignmentsPageContent() {
       const mobCollectionRef = collection(firestore, 'mobilizations');
       const newMobRef = doc(mobCollectionRef);
       
+      const workerDisplayName =
+        `${worker.firstName || ''} ${worker.lastName || ''}`.trim() || worker.workerCode || '';
       const newAssignment: Assignment = {
         id: newMobRef.id,
         assignmentNo: finalNo, // Apply unique sequential code
         workerId: selectedWorkerId,
+        workerName: workerDisplayName,
         poLineId: effectivePoLineId,
         poId: wave.poId,
         contractId: po?.contractId || '',

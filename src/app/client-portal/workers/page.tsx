@@ -5,27 +5,45 @@ import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { HardHat, ChevronRight, MapPin, Waves } from 'lucide-react';
-import type { Assignment, User } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import type { Assignment, POLine, Position, Wave, Worker } from '@/lib/types';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { useWorkersByIds } from '@/hooks/use-workers-by-ids';
 import { Button } from '@/components/ui/button';
-import { collection, getDocs, limit, query } from 'firebase/firestore';
-import type { Position } from '@/lib/types';
+import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
+import { useAppUser } from '@/hooks/use-app-user';
+
+function workerDisplayName(a: Assignment, w: Worker | undefined): string {
+  const fromMob = (a.workerName || '').trim();
+  if (fromMob) return fromMob;
+  if (w) {
+    const n = `${w.firstName || ''} ${w.lastName || ''}`.trim();
+    if (n) return n;
+    if (w.workerCode?.trim()) return w.workerCode.trim();
+  }
+  return (a.assignmentNo || '').trim() || `—`;
+}
+
+function siteDisplayLabel(a: Assignment, waveById: Map<string, Wave>, poLineByKey: Map<string, POLine>): string {
+  const wv = a.waveId ? waveById.get(a.waveId) : undefined;
+  const site = wv?.siteLocation?.trim();
+  if (site) return site;
+  if (a.poId && a.poLineId) {
+    const pl = poLineByKey.get(`${a.poId}|${a.poLineId}`);
+    const wl = pl?.workLocation?.trim();
+    if (wl) return wl;
+  }
+  const proj = wv?.projectName?.trim() || a.projectName?.trim();
+  return proj || '—';
+}
 
 export default function ClientWorkersPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  useUser();
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { locale, t } = usePortalLocale();
   const [positionLabels, setPositionLabels] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    const raw = localStorage.getItem('opsflow_user');
-    if (raw) setCurrentUser(JSON.parse(raw));
-  }, []);
 
   useEffect(() => {
     if (!firestore) return;
@@ -46,7 +64,7 @@ export default function ClientWorkersPage() {
 
   const queryService = useMemo(() => (firestore ? new CustomerQueryService(firestore) : null), [firestore]);
   const aq = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
-  const { data: assignments, isLoading } = useCollection<Assignment>(aq as any);
+  const { data: assignments, isLoading, error: assignmentsError } = useCollection<Assignment>(aq as any);
 
   const workerIds = useMemo(
     () => [...new Set((assignments ?? []).map((a) => a.workerId).filter(Boolean))],
@@ -54,15 +72,80 @@ export default function ClientWorkersPage() {
   );
   const workersById = useWorkersByIds(firestore, workerIds);
 
+  const rows = useMemo(
+    () =>
+      (assignments ?? []).filter((a) =>
+        ['ACTIVE', 'MOBILIZING', 'READY_TO_MOB', 'CONFIRMED', 'CLIENT_APPROVED'].includes(a.deploymentStatus)
+      ),
+    [assignments]
+  );
+
+  const [waveById, setWaveById] = useState<Map<string, Wave>>(() => new Map());
+  const [poLineByKey, setPoLineByKey] = useState<Map<string, POLine>>(() => new Map());
+
+  useEffect(() => {
+    if (!firestore || rows.length === 0) {
+      setWaveById(new Map());
+      setPoLineByKey(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const wMap = new Map<string, Wave>();
+      const pMap = new Map<string, POLine>();
+      const wids = [...new Set(rows.map((r) => r.waveId).filter(Boolean))];
+      await Promise.all(
+        wids.map(async (wid) => {
+          try {
+            const s = await getDoc(doc(firestore, 'waves', wid));
+            if (s.exists()) wMap.set(wid, { id: s.id, ...s.data() } as Wave);
+          } catch {
+            /* permission */
+          }
+        })
+      );
+      const lineKeys = new Map<string, { poId: string; lineId: string }>();
+      rows.forEach((r) => {
+        if (r.poId && r.poLineId) lineKeys.set(`${r.poId}|${r.poLineId}`, { poId: r.poId, lineId: r.poLineId });
+      });
+      await Promise.all(
+        [...lineKeys.values()].map(async ({ poId, lineId }) => {
+          const k = `${poId}|${lineId}`;
+          try {
+            const s = await getDoc(doc(firestore, 'purchase_orders', poId, 'po_lines', lineId));
+            if (s.exists()) pMap.set(k, { id: s.id, ...s.data() } as POLine);
+          } catch {
+            /* permission */
+          }
+        })
+      );
+      if (!cancelled) {
+        setWaveById(wMap);
+        setPoLineByKey(pMap);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, rows]);
+
+  if (userLoading) {
+    return <p className="text-sm text-muted-foreground">…</p>;
+  }
+
   if (!currentUser || !isClient(currentUser)) {
     return (
       <p className="text-sm text-muted-foreground">{locale === 'en' ? 'Customer portal only.' : 'เฉพาะบัญชีลูกค้า'}</p>
     );
   }
 
-  const rows = (assignments ?? []).filter((a) =>
-    ['ACTIVE', 'MOBILIZING', 'READY_TO_MOB', 'CONFIRMED', 'CLIENT_APPROVED'].includes(a.deploymentStatus)
-  );
+  if (assignmentsError) {
+    return (
+      <p className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
+        {assignmentsError.message || String(assignmentsError)}
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -105,8 +188,9 @@ export default function ClientWorkersPage() {
               <TableBody>
                 {rows.map((a) => {
                   const w = workersById.get(a.workerId);
-                  const name = w ? `${w.firstName} ${w.lastName}` : `Worker ${a.workerId.slice(0, 6)}…`;
+                  const name = workerDisplayName(a, w);
                   const pos = positionLabels[a.positionId] || a.positionId;
+                  const site = siteDisplayLabel(a, waveById, poLineByKey);
                   return (
                     <TableRow key={a.id}>
                       <TableCell className="font-medium">{name}</TableCell>
@@ -114,7 +198,7 @@ export default function ClientWorkersPage() {
                       <TableCell>
                         <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
                           <MapPin className="h-3.5 w-3.5 shrink-0" />
-                          {a.projectName || '—'}
+                          {site}
                         </span>
                       </TableCell>
                       <TableCell className="text-right">

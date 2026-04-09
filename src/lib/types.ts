@@ -765,6 +765,8 @@ export interface Assignment {
   id: string;
   assignmentNo: string;
   workerId: string;
+  /** Denormalized for client portal — avoids extra worker doc read when assignedCustomerIds blocks profile */
+  workerName?: string;
   waveId: string;
   /** ไม่บังคับ: ลิงก์ sales_contract_terms แบบเก่า — การมอบหมายใหม่ใช้ PO + contractId เป็นหลัก */
   salesContractTermId?: string;
@@ -866,6 +868,8 @@ export interface AuditLog {
 
 export interface DailyTimesheet {
   id: string;
+  /** Portal / billing scope — denormalized from wave or PO */
+  customerId?: string;
   date: string;
   workerId: string;
   workerNameSnapshot: string;

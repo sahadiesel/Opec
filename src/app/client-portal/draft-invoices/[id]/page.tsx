@@ -140,7 +140,7 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
   return (
     <div className="space-y-6 max-w-3xl">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/client-portal/draft-invoices">
+        <Link href="/client-portal/accounting?tab=drafts">
           <ArrowLeft className="h-4 w-4 mr-2" />
           {locale === 'en' ? 'Draft list' : 'รายการร่าง'}
         </Link>

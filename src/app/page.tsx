@@ -103,7 +103,8 @@ function LoginStageBackdrop({ children }: { children: ReactNode }) {
 export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
+  /** ถ้า Firebase Auth ไม่ตอบ (เครือข่าย/VPN) ไม่ให้ค้างที่ "กำลังเตรียมระบบ" ตลอดไป */
+  const [authBootstrapTimedOut, setAuthBootstrapTimedOut] = useState(false);
   const [authSlowHint, setAuthSlowHint] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -148,12 +149,16 @@ export default function Home() {
   }, [rawUserDoc]);
 
   useEffect(() => {
-    const t = window.setTimeout(() => setAuthSlowHint(true), 20_000);
+    const t = window.setTimeout(() => setAuthSlowHint(true), 12_000);
     return () => window.clearTimeout(t);
   }, []);
 
   useEffect(() => {
-    setIsLoaded(true);
+    const escape = window.setTimeout(() => setAuthBootstrapTimedOut(true), 12_000);
+    return () => window.clearTimeout(escape);
+  }, []);
+
+  useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) {
       try {
@@ -454,7 +459,7 @@ export default function Home() {
     setShowResetDialog(false);
   };
 
-  if (!isLoaded || isUserLoading) {
+  if (isUserLoading && !authBootstrapTimedOut) {
     return (
       <LoginStageBackdrop>
         <div className="relative z-10 flex max-w-md flex-col items-center justify-center gap-3 px-4 text-center">
@@ -508,6 +513,14 @@ export default function Home() {
                 <AlertTitle>เชื่อมต่อระบบไม่สำเร็จ</AlertTitle>
                 <AlertDescription className="text-sm">
                   {userError.message}
+                </AlertDescription>
+              </Alert>
+            )}
+            {authBootstrapTimedOut && isUserLoading && !userError && (
+              <Alert className="mb-4 text-left border-amber-200 bg-amber-50 text-amber-950">
+                <AlertTitle>กำลังเชื่อมต่อ Firebase…</AlertTitle>
+                <AlertDescription className="text-sm">
+                  ระบบยังไม่ได้สถานะล็อกอินภายในเวลาที่กำหนด — ลองรีเฟรช (Ctrl+Shift+R) หรือตรวจอินเทอร์เน็ต / VPN / ไฟร์วอลล์
                 </AlertDescription>
               </Alert>
             )}

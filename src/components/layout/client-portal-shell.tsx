@@ -16,11 +16,9 @@ import { cn } from '@/lib/utils';
 const NAV_PATHS: { href: string; key: PortalDictKey }[] = [
   { href: '/client-portal/dashboard', key: 'home' },
   { href: '/client-portal/contracts', key: 'contracts' },
-  { href: '/client-portal/pos', key: 'pos' },
   { href: '/client-portal/workers', key: 'workers' },
   { href: '/client-portal/timesheets', key: 'timesheets' },
-  { href: '/client-portal/draft-invoices', key: 'draftInvoices' },
-  { href: '/client-portal/invoices-receipts', key: 'documents' },
+  { href: '/client-portal/accounting', key: 'accounting' },
 ];
 
 export function ClientPortalShell({
@@ -55,7 +53,13 @@ export function ClientPortalShell({
       )}
     >
       {NAV_PATHS.map(({ href, key }) => {
-        const active = pathname === href || pathname.startsWith(`${href}/`);
+        const active =
+          pathname === href ||
+          pathname.startsWith(`${href}/`) ||
+          (href === '/client-portal/accounting' &&
+            (pathname.startsWith('/client-portal/draft-invoices') ||
+              pathname.startsWith('/client-portal/invoices-receipts') ||
+              pathname.startsWith('/client-portal/billing')));
         return (
           <Link
             key={href}

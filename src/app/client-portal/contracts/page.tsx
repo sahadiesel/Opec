@@ -1,33 +1,57 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { FileText } from 'lucide-react';
-import type { MainContract, User } from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { FileText, ChevronDown, ChevronRight } from 'lucide-react';
+import type { MainContract, PurchaseOrder, User } from '@/lib/types';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
-import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
-
+import { useAppUser } from '@/hooks/use-app-user';
+import { Button } from '@/components/ui/button';
 export default function ClientContractsPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  useUser();
+  const { currentUser, isLoading } = useAppUser();
   const firestore = useFirestore();
-  const { locale } = usePortalLocale();
-
-  useEffect(() => {
-    const raw = localStorage.getItem('opsflow_user');
-    if (raw) setCurrentUser(JSON.parse(raw));
-  }, []);
+  const { locale, t } = usePortalLocale();
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const queryService = useMemo(() => (firestore ? new CustomerQueryService(firestore) : null), [firestore]);
-  const q = useMemoFirebase(() => queryService?.getScopedContractsQuery(currentUser), [queryService, currentUser]);
-  const { data: contracts, isLoading } = useCollection<MainContract>(q as any);
+  const cq = useMemoFirebase(() => queryService?.getScopedContractsQuery(currentUser), [queryService, currentUser]);
+  const { data: contracts, isLoading: loadingC } = useCollection<MainContract>(cq as any);
 
-  if (!currentUser || !isClient(currentUser)) {
+  const pq = useMemoFirebase(() => queryService?.getScopedPOsQuery(currentUser), [queryService, currentUser]);
+  const { data: purchaseOrders, isLoading: loadingP } = useCollection<PurchaseOrder>(pq as any);
+
+  const contractIds = useMemo(() => new Set((contracts ?? []).map((c) => c.id)), [contracts]);
+
+  const posByContract = useMemo(() => {
+    const m = new Map<string, PurchaseOrder[]>();
+    for (const po of purchaseOrders ?? []) {
+      const cid = (po.contractId || '').trim();
+      if (!cid || !contractIds.has(cid)) continue;
+      const arr = m.get(cid) ?? [];
+      arr.push(po);
+      m.set(cid, arr);
+    }
+    return m;
+  }, [purchaseOrders, contractIds]);
+
+  const standalonePos = useMemo(() => {
+    return (purchaseOrders ?? []).filter((po) => {
+      const cid = (po.contractId || '').trim();
+      return !cid || !contractIds.has(cid);
+    });
+  }, [purchaseOrders, contractIds]);
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">…</p>;
+  }
+
+  if (!currentUser || !isClient(currentUser as User)) {
     return (
       <p className="text-sm text-muted-foreground">
         {locale === 'en' ? 'Customer portal only.' : 'เฉพาะบัญชีลูกค้า'}
@@ -36,29 +60,28 @@ export default function ClientContractsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h2 className="text-xl font-bold text-primary flex items-center gap-2">
           <FileText className="h-6 w-6" />
           {locale === 'en' ? 'Your contracts' : 'สัญญาของท่าน'}
         </h2>
-        <p className="text-sm text-muted-foreground">
-          {locale === 'en' ? 'Main contracts linked to your company.' : 'สัญญาหลักที่ผูกกับบริษัทของท่าน'}
-        </p>
+        <p className="text-sm text-muted-foreground">{t('contractsPoHint')}</p>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{locale === 'en' ? 'Contract list' : 'รายการสัญญา'}</CardTitle>
-          <CardDescription>{locale === 'en' ? 'Read-only' : 'ดูอย่างเดียว'}</CardDescription>
+          <CardDescription>{locale === 'en' ? 'Read-only — click a row to show POs' : 'ดูอย่างเดียว — กดแถวเพื่อดู PO'}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {isLoading ? (
+          {loadingC || loadingP ? (
             <p className="p-6 text-sm text-muted-foreground">…</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10" />
                   <TableHead>{locale === 'en' ? 'Code' : 'รหัส'}</TableHead>
                   <TableHead>{locale === 'en' ? 'Title' : 'ชื่อสัญญา'}</TableHead>
                   <TableHead>{locale === 'en' ? 'Period' : 'ช่วงเวลา'}</TableHead>
@@ -66,21 +89,75 @@ export default function ClientContractsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(contracts ?? []).map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-mono text-xs">{c.contractNumber || c.id}</TableCell>
-                    <TableCell className="font-medium">{c.title || '—'}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {formatStoredDateThaiBE(c.startDate)} – {formatStoredDateThaiBE(c.endDate)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{c.status}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {(contracts ?? []).map((c) => {
+                  const expanded = openId === c.id;
+                  const nested = posByContract.get(c.id) ?? [];
+                  return (
+                    <Fragment key={c.id}>
+                      <TableRow
+                        className="cursor-pointer hover:bg-muted/40"
+                        onClick={() => setOpenId(expanded ? null : c.id)}
+                      >
+                        <TableCell className="w-10">
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-expanded={expanded}>
+                            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </Button>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{c.contractNumber || c.id}</TableCell>
+                        <TableCell className="font-medium">{c.title || '—'}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {formatStoredDateRangeThaiBE(c.startDate, c.endDate)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{c.status}</Badge>
+                        </TableCell>
+                      </TableRow>
+                      {expanded && (
+                        <TableRow className="bg-muted/20 hover:bg-muted/20">
+                          <TableCell />
+                          <TableCell colSpan={4} className="p-0">
+                            <div className="border-t border-border px-4 py-3">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                {t('posForContract')}
+                              </p>
+                              {nested.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">—</p>
+                              ) : (
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>{t('poCode')}</TableHead>
+                                      <TableHead>{t('poProject')}</TableHead>
+                                      <TableHead>{t('poPeriod')}</TableHead>
+                                      <TableHead>{locale === 'en' ? 'Status' : 'สถานะ'}</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {nested.map((po) => (
+                                      <TableRow key={po.id}>
+                                        <TableCell className="font-mono text-xs">{po.poCode || po.id}</TableCell>
+                                        <TableCell className="text-sm">{po.projectName || '—'}</TableCell>
+                                        <TableCell className="text-xs text-muted-foreground">
+                                          {formatStoredDateRangeThaiBE(po.startDate, po.endDate)}
+                                        </TableCell>
+                                        <TableCell>
+                                          <Badge variant="secondary">{po.status}</Badge>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
                 {(!contracts || contracts.length === 0) && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-10 text-muted-foreground">
+                    <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                       {locale === 'en' ? 'No contracts found.' : 'ไม่พบสัญญา'}
                     </TableCell>
                   </TableRow>
@@ -88,6 +165,46 @@ export default function ClientContractsPage() {
               </TableBody>
             </Table>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t('otherPOs')}</CardTitle>
+          <CardDescription>{t('otherPOsHint')}</CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('poCode')}</TableHead>
+                <TableHead>{t('poProject')}</TableHead>
+                <TableHead>{t('poPeriod')}</TableHead>
+                <TableHead>{locale === 'en' ? 'Status' : 'สถานะ'}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {standalonePos.map((po) => (
+                <TableRow key={po.id}>
+                  <TableCell className="font-mono text-xs">{po.poCode || po.id}</TableCell>
+                  <TableCell className="text-sm">{po.projectName || '—'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatStoredDateRangeThaiBE(po.startDate, po.endDate)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{po.status}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {standalonePos.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                    {t('noData')}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>

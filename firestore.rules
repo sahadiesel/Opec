@@ -414,6 +414,14 @@ service cloud.firestore {
       allow read: if isInternalUser() || portalOwnsResourceCustomerId();
       allow write: if isInternalUser();
     }
+    /** PO lines: portal may read workLocation for their PO (site per line). */
+    match /purchase_orders/{purchaseOrderId}/po_lines/{lineId} {
+      allow read: if isInternalUser()
+        || (portalCustomerIdOk()
+          && get(/databases/$(database)/documents/purchase_orders/$(purchaseOrderId)).data.customerId
+            == userData().customerId);
+      allow write: if isInternalUser();
+    }
     match /purchase_orders/{purchaseOrderId}/{document=**} {
       allow read, write: if isInternalUser();
     }
