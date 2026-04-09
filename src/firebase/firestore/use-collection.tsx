@@ -12,6 +12,7 @@ import {
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { isPermissionDeniedWhileLoggedOut } from '@/firebase/firestore/suppress-logout-permission-error';
+import { isFirestoreMissingIndexError } from '@/firebase/firestore/firestore-index-error';
 
 /** Utility type to add an 'id' field to a given type T. */
 export type WithId<T> = T & { id: string };
@@ -86,26 +87,30 @@ export function useCollection<T = any>(
         setIsLoading(false);
       },
       (error: FirestoreError) => {
-        // This logic extracts the path from either a ref or a query
+        setData(null);
+        setIsLoading(false);
+
+        if (isPermissionDeniedWhileLoggedOut(error)) {
+          setError(null);
+          return;
+        }
+
+        if (isFirestoreMissingIndexError(error)) {
+          console.error('[Firestore] Missing composite index — full message:\n', error.message);
+          setError(error);
+          return;
+        }
+
         const path: string =
           memoizedTargetRefOrQuery.type === 'collection'
             ? (memoizedTargetRefOrQuery as CollectionReference).path
-            : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString()
+            : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString();
 
         const contextualError = new FirestorePermissionError({
           operation: 'list',
           path,
-        })
-
-        setData(null)
-        setIsLoading(false)
-
-        if (isPermissionDeniedWhileLoggedOut(error)) {
-          setError(null)
-          return
-        }
-
-        setError(contextualError)
+        });
+        setError(contextualError);
         errorEmitter.emit('permission-error', contextualError);
       }
     );

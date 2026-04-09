@@ -82,16 +82,39 @@ interface NavGroup {
   accountingStructured?: boolean;
 }
 
-const ACCOUNTING_MAIN_ITEMS: NavItem[] = [
-  { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
-  { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
-  { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
-  { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
-  { key: 'accounts_payable', title: 'ตรวจสอบรายจ่าย (ใบรับวางบิล)', href: '/accounting/outgoing-review', icon: Banknote },
-  { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
-  { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
-  { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
-  { key: 'bank_accounts', title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard },
+/** แยกหมวดบัญชี: ลูกหนี้ / เจ้าหนี้ / สมุดรายวัน — ไม่รวมเงินเดือน (อยู่ใน ACCOUNTING_PAYROLL_SUBSECTIONS) */
+const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
+  title: string;
+  icon: ComponentType<{ className?: string }>;
+  items: NavItem[];
+}> = [
+  {
+    title: 'ลูกหนี้ — วางบิล / ใบกำกับ / ใบเสร็จ',
+    icon: FileBadge,
+    items: [
+      { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
+      { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
+      { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
+      { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
+    ],
+  },
+  {
+    title: 'เจ้าหนี้ — รับวางบิล / ตรวจจ่าย',
+    icon: Inbox,
+    items: [
+      { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
+      { key: 'accounts_payable', title: 'ตรวจสอบรายจ่าย (ใบรับวางบิล)', href: '/accounting/outgoing-review', icon: Banknote },
+      { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
+    ],
+  },
+  {
+    title: 'สมุดบัญชีและธนาคาร',
+    icon: BookOpen,
+    items: [
+      { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
+      { key: 'bank_accounts', title: 'บัญชีธนาคาร (Bank Accounts)', href: '/bank-accounts', icon: CreditCard },
+    ],
+  },
 ];
 
 const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
@@ -151,13 +174,19 @@ const navGroups: NavGroup[] = [
         href: '/store/vendor-bills',
         icon: FileText,
       },
+      {
+        key: 'draft_invoices',
+        title: 'ใบแจ้งหนี้ร่าง (เรียกเก็บ)',
+        href: '/draft-invoices',
+        icon: FileText,
+      },
     ],
   },
   {
-    label: 'การเงินและบัญชี (Finance & Accounting)',
+    label: 'บัญชี (Accounting)',
     audience: 'accounting',
     accountingStructured: true,
-    items: ACCOUNTING_MAIN_ITEMS,
+    items: [],
   },
   {
     label: 'การจัดการระบบ (Administration)',
@@ -268,23 +297,24 @@ export function SidebarNav({
           if (!canSeeGroup(group, user, admin)) return null;
 
           if (group.accountingStructured) {
-            const visibleMain = group.items.filter((item) => {
+            const filterNav = (item: NavItem) => {
               if (admin) return true;
               const byMatrix = sidebarMatrixVisibility(user, item);
               if (byMatrix !== null) return byMatrix;
               return canView(user, item.key, profile);
-            });
-            const payrollSubs = ACCOUNTING_PAYROLL_SUBSECTIONS.map((sub) => ({
+            };
+
+            const documentSubs = ACCOUNTING_DOCUMENT_SUBSECTIONS.map((sub) => ({
               ...sub,
-              visibleItems: sub.items.filter((item) => {
-                if (admin) return true;
-                const byMatrix = sidebarMatrixVisibility(user, item);
-                if (byMatrix !== null) return byMatrix;
-                return canView(user, item.key, profile);
-              }),
+              visibleItems: sub.items.filter(filterNav),
             })).filter((s) => s.visibleItems.length > 0);
 
-            if (visibleMain.length === 0 && payrollSubs.length === 0) return null;
+            const payrollSubs = ACCOUNTING_PAYROLL_SUBSECTIONS.map((sub) => ({
+              ...sub,
+              visibleItems: sub.items.filter(filterNav),
+            })).filter((s) => s.visibleItems.length > 0);
+
+            if (documentSubs.length === 0 && payrollSubs.length === 0) return null;
 
             return (
               <SidebarGroup key={group.label} className="py-2">
@@ -293,24 +323,41 @@ export function SidebarNav({
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {visibleMain.map((item) => {
-                      const active = pathMatches(pathname, item.href);
+                    {documentSubs.map((sub) => {
+                      const isSubActive = sub.visibleItems.some((it) => pathMatches(pathname, it.href));
                       return (
-                        <SidebarMenuItem key={`${item.key}-${item.href}`}>
-                          <SidebarMenuButton
-                            asChild
-                            isActive={active}
-                            tooltip={item.title}
-                            className={`transition-all duration-200 ${active ? 'font-bold' : ''}`}
-                          >
-                            <Link href={item.href}>
-                              <item.icon
-                                className={`h-4 w-4 ${active ? 'text-primary' : 'text-muted-foreground'}`}
-                              />
-                              <span className="font-semibold text-xs tracking-tight">{item.title}</span>
-                            </Link>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
+                        <Collapsible key={sub.title} defaultOpen={isSubActive} className="group">
+                          <SidebarMenuItem>
+                            <CollapsibleTrigger asChild>
+                              <SidebarMenuButton tooltip={sub.title} className="transition-all duration-200 h-auto min-h-10 py-2">
+                                <sub.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="font-semibold text-[11px] tracking-tight text-left leading-snug line-clamp-2">
+                                  {sub.title}
+                                </span>
+                                <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
+                              </SidebarMenuButton>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent>
+                              <SidebarMenuSub>
+                                {sub.visibleItems.map((item) => {
+                                  const active = pathMatches(pathname, item.href);
+                                  return (
+                                    <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
+                                      <SidebarMenuSubButton asChild isActive={active} size="sm">
+                                        <Link href={item.href}>
+                                          <item.icon
+                                            className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                          />
+                                          <span>{item.title}</span>
+                                        </Link>
+                                      </SidebarMenuSubButton>
+                                    </SidebarMenuSubItem>
+                                  );
+                                })}
+                              </SidebarMenuSub>
+                            </CollapsibleContent>
+                          </SidebarMenuItem>
+                        </Collapsible>
                       );
                     })}
                     {payrollSubs.map((sub) => {

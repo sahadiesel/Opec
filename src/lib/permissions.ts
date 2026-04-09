@@ -23,6 +23,7 @@ import {
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
   isPayrollOfficer,
+  canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
   canActAsHrManager,
   getUserAccessContext,
@@ -73,6 +74,7 @@ export {
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
   isPayrollOfficer,
+  canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
   canActAsHrManager,
   getUserAccessContext,
@@ -163,18 +165,23 @@ export const SYSTEM_MODULES = [
   { group: 'Operations (ปฏิบัติการ)', key: 'waves', label: 'กลุ่มรอบการทำงาน (Waves)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'assignments', label: 'การมอบหมายงาน (Assignments)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'mobilization', label: 'การเตรียมส่งตัว (Mobilization)' },
+  {
+    group: 'Operations (ปฏิบัติการ)',
+    key: 'draft_invoices',
+    label: 'ใบแจ้งหนี้ร่าง — เรียกเก็บลูกค้า (Draft commercial invoice)',
+  },
   { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การซื้อสินค้า/บริการ (Purchases)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'tax_invoices', label: 'ใบกำกับภาษี (Tax Invoices)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'receipts', label: 'ใบเสร็จรับเงิน (Receipts)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'ap_bills', label: 'รับวางบิลเจ้าหนี้ (AP Bills)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'accounts_receivable', label: 'ลูกหนี้การค้า (AR)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'accounts_payable', label: 'เจ้าหนี้การค้า (AP)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
-  { group: 'Finance & Accounting (การเงิน)', key: 'executive_payroll', label: 'เงินเดือนผู้บริหาร (Executive Payroll)' },
+  { group: 'บัญชี (Accounting)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
+  { group: 'บัญชี (Accounting)', key: 'tax_invoices', label: 'ใบกำกับภาษี (Tax Invoices)' },
+  { group: 'บัญชี (Accounting)', key: 'receipts', label: 'ใบเสร็จรับเงิน (Receipts)' },
+  { group: 'บัญชี (Accounting)', key: 'ap_bills', label: 'รับวางบิลเจ้าหนี้ (AP Bills)' },
+  { group: 'บัญชี (Accounting)', key: 'accounts_receivable', label: 'ลูกหนี้การค้า (AR)' },
+  { group: 'บัญชี (Accounting)', key: 'accounts_payable', label: 'เจ้าหนี้การค้า (AP)' },
+  { group: 'บัญชี (Accounting)', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
+  { group: 'บัญชี (Accounting)', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
+  { group: 'บัญชี (Accounting)', key: 'executive_payroll', label: 'เงินเดือนผู้บริหาร (Executive Payroll)' },
   { group: 'Administration (ระบบ)', key: 'system_admin', label: 'จัดการผู้ใช้/ระบบ (System Admin)' },
   { group: 'Administration (ระบบ)', key: 'client_portal', label: 'Client Portal (หน้าของลูกค้า)' },
   { group: 'Administration (ระบบ)', key: 'document_numbering', label: 'รันเลขที่เอกสาร (Numbering)' },
@@ -350,6 +357,15 @@ export function getPermissions(
 
   if (ADMIN_ONLY_MODULE_KEYS.has(moduleKey)) return clonePermission(NO_ACCESS);
 
+  /** ใบกำกับร่าง + แนบสลิป: พนักงานภายใน (ไม่ใช่บัญชี) ดู/แก้ไขได้ แต่ไม่สร้างเอกสารใหม่ใน UI */
+  if (
+    moduleKey === 'tax_invoices' &&
+    isSimpleInternalEligible(u) &&
+    !isSimpleAccounting(u)
+  ) {
+    return { view: true, create: false, edit: true, delete: false, approve: false };
+  }
+
   if (ACCOUNTING_ONLY_MODULE_KEYS.has(moduleKey)) {
     return isSimpleAccounting(u) ? clonePermission(FULL_ACCESS) : clonePermission(NO_ACCESS);
   }
@@ -398,6 +414,24 @@ export function canApprovePayroll(user: User | null): boolean {
 
 export function canExportPayroll(user: User | null, _payrollStatus?: string | null): boolean {
   return isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
+}
+
+/** ส่งงวดลูกจ้างต่อบัญชี (FINANCE_PREPARED) — payroll officer / ผู้จัดการ HR-Ops เป็นหลัก */
+export function canHandoffWorkerPayrollToAccounting(user: User | null): boolean {
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u || !isSimpleInternalEligible(u)) return false;
+  if (isSimpleAdmin(u)) return true;
+  if (isPayrollOfficer(u)) return true;
+  if (isHrManager(u) || isOperationManager(u)) return true;
+  return false;
+}
+
+/** บัญชียืนยันจ่ายงวดลูกจ้าง + บันทึก cashbook */
+export function canConfirmWorkerPayrollPaid(user: User | null): boolean {
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u || !isActiveForApp(u)) return false;
+  if (isSimpleAdmin(u)) return true;
+  return isSimpleAccounting(u);
 }
 
 export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = SYSTEM_MODULES.reduce(
@@ -451,7 +485,7 @@ const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
   'profit_estimates',
 ];
 
-const OPS_PILLAR_UI_KEYS: ModuleKey[] = ['waves', 'assignments', 'mobilization'];
+const OPS_PILLAR_UI_KEYS: ModuleKey[] = ['waves', 'assignments', 'mobilization', 'draft_invoices'];
 const STORE_PILLAR_UI_KEYS: ModuleKey[] = ['vendors', 'purchases', 'store_inventory'];
 const ACCOUNTING_PILLAR_UI_KEYS: ModuleKey[] = [
   'billing_notes',

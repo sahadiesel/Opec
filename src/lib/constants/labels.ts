@@ -23,7 +23,7 @@ export const UI_LABELS = {
   VENDORS: 'คู่ค้า / ผู้ขาย (Vendors)',
   PURCHASES: 'การซื้อสินค้า/บริการ (Purchases)',
   STORE: 'คลังอุปกรณ์ (Store / Inventory)',
-  FINANCE: 'การเงินและบัญชี (Finance & Accounting)',
+  FINANCE: 'บัญชี (Accounting)',
   SYSTEM_ADMIN: 'จัดการระบบ (System Admin)',
   PERMISSION_MATRIX: 'เมทริกซ์สิทธิ์ (Permission Matrix)',
   

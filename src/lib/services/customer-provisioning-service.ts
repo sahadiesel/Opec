@@ -16,7 +16,6 @@ import {
 import { 
   getAuth, 
   createUserWithEmailAndPassword, 
-  sendPasswordResetEmail,
   signOut
 } from 'firebase/auth';
 import { initializeApp, getApps } from 'firebase/app';

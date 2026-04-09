@@ -29,9 +29,8 @@ import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
-import { collection, query, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { canView, canCreate } from '@/lib/permissions';
+import { collection, query, orderBy, doc, addDoc } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
@@ -56,6 +55,11 @@ export default function TaxInvoicesPage() {
 
   const isAuthorized = useMemo(
     () => !!currentUser && canView(currentUser, 'tax_invoices'),
+    [currentUser]
+  );
+
+  const canCreateInvoice = useMemo(
+    () => !!currentUser && canCreate(currentUser, 'tax_invoices'),
     [currentUser]
   );
 
@@ -113,10 +117,10 @@ export default function TaxInvoicesPage() {
     setIsCreating(true);
     try {
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'tax_invoice', { actor: currentUser.displayName });
-      const { code: arNo } = await generateNextDocumentCode(firestore, 'ar', { actor: currentUser.displayName });
 
       const invoicePayload: Record<string, unknown> = {
         ...newInvoice,
+        status: 'DRAFT',
         taxInvoiceNo: finalNo,
         customerId: sourceNote.customerId,
         taxableAmount: sourceNote.amountBeforeTax,
@@ -128,32 +132,14 @@ export default function TaxInvoicesPage() {
         updatedAt: Date.now(),
       };
       if (sourceNote.waveId) invoicePayload.waveId = sourceNote.waveId;
-      const docRef = await addDocumentNonBlocking(collection(firestore, 'tax_invoices'), invoicePayload);
-
-      // Mark billing note as INVOICED so it won't appear in the dropdown again
-      const sourceNoteRef = doc(firestore, 'billing_notes', sourceNote.id);
-      await updateDoc(sourceNoteRef, { status: 'INVOICED', updatedAt: Date.now() });
-
-      // 4. Create an AR record automatically with sequential AR- number
-      await addDocumentNonBlocking(collection(firestore, 'accounts_receivable'), {
-        customerId: sourceNote.customerId,
-        referenceType: 'TAX_INVOICE',
-        referenceId: docRef?.id || '',
-        referenceNo: finalNo, 
-        documentNo: arNo, 
-        issueDate: newInvoice.issueDate,
-        dueDate: sourceNote.dueDate,
-        debitAmount: sourceNote.netAmount,
-        creditAmount: 0,
-        outstandingAmount: sourceNote.netAmount,
-        status: 'OPEN',
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
+      const docRef = await addDoc(collection(firestore, 'tax_invoices'), invoicePayload);
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างใบกำกับภาษีสำเร็จ", description: `เลขที่เอกสาร: ${finalNo}` });
-      if (docRef) router.push(`/tax-invoices/${docRef.id}`);
+      toast({
+        title: 'สร้างใบแจ้งหนี้ร่างสำเร็จ',
+        description: `เลขที่ ${finalNo} — แนบสลิปได้ที่หน้ารายละเอียด ก่อนกดออกเอกสารจริง (ISSUED)`,
+      });
+      router.push(`/tax-invoices/${docRef.id}`);
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างใบกำกับภาษีได้" });
@@ -181,7 +167,7 @@ export default function TaxInvoicesPage() {
             <FileBadge className="h-8 w-8" /> ใบกำกับภาษี (Tax Invoices)
           </h1>
           <p className="text-muted-foreground text-lg">
-            จัดการการออกใบกำกับภาษี/ใบส่งของ โดยอ้างอิงจากใบวางบิลที่ผ่านการยืนยันแล้ว
+            สร้างใบแจ้งหนี้ร่าง (DRAFT) จากใบวางบิล — แนบรูปสลิปลงเวลาได้ก่อนยืนยันออกเอกสารจริง (ISSUED) จึงจะบันทึกลูกหนี้ (AR)
           </p>
         </div>
 
@@ -189,7 +175,7 @@ export default function TaxInvoicesPage() {
           <Info className="h-5 w-5 text-blue-600" />
           <AlertTitle className="font-bold text-lg">นโยบายเอกสารภาษี (Tax Document Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            ใบกำกับภาษีที่สถานะเป็น ISSUED แล้ว จะถูกนำไปคำนวณในรายงานภาษีขายและยอดลูกหนี้ (AR) ทันที
+            สถานะ DRAFT ยังไม่กระทบลูกหนี้ — เมื่อเปลี่ยนเป็น ISSUED ระบบจะสร้าง AR และอัปเดตใบวางบิลเป็น INVOICED
           </AlertDescription>
         </Alert>
 
@@ -202,16 +188,21 @@ export default function TaxInvoicesPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog open={isAuthorized && canCreateInvoice && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
-                <Plus className="h-5 w-5" /> สร้างใบกำกับภาษี (New Tax Invoice)
+              <Button
+                className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
+                disabled={!canCreateInvoice}
+              >
+                <Plus className="h-5 w-5" /> สร้างใบแจ้งหนี้ร่าง (Draft)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
               <DialogHeader>
-                <DialogTitle>สร้างใบกำกับภาษีใหม่ (Create Tax Invoice)</DialogTitle>
-                <DialogDescription>เลือกใบวางบิลต้นทางเพื่อดึงข้อมูลรายการและยอดเงิน ระบบจะรันเลขที่อัตโนมัติ</DialogDescription>
+                <DialogTitle>สร้างใบแจ้งหนี้ร่าง (Draft Tax Invoice)</DialogTitle>
+                <DialogDescription>
+                  เลือกใบวางบิลต้นทาง ระบบจะสร้างสถานะ DRAFT — ยังไม่บันทึกลูกหนี้จนกว่าจะยืนยัน ISSUED ที่หน้ารายละเอียด
+                </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
@@ -247,7 +238,7 @@ export default function TaxInvoicesPage() {
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
                 <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  ยืนยันการออกเอกสาร (Confirm)
+                  สร้างร่าง (Create draft)
                 </Button>
               </DialogFooter>
             </DialogContent>

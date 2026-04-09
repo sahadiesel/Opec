@@ -66,6 +66,7 @@ export function canViewHrHubItem(
 }
 
 const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
+  ['/draft-invoices', 'draft_invoices'],
   ['/accounting/executive-payroll', 'executive_payroll'],
   ['/office-payroll', 'office_payroll'],
   ['/payroll', 'worker_payroll'],

@@ -61,6 +61,14 @@ import {
   DialogTrigger,
   DialogFooter
 } from '@/components/ui/dialog';
+import {
+  extractFirestoreIndexConsoleUrl,
+  isFirestoreMissingIndexError,
+} from '@/firebase/firestore/firestore-index-error';
+
+/** โปรเจกต์จาก `.firebaserc` — หน้าจัดการ Indexes ใน Console */
+const FIRESTORE_INDEXES_CONSOLE_URL =
+  'https://console.firebase.google.com/project/studio-9554558161-dc547/firestore/databases/-default-/indexes';
 
 export default function BillingNoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -86,7 +94,12 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
   const customer = customers?.find(c => c.id === note?.customerId);
 
   const linkedInvoicesQuery = useMemoFirebase(() => (firestore ? query(collection(firestore, 'tax_invoices'), where('billingNoteId', '==', id)) : null), [firestore, id]);
-  const { data: linkedInvoices } = useCollection<TaxInvoice>(linkedInvoicesQuery as any);
+  const { data: linkedInvoices, error: linkedInvoicesError } = useCollection<TaxInvoice>(linkedInvoicesQuery as any);
+
+  const linkedInvoicesIndexUrl = useMemo(() => {
+    if (!linkedInvoicesError || !isFirestoreMissingIndexError(linkedInvoicesError)) return null;
+    return extractFirestoreIndexConsoleUrl(linkedInvoicesError.message);
+  }, [linkedInvoicesError]);
 
   const [isAddingLine, setIsAddingLine] = useState(false);
   const [newLine, setNewLine] = useState<Partial<BillingNoteLine>>({
@@ -247,6 +260,50 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
             </Badge>
           </div>
         </div>
+
+        {linkedInvoicesIndexUrl || (linkedInvoicesError && isFirestoreMissingIndexError(linkedInvoicesError)) ? (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>ต้องสร้าง Firestore composite index</AlertTitle>
+            <AlertDescription className="space-y-3 text-sm">
+              <p>
+                Query ใบกำกับภาษีที่ผูกกับใบวางบิลนี้ (<code className="text-xs">tax_invoices</code> โดยฟิลด์{' '}
+                <code className="text-xs">billingNoteId</code>) ต้องมี index ใน Firebase
+              </p>
+              {linkedInvoicesIndexUrl ? (
+                <p>
+                  <a
+                    href={linkedInvoicesIndexUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-semibold underline break-all text-foreground"
+                  >
+                    เปิดลิงก์สร้าง index อัตโนมัติจาก Firebase <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  </a>
+                </p>
+              ) : null}
+              <p>
+                หรือเปิดหน้า Indexes แล้วกด &quot;Add index&quot; เอง:{' '}
+                <a
+                  href={FIRESTORE_INDEXES_CONSOLE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline break-all"
+                >
+                  {FIRESTORE_INDEXES_CONSOLE_URL}
+                </a>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                ค่าที่ใช้บ่อย: Collection <code>tax_invoices</code> — ฟิลด์ <code>billingNoteId</code> (Ascending),{' '}
+                <code>__name__</code> (Ascending) — Query scope: Collection
+              </p>
+              <p className="text-xs text-muted-foreground">
+                จากโค้ดโปรเจกต์: รัน <code className="bg-muted px-1 rounded">firebase deploy --only firestore:indexes</code> เพื่อสร้าง
+                index ชุดใน <code className="bg-muted px-1 rounded">firestore.indexes.json</code>
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <div className="lg:col-span-3 space-y-6">

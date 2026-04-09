@@ -24,6 +24,8 @@ export const AuditLogSchema = z.object({
   purchaseOrderId: z.string().optional().nullable(),
   contractTermId: z.string().optional().nullable(),
   exportBatchId: z.string().optional().nullable(),
+  taxInvoiceId: z.string().optional().nullable(),
+  billingNoteId: z.string().optional().nullable(),
   beforeSummary: z.string().optional().nullable(),
   afterSummary: z.string().optional().nullable(),
   changedFields: z.array(z.string()).optional(),

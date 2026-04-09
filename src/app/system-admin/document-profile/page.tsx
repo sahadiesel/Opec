@@ -52,11 +52,17 @@ export default function DocumentProfileAdminPage() {
     if (!profileRef || !currentUser || !canManage) return;
     setIsSaving(true);
     try {
-      const normalizedBranchNo = draft.branchType === 'branch' ? (draft.branchNo || '').trim() : '00000';
-      if (draft.branchType === 'branch' && !normalizedBranchNo) {
-        toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุเลขสาขา' });
-        setIsSaving(false);
-        return;
+      const normalizedBranchNo = draft.branchType === 'branch' ? (draft.branchNo || '').replace(/\D/g, '') : '00000';
+      if (draft.branchType === 'branch') {
+        if (normalizedBranchNo.length !== 5) {
+          toast({
+            variant: 'destructive',
+            title: 'เลขสาขาไม่ถูกต้อง',
+            description: 'กรุณากรอกเลขสาขาเป็นตัวเลข 5 หลัก (เช่น 00001)',
+          });
+          setIsSaving(false);
+          return;
+        }
       }
       await setDoc(
         profileRef,
@@ -125,43 +131,73 @@ export default function DocumentProfileAdminPage() {
                 <Input value={draft.companyNameEn || ''} onChange={(e) => setDraft({ ...draft, companyNameEn: e.target.value })} />
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>เลขผู้เสียภาษี</Label>
                 <Input value={draft.taxId || ''} onChange={(e) => setDraft({ ...draft, taxId: e.target.value })} />
               </div>
               <div className="grid gap-2">
                 <Label>ประเภทสาขา</Label>
-                <Select value={(draft.branchType as any) || 'head_office'} onValueChange={(v: 'head_office' | 'branch') => setDraft({ ...draft, branchType: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={(draft.branchType as any) || 'head_office'}
+                  onValueChange={(v: 'head_office' | 'branch') =>
+                    setDraft({ ...draft, branchType: v, branchNo: v === 'head_office' ? undefined : draft.branchNo })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="head_office">สำนักงานใหญ่</SelectItem>
                     <SelectItem value="branch">สาขา</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              {draft.branchType === 'branch' && (
-                <div className="grid gap-2">
-                  <Label>เลขสาขา (Branch No.)</Label>
-                  <Input value={draft.branchNo || ''} onChange={(e) => setDraft({ ...draft, branchNo: e.target.value })} placeholder="เช่น 00001" />
-                </div>
-              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="grid gap-2">
                 <Label>เบอร์โทร</Label>
                 <Input value={draft.phone || ''} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
               </div>
               <div className="grid gap-2">
                 <Label>อีเมล</Label>
-                <Input value={draft.email || ''} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
+                <Input type="email" value={draft.email || ''} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
               </div>
+              {draft.branchType === 'branch' ? (
+                <div className="grid gap-2">
+                  <Label>เลขสาขา (5 หลัก)</Label>
+                  <Input
+                    inputMode="numeric"
+                    maxLength={5}
+                    autoComplete="off"
+                    placeholder="เช่น 00001"
+                    value={draft.branchNo || ''}
+                    onChange={(e) => {
+                      const d = e.target.value.replace(/\D/g, '').slice(0, 5);
+                      setDraft({ ...draft, branchNo: d });
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">ระบุเลขสาขา 5 หลักตามทะเบียน (เฉพาะเมื่อเลือก &quot;สาขา&quot;)</p>
+                </div>
+              ) : (
+                <div className="hidden md:block" aria-hidden />
+              )}
             </div>
             <div className="grid gap-2">
-              <Label>ที่อยู่บรรทัด 1</Label>
-              <Input value={draft.addressLine1 || ''} onChange={(e) => setDraft({ ...draft, addressLine1: e.target.value })} />
+              <Label>ชื่อที่อยู่ภาษาอังกฤษ</Label>
+              <Input
+                value={draft.addressLine1 || ''}
+                onChange={(e) => setDraft({ ...draft, addressLine1: e.target.value })}
+                placeholder="ที่อยู่เป็นภาษาอังกฤษสำหรับหัวเอกสาร"
+              />
             </div>
             <div className="grid gap-2">
-              <Label>ที่อยู่บรรทัด 2</Label>
-              <Input value={draft.addressLine2 || ''} onChange={(e) => setDraft({ ...draft, addressLine2: e.target.value })} />
+              <Label>ชื่อที่อยู่ภาษาไทย</Label>
+              <Input
+                value={draft.addressLine2 || ''}
+                onChange={(e) => setDraft({ ...draft, addressLine2: e.target.value })}
+                placeholder="ที่อยู่เป็นภาษาไทยสำหรับหัวเอกสาร"
+              />
             </div>
             <div className="flex justify-end">
               <Button onClick={handleSave} disabled={isSaving} className="gap-2">

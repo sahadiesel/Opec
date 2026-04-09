@@ -39,7 +39,8 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
-import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase, useAuth } from '@/firebase';
+import { sendPasswordResetEmail, type ActionCodeSettings } from 'firebase/auth';
 import { isSystemAdmin, isOperationsPillarExecutive } from '@/lib/permission-core';
 import { formatDateRangeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { doc, collection, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
@@ -71,6 +72,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
+  const auth = useAuth();
   const { toast } = useToast();
   const canViewCustomers = useMemo(() => canView(currentUser, 'customers'), [currentUser]);
   const canEditCustomers = useMemo(() => canEdit(currentUser, 'customers'), [currentUser]);
@@ -100,6 +102,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     displayName: '',
     portalRole: 'viewer' as PortalRole
   });
+
+  const [isPortalEditOpen, setIsPortalEditOpen] = useState(false);
+  const [portalEditUser, setPortalEditUser] = useState<User | null>(null);
+  const [portalEditDisplayName, setPortalEditDisplayName] = useState('');
+  const [portalEditRole, setPortalEditRole] = useState<PortalRole>('viewer');
+  const [isPortalEditSaving, setIsPortalEditSaving] = useState(false);
 
   // --- Data Queries ---
 
@@ -189,6 +197,18 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  /** ลิงก์รีเซ็ตรหัสจาก Firebase — ต้องใส่ continue URL ให้ตรงโดเมนที่ลงใน Firebase Console → Auth → Authorized domains */
+  const buildPasswordResetActionSettings = (): ActionCodeSettings => ({
+    url: typeof window !== 'undefined' ? `${window.location.origin}/` : 'http://localhost:9003/',
+    handleCodeInApp: false,
+  });
+
+  const sendPasswordResetToPortalEmail = async (emailRaw: string) => {
+    const email = emailRaw.trim().toLowerCase();
+    if (!email) throw new Error('ไม่มีอีเมล');
+    await sendPasswordResetEmail(auth, email, buildPasswordResetActionSettings());
+  };
+
   const handleProvisionPortalUser = async () => {
     if (!firestore || !currentUser || !customer) return;
     if (!newPortalUser.email || !newPortalUser.displayName) {
@@ -196,25 +216,42 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       return;
     }
 
+    const createdEmail = newPortalUser.email.trim().toLowerCase();
+
     setIsSubmitting(true);
     const service = new CustomerProvisioningService(firestore);
     try {
       const { tempPassword } = await service.createCustomerPortalUser({
         ...newPortalUser,
+        email: createdEmail,
         customerId: id,
         adminUser: currentUser
       });
 
       setIsProvisioningOpen(false);
       setNewPortalUser({ email: '', displayName: '', portalRole: 'viewer' });
-      
-      toast({ 
-        title: "สร้างบัญชีลูกค้าสำเร็จ", 
-        description: `รหัสผ่านชั่วคราวคือ: ${tempPassword} (กรุณาแจ้งลูกค้า)`,
-        duration: 10000 
+
+      let resetEmailOk = false;
+      let resetEmailErr = '';
+      try {
+        await sendPasswordResetToPortalEmail(createdEmail);
+        resetEmailOk = true;
+      } catch (e: unknown) {
+        console.error('[Portal] sendPasswordResetEmail after provision:', e);
+        const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: string }).code) : '';
+        resetEmailErr = code || (e instanceof Error ? e.message : 'unknown');
+      }
+
+      toast({
+        title: 'สร้างบัญชีลูกค้าสำเร็จ',
+        description: resetEmailOk
+          ? `ส่งลิงก์ตั้งรหัสไปที่ ${createdEmail} แล้ว — รหัสชั่วคราวสำรองสำหรับแอดมิน: ${tempPassword}`
+          : `รหัสชั่วคราว: ${tempPassword} — ส่งอีเมลอัตโนมัติไม่สำเร็จ (${resetEmailErr}) กดไอคอนกุญแจที่รายการ หรือตรวจ Firebase Auth (Authorized domains / Email template)`,
+        duration: resetEmailOk ? 9000 : 14000,
       });
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Provisioning Error", description: err.message });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Provisioning Error';
+      toast({ variant: 'destructive', title: 'Provisioning Error', description: msg });
     } finally {
       setIsSubmitting(false);
     }
@@ -229,6 +266,75 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     } else {
       service.activateUser(user.id, currentUser);
       toast({ title: "เปิดการใช้งานสำเร็จ" });
+    }
+  };
+
+  const openPortalUserEdit = (user: User) => {
+    setPortalEditUser(user);
+    setPortalEditDisplayName(user.displayName || '');
+    setPortalEditRole((user.portalRole as PortalRole) || 'viewer');
+    setIsPortalEditOpen(true);
+  };
+
+  const handleSavePortalUserEdit = async () => {
+    if (!firestore || !portalEditUser || !canEditCustomers) return;
+    const name = portalEditDisplayName.trim();
+    if (!name) {
+      toast({ variant: 'destructive', title: 'กรุณาระบุชื่อแสดงผล' });
+      return;
+    }
+    setIsPortalEditSaving(true);
+    try {
+      await updateDoc(doc(firestore, 'users', portalEditUser.id), {
+        displayName: name,
+        portalRole: portalEditRole,
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'บันทึกข้อมูลบัญชีพอร์ทัลแล้ว',
+        description:
+          portalEditRole === 'approver'
+            ? 'Approver — อนุมัติ billing บนใบแจ้งหนี้ร่างได้'
+            : 'Viewer — ดูอย่างเดียว',
+      });
+      setIsPortalEditOpen(false);
+      setPortalEditUser(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'บันทึกไม่สำเร็จ';
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: msg });
+    } finally {
+      setIsPortalEditSaving(false);
+    }
+  };
+
+  /** ส่งลิงก์ตั้งรหัสใหม่ไปที่อีเมลล็อกอินของลูกค้า (Firebase Auth) */
+  const handleSendPortalPasswordReset = async (user: User) => {
+    if (!canEditCustomers) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์' });
+      return;
+    }
+    const email = user.email?.trim();
+    if (!email) {
+      toast({ variant: 'destructive', title: 'ไม่มีอีเมล', description: 'บัญชีนี้ไม่มีอีเมลสำหรับรีเซ็ต' });
+      return;
+    }
+    try {
+      await sendPasswordResetToPortalEmail(email);
+      toast({
+        title: 'ส่งลิงก์รีเซ็ตรหัสแล้ว',
+        description: `ให้ลูกค้าเช็กอีเมล ${email} และโฟลเดอร์สแปม — ถ้าไม่ได้รับ ตรวจ Firebase Console → Authentication → Templates และ Authorized domains`,
+        duration: 10000,
+      });
+    } catch (err: unknown) {
+      console.error('[Portal] sendPasswordResetEmail', err);
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code) : '';
+      const msg = err instanceof Error ? err.message : 'ส่งไม่สำเร็จ';
+      toast({
+        variant: 'destructive',
+        title: 'ส่งอีเมลไม่สำเร็จ',
+        description: code ? `${code}: ${msg}` : msg,
+        duration: 12000,
+      });
     }
   };
 
@@ -977,9 +1083,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             <PageGuidance 
               title="การจัดการสิทธิ์ลูกค้า (Customer Portal Guidance)"
               tips={[
-                "คุณสามารถสร้างบัญชีผู้ใช้ให้พนักงานฝั่งลูกค้าเพื่อเข้าดูความพร้อมของคนงาน (Candidate Review) หรืออนุมัติเวลา (Timesheet)",
-                "บัญชีประเภท 'Approver' จะสามารถกดยืนยันรายการสำคัญได้ ส่วน 'Viewer' จะอ่านข้อมูลได้เพียงอย่างเดียว",
-                "สิทธิ์ของลูกค้าถูกจำกัดให้เห็นเฉพาะข้อมูลใน Customer ID ของตนเองเท่านั้น เพื่อความปลอดภัยของข้อมูลโครงการอื่น"
+                "คุณสามารถสร้างบัญชีผู้ใช้ให้พนักงานฝั่งลูกค้าเพื่อเข้าดูสัญญา PO กำลังพล timesheet และเอกสารการเงิน — พอร์ทัลออกแบบให้เรียบง่าย สลับ EN/TH ได้",
+                "บัญชี 'Approver' อนุมัติ billing บนใบแจ้งหนี้ร่าง (draft invoice) — 'Viewer' ดูได้อย่างเดียว — กดปุ่ม แก้ไข ในรายการเมื่อลูกค้าเปลี่ยนผู้รับผิดชอบ/ตำแหน่ง",
+                "อีเมลรีเซ็ตรหัสจาก Firebase — ถ้าไม่เข้า inbox ให้เช็กสแปม และใน Firebase Console → Authentication → Settings → Authorized domains ต้องมีโดเมนที่ใช้รันแอป (เช่น localhost:9003 ตอนพัฒนา)",
+                "สิทธิ์จำกัดตาม Customer ID ของบริษัทนี้เท่านั้น — หลังสร้างบัญชีระบบจะพยายามส่งลิงก์ตั้งรหัสไปที่อีเมลลูกค้า (แจ้งรหัสชั่วคราวใน toast เป็นสำรอง)",
+                "EN: Use Edit on each row for name + Approver/Viewer; password reset uses Firebase email — check spam & Authorized domains.",
               ]}
             />
 
@@ -989,7 +1097,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
                     <Lock className="h-5 w-5 text-primary" /> บัญชีผู้ใช้งานระบบลูกค้า (Customer Accounts)
                   </CardTitle>
-                  <CardDescription>จัดการการเข้าถึงระบบ Customer Portal สำหรับบริษัทนี้</CardDescription>
+                  <CardDescription className="space-y-1">
+                    <span className="block">จัดการการเข้าถึงระบบ Customer Portal สำหรับบริษัทนี้</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Use this tab to issue usernames (email) and roles — Approver / Viewer — for this company&apos;s portal.
+                    </span>
+                  </CardDescription>
                 </div>
                 <Dialog open={isProvisioningOpen} onOpenChange={setIsProvisioningOpen}>
                   <DialogTrigger asChild>
@@ -1043,6 +1156,50 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+
+                <Dialog open={isPortalEditOpen} onOpenChange={(open) => { setIsPortalEditOpen(open); if (!open) setPortalEditUser(null); }}>
+                  <DialogContent className="max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>แก้ไขบัญชีพอร์ทัลลูกค้า</DialogTitle>
+                      <DialogDescription>
+                        ปรับชื่อที่แสดงและบทบาท Viewer/Approver เมื่อลูกค้าเปลี่ยนผู้รับผิดชอบ — อีเมลล็อกอินแก้ไขไม่ได้จากที่นี่ (ต้องใช้ Firebase Auth ระดับผู้ดูแลระบบ)
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                      <div className="space-y-2">
+                        <Label>อีเมล (Login ID)</Label>
+                        <Input value={portalEditUser?.email || ''} disabled className="bg-muted/50" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ชื่อแสดงผล</Label>
+                        <Input
+                          value={portalEditDisplayName}
+                          onChange={(e) => setPortalEditDisplayName(e.target.value)}
+                          placeholder="ชื่อผู้ติดต่อ / ตำแหน่ง"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>บทบาทพอร์ทัล</Label>
+                        <Select value={portalEditRole} onValueChange={(v) => setPortalEditRole(v as PortalRole)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="viewer">Viewer (ดูข้อมูล)</SelectItem>
+                            <SelectItem value="approver">Approver (อนุมัติ billing / รายการที่เปิดใช้)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsPortalEditOpen(false)} disabled={isPortalEditSaving}>
+                        ยกเลิก
+                      </Button>
+                      <Button onClick={() => void handleSavePortalUserEdit()} disabled={isPortalEditSaving}>
+                        {isPortalEditSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                        บันทึก
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -1071,8 +1228,26 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon" className="h-8 w-8" title="Reset Password">
+                          <div className="flex justify-end flex-wrap gap-1">
+                            {canEditCustomers && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1 text-xs"
+                                onClick={() => openPortalUserEdit(user)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                แก้ไข
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              title="ส่งลิงก์รีเซ็ตรหัสทางอีเมล"
+                              disabled={!canEditCustomers}
+                              onClick={() => void handleSendPortalPasswordReset(user)}
+                            >
                               <KeyRound className="h-4 w-4 text-primary" />
                             </Button>
                             <Button 

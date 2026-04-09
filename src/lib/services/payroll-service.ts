@@ -28,7 +28,14 @@ import {
 } from '@/lib/types';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
-import { assertPayrollPermission, canApprovePayroll, canPreparePayroll } from '@/lib/permissions';
+import {
+  assertPayrollPermission,
+  canApprovePayroll,
+  canConfirmWorkerPayrollPaid,
+  canHandoffWorkerPayrollToAccounting,
+  canPreparePayroll,
+} from '@/lib/permissions';
+import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { writeAuditLog } from './audit-service';
 import {
   batchStatusToD8Lifecycle,
@@ -568,9 +575,11 @@ export class PayrollService {
     });
   }
 
-  /** หลัง HR_APPROVED — ส่งต่อบัญชีเตรียมจ่าย */
+  /** หลัง HR_APPROVED — ส่งต่อบัญชีเตรียมจ่าย (payroll officer / ผู้จัดการ) */
   async financePrepareBatch(id: string, user: User) {
-    assertPayrollPermission(user, 'payroll_worker', 'approve');
+    if (!canHandoffWorkerPayrollToAccounting(user)) {
+      throw new Error('ไม่มีสิทธิ์ส่งต่อบัญชี — ใช้เฉพาะ payroll officer หรือผู้จัดการ HR/ปฏิบัติการ');
+    }
     const docRef = doc(this.getBatchCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Payroll batch not found');
@@ -593,6 +602,68 @@ export class PayrollService {
       sourceModule: 'hr',
       afterSummary: 'Handed off to finance (FINANCE_PREPARED)',
     });
+  }
+
+  /**
+   * บัญชียืนยันจ่ายแล้ว → PAID + สร้างรายการ cashbook (ครั้งเดียวต่องวด)
+   */
+  async financeConfirmWorkerBatchPaid(
+    id: string,
+    user: User,
+    options?: { payoutBankAccountId?: string }
+  ) {
+    if (!canConfirmWorkerPayrollPaid(user)) {
+      throw new Error('ไม่มีสิทธิ์ยืนยันจ่าย — ใช้เฉพาะฝ่ายบัญชี');
+    }
+    const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const batch = snap.data() as PayrollBatch;
+    if (batch.status === 'PAID' || batch.status === 'LOCKED') {
+      return { alreadyDone: true as const, cashbookEntryId: batch.financeCashbookEntryId };
+    }
+    if (batch.status !== 'FINANCE_PREPARED' && batch.status !== 'PAYMENT_EXPORTED') {
+      throw new Error('ยืนยันจ่ายได้เมื่อสถานะ FINANCE_PREPARED หรือ PAYMENT_EXPORTED เท่านั้น');
+    }
+
+    const periodRef = doc(this.db, 'payroll_periods', batch.payrollPeriodId);
+    const periodSnap = await getDoc(periodRef);
+    const periodLabel = periodSnap.exists() ? (periodSnap.data() as PayrollPeriod).label : batch.payrollPeriodId;
+
+    const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
+      this.db,
+      user,
+      {
+        runId: id,
+        netAmount: batch.netAmount,
+        payrollRunNo: batch.id,
+        payrollMonthLabel: periodLabel,
+        existingCashbookEntryId: batch.financeCashbookEntryId,
+        payoutBankAccountId: options?.payoutBankAccountId ?? batch.payoutBankAccountId,
+        kind: 'WORKER',
+      }
+    );
+
+    await updateDoc(docRef, {
+      status: 'PAID',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('PAID'),
+      financeCashbookEntryId: cashbookEntryId,
+      payoutBankAccountId: bankAccountId,
+      financeApprovedBy: user.displayName,
+      financeApprovedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'PAID',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      payrollBatchId: id,
+      sourceModule: 'accounting',
+      afterSummary: `Accounting confirmed payout; cashbook ${cashbookEntryId}`,
+    });
+
+    return { alreadyDone: false as const, cashbookEntryId };
   }
 
   async lockBatch(id: string, user: User) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
@@ -100,7 +100,7 @@ function waveRequiredPositionLabel(
   return labels.join(' · ');
 }
 
-export default function AssignmentsPage() {
+function AssignmentsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -875,5 +875,19 @@ export default function AssignmentsPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+export default function AssignmentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <AssignmentsPageContent />
+    </Suspense>
   );
 }

@@ -9,6 +9,7 @@
  * Registry of Domain-to-Module aliases.
  */
 export const DOMAIN_TO_MODULE_MAP: Record<string, string> = {
+  'commercial_invoices': 'draft_invoices',
   'purchase_orders': 'customer_pos',
   /** Firestore collection name ↔ UI module key worker_documents (permissions.ts / SYSTEM_MODULES) */
   'worker_document_catalog': 'worker_documents',

@@ -14,10 +14,10 @@ import {
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import type { User } from '@/lib/types';
 
-export type PayrollPayoutKind = 'OFFICE_STAFF' | 'EXECUTIVE';
+export type PayrollPayoutKind = 'OFFICE_STAFF' | 'EXECUTIVE' | 'WORKER';
 
 /**
- * เมื่อบัญชีอนุมัติจ่าย (FINANCE_APPROVED): สร้างรายการ cashbook จ่ายออก + ลดยอดบัญชีธนาคาร
+ * เมื่อบัญชียืนยันจ่าย (office: FINANCE_APPROVED / worker batch: PAID): สร้างรายการ cashbook จ่ายออก + ลดยอดบัญชีธนาคาร
  */
 export async function recordPayrollFinanceApprovalPayout(
   db: Firestore,
@@ -57,7 +57,12 @@ export async function recordPayrollFinanceApprovalPayout(
   });
 
   const today = new Date().toISOString().slice(0, 10);
-  const kindLabel = params.kind === 'EXECUTIVE' ? 'ผู้บริหาร' : 'พนักงานสำนักงาน';
+  const kindLabel =
+    params.kind === 'EXECUTIVE'
+      ? 'ผู้บริหาร'
+      : params.kind === 'WORKER'
+        ? 'ลูกจ้างคนงาน'
+        : 'พนักงานสำนักงาน';
   const description = `จ่ายเงินเดือน ${kindLabel} ${params.payrollRunNo} งวด ${params.payrollMonthLabel}`;
 
   const cashbookRef = doc(collection(db, 'cashbook_entries'));

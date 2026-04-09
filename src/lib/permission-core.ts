@@ -6,7 +6,7 @@
 
 import type { BusinessRoleKey, DeptType, User } from './types';
 import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
-import { isActiveForApp, isInternalTypeUser, isSimpleAdmin } from './simple-tier-model';
+import { isActiveForApp, isInternalTypeUser, isSimpleAdmin, isSimpleAccounting } from './simple-tier-model';
 
 // ---------------------------------------------------------------------------
 // Canonical types
@@ -478,6 +478,19 @@ export function isOperationsOfficer(user: User | null): boolean {
 export function isPayrollOfficer(user: User | null): boolean {
   if (!user) return false;
   return getPrimaryLegacyRole(user) === 'payroll_officer';
+}
+
+/**
+ * บันทึก "ลูกค้าอนุมัติ billing" บน draft tax invoice (แยกจาก payroll) —
+ * ผู้จัดการปฏิบัติการ/HR/ขาย, บัญชี, แอดมิน; ไม่รวม payroll_officer เป็นค่าเริ่มต้น
+ */
+export function canRecordTaxInvoiceBillingCustomerApproval(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  if (isSimpleAccounting(user)) return true;
+  if (isOperationManager(user)) return true;
+  if (isOperationsPillarExecutive(user)) return true;
+  return false;
 }
 
 /** แก้ฐานเงินเดือน/ค่าจ้างใน master (เช่น office_staff.monthlySalary) — ไม่ให้ hr_officer / payroll */

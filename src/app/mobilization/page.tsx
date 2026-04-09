@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -18,10 +18,12 @@ import {
   HardHat,
   Waves,
   Calendar,
-  Briefcase
+  Briefcase,
+  Loader2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, User, Position, Wave, PurchaseOrder } from '@/lib/types';
+import { Assignment, Worker, User, Position, Wave, PurchaseOrder, DeploymentStatus } from '@/lib/types';
+import { MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES } from '@/lib/store/mobilization-fulfillment';
 import { Badge } from '@/components/ui/badge';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -30,7 +32,7 @@ import { collection } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 
-export default function MobilizationPage() {
+function MobilizationPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -68,14 +70,11 @@ export default function MobilizationPage() {
     [filterPoId, allPOs]
   );
 
-  // Filter for workers in mobilization pipeline
+  // คิวเตรียมส่งตัว — รวม DRAFT (หลังสร้างจาก Assignments) ถึงก่อน ACTIVE
   const mobilizationList = useMemo(() => {
     if (!assignments) return [];
-    return assignments.filter(a => 
-      ['CLIENT_APPROVED', 'READY', 'MOBILIZING', 'READINESS_CHECK'].includes(a.deploymentStatus) &&
-      a.deploymentStatus !== 'CLOSED' &&
-      a.deploymentStatus !== 'DEMOBILIZED' &&
-      a.deploymentStatus !== 'ACTIVE'
+    return assignments.filter((a) =>
+      MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)
     );
   }, [assignments]);
 
@@ -105,12 +104,24 @@ export default function MobilizationPage() {
     return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">PARTIAL</Badge>;
   };
 
-  const getMobStatusBadge = (status: string | undefined) => {
+  const getDeploymentStatusBadge = (status: DeploymentStatus | string | undefined) => {
     switch (status) {
-      case 'READY_TO_MOBILIZE': return <Badge className="bg-blue-600">READY TO MOB</Badge>;
-      case 'MOBILIZING': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">MOBILIZING</Badge>;
-      case 'FAILED_CHECK': return <Badge variant="destructive">FAILED CHECK</Badge>;
-      default: return <Badge variant="secondary">PENDING</Badge>;
+      case 'DRAFT':
+        return <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 uppercase font-bold">DRAFT</Badge>;
+      case 'READINESS_CHECK':
+        return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">READINESS</Badge>;
+      case 'CLIENT_SUBMITTED':
+        return <Badge variant="outline" className="bg-blue-50 text-blue-800 border-blue-200 uppercase font-bold">CLIENT SUBMITTED</Badge>;
+      case 'CLIENT_APPROVED':
+        return <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-200 uppercase font-bold">CLIENT APPROVED</Badge>;
+      case 'CONFIRMED':
+        return <Badge variant="outline" className="bg-violet-50 text-violet-800 border-violet-200 uppercase font-bold">CONFIRMED</Badge>;
+      case 'READY_TO_MOB':
+        return <Badge className="bg-blue-600 uppercase font-bold">READY TO MOB</Badge>;
+      case 'MOBILIZING':
+        return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">MOBILIZING</Badge>;
+      default:
+        return <Badge variant="secondary">{status || '—'}</Badge>;
     }
   };
 
@@ -226,7 +237,7 @@ export default function MobilizationPage() {
                                 </div>
                               </div>
                             </TableCell>
-                            <TableCell>{getMobStatusBadge(asgn.mobilizationStatus)}</TableCell>
+                            <TableCell>{getDeploymentStatusBadge(asgn.deploymentStatus)}</TableCell>
                             <TableCell className="text-right pr-6">
                               <Button variant="ghost" size="sm" className="gap-2 group-hover:text-primary">
                                 <ClipboardCheck className="h-4 w-4" /> ตรวจสอบความพร้อม <ChevronRight className="h-4 w-4" />
@@ -240,7 +251,7 @@ export default function MobilizationPage() {
                           <TableCell colSpan={6} className="text-center py-20 text-muted-foreground text-sm">
                             {mobilizationList.length === 0 ? (
                               <span className="italic">
-                                ยังไม่มีรายการเตรียมความพร้อมในขณะนี้ เมื่อ Assignment เข้าขั้นตอนนี้ ระบบจะแสดงรายการที่นี่
+                                ยังไม่มีรายการเตรียมความพร้อมในขณะนี้ — หลังมอบหมายจาก Assignments (สถานะ DRAFT) รายการจะปรากฏที่นี่
                               </span>
                             ) : (
                               <span>
@@ -287,5 +298,19 @@ export default function MobilizationPage() {
         )}
       </div>
     </AppShell>
+  );
+}
+
+export default function MobilizationPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <MobilizationPageContent />
+    </Suspense>
   );
 }

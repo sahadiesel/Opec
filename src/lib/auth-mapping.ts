@@ -65,6 +65,7 @@ export const OPERATION_DEFAULT_MODULES = [
   'waves',
   'assignments',
   'mobilization',
+  'draft_invoices',
 ] as const;
 
 export const ACCOUNTING_DEFAULT_MODULES = [

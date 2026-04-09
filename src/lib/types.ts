@@ -388,6 +388,8 @@ export interface Worker {
   skills: string[];
   notes?: string;
   disciplinaryNotes?: string;
+  /** ลูกค้าในรายการนี้สามารถเปิดดูโปรไฟล์/เอกสารคนงานในพอร์ทัลได้ (จำกัดสิทธิ์ใน Firestore rules) */
+  assignedCustomerIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -850,6 +852,8 @@ export interface AuditLog {
   purchaseOrderId?: string;
   contractTermId?: string;
   exportBatchId?: string;
+  taxInvoiceId?: string;
+  billingNoteId?: string;
   beforeSummary?: string;
   afterSummary?: string;
   changedFields?: string[];
@@ -917,6 +921,8 @@ export interface DailyTimesheet {
   lockedForPayrollAt?: number;
   lockedForBillingAt?: number;
   evidenceFileUrl?: string;
+  /** ล็อกเพราะลูกค้าอนุมัติ billing (draft invoice) — ห้ามแก้ไขหลังนี้ */
+  billingLockedByTaxInvoiceId?: string;
 
   createdAt: number;
   updatedAt: number;
@@ -1150,6 +1156,61 @@ export interface BillingNoteLine {
 
 export type BillingNoteReferenceType = 'CONTRACT' | 'PO' | 'TIMESHEET' | 'SERVICE';
 
+/**
+ * ใบแจ้งหนี้เรียกเก็บ (commercial) — สร้างจาก timesheet/wave ก่อนใบกำกับภาษี
+ * แยกจาก {@link TaxInvoice} ซึ่งออกทางบัญชีหลังได้รับเงิน
+ */
+export type CommercialInvoiceStatus = 'DRAFT' | 'PENDING_CUSTOMER' | 'ISSUED' | 'VOID';
+
+export interface CommercialInvoiceLine {
+  id: string;
+  description: string;
+  workerId?: string;
+  workerName?: string;
+  positionId?: string;
+  eventType?: string;
+  timesheetIds?: string[];
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface CommercialInvoice {
+  id: string;
+  invoiceNo: string;
+  status: CommercialInvoiceStatus;
+  customerId: string;
+  contractId?: string;
+  poId: string;
+  waveId: string;
+  /** แสดงผล — เก็บตอนสร้างจาก wave */
+  waveCode?: string;
+  periodStart: string;
+  periodEnd: string;
+  issueDate: string;
+  currency: string;
+  vatPercent: number;
+  amountBeforeTax: number;
+  vatAmount: number;
+  withholdingTaxAmount: number;
+  totalAmount: number;
+  lines: CommercialInvoiceLine[];
+  /** หลังลูกค้า/ตัวแทนอนุมัติ — ถือเป็น Invoice จริงสำหรับเรียกเก็บ (ยังไม่ใช่ใบกำกับภาษี) */
+  customerApprovedAt?: number;
+  customerApprovedByUid?: string;
+  customerApprovedByName?: string;
+  customerApprovalSource?: 'CLIENT_PORTAL' | 'INTERNAL';
+  generationWarnings?: string[];
+  timesheetCount?: number;
+  notes?: string;
+  createdAt: number;
+  createdByUid: string;
+  createdByName: string;
+  updatedAt: number;
+  updatedByUid?: string;
+  updatedByName?: string;
+}
+
 export interface CashbookEntry {
   id: string;
   entryNo: string;
@@ -1294,6 +1355,12 @@ export interface PayrollBatch {
   hrApprovedAt?: number;
   financePreparedBy?: string;
   financePreparedAt?: number;
+  /** บัญชียืนยันจ่ายแล้ว — รายการ cashbook ที่สร้างอัตโนมัติ */
+  financeCashbookEntryId?: string;
+  /** บัญชีธนาคารที่ใช้ตัดจ่าย (ถ้าว่าง ระบบใช้บัญชี ACTIVE แรก) */
+  payoutBankAccountId?: string;
+  financeApprovedBy?: string;
+  financeApprovedAt?: number;
   lockedBy?: string;
   lockedAt?: number;
   createdBy: string;
@@ -1759,6 +1826,33 @@ export interface ReceiptAllocation {
   createdAt: number;
 }
 
+/** เหตุการณ์อนุมัติ/ล็อกที่เก็บบนเอกสาร (คู่กับ audit_logs กลาง) */
+export interface DocumentApprovalEvent {
+  id: string;
+  action: 'BILLING_CUSTOMER_APPROVED';
+  at: number;
+  actorUid: string;
+  actorName: string;
+  actorRole?: string;
+  /** internal_ui = บันทึกแทนลูกค้าในระบบภายใน; client_portal = ลูกค้ากดเอง */
+  channel: 'internal_ui' | 'client_portal';
+  /** โทเคนอ้างอิงชุดเอกสาร (แสดงต่อท้ายเลขที่/QR ได้) */
+  approvalToken: string;
+  note?: string;
+}
+
+/** รูปสลิปลงเวลา/เอกสารลงนามแนบกับใบแจ้งหนี้ร่าง (ก่อน ISSUED) */
+export interface TaxInvoiceTimesheetAttachment {
+  id: string;
+  storagePath: string;
+  downloadUrl: string;
+  fileName: string;
+  contentType: string;
+  uploadedAt: number;
+  uploadedByUid?: string;
+  uploadedByName?: string;
+}
+
 export interface TaxInvoice {
   id: string;
   taxInvoiceNo: string;
@@ -1774,6 +1868,19 @@ export interface TaxInvoice {
   currency: string;
   status: TaxInvoiceStatus;
   notes?: string;
+  /** แนบรูปสลิป/เอกสารขณะสถานะ DRAFT */
+  timesheetPaperAttachments?: TaxInvoiceTimesheetAttachment[];
+  /** อ้างอิงแถวลูกหนี้ (AR) หลังออกเอกสารจริง */
+  arEntryId?: string;
+  /** ลูกค้ายืนยันยอด billing (แยกจาก payroll) — หลังตั้งค่า timesheet ที่เกี่ยวข้องจะถูกล็อก */
+  billingCustomerApprovedAt?: number;
+  billingCustomerApprovedByUid?: string;
+  billingCustomerApprovedByName?: string;
+  billingCustomerApprovalSource?: 'internal_representative' | 'client_portal';
+  /** โทเคนอ้างอิงครั้งอนุมัติ billing (แนบท้ายเอกสาร/ตรวจสอบย้อนหลัง) */
+  billingApprovalToken?: string;
+  /** ประวัติอนุมัติบนเอกสาร (รายละเอียดเต็มอยู่ที่ audit_logs ด้วย) */
+  billingApprovalEvents?: DocumentApprovalEvent[];
   createdAt: number;
   updatedAt: number;
 }

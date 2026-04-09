@@ -7,7 +7,15 @@ import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
-import { canAccess, canApprovePayroll, canGeneratePayslips, canView, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
+import {
+  canAccess,
+  canApprovePayroll,
+  canGeneratePayslips,
+  canHandoffWorkerPayrollToAccounting,
+  canView,
+  isHRStaff,
+  isMatrixControlledRole,
+} from '@/lib/permissions';
 import type {
   OfficePayrollLine,
   OfficePayrollRun,
@@ -268,7 +276,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
   };
 
   const handleWorkerHandoff = async () => {
-    if (!firestore || !selectedBatch || !canApproveWorkerFlow) return;
+    if (!firestore || !selectedBatch || !canHandoffWorkerPayrollToAccounting(currentUser)) return;
     setBusy(true);
     try {
       const svc = new PayrollService(firestore);
@@ -511,10 +519,14 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                       </Button>
                       <Button
                         variant="outline"
-                        disabled={busy || !canApproveWorkerFlow || selectedBatch.status !== 'HR_APPROVED'}
+                        disabled={
+                          busy ||
+                          !canHandoffWorkerPayrollToAccounting(currentUser) ||
+                          selectedBatch.status !== 'HR_APPROVED'
+                        }
                         onClick={() => void handleWorkerHandoff()}
                       >
-                        ล็อก / ส่งต่อบัญชี (FINANCE_PREPARED)
+                        ส่งต่อบัญชี (FINANCE_PREPARED)
                       </Button>
                     </CardContent>
                   </Card>

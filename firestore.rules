@@ -174,6 +174,51 @@ service cloud.firestore {
         && isActiveStatus(userData());
     }
 
+    function portalCustomerIdOk() {
+      let d = userData();
+      return clientPortalUserActive()
+        && d != null
+        && 'customerId' in d
+        && d.customerId is string
+        && d.customerId.size() > 0;
+    }
+
+    function portalOwnsResourceCustomerId() {
+      return portalCustomerIdOk()
+        && resource != null
+        && resource.data.keys().hasAny(['customerId'])
+        && resource.data.customerId == userData().customerId;
+    }
+
+    function portalIsApprover() {
+      return portalCustomerIdOk()
+        && 'portalRole' in userData()
+        && userData().portalRole == 'approver';
+    }
+
+    function portalTaxInvoiceBillingApprovalKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'billingCustomerApprovedAt',
+        'billingCustomerApprovedByUid',
+        'billingCustomerApprovedByName',
+        'billingCustomerApprovalSource',
+        'billingApprovalToken',
+        'billingApprovalEvents',
+        'updatedAt'
+      ]);
+    }
+
+    function portalTimesheetBillingLockKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'status',
+        'lockedAt',
+        'lockedBy',
+        'billingLockedByTaxInvoiceId',
+        'lockedForBillingAt',
+        'updatedAt'
+      ]);
+    }
+
     // ---------- Admin-only (no overlapping permissive catch-all) ----------
     match /users/{userId} {
       allow get: if isAdmin() || isOwner(userId) || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
@@ -202,7 +247,8 @@ service cloud.firestore {
     // UI list: admin only; app services append entries as any internal user.
     match /audit_logs/{id} {
       allow read: if isAdmin();
-      allow create: if isInternalUser();
+      allow create: if isInternalUser()
+        || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
       allow update, delete: if isAdmin();
     }
 
@@ -213,27 +259,74 @@ service cloud.firestore {
 
     // ---------- Accounting-only modules ----------
     match /billing_notes/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || portalOwnsResourceCustomerId();
+      allow write: if isAccountingOrAdmin();
+    }
+    match /billing_notes/{billingNoteId}/lines/{lineId} {
+      allow read: if isAccountingOrAdmin()
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/billing_notes/$(billingNoteId))
+            && get(/databases/$(database)/documents/billing_notes/$(billingNoteId)).data.customerId == userData().customerId);
+      allow write: if isAccountingOrAdmin();
     }
     match /billing_notes/{billingNoteId}/{document=**} {
       allow read, write: if isAccountingOrAdmin();
     }
 
+    // DRAFT: บัญชีสร้าง/ออกเอกสารจริง — พนักงานภายในดูได้และแนบรูปสลิปขณะยัง DRAFT เท่านั้น
+    // Commercial invoices (draft → customer approval → issued) — not tax invoices; internal creates from timesheet/wave.
+    match /commercial_invoices/{id} {
+      allow read: if isInternalUser()
+        || (portalCustomerIdOk() && resource.data.customerId == userData().customerId);
+      allow create: if isInternalUser();
+      allow update: if isInternalUser();
+      allow delete: if isAdmin() || (isInternalUser() && resource.data.status == 'DRAFT');
+    }
+
     match /tax_invoices/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow create: if isAccountingOrAdmin()
+        && request.resource.data.status == 'DRAFT';
+      allow update: if isAccountingOrAdmin()
+        || (
+          isInternalUser()
+          && resource.data.status == 'DRAFT'
+          && request.resource.data.status == 'DRAFT'
+        )
+        || (
+          portalIsApprover()
+          && portalOwnsResourceCustomerId()
+          && resource.data.status == 'DRAFT'
+          && request.resource.data.status == 'DRAFT'
+          && portalTaxInvoiceBillingApprovalKeysOnly()
+        );
+      allow delete: if isAccountingOrAdmin();
     }
     match /tax_invoices/{taxInvoiceId}/{document=**} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isInternalUser()
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId))
+            && get(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId)).data.customerId == userData().customerId);
+      allow write: if isAccountingOrAdmin();
     }
 
     match /receipts/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || portalOwnsResourceCustomerId();
+      allow write: if isAccountingOrAdmin();
     }
     match /receipts/{id}/allocations/{allocId} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin()
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/receipts/$(id))
+            && get(/databases/$(database)/documents/receipts/$(id)).data.customerId == userData().customerId);
+      allow write: if isAccountingOrAdmin();
     }
     match /receipts/{receiptId}/{document=**} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin()
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/receipts/$(receiptId))
+            && get(/databases/$(database)/documents/receipts/$(receiptId)).data.customerId == userData().customerId);
+      allow write: if isAccountingOrAdmin();
     }
 
     match /ap_bills/{id} {
@@ -241,7 +334,8 @@ service cloud.firestore {
     }
 
     match /accounts_receivable/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || portalOwnsResourceCustomerId();
+      allow write: if isAccountingOrAdmin();
     }
 
     // Internal users may create rows from store workflow (vendor bill); accounting still controls payment in UI.
@@ -305,7 +399,8 @@ service cloud.firestore {
     }
 
     match /main_contracts/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow write: if isInternalUser();
     }
     match /main_contracts/{contractId}/{document=**} {
       allow read, write: if isInternalUser();
@@ -316,7 +411,8 @@ service cloud.firestore {
     }
 
     match /purchase_orders/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow write: if isInternalUser();
     }
     match /purchase_orders/{purchaseOrderId}/{document=**} {
       allow read, write: if isInternalUser();
@@ -331,11 +427,13 @@ service cloud.firestore {
     }
 
     match /waves/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow write: if isInternalUser();
     }
 
     match /mobilizations/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow write: if isInternalUser();
     }
     match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
       allow read, write: if isInternalUser();
@@ -349,15 +447,28 @@ service cloud.firestore {
       allow read, write: if isInternalUser();
     }
 
-    match /workers/{id} {
-      allow read, write: if isInternalUser();
+    match /workers/{workerId} {
+      allow read: if isInternalUser()
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/workers/$(workerId))
+            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
+      allow write: if isInternalUser();
     }
     match /workers/{workerId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser()
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/workers/$(workerId))
+            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
+      allow write: if isInternalUser();
     }
 
     match /positions/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || clientPortalUserActive();
+      allow write: if isInternalUser();
     }
     match /positions/{positionId}/{document=**} {
       allow read, write: if isInternalUser();
@@ -416,11 +527,28 @@ service cloud.firestore {
     }
 
     match /daily_timesheets/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow create, delete: if isInternalUser();
+      allow update: if isInternalUser()
+        || (
+          portalIsApprover()
+          && portalOwnsResourceCustomerId()
+          && resource.data.status != 'LOCKED'
+          && request.resource.data.status == 'LOCKED'
+          && portalTimesheetBillingLockKeysOnly()
+        );
     }
 
     match /exception_requests/{id} {
       allow read, write: if isInternalUser();
+    }
+
+    match /customer_issues/{id} {
+      allow create: if clientPortalUserActive()
+        && request.resource.data.customerId == userData().customerId;
+      allow read: if isInternalUser()
+        || (portalCustomerIdOk() && resource.data.customerId == userData().customerId);
+      allow update, delete: if isInternalUser();
     }
 
     match /worker_payment_profiles/{id} {

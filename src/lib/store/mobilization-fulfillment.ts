@@ -43,6 +43,19 @@ export const MOBILIZATION_STATUSES_NOT_CLOSED: DeploymentStatus[] = [
   'DEMOBILIZED',
 ];
 
+/**
+ * คิวหน้า /mobilization — แสดงตั้งแต่ DRAFT (หลังมอบหมาย) จนถึงก่อนลงงานหน้าไซต์ (ACTIVE)
+ */
+export const MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES: DeploymentStatus[] = [
+  'DRAFT',
+  'READINESS_CHECK',
+  'CLIENT_SUBMITTED',
+  'CLIENT_APPROVED',
+  'CONFIRMED',
+  'READY_TO_MOB',
+  'MOBILIZING',
+];
+
 export function appliesPpeRequirement(req: PositionPPERequirement): boolean {
   return !!req.required;
 }

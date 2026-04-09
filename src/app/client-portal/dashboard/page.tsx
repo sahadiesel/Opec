@@ -1,329 +1,145 @@
-
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { AppShell } from '@/components/layout/app-shell';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-import { 
-  Users, 
-  Waves, 
-  Clock, 
-  ChevronRight, 
-  LayoutGrid,
-  HardHat,
-  MapPin,
-  Calendar,
-  Activity,
-  ShoppingCart,
-  AlertCircle,
-  FileBarChart,
-  ShieldCheck,
-  Truck,
-  Building2,
-  FileText,
-  Receipt,
-  Wallet
-} from 'lucide-react';
-import { 
-  User, 
-  Wave, 
-  Assignment, 
-  DailyTimesheet, 
-  Worker, 
-  PurchaseOrder, 
-  TaxInvoice
-} from '@/lib/types';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, where, limit, orderBy } from 'firebase/firestore';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useMemo } from 'react';
 import Link from 'next/link';
-import { PageGuidance } from '@/components/layout/page-guidance';
+import {
+  FileText,
+  ShoppingCart,
+  HardHat,
+  Clock,
+  FileEdit,
+  Receipt,
+  ChevronRight,
+  AlertCircle,
+  Wallet,
+  Waves,
+} from 'lucide-react';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { collection, query, where, limit, orderBy } from 'firebase/firestore';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { isClient } from '@/lib/permissions';
-import { differenceInDays, parseISO, startOfDay } from 'date-fns';
-import { Separator } from '@/components/ui/separator';
-import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import { useAppUser } from '@/hooks/use-app-user';
+import { usePortalLocale } from '@/contexts/portal-locale-context';
+import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
+import type { LucideIcon } from 'lucide-react';
+
+const TILES: { href: string; key: PortalDictKey; icon: LucideIcon }[] = [
+  { href: '/client-portal/contracts', key: 'contracts', icon: FileText },
+  { href: '/client-portal/pos', key: 'pos', icon: ShoppingCart },
+  { href: '/client-portal/workers', key: 'workers', icon: HardHat },
+  { href: '/client-portal/timesheets', key: 'timesheets', icon: Clock },
+  { href: '/client-portal/draft-invoices', key: 'draftInvoices', icon: FileEdit },
+  { href: '/client-portal/invoices-receipts', key: 'documents', icon: Receipt },
+];
 
 export default function ClientDashboardPage() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const { isUserLoading } = useUser();
+  const { currentUser, isLoading: appUserLoading } = useAppUser();
   const firestore = useFirestore();
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const { t } = usePortalLocale();
 
   const isClientUser = useMemo(() => isClient(currentUser), [currentUser]);
 
-  // --- Scoped Queries ---
-  const queryService = useMemo(() => firestore ? new CustomerQueryService(firestore) : null, [firestore]);
+  const queryService = useMemo(() => (firestore ? new CustomerQueryService(firestore) : null), [firestore]);
 
   const wavesQuery = useMemoFirebase(() => queryService?.getScopedWavesQuery(currentUser), [queryService, currentUser]);
-  const { data: waves } = useCollection<Wave>(wavesQuery as any);
-
-  const asgnQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
-  const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
-
-  const tsQuery = useMemoFirebase(() => {
-    const base = queryService?.getScopedTimesheetsQuery(currentUser);
-    return base ? query(base as any, where('status', 'in', ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED']), limit(5)) : null;
-  }, [queryService, currentUser]);
-  const { data: recentTimesheets } = useCollection<DailyTimesheet>(tsQuery as any);
-
-  const invQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser?.customerId) return null;
-    return query(collection(firestore, 'tax_invoices'), where('customerId', '==', currentUser.customerId), orderBy('issueDate', 'desc'), limit(5));
-  }, [firestore, currentUser?.customerId]);
-  const { data: recentInvoices } = useCollection<TaxInvoice>(invQuery as any);
+  const { data: waves } = useCollection(wavesQuery as any);
 
   const posQuery = useMemoFirebase(() => queryService?.getScopedPOsQuery(currentUser), [queryService, currentUser]);
-  const { data: pos } = useCollection<PurchaseOrder>(posQuery as any);
+  const { data: pos } = useCollection(posQuery as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'workers') : null), [firestore]);
-  const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
+  const recentInvoicesQuery = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(
+      collection(firestore, 'tax_invoices'),
+      where('customerId', '==', currentUser.customerId),
+      orderBy('issueDate', 'desc'),
+      limit(40)
+    );
+  }, [firestore, currentUser?.customerId]);
+  const { data: recentInvoices } = useCollection(recentInvoicesQuery as any);
 
-  // --- Stats Calculation ---
-  const stats = useMemo(() => {
-    const activeHeadcount = assignments?.filter(a => a.deploymentStatus === 'ACTIVE').length || 0;
-    const mobilising = assignments?.filter(a => ['READY_TO_MOB', 'MOBILIZING'].includes(a.deploymentStatus)).length || 0;
-    
-    return {
-      activeHeadcount,
-      mobilising,
-      totalWaves: waves?.length || 0,
-      activeWaves: waves?.filter(w => w.status === 'ACTIVE').length || 0,
-      totalPOs: pos?.length || 0,
-    };
-  }, [assignments, waves, pos]);
+  const pendingDraftApprovals = useMemo(
+    () =>
+      (recentInvoices ?? []).filter(
+        (d: { status?: string; billingCustomerApprovedAt?: number }) =>
+          d.status === 'DRAFT' && !d.billingCustomerApprovedAt
+      ).length,
+    [recentInvoices]
+  );
 
-  const activeWorkerStats = useMemo(() => {
-    if (!assignments || !allWorkers) return [];
-    
-    return assignments
-      .filter(a => a.deploymentStatus === 'ACTIVE')
-      .map(asgn => {
-        const worker = allWorkers.find(w => w.id === asgn.workerId);
-        const start = parseISO(asgn.startDate);
-        const end = parseISO(asgn.endDate);
-        const today = startOfDay(new Date());
-        
-        const totalDays = differenceInDays(end, start) + 1;
-        const daysWorked = differenceInDays(today, start);
-        const remaining = totalDays - daysWorked;
-
-        return {
-          id: asgn.id,
-          name: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
-          position: asgn.positionId,
-          projectName: asgn.projectName,
-          daysWorked: Math.max(0, daysWorked),
-          remaining: Math.max(0, remaining),
-          percent: Math.min(100, Math.max(0, (daysWorked / totalDays) * 100))
-        };
-      }).slice(0, 5);
-  }, [assignments, allWorkers]);
-
-  if (isUserLoading || !currentUser) return null;
+  if (appUserLoading || !currentUser) return null;
 
   if (!isClientUser) {
     return (
-      <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-          <AlertCircle className="h-12 w-12 text-destructive opacity-50" />
-          <h2 className="text-xl font-bold">Access Restricted</h2>
-          <p className="text-muted-foreground">This dashboard is designed for Customer Portal users.</p>
-        </div>
-      </AppShell>
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-white py-16 text-center dark:border-zinc-800 dark:bg-zinc-900/50">
+        <AlertCircle className="mb-3 h-10 w-10 text-amber-500" />
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('accessRestricted')}</h2>
+        <p className="mt-1 max-w-sm text-sm text-zinc-500">{t('portalOnly')}</p>
+      </div>
     );
   }
 
+  const activeWaves = waves?.filter((w: { status: string }) => w.status === 'ACTIVE').length ?? 0;
+
   return (
-    <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-8 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <ShieldCheck className="h-8 w-8 text-primary" /> พอร์ทัลโครงการ (Project Transparency Portal)
-          </h1>
-          <p className="text-muted-foreground text-lg italic">
-            ศูนย์รวมข้อมูลการดำเนินงาน เอกสารสิทธิ์ และความโปร่งใสสำหรับ {currentUser.displayName}
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-2xl">{t('dashboardTitle')}</h1>
+        <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">{t('dashboardLead')}</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <div className="rounded-xl border border-zinc-200 bg-white p-3 text-center dark:border-zinc-800 dark:bg-zinc-900/40">
+          <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{pos?.length ?? 0}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 sm:text-xs">PO</p>
+        </div>
+        <div className="rounded-xl border border-zinc-200 bg-white p-3 text-center dark:border-zinc-800 dark:bg-zinc-900/40">
+          <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{activeWaves}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 sm:text-xs">{t('waves')}</p>
+        </div>
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/80 p-3 text-center dark:border-amber-900/40 dark:bg-amber-950/30">
+          <p className="text-lg font-semibold text-amber-900 dark:text-amber-100">{pendingDraftApprovals}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-amber-800/80 dark:text-amber-200/80">
+            {t('draftInvoices')}
           </p>
         </div>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="พนักงานหน้างาน" value={stats.activeHeadcount} sub="Active Personnel" icon={HardHat} colorClass="border-l-blue-600" />
-          <StatCard title="กำลังระดมพล" value={stats.mobilising} sub="Mobilization Pipeline" icon={Truck} colorClass="border-l-indigo-500" />
-          <StatCard title="รอบงานปัจจุบัน" value={stats.activeWaves} sub="Active Waves" icon={Waves} colorClass="border-l-green-600" />
-          <StatCard title="ใบสั่งซื้อ (POs)" value={stats.totalPOs} sub="Purchase Orders" icon={ShoppingCart} colorClass="border-l-amber-500" />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
-            <Card className="shadow-md border-none overflow-hidden">
-              <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <Activity className="h-5 w-5" /> ตารางการปฏิบัติงาน (Active Roster)
-                  </CardTitle>
-                  <CardDescription>ความคืบหน้าของรอบการทำงานพนักงานปัจจุบัน</CardDescription>
-                </div>
-                <Button variant="ghost" size="sm" className="text-xs font-bold text-primary" asChild>
-                  <Link href="/client-portal/waves">ดูทั้งหมด <ChevronRight className="h-4 w-4" /></Link>
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/30">
-                      <TableHead className="pl-6">พนักงาน (Worker)</TableHead>
-                      <TableHead>โครงการ (Project)</TableHead>
-                      <TableHead className="text-center">Worked</TableHead>
-                      <TableHead className="text-right pr-6">Days left</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {activeWorkerStats.map(w => (
-                      <TableRow key={w.id} className="hover:bg-muted/10">
-                        <TableCell className="pl-6">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{w.name}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{w.position}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs font-medium">{w.projectName}</TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex flex-col items-center gap-1">
-                            <span className="font-black text-blue-700">{w.daysWorked} วัน</span>
-                            <div className="w-20 h-1 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-blue-500" style={{ width: `${w.percent}%` }} />
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right pr-6 font-bold text-slate-600">{w.remaining} วัน</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card className="shadow-md border-none overflow-hidden">
-                <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Wallet className="h-4 w-4 text-primary" /> เอกสารการเงินล่าสุด
-                  </CardTitle>
-                  <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
-                    <Link href="/client-portal/billing">ดูทั้งหมด</Link>
-                  </Button>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="divide-y">
-                    {recentInvoices?.map(inv => (
-                      <div key={inv.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
-                        <div className="space-y-0.5">
-                          <p className="font-bold text-primary font-mono">{inv.taxInvoiceNo}</p>
-                          <p className="text-[10px] text-muted-foreground">{formatStoredDateThaiBE(inv.issueDate)}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-black text-primary">฿{inv.totalAmount.toLocaleString()}</p>
-                          <Badge variant="outline" className="text-[8px] h-4 uppercase">{inv.status}</Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="shadow-md border-none overflow-hidden">
-                <CardHeader className="bg-primary/5 border-b flex flex-row items-center justify-between">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-primary" /> บันทึกเวลาที่ยืนยันแล้ว
-                  </CardTitle>
-                  <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold" asChild>
-                    <Link href="/client-portal/timesheets">ดูทั้งหมด</Link>
-                  </Button>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="divide-y">
-                    {recentTimesheets?.map(ts => (
-                      <div key={ts.id} className="p-3 flex items-center justify-between text-xs hover:bg-muted/10 transition-colors">
-                        <div className="space-y-0.5">
-                          <p className="font-bold text-primary">{ts.workerNameSnapshot}</p>
-                          <p className="text-[10px] text-muted-foreground">{ts.date} | Slip: {ts.sourceDocumentNo || 'N/A'}</p>
-                        </div>
-                        <Badge variant="secondary" className="text-[8px] font-bold h-4 uppercase bg-blue-50 text-blue-700 border-blue-100">
-                          {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {TILES.map(({ href, key, icon: Icon }) => (
+          <Link
+            key={href}
+            href={href}
+            className="group flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-primary/30 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900/40"
+          >
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Icon className="h-6 w-6" />
             </div>
-          </div>
-
-          <div className="space-y-6">
-            <Card className="bg-primary text-primary-foreground shadow-lg overflow-hidden border-none">
-              <CardHeader className="pb-4 border-b border-white/10">
-                <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                  <LayoutGrid className="h-4 w-4" /> แหล่งข้อมูล (Portal Access)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-4">
-                <div className="space-y-2">
-                  <ShortcutItem href="/client-portal/waves" label="รายชื่อกำลังพล" sub="Personnel Roster" icon={HardHat} />
-                  <ShortcutItem href="/client-portal/timesheets" label="บันทึกเวลาและหลักฐาน" sub="Verified Evidence" icon={FileText} />
-                  <ShortcutItem href="/client-portal/billing" label="ประวัติวางบิล/ชำระเงิน" sub="Billing & Invoices" icon={Receipt} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <PageGuidance 
-              title="แนะนำการตรวจสอบ"
-              tips={[
-                "ท่านสามารถตรวจสอบเลขที่ Slip จากตารางบันทึกเวลาเพื่อสอบทานกับสำเนาที่หน้างาน",
-                "เอกสารการเงินประกอบด้วย ใบวางบิล (Notes), ใบกำกับภาษี (Invoices) และใบเสร็จ (Receipts)",
-                "ใช้ระบบ 'Report' หากพบข้อมูลที่ไม่ตรงตามจริงเพื่อรับการตรวจสอบจากเจ้าหน้าที่โดยตรง"
-              ]}
-            />
-          </div>
-        </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-zinc-900 dark:text-zinc-50">{t(key)}</p>
+              <p className="text-xs text-zinc-500">{t('open')}</p>
+            </div>
+            <ChevronRight className="h-5 w-5 shrink-0 text-zinc-300 transition group-hover:translate-x-0.5 group-hover:text-primary" />
+          </Link>
+        ))}
       </div>
-    </AppShell>
-  );
-}
 
-function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
-  return (
-    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm bg-white`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-4 w-4 opacity-30 text-primary" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-black text-primary truncate">{value}</div>
-        <p className="text-[10px] font-medium text-muted-foreground mt-1 uppercase tracking-tighter">{sub}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ShortcutItem({ href, label, sub, icon: Icon }: any) {
-  return (
-    <Link href={href} className="flex items-center justify-between p-3 rounded-xl bg-white/10 hover:bg-white/20 transition-all group">
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-white/10 group-hover:bg-white/20 transition-colors">
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-xs font-bold">{label}</span>
-          <span className="text-[9px] opacity-60 uppercase">{sub}</span>
-        </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-6 dark:border-zinc-800">
+        <Link
+          href="/client-portal/waves"
+          className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+        >
+          <Waves className="h-4 w-4" />
+          {t('waves')}
+        </Link>
+        <Link
+          href="/client-portal/billing"
+          className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+        >
+          <Wallet className="h-4 w-4" />
+          {t('dashboardMoreBilling')}
+        </Link>
       </div>
-      <ChevronRight className="h-4 w-4 opacity-40 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
-    </Link>
+    </div>
   );
 }

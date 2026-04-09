@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -117,7 +117,7 @@ const defaultNewWaveState = (): Partial<Wave> => ({
   notes: '',
 });
 
-export default function WavesPage() {
+function WavesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -1096,5 +1096,19 @@ export default function WavesPage() {
         </AlertDialog>
       </div>
     </AppShell>
+  );
+}
+
+export default function WavesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <WavesPageContent />
+    </Suspense>
   );
 }

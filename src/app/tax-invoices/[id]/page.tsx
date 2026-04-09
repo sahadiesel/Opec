@@ -1,67 +1,298 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useRef } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
-  ArrowLeft, 
-  Save, 
-  FileBadge, 
-  Building2, 
-  Calendar, 
-  History,
+import {
+  ArrowLeft,
+  FileBadge,
+  Building2,
+  Calendar,
   Info,
   Loader2,
   Printer,
   XCircle,
-  CheckCircle2
+  CheckCircle2,
+  ImagePlus,
+  Trash2,
+  ExternalLink,
+  UserCheck,
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, collection } from 'firebase/firestore';
+import { useFirestore, useDoc, useMemoFirebase, useUser, useFirebaseApp, useCollection } from '@/firebase';
+import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib/types';
+import {
+  TaxInvoice,
+  TaxInvoiceStatus,
+  User,
+  Customer,
+  BillingNote,
+  BillingNoteLine,
+  TaxInvoiceTimesheetAttachment,
+} from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
+import { useAppUser } from '@/hooks/use-app-user';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAccounting } from '@/lib/simple-tier-model';
+import { canRecordTaxInvoiceBillingCustomerApproval } from '@/lib/permissions';
+import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { recordTaxInvoiceBillingCustomerApproval } from '@/lib/services/tax-invoice-billing-approval-service';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  uploadTaxInvoiceTimesheetImage,
+  deleteTaxInvoiceAttachmentFile,
+  validateTimesheetImageFile,
+} from '@/lib/storage/tax-invoice-attachments';
 
 export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: appUserLoading } = useAppUser();
+  const { user: authUser } = useUser();
+  const firebaseApp = useFirebaseApp();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
+  const [issuing, setIssuing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [billingApproveOpen, setBillingApproveOpen] = useState(false);
+  const [billingApproveNote, setBillingApproveNote] = useState('');
+  const [billingApproving, setBillingApproving] = useState(false);
 
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
 
-  const customerRef = useMemoFirebase(() => (firestore && invoice ? doc(firestore, 'customers', invoice.customerId) : null), [firestore, invoice?.customerId]);
+  const customerRef = useMemoFirebase(
+    () => (firestore && invoice ? doc(firestore, 'customers', invoice.customerId) : null),
+    [firestore, invoice?.customerId]
+  );
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
-  const billingNoteRef = useMemoFirebase(() => (firestore && invoice ? doc(firestore, 'billing_notes', invoice.billingNoteId) : null), [firestore, invoice?.billingNoteId]);
+  const billingNoteRef = useMemoFirebase(
+    () => (firestore && invoice ? doc(firestore, 'billing_notes', invoice.billingNoteId) : null),
+    [firestore, invoice?.billingNoteId]
+  );
   const { data: billingNote } = useDoc<BillingNote>(billingNoteRef as any);
+
+  const billingLinesQuery = useMemoFirebase(
+    () =>
+      firestore && invoice
+        ? collection(firestore, 'billing_notes', invoice.billingNoteId, 'lines')
+        : null,
+    [firestore, invoice?.billingNoteId]
+  );
+  const { data: billingLines } = useCollection<BillingNoteLine>(billingLinesQuery as any);
+
+  const isAccountingActor =
+    !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser));
+
+  const canRecordBillingApproval =
+    !!currentUser && canRecordTaxInvoiceBillingCustomerApproval(currentUser);
+
+  const handleIssueInvoice = async () => {
+    if (!firestore || !invRef || !invoice || !currentUser || !billingNote) return;
+    if (invoice.status !== 'DRAFT') return;
+    if (!invoice.billingCustomerApprovedAt) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่มีการอนุมัติ billing จากลูกค้า',
+        description:
+          'ต้องกด "ลูกค้าอนุมัติ billing" (หรือลูกค้าอนุมัติผ่าน portal) ก่อน — แยกจากขั้นตอน payroll',
+      });
+      return;
+    }
+    if (!isAccountingActor) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์',
+        description: 'เฉพาะบัญชี/ผู้ดูแลระบบเท่านั้นที่ยืนยันออกเอกสารจริง (ISSUED)',
+      });
+      return;
+    }
+
+    setIssuing(true);
+    try {
+      let arEntryId = invoice.arEntryId;
+      if (!arEntryId) {
+        const { code: arNo } = await generateNextDocumentCode(firestore, 'ar', {
+          actor: currentUser.displayName,
+        });
+        const arRef = await addDoc(collection(firestore, 'accounts_receivable'), {
+          customerId: invoice.customerId,
+          referenceType: 'TAX_INVOICE',
+          referenceId: invoice.id,
+          referenceNo: invoice.taxInvoiceNo,
+          documentNo: arNo,
+          issueDate: invoice.issueDate,
+          dueDate: billingNote.dueDate,
+          debitAmount: invoice.totalAmount,
+          creditAmount: 0,
+          outstandingAmount: invoice.totalAmount,
+          status: 'OPEN',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        arEntryId = arRef.id;
+      }
+
+      await updateDoc(invRef, {
+        status: 'ISSUED' as TaxInvoiceStatus,
+        arEntryId,
+        updatedAt: Date.now(),
+      });
+
+      await updateDoc(doc(firestore, 'billing_notes', invoice.billingNoteId), {
+        status: 'INVOICED',
+        updatedAt: Date.now(),
+      });
+
+      toast({
+        title: 'ออกเอกสารจริงแล้ว (ISSUED)',
+        description: 'บันทึกลูกหนี้ (AR) และอัปเดตใบวางบิลเป็น INVOICED',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สำเร็จ',
+        description: 'ไม่สามารถออกเอกสารหรือสร้าง AR ได้',
+      });
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const handleConfirmBillingCustomerApprove = async () => {
+    if (!firestore || !invoice || !billingNote || !currentUser) return;
+    const lines = billingLines ?? [];
+    setBillingApproving(true);
+    try {
+      const { approvalToken, timesheetsLocked } = await recordTaxInvoiceBillingCustomerApproval(
+        firestore,
+        invoice,
+        billingNote,
+        lines,
+        currentUser as User,
+        { channel: 'internal_ui', note: billingApproveNote.trim() || undefined }
+      );
+      setBillingApproveOpen(false);
+      setBillingApproveNote('');
+      toast({
+        title: 'บันทึกการอนุมัติ billing แล้ว',
+        description: `โทเคน ${approvalToken} — ล็อก timesheet ${timesheetsLocked} รายการ`,
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'บันทึกอนุมัติไม่ได้',
+      });
+    } finally {
+      setBillingApproving(false);
+    }
+  };
 
   const handleUpdateStatus = (newStatus: TaxInvoiceStatus) => {
     if (!invRef) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
     updateDocumentNonBlocking(invRef, { status: newStatus, updatedAt: Date.now() });
-    toast({ title: "อัปเดตสถานะสำเร็จ", description: `เปลี่ยนสถานะเป็น ${newStatus}` });
+    toast({ title: 'อัปเดตสถานะสำเร็จ', description: `เปลี่ยนสถานะเป็น ${newStatus}` });
   };
 
-  if (isInvLoading || !invoice || !currentUser) {
-    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
+  const handlePickFiles = () => fileInputRef.current?.click();
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length || !invRef || !invoice || !authUser || !currentUser) return;
+    if (invoice.status !== 'DRAFT') return;
+    if (invoice.billingCustomerApprovedAt) return;
+
+    setUploading(true);
+    try {
+      const existing = invoice.timesheetPaperAttachments ?? [];
+      let next = [...existing];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const v = validateTimesheetImageFile(file);
+        if (v) {
+          toast({ variant: 'destructive', title: file.name, description: v });
+          continue;
+        }
+        const att = await uploadTaxInvoiceTimesheetImage(
+          firebaseApp,
+          invoice.id,
+          file,
+          authUser.uid,
+          currentUser.displayName || authUser.email || 'User'
+        );
+        next = [...next, att];
+      }
+
+      await updateDoc(invRef, { timesheetPaperAttachments: next, updatedAt: Date.now() });
+      toast({ title: 'อัปโหลดรูปแล้ว', description: `จำนวนไฟล์ในรายการ: ${next.length}` });
+    } catch (err) {
+      console.error(err);
+      toast({ variant: 'destructive', title: 'อัปโหลดไม่สำเร็จ', description: String(err) });
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = async (att: TaxInvoiceTimesheetAttachment) => {
+    if (!invRef || !invoice || invoice.status !== 'DRAFT') return;
+    if (invoice.billingCustomerApprovedAt) return;
+    setRemovingId(att.id);
+    try {
+      try {
+        await deleteTaxInvoiceAttachmentFile(firebaseApp, att.storagePath);
+      } catch {
+        /* ไฟล์อาจถูกลบไปแล้ว — ยังตัดรายการออกจากเอกสาร */
+      }
+      const next = (invoice.timesheetPaperAttachments ?? []).filter((a) => a.id !== att.id);
+      await updateDoc(invRef, { timesheetPaperAttachments: next, updatedAt: Date.now() });
+      toast({ title: 'ลบรายการแนบแล้ว' });
+    } catch (err) {
+      console.error(err);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ' });
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  if (isInvLoading || appUserLoading || !invoice || !currentUser) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-12 w-12 text-primary animate-spin" />
+      </div>
+    );
   }
 
+  const attachments = invoice.timesheetPaperAttachments ?? [];
+
   return (
-    <AppShell user={currentUser} onLogout={() => {}}>
+    <AppShell user={currentUser as User} onLogout={() => {}}>
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -69,7 +300,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Tax Invoice Detail (รายละเอียดใบกำกับภาษี)</h1>
+              <h1 className="text-2xl font-bold tracking-tight">
+                ใบแจ้งหนี้ / ใบกำกับภาษี (Tax Invoice)
+              </h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{invoice.taxInvoiceNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -82,7 +315,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร
             </Button>
             <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary">
-              STATUS: {invoice.status}
+              {invoice.status === 'DRAFT' ? 'DRAFT — ร่าง' : `STATUS: ${invoice.status}`}
             </Badge>
           </div>
         </div>
@@ -102,7 +335,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันที่ออกเอกสาร:</Label>
-                  <p className="font-medium flex items-center gap-2"><Calendar className="h-4 w-4" /> {formatStoredDateThaiBE(invoice.issueDate)}</p>
+                  <p className="font-medium flex items-center gap-2">
+                    <Calendar className="h-4 w-4" /> {formatStoredDateThaiBE(invoice.issueDate)}
+                  </p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">อ้างอิงใบวางบิล:</Label>
@@ -110,24 +345,36 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">ลูกค้า:</Label>
-                  <p className="font-semibold">{customer?.name}</p>
+                  <p className="font-semibold flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                    {customer?.name}
+                  </p>
                 </div>
               </div>
-              
+
               <Separator />
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">ยอดเงินฐานภาษี (Taxable Amount)</span>
-                  <span className="font-bold">{invoice.currency} {invoice.taxableAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-bold">
+                    {invoice.currency}{' '}
+                    {invoice.taxableAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม (VAT 7%)</span>
-                  <span className="font-bold">{invoice.currency} {invoice.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-bold">
+                    {invoice.currency}{' '}
+                    {invoice.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center text-lg pt-2 border-t">
                   <span className="font-black text-primary uppercase">ยอดรวมสุทธิ (Net Total)</span>
-                  <span className="font-black text-2xl text-primary">{invoice.currency} {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-black text-2xl text-primary">
+                    {invoice.currency}{' '}
+                    {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
               </div>
 
@@ -135,29 +382,123 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 <Label>หมายเหตุ:</Label>
                 <p className="text-sm italic text-muted-foreground">{invoice.notes || 'ไม่มีหมายเหตุ'}</p>
               </div>
+
+              {invoice.billingApprovalToken && (
+                <div className="rounded-lg border bg-muted/40 p-4 space-y-1">
+                  <Label className="text-[10px] uppercase text-muted-foreground font-bold">
+                    โทเคนอนุมัติ billing (อ้างอิงชุดเอกสาร)
+                  </Label>
+                  <p className="font-mono text-sm font-bold break-all">{invoice.billingApprovalToken}</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
           <div className="space-y-6">
+            <Card className="border-amber-200 bg-amber-50/80 dark:bg-amber-950/20">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-amber-900 dark:text-amber-100">
+                  <UserCheck className="h-4 w-4" />
+                  ลูกค้าอนุมัติ billing (แยกจาก payroll)
+                </CardTitle>
+                <CardDescription className="text-xs text-amber-900/80 dark:text-amber-100/80">
+                  หลังอนุมัติ timesheet ที่เกี่ยวกับใบวางบิลนี้จะถูกล็อก — บัญชีจะออก ISSUED ได้เมื่อขั้นตอนนี้เสร็จแล้ว
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {invoice.billingCustomerApprovedAt ? (
+                  <div className="space-y-1 text-xs">
+                    <p>
+                      <span className="font-semibold">อนุมัติเมื่อ:</span>{' '}
+                      {formatDateTimeThaiBE(invoice.billingCustomerApprovedAt)}
+                    </p>
+                    <p>
+                      <span className="font-semibold">โดย:</span>{' '}
+                      {invoice.billingCustomerApprovedByName || '—'} (
+                      {invoice.billingCustomerApprovalSource === 'client_portal'
+                        ? 'Client portal'
+                        : 'บันทึกภายใน'})
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">ยังไม่มีการอนุมัติ billing จากลูกค้า</p>
+                )}
+                {invoice.status === 'DRAFT' && !invoice.billingCustomerApprovedAt && canRecordBillingApproval && (
+                  <Button
+                    variant="default"
+                    className="w-full bg-amber-700 hover:bg-amber-800 text-white"
+                    onClick={() => setBillingApproveOpen(true)}
+                  >
+                    <UserCheck className="h-4 w-4 mr-2" />
+                    ลูกค้าอนุมัติ billing
+                  </Button>
+                )}
+                {invoice.billingApprovalEvents && invoice.billingApprovalEvents.length > 0 && (
+                  <div className="pt-2 border-t border-amber-200/60 space-y-2 max-h-40 overflow-y-auto">
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">ประวัติบนเอกสาร</p>
+                    {invoice.billingApprovalEvents.map((ev) => (
+                      <div key={ev.id} className="text-[10px] rounded bg-white/60 dark:bg-black/20 p-2 font-mono">
+                        <div>{ev.approvalToken}</div>
+                        <div className="text-muted-foreground mt-1">
+                          {formatDateTimeThaiBE(ev.at)} · {ev.actorName} · {ev.channel}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card className="bg-primary text-primary-foreground shadow-lg">
               <CardHeader className="pb-4 border-b border-white/10">
-                <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ (Workflow)</CardTitle>
+                <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">
+                  การดำเนินการ (Workflow)
+                </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-3">
-                {invoice.status === 'DRAFT' && (
-                  <Button className="w-full bg-white text-primary hover:bg-slate-100 font-bold" onClick={() => handleUpdateStatus('ISSUED')}>
-                    <CheckCircle2 className="h-4 w-4 mr-2" /> ยืนยันการออกเอกสาร
+                {invoice.status === 'DRAFT' && isAccountingActor && (
+                  <Button
+                    className="w-full bg-white text-primary hover:bg-slate-100 font-bold"
+                    onClick={() => void handleIssueInvoice()}
+                    disabled={issuing || !invoice.billingCustomerApprovedAt}
+                  >
+                    {issuing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                    )}
+                    ยืนยันออกเอกสารจริง (ISSUED)
                   </Button>
+                )}
+                {invoice.status === 'DRAFT' && isAccountingActor && !invoice.billingCustomerApprovedAt && (
+                  <div className="p-3 bg-white/15 rounded-lg text-[11px] flex gap-2">
+                    <Info className="h-4 w-4 shrink-0" />
+                    รอลูกค้าอนุมัติ billing ก่อนจึงจะออก ISSUED ได้
+                  </div>
+                )}
+                {invoice.status === 'DRAFT' && !isAccountingActor && (
+                  <div className="p-4 bg-white/10 rounded-lg text-xs flex gap-2">
+                    <Info className="h-4 w-4 shrink-0" />
+                    {invoice.billingCustomerApprovedAt
+                      ? 'ลูกค้าอนุมัติ billing แล้ว — รอฝ่ายบัญชีออก ISSUED'
+                      : 'รอลูกค้าอนุมัติ billing — แนบรูปสลิปด้านล่างได้ (จนกว่าจะอนุมัติ billing)'}
+                  </div>
                 )}
                 {invoice.status === 'ISSUED' && (
                   <div className="p-4 bg-white/10 rounded-lg text-xs flex gap-2">
                     <Info className="h-4 w-4 shrink-0" />
-                    เอกสารถูกยืนยันแล้ว และได้บันทึกเข้าสู่ระบบลูกหนี้ (AR) เรียบร้อยแล้ว
+                    เอกสารออกจริงแล้ว — บันทึกลูกหนี้ (AR) และใบวางบิลเป็น INVOICED
                   </div>
                 )}
-                <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10" onClick={() => handleUpdateStatus('CANCELLED')}>
-                  <XCircle className="h-4 w-4 mr-2" /> ยกเลิกใบกำกับภาษี
-                </Button>
+                {isAccountingActor && (
+                  <Button
+                    variant="ghost"
+                    className="w-full text-white/60 hover:text-white hover:bg-white/10"
+                    onClick={() => handleUpdateStatus('CANCELLED')}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" /> ยกเลิกใบกำกับภาษี
+                  </Button>
+                )}
               </CardContent>
             </Card>
 
@@ -178,6 +519,123 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             </Card>
           </div>
         </div>
+
+        {invoice.status === 'DRAFT' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ImagePlus className="h-5 w-5" />
+                แนบรูปสลิปลงเวลา / เอกสารลงนาม (เฉพาะร่าง DRAFT)
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {invoice.billingCustomerApprovedAt
+                  ? 'หลังลูกค้าอนุมัติ billing แล้ว — ไม่สามารถเพิ่ม/ลบรูปได้ (timesheet ถูกล็อกแล้ว)'
+                  : 'รองรับ JPEG, PNG, WebP ไม่เกิน 15 MB ต่อไฟล์ — ใช้ส่งให้ลูกค้าตรวจก่อนกดอนุมัติ billing'}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="hidden"
+                onChange={(e) => void handleFileChange(e)}
+              />
+              {!invoice.billingCustomerApprovedAt && (
+                <Button variant="secondary" onClick={handlePickFiles} disabled={uploading}>
+                  {uploading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <ImagePlus className="h-4 w-4 mr-2" />
+                  )}
+                  เลือกรูป
+                </Button>
+              )}
+
+              {attachments.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic">ยังไม่มีรูปแนบ</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {attachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="relative rounded-lg border bg-card overflow-hidden group shadow-sm"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={att.downloadUrl}
+                        alt={att.fileName}
+                        className="h-32 w-full object-cover"
+                      />
+                      <div className="p-2 flex flex-col gap-1">
+                        <p className="text-[10px] truncate font-medium" title={att.fileName}>
+                          {att.fileName}
+                        </p>
+                        <div className="flex gap-1">
+                          <Button variant="outline" size="sm" className="h-7 flex-1 text-[10px] px-1" asChild>
+                            <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              เปิด
+                            </a>
+                          </Button>
+                          {!invoice.billingCustomerApprovedAt && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-7 px-2"
+                              onClick={() => void handleRemoveAttachment(att)}
+                              disabled={removingId === att.id}
+                            >
+                              {removingId === att.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3 w-3" />
+                              )}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Dialog open={billingApproveOpen} onOpenChange={setBillingApproveOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>ลูกค้าอนุมัติ billing</DialogTitle>
+              <DialogDescription>
+                ยืนยันการอนุมัติยอด/เอกสารชุดนี้เพื่อส่งต่อบัญชี (แยกจาก payroll) ระบบจะออกโทเคนอ้างอิง ล็อก timesheet
+                และบันทึก audit
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label className="text-xs">หมายเหตุ (ไม่บังคับ)</Label>
+              <Textarea
+                value={billingApproveNote}
+                onChange={(e) => setBillingApproveNote(e.target.value)}
+                placeholder="เช่น อีเมลลูกค้ายืนยัน วันที่ ..."
+                rows={3}
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setBillingApproveOpen(false)} disabled={billingApproving}>
+                ยกเลิก
+              </Button>
+              <Button
+                className="bg-amber-700 hover:bg-amber-800"
+                onClick={() => void handleConfirmBillingCustomerApprove()}
+                disabled={billingApproving}
+              >
+                {billingApproving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยันอนุมัติ billing'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

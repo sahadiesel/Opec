@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -23,19 +23,23 @@ import {
   Building2,
   FileText,
   CreditCard,
-  Printer
+  Printer,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection } from 'firebase/firestore';
-import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod } from '@/lib/types';
+import { doc, collection, getDoc } from 'firebase/firestore';
+import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod, Worker } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateTimeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
-import { canAccess, canGeneratePayslips, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canAccess, canConfirmWorkerPayrollPaid, canGeneratePayslips, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { useAppUser } from '@/hooks/use-app-user';
+import { PayrollService } from '@/lib/services/payroll-service';
+import { buildWorkerPayrollBankVerificationCsv } from '@/lib/payroll/worker-payroll-bank-csv';
+import { useToast } from '@/hooks/use-toast';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -44,9 +48,14 @@ function lineDeductionsTotal(line: PayrollBatchLine): number {
 export default function PayrollBatchDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { toast } = useToast();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const [workersById, setWorkersById] = useState<Map<string, Pick<Worker, 'contactPhone' | 'thaiNationalId'>>>(
+    () => new Map()
+  );
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const canViewBatch = useMemo(() => {
     if (useMatrixGuards) {
       return (
@@ -66,6 +75,65 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
 
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
+
+  useEffect(() => {
+    if (!firestore || !lines?.length) {
+      setWorkersById(new Map());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ids = [...new Set(lines.map((l) => l.workerId))];
+      const m = new Map<string, Pick<Worker, 'contactPhone' | 'thaiNationalId'>>();
+      await Promise.all(
+        ids.map(async (wid) => {
+          try {
+            const s = await getDoc(doc(firestore, 'workers', wid));
+            if (!s.exists()) return;
+            const d = s.data() as Worker;
+            m.set(wid, { contactPhone: d.contactPhone, thaiNationalId: d.thaiNationalId });
+          } catch {
+            /* ignore row */
+          }
+        })
+      );
+      if (!cancelled) setWorkersById(m);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, lines]);
+
+  const handleDownloadBankCsv = useCallback(() => {
+    if (!batch || !lines?.length) return;
+    const csv = buildWorkerPayrollBankVerificationCsv(batch, lines, workersById);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `payroll-bank-check_${batch.id}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast({ title: 'ดาวน์โหลด CSV', description: 'ไฟล์ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)' });
+  }, [batch, lines, workersById, toast]);
+
+  const handleConfirmPaid = useCallback(async () => {
+    if (!firestore || !batch || !currentUser) return;
+    setConfirmBusy(true);
+    try {
+      const svc = new PayrollService(firestore);
+      await svc.financeConfirmWorkerBatchPaid(batch.id, currentUser as User);
+      toast({ title: 'ยืนยันจ่ายแล้ว', description: 'บันทึกสถานะ PAID และรายการ cashbook แล้ว' });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ยืนยันไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setConfirmBusy(false);
+    }
+  }, [firestore, batch, currentUser, toast]);
 
   if (userLoading || isBatchLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
@@ -87,6 +155,10 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
 
   const isLocked = batch.status === 'LOCKED' || batch.status === 'PAID';
   const canGenerateWorkerPayslips = canGeneratePayslips(currentUser, batch.status);
+  const canBankCheckCsv = ['FINANCE_PREPARED', 'PAYMENT_EXPORTED', 'PAID', 'LOCKED'].includes(batch.status);
+  const showAccountingConfirm =
+    canConfirmWorkerPayrollPaid(currentUser) &&
+    (batch.status === 'FINANCE_PREPARED' || batch.status === 'PAYMENT_EXPORTED');
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -154,6 +226,44 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
             </CardContent>
           </Card>
         </div>
+
+        {(canBankCheckCsv || showAccountingConfirm || batch.financeCashbookEntryId) && (
+          <Card className="border-l-4 border-l-primary/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">บัญชี · ตรวจโอน payroll</CardTitle>
+              <CardDescription>
+                หลังส่งต่อบัญชี (FINANCE_PREPARED) ดาวน์โหลด CSV รายชุดเพื่อตรวจกับธนาคาร — เมื่อโอนจริงแล้วให้บัญชีกดยืนยันจ่ายเพื่อบันทึก cashbook
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-2">
+              {canBankCheckCsv && lines && lines.length > 0 && (
+                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleDownloadBankCsv}>
+                  <FileSpreadsheet className="h-4 w-4" />
+                  ดาวน์โหลด CSV ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)
+                </Button>
+              )}
+              {showAccountingConfirm && (
+                <Button type="button" size="sm" disabled={confirmBusy} onClick={() => void handleConfirmPaid()}>
+                  {confirmBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" /> กำลังบันทึก…
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      บัญชียืนยันจ่ายแล้ว (PAID + cashbook)
+                    </>
+                  )}
+                </Button>
+              )}
+              {batch.financeCashbookEntryId ? (
+                <span className="text-xs text-muted-foreground font-mono">
+                  Cashbook ref: {batch.financeCashbookEntryId}
+                </span>
+              ) : null}
+            </CardContent>
+          </Card>
+        )}
 
         <Tabs defaultValue="lines" className="w-full">
           <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">
