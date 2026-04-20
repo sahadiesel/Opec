@@ -576,6 +576,8 @@ export interface MainContract {
   endDate: number;
   status: 'pending' | 'active' | 'revised' | 'expired' | 'closed';
   currency: string;
+  /** อัตรา VAT (%) สำหรับใบแจ้งหนี้เรียกเก็บ — อ้างอิงจากสัญญาเท่านั้น */
+  vatPercent?: number;
   billingTerms: string;
   paymentTerms: string;
   rateMultiplierPolicy?: {
@@ -934,6 +936,71 @@ export interface DailyTimesheet {
   lockedBy?: string;
 }
 
+/**
+ * ส่งตรวจ timesheet รอบเดือนต่อ Wave — Payroll/Officer ส่งจากหน้าสรุปรายเดือน
+ * ให้ Operations/HR Manager อนุมัติก่อนนำไปคำนวณ payroll / ออก Draft Invoice
+ */
+
+/** รูปถ่ายหรือ PDF แนบกับงวด Wave/เดือน (Storage + URL) */
+export interface WaveMonthTimesheetPhotoAttachment {
+  id: string;
+  storagePath: string;
+  downloadUrl: string;
+  fileName: string;
+  /** เช่น image/jpeg, application/pdf — ข้อมูลเก่าอาจไม่มี (ใช้นามสกุลไฟล์แทน) */
+  contentType?: string;
+  uploadedAt: number;
+}
+
+/**
+ * รูปก่อนส่งผู้จัดการ — เก็บแยกจนกว่าจะส่งตรวจ (doc id = waveId_yyyy-MM)
+ */
+export interface WaveMonthTimesheetPhotoBundle {
+  id: string;
+  waveId: string;
+  poId: string;
+  yearMonth: string;
+  attachments: WaveMonthTimesheetPhotoAttachment[];
+  updatedAt: number;
+}
+
+export type WaveMonthTimesheetReviewStatus =
+  | 'entry_locked'
+  | 'pending_manager_review'
+  | 'approved'
+  | 'rejected';
+
+export interface WaveMonthTimesheetReview {
+  id: string;
+  waveId: string;
+  poId: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  /**
+   * entry_locked = Officer ปิดงวดลงเวลาแล้ว (ล็อกแก้ไข) แต่ยังไม่ส่งผู้จัดการ
+   * pending_manager_review = ส่งคิวอนุมัติ
+   * approved = ผู้จัดการอนุมัติ → ระบบตั้ง readyForPayroll ตามช่วงงวด
+   */
+  status: WaveMonthTimesheetReviewStatus;
+  /** ช่วงวันที่รวมในงวดปิด (ค่าเริ่มต้น: วันที่ 1 – สิ้นเดือนของ yearMonth) */
+  periodStartDate?: string;
+  periodEndDate?: string;
+  submittedAt: number;
+  submittedByUserId: string;
+  submittedByName?: string;
+  entryLockedAt?: number;
+  entryLockedByUserId?: string;
+  entryLockedByName?: string;
+  reviewedAt?: number;
+  reviewedByUserId?: string;
+  reviewedByName?: string;
+  reviewNote?: string;
+  /** รูปถ่าย timesheet ที่แนบตอนส่งผู้จัดการ (คัดลอกจาก bundle ตอนกดส่ง) */
+  timesheetPhotoAttachments?: WaveMonthTimesheetPhotoAttachment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export type DailyTimesheetStatus = 
   | 'DRAFT' 
   | 'SUBMITTED' 
@@ -1177,6 +1244,8 @@ export interface CommercialInvoiceLine {
   quantity: number;
   unitPrice: number;
   amount: number;
+  /** จาก timesheet อัตโนมัติ vs ปรับยอดด้วยมือ (ส่วนลด/เพิ่ม) */
+  lineSource?: 'timesheet' | 'manual';
 }
 
 export interface CommercialInvoice {
@@ -1187,6 +1256,12 @@ export interface CommercialInvoice {
   contractId?: string;
   poId: string;
   waveId: string;
+  /** อ้าง wave_month_timesheet_reviews — กันสร้างซ้ำเมื่ออนุมัติรอบเดือน */
+  sourceWaveMonthReviewId?: string;
+  /** ฝั่ง OPEC ส่งให้ลูกค้าเห็นใน portal (DRAFT → PENDING_CUSTOMER) */
+  sentToCustomerAt?: number;
+  sentToCustomerByUid?: string;
+  sentToCustomerByName?: string;
   /** แสดงผล — เก็บตอนสร้างจาก wave */
   waveCode?: string;
   periodStart: string;
@@ -1199,6 +1274,12 @@ export interface CommercialInvoice {
   withholdingTaxAmount: number;
   totalAmount: number;
   lines: CommercialInvoiceLine[];
+  /** ลูกค้าแจ้งขอแก้ไข (portal — Open Dispute) — คู่กับ customerRevisionRequestNote */
+  customerRevisionRequestedAt?: number;
+  /** ข้อความจากลูกค้าเมื่อแจ้ง dispute */
+  customerRevisionRequestNote?: string;
+  /** อ้างอิง customer_issues ที่สร้างตอน dispute */
+  customerRevisionIssueId?: string;
   /** หลังลูกค้า/ตัวแทนอนุมัติ — ถือเป็น Invoice จริงสำหรับเรียกเก็บ (ยังไม่ใช่ใบกำกับภาษี) */
   customerApprovedAt?: number;
   customerApprovedByUid?: string;
@@ -1207,6 +1288,8 @@ export interface CommercialInvoice {
   generationWarnings?: string[];
   timesheetCount?: number;
   notes?: string;
+  /** ใบกำกับภาษี / ใบเสร็จ (ร่างหรือออกแล้ว) ที่สร้างจากใบเรียกเก็บนี้ */
+  linkedTaxInvoiceId?: string;
   createdAt: number;
   createdByUid: string;
   createdByName: string;
@@ -1415,24 +1498,6 @@ export interface PaymentExportBatch {
 }
 
 /**
- * Profit estimation snapshots for commercial analysis
- */
-export interface PurchaseOrderProfitSnapshot {
-  id: string;
-  purchaseOrderId: string;
-  waveId?: string | null;
-  periodStartDate: string;
-  periodEndDate: string;
-  estimatedRevenue: number;
-  estimatedLaborCost: number;
-  estimatedGrossProfit: number;
-  estimatedGrossMarginPercent: number;
-  calculationBasisSummary: string;
-  generatedAt: number;
-  generatedBy: string;
-}
-
-/**
  * Document Numbering Sequence tracking
  */
 export interface NumberSequence {
@@ -1454,6 +1519,15 @@ export interface NumberSequence {
 }
 
 export type QuotationStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'cancelled' | 'revised';
+
+/** ลูกค้า portal เห็นได้หลัง OPEC กดส่งให้ลูกค้าเท่านั้น — ไม่รวม draft/revised */
+export const QUOTATION_PORTAL_VISIBLE_STATUSES: QuotationStatus[] = [
+  'sent',
+  'accepted',
+  'rejected',
+  'expired',
+  'cancelled',
+];
 
 export interface Quotation {
   id: string;
@@ -1483,6 +1557,15 @@ export interface Quotation {
   createdBy: string;
   updatedAt: number;
   updatedBy: string;
+  /** ลูกค้า (portal) ตอบรับ/ปฏิเสธ — คู่กับ status accepted|rejected */
+  portalDecisionAt?: number;
+  portalDecisionByUid?: string;
+  portalDecisionByName?: string;
+  portalDecisionSource?: 'CLIENT_PORTAL';
+  /** ลูกค้าแจ้งขอแก้ไข/ต่อรอง (portal) — คู่กับ customerRevisionRequestNote */
+  customerRevisionRequestedAt?: number;
+  customerRevisionRequestNote?: string;
+  customerRevisionIssueId?: string;
 }
 
 export interface QuotationLine {
@@ -1861,6 +1944,8 @@ export interface TaxInvoice {
   id: string;
   taxInvoiceNo: string;
   billingNoteId: string;
+  /** สร้างจากใบเรียกเก็บ (commercial) หลังลูกค้า/OPEC ยืนยัน — พร้อม snapshot ใบวางบิล */
+  sourceCommercialInvoiceId?: string;
   customerId: string;
   waveId?: string;
   issueDate: string;
@@ -1892,7 +1977,14 @@ export interface TaxInvoice {
 export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
 
 /** Simple Customer Issue / Dispute Request */
-export type IssueCategory = 'TIMESHEET' | 'BILLING_NOTE' | 'TAX_INVOICE' | 'RECEIPT' | 'GENERAL';
+export type IssueCategory =
+  | 'TIMESHEET'
+  | 'BILLING_NOTE'
+  | 'TAX_INVOICE'
+  | 'RECEIPT'
+  | 'COMMERCIAL_INVOICE'
+  | 'QUOTATION'
+  | 'GENERAL';
 export type IssueStatus = 'OPEN' | 'IN_REVIEW' | 'RESOLVED' | 'CLOSED';
 
 export interface CustomerIssue {

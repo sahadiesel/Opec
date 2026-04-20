@@ -137,9 +137,10 @@ function CustomerPOsPageContent() {
     return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
   }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
   const { data: activeContracts } = useCollection<MainContract>(contractsQuery as any);
+  /** เปิด PO จาก QT หลังลูกค้า/ผู้จัดการอนุมัติแล้ว (accepted) — ไม่ใช่แค่สถานะ sent */
   const quotationsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
-    return query(collection(firestore, 'quotations'), where('status', 'in', ['sent', 'accepted']));
+    return query(collection(firestore, 'quotations'), where('status', '==', 'accepted'));
   }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
   const { data: eligibleQuotations } = useCollection<Quotation>(quotationsQuery as any);
 

@@ -32,15 +32,11 @@ import {
   Calendar,
   CheckCircle2,
   AlertCircle,
-  TrendingUp,
-  Coins,
   History,
   Info,
   Loader2,
   Zap,
-  BarChart3,
   Percent,
-  Scale,
   ChevronRight,
   ClipboardList,
   ListOrdered,
@@ -58,7 +54,7 @@ import {
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, updateDoc, addDoc, getDocs, writeBatch } from 'firebase/firestore';
-import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { updateDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   PurchaseOrder, 
   POLine, 
@@ -71,7 +67,6 @@ import {
   Worker,
   SalesContractTerm,
   LaborCostContractTerm,
-  RateCondition,
   Quotation,
   Wave
 } from '@/lib/types';
@@ -79,8 +74,6 @@ import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { Separator } from '@/components/ui/separator';
-import { ProfitAnalysisTab } from '@/components/commercial/profit-analysis-tab';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
@@ -194,9 +187,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     return 'ตรวจความพร้อมและเตรียมส่งตัว (ขั้นตอนที่ 3)';
   }, [po, fulfillmentTotals]);
 
-  const conditionsQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'rate_conditions') : null), [firestore, canViewPo]);
-  const { data: allConditions } = useCollection<RateCondition>(conditionsQuery as any);
-
   const [isEditing, setIsEditing] = useState(false);
   const [editedPO, setEditedPO] = useState<Partial<PurchaseOrder>>({});
 
@@ -213,20 +203,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   });
 
   const [isApprovingPo, setIsApprovingPo] = useState(false);
+  const [isClosingPo, setIsClosingPo] = useState(false);
   const [isDeletingPoDoc, setIsDeletingPoDoc] = useState(false);
   const [isEditLineOpen, setIsEditLineOpen] = useState(false);
   const [editLineDraft, setEditLineDraft] = useState<POLine | null>(null);
   const [isSavingLine, setIsSavingLine] = useState(false);
-
-  const [isCreatingSalesTerm, setIsCreatingSalesTerm] = useState(false);
-  const [newSalesTerm, setNewSalesTerm] = useState<Partial<SalesContractTerm>>({
-    currency: 'THB',
-    vatPercent: 7,
-    withholdingTaxPercent: 3,
-    billingCycle: 'Monthly',
-    paymentTermsDays: 30,
-    status: 'ACTIVE'
-  });
 
   useEffect(() => {
     if (po) setEditedPO(po);
@@ -241,6 +222,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     (quotation.status === 'sent' || quotation.status === 'accepted');
   /** พร้อมเพิ่ม PO Line / Wave: สายสัญญา = สัญญา active | สายใบเสนอราคา = sent/accepted */
   const isLinkedSourceReady = isContractBasedPO ? isLinkedContractActive : isQuotationAccepted;
+
+  /** ปิด PO ได้เมื่อทุก Wave จบแล้ว (COMPLETED/CLOSED) */
+  const allWavesTerminalForClose = useMemo(() => {
+    if (!poWaves?.length) return false;
+    return poWaves.every((w) => w.status === 'COMPLETED' || w.status === 'CLOSED');
+  }, [poWaves]);
 
   const handleSaveMaster = () => {
     if (!canEditPo) {
@@ -343,6 +330,43 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     }
   };
 
+  const handleClosePo = async () => {
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข PO' });
+      return;
+    }
+    if (!poRef || !firestore || !currentUser || !po || po.status !== 'active' || !isContractBasedPO) return;
+    if (!allWavesTerminalForClose) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังปิด PO ไม่ได้',
+        description: 'ทุก Wave ของ PO ต้องเป็นสถานะ COMPLETED หรือ CLOSED ก่อน',
+      });
+      return;
+    }
+    if (!confirm('ปิด PO นี้ถาวร?\n\nจะไม่สร้าง Wave หรือส่งตัวเพิ่มใน PO เดิม — งานใหม่ต้องใช้ PO ฉบับใหม่')) return;
+    setIsClosingPo(true);
+    try {
+      await updateDoc(poRef, { status: 'closed', updatedAt: Date.now() });
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'UPDATE',
+        entityType: 'PurchaseOrder',
+        entityId: id,
+        entityLabel: po.poCode,
+        changedFields: ['status'],
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: 'Closed PO — no new waves on this document',
+      });
+      toast({ title: 'ปิด PO แล้ว', description: 'ไม่สามารถสร้าง Wave เพิ่มใน PO นี้' });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'ปิด PO ไม่สำเร็จ' });
+    } finally {
+      setIsClosingPo(false);
+    }
+  };
+
   const handleSaveEditedLine = async () => {
     if (!canEditPo) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ไม่มีสิทธิ์แก้ไขบรรทัด PO' });
@@ -383,6 +407,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const handleAddLine = async () => {
     if (!canEditPo) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์เพิ่มรายการใน Customer PO' });
+      return;
+    }
+    if (po?.status === 'closed') {
+      toast({
+        variant: 'destructive',
+        title: 'PO ปิดแล้ว',
+        description: 'ไม่สามารถเพิ่มบรรทัดหรือสร้าง Wave ใน PO นี้ — สร้าง PO ฉบับใหม่',
+      });
       return;
     }
     if (!poLinesQuery || !newLine.positionId || !currentUser || !firestore) return;
@@ -523,76 +555,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  const handleCreateSalesTerm = async () => {
-    if (!canEditPo) {
-      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างเงื่อนไขการขายจาก PO นี้' });
-      return;
-    }
-    if (!firestore || !currentUser || !po) return;
-    if (!isLinkedSourceReady) {
-      toast({
-        variant: 'destructive',
-        title: 'เอกสารต้นทางยังไม่พร้อม',
-        description: isContractBasedPO
-          ? 'ต้องเปิดสัญญาหลักเป็น Active ก่อนสร้าง Sales Term'
-          : 'ใบเสนอราคาต้องเป็นสถานะ sent/accepted ก่อนสร้าง Sales Term',
-      });
-      return;
-    }
-    if (isContractBasedPO && !po.contractId) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'PO ไม่ได้ผูกสัญญาหลัก' });
-      return;
-    }
-    if (!isContractBasedPO && !po.quotationId) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'PO ไม่ได้ผูกใบเสนอราคา' });
-      return;
-    }
-    setIsCreatingSalesTerm(true);
-    try {
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'sales_term', { actor: currentUser.displayName });
-      
-      const termData = {
-        ...newSalesTerm,
-        contractNo: finalNo,
-        title: `Sales Terms for ${po.poCode}`,
-        customerId: po.customerId,
-        mainContractId: isContractBasedPO ? (po.contractId || '') : '',
-        quotationId: !isContractBasedPO ? (po.quotationId || '') : undefined,
-        purchaseOrderId: po.id,
-        vatPercent:
-          !isContractBasedPO && quotation != null
-            ? quotation.taxPercent
-            : Number(newSalesTerm.vatPercent ?? 7),
-        effectiveDate: new Date(po.startDate).toISOString().split('T')[0],
-        endDate: new Date(po.endDate).toISOString().split('T')[0],
-        createdBy: currentUser.displayName,
-        updatedBy: currentUser.displayName,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-
-      const docRef = await addDocumentNonBlocking(collection(firestore, 'sales_contract_terms'), termData);
-
-      if (docRef) {
-        writeAuditLog(firestore, currentUser, {
-          actionType: 'CREATE',
-          entityType: 'SalesContractTerm',
-          entityId: docRef.id,
-          entityLabel: finalNo,
-          sourceModule: 'commercial',
-          purchaseOrderId: id,
-          afterSummary: `Initialized sales terms for PO ${po.poCode}`
-        });
-      }
-
-      toast({ title: "สร้างเงื่อนไขการขายสำเร็จ", description: `รหัส: ${finalNo}` });
-    } catch (e) {
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
-    } finally {
-      setIsCreatingSalesTerm(false);
-    }
-  };
-
   const deleteLine = (lineId: string) => {
     if (!canEditPo && !canDeletePo) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบรายการ PO' });
@@ -712,6 +674,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง
               </Button>
             )}
+            {isContractBasedPO && po.status === 'active' && allWavesTerminalForClose && canEditPo && (
+              <Button
+                variant="outline"
+                className="h-10 border-amber-600 text-amber-900"
+                disabled={isClosingPo}
+                onClick={() => void handleClosePo()}
+              >
+                {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                ปิด PO (ไม่สร้าง Wave เพิ่ม)
+              </Button>
+            )}
           </div>
         </div>
 
@@ -736,12 +709,18 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <Badge variant={hasActiveLaborCostTerm ? 'default' : 'outline'} className="text-[10px]">
                     Labor cost: {hasActiveLaborCostTerm ? 'ACTIVE มี' : 'ยังไม่มี ACTIVE'}
                   </Badge>
-                  {poReadyForOps ? (
+                  {poReadyForOps && po.status !== 'closed' ? (
                     <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
                       <Link href={`/waves?poId=${encodeURIComponent(id)}&newWave=1`}>+ Wave</Link>
                     </Button>
                   ) : (
-                    <Button variant="outline" size="sm" className="h-8 text-xs" disabled title="อนุมัติ PO ให้ Active ก่อน">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled
+                      title={po.status === 'closed' ? 'PO ปิดแล้ว — ใช้ PO ฉบับใหม่' : 'อนุมัติ PO ให้ Active ก่อน'}
+                    >
                       + Wave
                     </Button>
                   )}
@@ -929,11 +908,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         )}
 
         <Tabs defaultValue="lines" className="w-full">
-          <TabsList className="grid grid-cols-5 w-full md:w-[900px] h-auto p-1 bg-muted/50">
+          <TabsList className="grid grid-cols-3 w-full md:w-[900px] h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6">ข้อมูลหัว PO</TabsTrigger>
             <TabsTrigger value="lines" className="gap-2 py-2 px-6">PO Lines (โควต้า)</TabsTrigger>
-            <TabsTrigger value="terms" className="gap-2 py-2 px-6"><Scale className="h-4 w-4" /> Commercial Terms</TabsTrigger>
-            <TabsTrigger value="analysis" className="gap-2 py-2 px-6"><BarChart3 className="h-4 w-4" /> Profit Analysis</TabsTrigger>
             <TabsTrigger value="assignments" className="gap-2 py-2 px-6">Assignments (คนงาน)</TabsTrigger>
           </TabsList>
 
@@ -1341,143 +1318,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </Table>
               </CardContent>
             </Card>
-          </TabsContent>
-
-          <TabsContent value="terms" className="mt-6 space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Revenue Side */}
-              <Card className="shadow-md">
-                <CardHeader className="flex flex-row items-center justify-between border-b pb-4 bg-blue-50/20">
-                  <div>
-                    <CardTitle className="text-lg flex items-center gap-2 text-blue-800"><TrendingUp className="h-5 w-5" /> เงื่อนไขการขาย (Revenue Terms)</CardTitle>
-                    <CardDescription>
-                      {isContractBasedPO
-                        ? 'นโยบายการวางบิลและรายรับ สำหรับใบสั่งซื้อนี้ (สายสัญญา)'
-                        : 'นโยบายการวางบิลและรายรับ สำหรับใบสั่งซื้อนี้ (สายใบเสนอราคา — ผูกกับ QT ที่อ้างอิง)'}
-                    </CardDescription>
-                  </div>
-                  {salesTerms?.length === 0 && (
-                    <Button
-                      variant="outline"
-                      className="gap-2 border-blue-600 text-blue-700 hover:bg-blue-50 font-bold"
-                      onClick={handleCreateSalesTerm}
-                      disabled={isCreatingSalesTerm || !isLinkedSourceReady}
-                    >
-                      {isCreatingSalesTerm ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                      เปิดใช้ Sales Term
-                    </Button>
-                  )}
-                </CardHeader>
-                <CardContent className="pt-6">
-                  {salesTerms?.map(term => (
-                    <div key={term.id} className="space-y-6">
-                      <div className="grid grid-cols-2 gap-6">
-                        <div className="space-y-1">
-                          <Label className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">
-                            {term.mainContractId ? 'เลขที่สัญญาย่อย:' : 'เลขที่เอกสาร (Sales Term):'}
-                          </Label>
-                          <p className="font-mono text-sm font-bold text-primary flex items-center gap-2">
-                            <Scale className="h-3 w-3 text-blue-600" /> {term.contractNo}
-                          </p>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">รอบการวางบิล:</Label>
-                          <p className="font-bold text-primary">{term.billingCycle}</p>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">VAT (%):</Label>
-                          <Badge variant="outline" className="bg-slate-50">{term.vatPercent}%</Badge>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[10px] uppercase font-black tracking-widest text-muted-foreground">WHT (%):</Label>
-                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">{term.withholdingTaxPercent}%</Badge>
-                        </div>
-                      </div>
-                      <Separator className="bg-blue-100/50" />
-                      <div className="p-4 bg-blue-50/30 rounded-lg space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] font-black uppercase text-blue-800 tracking-tighter">Status & Effective Date</span>
-                          <Badge className="bg-green-600 h-5 text-[9px]">{term.status}</Badge>
-                        </div>
-                        <div className="flex justify-between items-center text-xs font-medium text-slate-600">
-                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> From: {formatYmdLocalThaiBE(term.effectiveDate)}</span>
-                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> To: {formatYmdLocalThaiBE(term.endDate)}</span>
-                        </div>
-                      </div>
-                      <div className="w-full text-blue-700 font-bold text-xs h-8 flex items-center justify-center border border-blue-100 rounded-md bg-blue-50/20">
-                        กฎราคาขายผูกตามเอกสารต้นทาง
-                      </div>
-                    </div>
-                  ))}
-                  {salesTerms?.length === 0 && (
-                    <div className="py-10 text-center text-muted-foreground italic text-sm">ยังไม่มีการกำหนดเงื่อนไขการขายสำหรับ PO นี้</div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Expense Side */}
-              <Card className="shadow-md">
-                <CardHeader className="flex flex-row items-center justify-between border-b pb-4 bg-orange-50/20">
-                  <div>
-                    <CardTitle className="text-lg flex items-center gap-2 text-orange-800"><Coins className="h-5 w-5" /> เงื่อนไขต้นทุนแรงงาน (Labor Cost)</CardTitle>
-                    <CardDescription>โครงสร้างค่าตอบแทนพนักงาน สำหรับใบสั่งซื้อนี้</CardDescription>
-                  </div>
-                  {costTerms?.length === 0 && (
-                    <Badge variant="outline" className="border-orange-300 text-orange-700 bg-orange-50">
-                      ไม่มีลิงก์เมนูเงื่อนไขตามโครงการ
-                    </Badge>
-                  )}
-                </CardHeader>
-                <CardContent className="pt-6">
-                  {costTerms?.length === 0 ? (
-                    <div className="py-10 text-center text-muted-foreground italic text-sm">ยังไม่มีการกำหนดเงื่อนไขต้นทุนแรงงานที่ผูกกับ PO นี้</div>
-                  ) : (
-                    <div className="space-y-4">
-                      {(costTerms || []).map(term => (
-                        <div key={term.id} className="p-4 border border-orange-100 bg-orange-50/10 rounded-lg hover:bg-orange-50/30 transition-all group">
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="space-y-1">
-                              <p className="font-black text-primary uppercase text-xs">{term.title}</p>
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline" className="text-[9px] uppercase font-bold tracking-tighter bg-white">{term.scopeType}</Badge>
-                                <span className="text-[10px] text-muted-foreground">ID: {term.id}</span>
-                              </div>
-                            </div>
-                            <Badge className="bg-orange-600 uppercase text-[9px]">{term.status}</Badge>
-                          </div>
-                          
-                          <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 mb-4">
-                            <span><Calendar className="h-2.5 w-2.5 inline mr-1" /> Valid: {formatYmdLocalThaiBE(term.effectiveDate)} ถึง {formatYmdLocalThaiBE(term.endDate)}</span>
-                          </div>
-
-                          <div className="w-full text-orange-700 font-bold text-xs h-8 flex items-center justify-center border border-orange-200 rounded-md bg-orange-50/30">
-                            กฎต้นทุนผูกตามเอกสารต้นทาง
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="analysis" className="mt-6">
-            {po && salesTerms && costTerms && allConditions && poLines ? (
-              <ProfitAnalysisTab 
-                po={po} 
-                poLines={poLines}
-                salesTerms={salesTerms}
-                costTerms={costTerms}
-                allConditions={allConditions}
-                user={currentUser}
-              />
-            ) : (
-              <div className="py-20 text-center text-muted-foreground italic">
-                <Info className="h-10 w-10 mx-auto mb-4 opacity-20" />
-                กรุณากำหนดเงื่อนไขการขายและต้นทุนให้ครบถ้วนเพื่อวิเคราะห์กำไร
-              </div>
-            )}
           </TabsContent>
 
           <TabsContent value="assignments" className="mt-6">

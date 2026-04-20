@@ -12,10 +12,13 @@ import {
   AlertCircle,
   Wallet,
   Waves,
+  FileSignature,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
+import type { CommercialInvoice, Quotation } from '@/lib/types';
+import { QUOTATION_PORTAL_VISIBLE_STATUSES } from '@/lib/types';
 import { isClient } from '@/lib/permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
@@ -25,6 +28,7 @@ import type { LucideIcon } from 'lucide-react';
 const TILES: { id: string; href: string; key: PortalDictKey; icon: LucideIcon }[] = [
   { id: 'contracts', href: '/client-portal/contracts', key: 'contracts', icon: FileText },
   { id: 'pos', href: '/client-portal/contracts', key: 'pos', icon: ShoppingCart },
+  { id: 'quotations', href: '/client-portal/quotations', key: 'quotations', icon: FileSignature },
   { id: 'workers', href: '/client-portal/workers', key: 'workers', icon: HardHat },
   { id: 'timesheets', href: '/client-portal/timesheets', key: 'timesheets', icon: Clock },
   { id: 'accounting', href: '/client-portal/accounting', key: 'accounting', icon: FileEdit },
@@ -56,13 +60,46 @@ export default function ClientDashboardPage() {
   }, [firestore, currentUser?.customerId]);
   const { data: recentInvoices } = useCollection(recentInvoicesQuery as any);
 
-  const pendingDraftApprovals = useMemo(
+  /** Same scope as Billing & documents — commercial rows (e.g. DFI-…) use PENDING_CUSTOMER, not tax_invoices DRAFT */
+  const commercialInvoicesQuery = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(
+      collection(firestore, 'commercial_invoices'),
+      where('customerId', '==', currentUser.customerId),
+      where('status', 'in', ['PENDING_CUSTOMER', 'ISSUED', 'VOID']),
+      orderBy('issueDate', 'desc')
+    );
+  }, [firestore, currentUser?.customerId]);
+  const { data: commercialInvoices } = useCollection(commercialInvoicesQuery as any);
+
+  const quotationsQuery = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(
+      collection(firestore, 'quotations'),
+      where('customerId', '==', currentUser.customerId),
+      where('status', 'in', QUOTATION_PORTAL_VISIBLE_STATUSES),
+      orderBy('createdAt', 'desc'),
+    );
+  }, [firestore, currentUser?.customerId]);
+  const { data: customerQuotations } = useCollection<Quotation>(quotationsQuery as any);
+
+  const pendingInvoiceCount = useMemo(() => {
+    const taxPending = (recentInvoices ?? []).filter(
+      (d: { status?: string; billingCustomerApprovedAt?: number }) =>
+        d.status === 'DRAFT' && !d.billingCustomerApprovedAt
+    ).length;
+    const commercialPending = (commercialInvoices ?? []).filter(
+      (c: CommercialInvoice) => c.status === 'PENDING_CUSTOMER'
+    ).length;
+    return taxPending + commercialPending;
+  }, [recentInvoices, commercialInvoices]);
+
+  const pendingQuotationCount = useMemo(
     () =>
-      (recentInvoices ?? []).filter(
-        (d: { status?: string; billingCustomerApprovedAt?: number }) =>
-          d.status === 'DRAFT' && !d.billingCustomerApprovedAt
+      (customerQuotations ?? []).filter(
+        (q) => q.status === 'sent' && !q.customerRevisionRequestedAt,
       ).length,
-    [recentInvoices]
+    [customerQuotations],
   );
 
   if (appUserLoading || !currentUser) return null;
@@ -86,17 +123,23 @@ export default function ClientDashboardPage() {
         <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">{t('dashboardLead')}</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         <div className="rounded-xl border border-zinc-200 bg-white p-3 text-center dark:border-zinc-800 dark:bg-zinc-900/40">
           <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{pos?.length ?? 0}</p>
           <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 sm:text-xs">PO</p>
+        </div>
+        <div className="rounded-xl border border-violet-200/90 bg-violet-50/90 p-3 text-center dark:border-violet-900/50 dark:bg-violet-950/30">
+          <p className="text-lg font-semibold text-violet-900 dark:text-violet-100">{pendingQuotationCount}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wide text-violet-800/90 dark:text-violet-200/90">
+            {t('pendingQuotations')}
+          </p>
         </div>
         <div className="rounded-xl border border-zinc-200 bg-white p-3 text-center dark:border-zinc-800 dark:bg-zinc-900/40">
           <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{activeWaves}</p>
           <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 sm:text-xs">{t('waves')}</p>
         </div>
         <div className="rounded-xl border border-amber-200/80 bg-amber-50/80 p-3 text-center dark:border-amber-900/40 dark:bg-amber-950/30">
-          <p className="text-lg font-semibold text-amber-900 dark:text-amber-100">{pendingDraftApprovals}</p>
+          <p className="text-lg font-semibold text-amber-900 dark:text-amber-100">{pendingInvoiceCount}</p>
           <p className="text-[10px] font-medium uppercase tracking-wide text-amber-800/80 dark:text-amber-200/80">
             {t('draftInvoices')}
           </p>
@@ -131,7 +174,7 @@ export default function ClientDashboardPage() {
           {t('waves')}
         </Link>
         <Link
-          href="/client-portal/accounting?tab=billing"
+          href="/client-portal/accounting?tab=invoices"
           className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
         >
           <Wallet className="h-4 w-4" />

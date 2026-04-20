@@ -140,3 +140,33 @@ export function htmlDateValueToTimestampMs(iso: string | null | undefined): numb
   const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
   return Number.isNaN(dt.getTime()) ? undefined : dt.getTime();
 }
+
+/** dd/mm/yyyy (ค.ศ.) — สำหรับเอกสารพิมพ์ภาษาอังกฤษ */
+export function formatStoredDateGregorian(
+  input: Date | number | string | null | undefined,
+  empty: string = '—',
+): string {
+  const d = toDate(input as Date | number | string);
+  if (!d) return empty;
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+export function formatStoredDateRangeGregorian(
+  start: Date | number | string | null | undefined,
+  end: Date | number | string | null | undefined,
+  empty: string = '—',
+): string {
+  const a = formatStoredDateGregorian(start, '');
+  const b = formatStoredDateGregorian(end, '');
+  if (a === '' && b === '') return empty;
+  if (a === '') return b;
+  if (b === '') return a;
+  return `${a} – ${b}`;
+}
+
+/** วันที่+เวลา ค.ศ. สำหรับสแตมป์พิมพ์เอกสาร EN */
+export function formatDateTimeGregorian(input: Date | number | string | null | undefined): string {
+  const d = toDate(input as Date | number | string);
+  if (!d) return '';
+  return `${formatStoredDateGregorian(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}

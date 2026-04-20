@@ -13,7 +13,8 @@ import {
   query,
   where,
   getDocs,
-  limit
+  limit,
+  type DocumentData,
 } from 'firebase/firestore';
 import { 
   DailyTimesheet, 
@@ -28,6 +29,17 @@ import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
 import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
+
+/** Firestore rejects `undefined` in set/update payloads — strip those keys. */
+function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
+  const out = { ...obj };
+  for (const key of Object.keys(out)) {
+    if (out[key as keyof T] === undefined) {
+      delete out[key as keyof T];
+    }
+  }
+  return out;
+}
 
 /**
  * Resolves the best-matching LaborCostContractTerm for a given PO + date.
@@ -155,9 +167,16 @@ export class TimesheetService {
     for (const ts of timesheets) {
       if (!ts.workerId || !ts.assignmentId || !ts.date) continue;
 
-      // Auto-fill laborCostContractTermId if not already set
+      // Auto-fill laborCostContractTermId when resolvable; never assign undefined (Firestore error)
       if (!ts.laborCostContractTermId && ts.purchaseOrderId) {
-        ts.laborCostContractTermId = costTermMap.get(ts.purchaseOrderId);
+        const resolved = costTermMap.get(ts.purchaseOrderId);
+        if (resolved) {
+          ts.laborCostContractTermId = resolved;
+        }
+      }
+      const tsRecord = ts as Record<string, unknown>;
+      if (tsRecord.laborCostContractTermId === undefined) {
+        delete tsRecord.laborCostContractTermId;
       }
 
       const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
@@ -171,10 +190,13 @@ export class TimesheetService {
           continue;
         }
         
-        batch.update(docRef, {
-          ...ts,
-          updatedAt: Date.now()
-        });
+        batch.update(
+          docRef,
+          omitUndefinedFields({
+            ...ts,
+            updatedAt: Date.now(),
+          } as Record<string, unknown>) as DocumentData,
+        );
         results.updated++;
       } else {
         const validated = DailyTimesheetSchema.parse({
@@ -188,7 +210,7 @@ export class TimesheetService {
           createdAt: Date.now(),
           updatedAt: Date.now(),
         });
-        batch.set(docRef, validated);
+        batch.set(docRef, omitUndefinedFields({ ...validated } as Record<string, unknown>) as DocumentData);
         results.created++;
       }
     }
@@ -362,16 +384,15 @@ export class TimesheetService {
       if (existing.exists()) continue;
       const { id: _omit, ...rest } = ts;
 
-      const costTermId = rest.laborCostContractTermId
-        || costTermMap.get(rest.purchaseOrderId)
-        || undefined;
+      const costTermId =
+        rest.laborCostContractTermId || costTermMap.get(rest.purchaseOrderId);
 
       try {
         const payload = DailyTimesheetSchema.parse({
           ...rest,
           id,
           date: targetDate,
-          laborCostContractTermId: costTermId,
+          ...(costTermId ? { laborCostContractTermId: costTermId } : {}),
           status: 'DRAFT',
           readyForPayroll: false,
           readyForBilling: false,

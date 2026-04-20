@@ -14,15 +14,13 @@ import { useWorkersByIds } from '@/hooks/use-workers-by-ids';
 import { Button } from '@/components/ui/button';
 import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
+import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
 
 function workerDisplayName(a: Assignment, w: Worker | undefined): string {
   const fromMob = (a.workerName || '').trim();
   if (fromMob) return fromMob;
-  if (w) {
-    const n = `${w.firstName || ''} ${w.lastName || ''}`.trim();
-    if (n) return n;
-    if (w.workerCode?.trim()) return w.workerCode.trim();
-  }
+  const fromWorker = mobilizationWorkerNameFromWorker(w);
+  if (fromWorker) return fromWorker;
   return (a.assignmentNo || '').trim() || `—`;
 }
 
@@ -156,8 +154,8 @@ export default function ClientWorkersPage() {
         </h2>
         <p className="text-sm text-muted-foreground">
           {locale === 'en'
-            ? 'Name, role, and site. Open a row to view shared documents (if enabled by OPEC).'
-            : 'ชื่อ ตำแหน่ง สถานที่ — เปิดแถวเพื่อดูเอกสารที่เปิดให้ลูกค้า (ต้องตั้งค่า assignedCustomerIds ที่คนงาน)'}
+            ? 'Name, role, and site. Per-person document links will be enabled here when OPEC turns them on.'
+            : 'ชื่อ ตำแหน่ง และสถานที่ — ลิงก์เอกสารรายคนจะเปิดใช้เมื่อ OPEC เปิดให้'}
         </p>
         <Button variant="outline" size="sm" className="mt-3 gap-2" asChild>
           <Link href="/client-portal/waves">
@@ -202,10 +200,16 @@ export default function ClientWorkersPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/client-portal/workers/${a.workerId}`}>
-                            <ChevronRight className="h-4 w-4" />
-                          </Link>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled
+                          className="pointer-events-none opacity-40"
+                          aria-label={locale === 'en' ? 'Details (coming soon)' : 'รายละเอียด (ยังไม่เปิดใช้)'}
+                          title={locale === 'en' ? 'Coming soon' : 'ยังไม่เปิดใช้'}
+                        >
+                          <ChevronRight className="h-4 w-4" aria-hidden />
                         </Button>
                       </TableCell>
                     </TableRow>

@@ -25,6 +25,9 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { buildTaxInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
+import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 
 export default function ClientDraftInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -61,7 +64,51 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
   );
   const { data: lines } = useCollection<BillingNoteLine>(linesQ as any);
 
+  const companyProfileRef = useMemoFirebase(
+    () => (ready ? doc(firestore!, 'system', 'company_profile') : null),
+    [firestore, ready],
+  );
+  const { data: companyProfile } = useDoc<{
+    companyNameTh?: string;
+    companyNameEn?: string;
+    taxId?: string;
+    phone?: string;
+    email?: string;
+    addressLine1?: string;
+    addressLine2?: string;
+  }>(companyProfileRef as any);
+
+  const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+
   const isApprover = currentUser?.portalRole === 'approver';
+
+  const handlePrintTaxDraft = () => {
+    if (!invoice) return;
+    const body = buildTaxInvoicePrintHtml({
+      company: companyProfile ?? undefined,
+      invoice,
+      billingNote: billingNote ?? undefined,
+      billingLines: lines ?? [],
+      customer: undefined,
+      customerPartyNameOverride: currentUser?.displayName || currentUser?.email || '—',
+      printedAtMs: Date.now(),
+      locale: printLocale,
+    });
+    if (
+      !openStandardPrintWindow({
+        windowTitle: invoice.taxInvoiceNo,
+        bodyInnerHtml: body,
+        htmlLang: printLocale,
+      })
+    ) {
+      toast({
+        variant: 'destructive',
+        title: locale === 'en' ? 'Popup blocked' : 'เปิดหน้าต่างพิมพ์ไม่ได้',
+        description:
+          locale === 'en' ? 'Allow popups for this site.' : 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+      });
+    }
+  };
 
   const handleApprove = async () => {
     if (!firestore || !invoice || !billingNote || !currentUser || !isApprover) return;
@@ -138,11 +185,11 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
   const attachments = invoice.timesheetPaperAttachments ?? [];
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="mx-auto w-full max-w-[min(100%,96rem)] space-y-6">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/client-portal/accounting?tab=drafts">
+        <Link href="/client-portal/accounting?tab=invoices">
           <ArrowLeft className="h-4 w-4 mr-2" />
-          {locale === 'en' ? 'Draft list' : 'รายการร่าง'}
+          {locale === 'en' ? 'Invoice list' : 'รายการใบแจ้งหนี้'}
         </Link>
       </Button>
 
@@ -156,10 +203,13 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
             </p>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => window.print()}>
-          <Printer className="h-4 w-4 mr-2" />
-          Print
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} />
+          <Button variant="outline" size="sm" type="button" onClick={() => handlePrintTaxDraft()}>
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </Button>
+        </div>
       </div>
 
       <Card>

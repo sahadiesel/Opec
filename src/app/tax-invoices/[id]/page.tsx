@@ -34,8 +34,10 @@ import {
   TaxInvoiceTimesheetAttachment,
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -57,6 +59,9 @@ import {
   deleteTaxInvoiceAttachmentFile,
   validateTimesheetImageFile,
 } from '@/lib/storage/tax-invoice-attachments';
+import { buildTaxInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
+import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 
 export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -98,6 +103,22 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     [firestore, invoice?.billingNoteId]
   );
   const { data: billingLines } = useCollection<BillingNoteLine>(billingLinesQuery as any);
+
+  const companyProfileRef = useMemoFirebase(
+    () => (firestore ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore]
+  );
+  const { data: companyProfile } = useDoc<{
+    companyNameTh?: string;
+    companyNameEn?: string;
+    taxId?: string;
+    phone?: string;
+    email?: string;
+    addressLine1?: string;
+    addressLine2?: string;
+  }>(companyProfileRef as any);
+
+  const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
   const isAccountingActor =
     !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser));
@@ -281,6 +302,32 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
+  const handlePrintTaxInvoice = () => {
+    if (!invoice) return;
+    const body = buildTaxInvoicePrintHtml({
+      company: companyProfile ?? undefined,
+      invoice,
+      billingNote: billingNote ?? undefined,
+      billingLines: billingLines ?? [],
+      customer: customer ?? undefined,
+      printedAtMs: Date.now(),
+      locale: printLocale,
+    });
+    if (
+      !openStandardPrintWindow({
+        windowTitle: invoice.taxInvoiceNo,
+        bodyInnerHtml: body,
+        htmlLang: printLocale,
+      })
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+        description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+      });
+    }
+  };
+
   if (isInvLoading || appUserLoading || !invoice || !currentUser) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -301,7 +348,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">
-                ใบแจ้งหนี้ / ใบกำกับภาษี (Tax Invoice)
+                ใบกำกับภาษี / ใบเสร็จรับเงิน
               </h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{invoice.taxInvoiceNo}</span>
@@ -310,8 +357,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" className="gap-2" onClick={() => window.print()}>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+            <Button variant="outline" className="gap-2" type="button" onClick={() => handlePrintTaxInvoice()}>
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร
             </Button>
             <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary">
@@ -319,6 +367,25 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             </Badge>
           </div>
         </div>
+
+        {invoice.sourceCommercialInvoiceId && (
+          <Alert className="border-teal-200 bg-teal-50/80">
+            <Info className="h-4 w-4" />
+            <AlertTitle>สร้างจากใบเรียกเก็บ (Commercial billing)</AlertTitle>
+            <AlertDescription className="text-sm space-y-2">
+              <p>
+                เอกสารนี้สร้างอัตโนมัติหลังยืนยันใบเรียกเก็บ — พิมพ์เป็น{' '}
+                <strong>ใบกำกับภาษี / ใบเสร็จรับเงิน</strong> ฉบับเดียว (ไม่ใช่ e-Tax)
+              </p>
+              <Button variant="outline" size="sm" className="gap-2" asChild>
+                <Link href={`/draft-invoices/${invoice.sourceCommercialInvoiceId}`}>
+                  <ExternalLink className="h-4 w-4" />
+                  เปิดใบเรียกเก็บต้นทาง
+                </Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card className="md:col-span-2">
@@ -399,10 +466,14 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-amber-900 dark:text-amber-100">
                   <UserCheck className="h-4 w-4" />
-                  ลูกค้าอนุมัติ billing (แยกจาก payroll)
+                  {invoice.sourceCommercialInvoiceId
+                    ? 'การยืนยันยอดเรียกเก็บ (จากใบเรียกเก็บ)'
+                    : 'ลูกค้าอนุมัติ billing (แยกจาก payroll)'}
                 </CardTitle>
                 <CardDescription className="text-xs text-amber-900/80 dark:text-amber-100/80">
-                  หลังอนุมัติ timesheet ที่เกี่ยวกับใบวางบิลนี้จะถูกล็อก — บัญชีจะออก ISSUED ได้เมื่อขั้นตอนนี้เสร็จแล้ว
+                  {invoice.sourceCommercialInvoiceId
+                    ? 'ยอดถูกยืนยันแล้วผ่านใบเรียกเก็บ — เอกสารพิมพ์เป็นใบกำกับภาษี/ใบเสร็จฉบับเดียว (ไม่ใช่ e-Tax) ฝ่ายบัญชีออก ISSUED ได้เมื่อพร้อม'
+                    : 'หลังอนุมัติ timesheet ที่เกี่ยวกับใบวางบิลนี้จะถูกล็อก — บัญชีจะออก ISSUED ได้เมื่อขั้นตอนนี้เสร็จแล้ว'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm">

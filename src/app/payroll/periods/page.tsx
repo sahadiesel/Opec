@@ -79,7 +79,7 @@ export default function PayrollPeriodsPage() {
     startDate: timestampToHtmlDateValue(Date.now()),
     endDate: timestampToHtmlDateValue(Date.now()),
     cycleType: 'MONTHLY',
-    status: 'DRAFT'
+    status: 'OPEN',
   });
 
   const handleCreate = async () => {

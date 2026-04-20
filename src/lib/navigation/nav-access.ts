@@ -42,6 +42,8 @@ function hrOfficerExcludedFromHrNavItem(user: User, item: HrNavItem): boolean {
   if (full.includes('#hr-action-queue')) return true;
   if (base.startsWith('/hr/payroll-workbench')) return true;
   if (base.startsWith('/hr/payroll-approval')) return true;
+  if (base.startsWith('/hr/approval-center')) return true;
+  if (base.startsWith('/hr/timesheet-month-approval')) return true;
   if (base.startsWith('/timesheets')) return true;
   if (base.startsWith('/payroll/')) return true;
   if (base === '/office-payroll' || base.startsWith('/office-payroll/')) return true;

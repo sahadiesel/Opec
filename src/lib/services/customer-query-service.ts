@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { User } from '@/lib/types';
 import { isClient } from '@/lib/permissions';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 
 /**
  * Service providing reusable Firestore query scoping for the Customer Portal.
@@ -76,6 +77,25 @@ export class CustomerQueryService {
   getScopedTimesheetsQuery(user: User | null) {
     const q = this.applyCustomerScope('daily_timesheets', user);
     return q ? query(q, orderBy('date', 'desc')) : null;
+  }
+
+  /**
+   * Daily timesheets for one calendar month (yyyy-MM), portal customer only.
+   * Uses composite index customerId + date (desc).
+   */
+  getScopedDailyTimesheetsForMonth(user: User | null, yearMonth: string): Query<DocumentData> | null {
+    if (!user || !isClient(user) || !user.customerId) return null;
+    if (!/^\d{4}-\d{2}$/.test(yearMonth)) return null;
+    const monthStart = `${yearMonth}-01`;
+    const monthEnd = lastDayOfCalendarMonth(yearMonth);
+    const colRef = collection(this.db, 'daily_timesheets');
+    return query(
+      colRef,
+      where('customerId', '==', user.customerId),
+      where('date', '>=', monthStart),
+      where('date', '<=', monthEnd),
+      orderBy('date', 'desc'),
+    );
   }
 
   /**

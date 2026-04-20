@@ -25,8 +25,10 @@ import { doc, collection, updateDoc, query, orderBy, where } from 'firebase/fire
 import { milestonesCoverTotal } from '@/lib/ops/purchase-payment-milestones';
 import {
   buildPurchaseOrderPrintHtml,
-  wrapStandardPrintDocument,
+  openStandardPrintWindow,
 } from '@/lib/documents/standard-document-print';
+import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
+import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
   Purchase,
@@ -150,6 +152,8 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     [firestore, canViewPurchases]
   );
   const { data: companyProfile } = useDoc<CompanyDocumentProfile>(companyProfileRef as any);
+
+  const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
   const vendorsQuery = useMemoFirebase(
     () => (firestore && canViewPurchases ? collection(firestore, 'vendors') : null),
@@ -350,43 +354,20 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       lines: lines ?? [],
       milestones: paymentMilestones ?? [],
       printedAtMs: Date.now(),
+      locale: printLocale,
     });
-    const html = wrapStandardPrintDocument(purchase.purchaseNo, body);
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, '_blank');
-    if (!w) {
-      URL.revokeObjectURL(url);
+    if (
+      !openStandardPrintWindow({
+        windowTitle: purchase.purchaseNo,
+        bodyInnerHtml: body,
+        htmlLang: printLocale,
+      })
+    ) {
       toast({
         variant: 'destructive',
         title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
         description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
       });
-      return;
-    }
-    let didPrint = false;
-    const runPrint = () => {
-      if (didPrint || w.closed) return;
-      didPrint = true;
-      try {
-        w.focus();
-        w.print();
-      } finally {
-        window.setTimeout(() => {
-          try {
-            w.close();
-          } catch {
-            /* ignore */
-          }
-          URL.revokeObjectURL(url);
-        }, 500);
-      }
-    };
-    if (w.document.readyState === 'complete') {
-      runPrint();
-    } else {
-      w.addEventListener('load', runPrint, { once: true });
-      window.setTimeout(runPrint, 600);
     }
   };
 
@@ -528,9 +509,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
               {statusLabelTh(purchase.status)}
             </Badge>
             {canPrintPurchase && (
-              <Button variant="outline" className="font-bold gap-2" onClick={handlePrint}>
-                <Printer className="h-4 w-4" /> พิมพ์เอกสาร
-              </Button>
+              <>
+                <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+                <Button variant="outline" className="font-bold gap-2" onClick={handlePrint}>
+                  <Printer className="h-4 w-4" /> พิมพ์เอกสาร
+                </Button>
+              </>
             )}
             {canPrintWithholdingSummary && (
               <Button variant="secondary" className="font-bold gap-2" onClick={handlePrintSupplierWithholding}>

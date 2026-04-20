@@ -7,11 +7,11 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter, ShieldAlert, Loader2 } from 'lucide-react';
+import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter, ShieldAlert, Loader2, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MainContract, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { 
+import {
   Dialog, 
   DialogContent, 
   DialogDescription, 
@@ -20,15 +20,25 @@ import {
   DialogTitle, 
   DialogTrigger 
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy, addDoc } from 'firebase/firestore';
+import { collection, query, orderBy, addDoc, where, getDocs, writeBatch, doc, limit } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, isClient } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
@@ -43,9 +53,12 @@ export default function MainContractsPage() {
   const isStaff = useMemo(() => canView(currentUser, 'main_contracts'), [currentUser]);
   const canCreateContracts = useMemo(() => canCreate(currentUser, 'main_contracts'), [currentUser]);
   const isClientUser = useMemo(() => isClient(currentUser), [currentUser]);
+  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<MainContract | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [newContract, setNewContract] = useState<Partial<MainContract>>({
     title: '',
     contractNumber: getPreviewPattern('main_contract'),
@@ -146,6 +159,55 @@ export default function MainContractsPage() {
       });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleDeleteContract = async () => {
+    if (!firestore || !deleteTarget || !isAdmin) return;
+    setIsDeleting(true);
+    try {
+      const cid = deleteTarget.id;
+      const poSnap = await getDocs(
+        query(collection(firestore, 'purchase_orders'), where('contractId', '==', cid), limit(5)),
+      );
+      if (!poSnap.empty) {
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่ได้',
+          description: 'มี Customer PO อ้างอิงสัญญานี้อยู่ — ยกเลิกหรือย้าย PO ก่อน',
+        });
+        return;
+      }
+      const childSnap = await getDocs(
+        query(collection(firestore, 'main_contracts'), where('parentContractId', '==', cid), limit(5)),
+      );
+      if (!childSnap.empty) {
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่ได้',
+          description: 'มีสัญญาฉบับแก้/เพิ่มเติมอ้างอิงสัญญานี้ — ลบรายการลูกก่อน',
+        });
+        return;
+      }
+      const ratesSnap = await getDocs(collection(firestore, 'main_contracts', cid, 'position_rates'));
+      const refs = [...ratesSnap.docs.map((d) => d.ref), doc(firestore, 'main_contracts', cid)];
+      const chunk = 400;
+      for (let i = 0; i < refs.length; i += chunk) {
+        const batch = writeBatch(firestore);
+        refs.slice(i, i + chunk).forEach((r) => batch.delete(r));
+        await batch.commit();
+      }
+      toast({ title: 'ลบสัญญาหลักแล้ว', description: deleteTarget.contractNumber });
+      setDeleteTarget(null);
+    } catch (error: unknown) {
+      console.error(error);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: error instanceof Error ? error.message : 'กรุณาลองใหม่',
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -367,8 +429,30 @@ export default function MainContractsPage() {
                             {contract.status.toUpperCase()}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <ChevronRight className="h-5 w-5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
+                        <TableCell className="text-right pr-4">
+                          <div className="flex items-center justify-end gap-0.5">
+                            {isAdmin ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                title="ลบสัญญา (Admin)"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteTarget(contract);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                            <span
+                              className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground"
+                              aria-hidden
+                            >
+                              <ChevronRight className="h-5 w-5 shrink-0" />
+                            </span>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -415,6 +499,34 @@ export default function MainContractsPage() {
             </Button>
           </CardFooter>
         </Card>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบสัญญาหลัก (Admin)</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span>
+                  ยืนยันการลบ <strong className="font-mono text-foreground">{deleteTarget?.contractNumber}</strong> —{' '}
+                  {deleteTarget?.title}
+                </span>
+                <span className="block text-destructive text-sm font-medium">
+                  การลบไม่สามารถย้อนกลับได้ (รวมอัตราตามตำแหน่งในสัญญานี้)
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>ยกเลิก</AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isDeleting}
+                onClick={() => void handleDeleteContract()}
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบถาวร'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

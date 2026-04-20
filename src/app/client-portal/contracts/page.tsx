@@ -1,8 +1,9 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import Link from 'next/link';
 import { FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import type { MainContract, PurchaseOrder, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -13,6 +14,7 @@ import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Button } from '@/components/ui/button';
+import { formatCustomerPoNumberForPortal } from '@/lib/client-portal/timesheet-portal-utils';
 export default function ClientContractsPage() {
   const { currentUser, isLoading } = useAppUser();
   const firestore = useFirestore();
@@ -46,6 +48,25 @@ export default function ClientContractsPage() {
       return !cid || !contractIds.has(cid);
     });
   }, [purchaseOrders, contractIds]);
+
+  /** Deep link from timesheet hub: #client-po-{poId} — expand contract row if PO is nested */
+  useEffect(() => {
+    if (typeof window === 'undefined' || loadingC || loadingP) return;
+    const raw = window.location.hash.replace(/^#/, '');
+    const prefix = 'client-po-';
+    if (!raw.startsWith(prefix)) return;
+    const poId = decodeURIComponent(raw.slice(prefix.length));
+    const po = (purchaseOrders ?? []).find((p) => p.id === poId);
+    if (!po) return;
+    const cid = (po.contractId || '').trim();
+    const scrollToPo = () => document.getElementById(raw)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (cid && contractIds.has(cid)) {
+      setOpenId(cid);
+      window.setTimeout(scrollToPo, 250);
+    } else {
+      requestAnimationFrame(() => requestAnimationFrame(scrollToPo));
+    }
+  }, [loadingC, loadingP, purchaseOrders, contractIds]);
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">…</p>;
@@ -127,21 +148,33 @@ export default function ClientContractsPage() {
                                   <TableHeader>
                                     <TableRow>
                                       <TableHead>{t('poCode')}</TableHead>
-                                      <TableHead>{t('poProject')}</TableHead>
+                                      <TableHead>{t('contractsColCustomerPo')}</TableHead>
                                       <TableHead>{t('poPeriod')}</TableHead>
                                       <TableHead>{locale === 'en' ? 'Status' : 'สถานะ'}</TableHead>
+                                      <TableHead className="w-14 text-right">{t('contractsColAction')}</TableHead>
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
                                     {nested.map((po) => (
-                                      <TableRow key={po.id}>
+                                      <TableRow key={po.id} id={`client-po-${po.id}`} className="scroll-mt-20">
                                         <TableCell className="font-mono text-xs">{po.poCode || po.id}</TableCell>
-                                        <TableCell className="text-sm">{po.projectName || '—'}</TableCell>
+                                        <TableCell className="text-sm font-mono">
+                                          {formatCustomerPoNumberForPortal(po, po.id)}
+                                        </TableCell>
                                         <TableCell className="text-xs text-muted-foreground">
                                           {formatStoredDateRangeThaiBE(po.startDate, po.endDate)}
                                         </TableCell>
                                         <TableCell>
                                           <Badge variant="secondary">{po.status}</Badge>
+                                        </TableCell>
+                                        <TableCell className="text-right p-1">
+                                          <Link
+                                            href={`/client-portal/po/${encodeURIComponent(po.id)}`}
+                                            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
+                                            aria-label={t('contractsColAction')}
+                                          >
+                                            <ChevronRight className="h-4 w-4" aria-hidden />
+                                          </Link>
                                         </TableCell>
                                       </TableRow>
                                     ))}
@@ -178,27 +211,39 @@ export default function ClientContractsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>{t('poCode')}</TableHead>
-                <TableHead>{t('poProject')}</TableHead>
+                <TableHead>{t('contractsColCustomerPo')}</TableHead>
                 <TableHead>{t('poPeriod')}</TableHead>
                 <TableHead>{locale === 'en' ? 'Status' : 'สถานะ'}</TableHead>
+                <TableHead className="w-14 text-right">{t('contractsColAction')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {standalonePos.map((po) => (
-                <TableRow key={po.id}>
+                <TableRow key={po.id} id={`client-po-${po.id}`} className="scroll-mt-20">
                   <TableCell className="font-mono text-xs">{po.poCode || po.id}</TableCell>
-                  <TableCell className="text-sm">{po.projectName || '—'}</TableCell>
+                  <TableCell className="text-sm font-mono">
+                    {formatCustomerPoNumberForPortal(po, po.id)}
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {formatStoredDateRangeThaiBE(po.startDate, po.endDate)}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">{po.status}</Badge>
                   </TableCell>
+                  <TableCell className="text-right p-1">
+                    <Link
+                      href={`/client-portal/po/${encodeURIComponent(po.id)}`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
+                      aria-label={t('contractsColAction')}
+                    >
+                      <ChevronRight className="h-4 w-4" aria-hidden />
+                    </Link>
+                  </TableCell>
                 </TableRow>
               ))}
               {standalonePos.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
                     {t('noData')}
                   </TableCell>
                 </TableRow>

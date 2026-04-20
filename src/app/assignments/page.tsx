@@ -84,6 +84,7 @@ import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
 import { normalizeWaveAllocations, plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
 import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
 import { MOBILIZATION_FULFILLMENT_SUBCOLLECTION } from '@/lib/store/mobilization-fulfillment';
+import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
 
 function waveRequiredPositionLabel(
   wave: Wave,
@@ -154,6 +155,33 @@ function AssignmentsPageContent() {
     return collectionGroup(firestore, 'po_lines');
   }, [firestore, isAuthorized]);
   const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
+
+  /** Backfill workerName บน mobilizations เก่า — client portal อ่านชื่อจากฟิลด์นี้เมื่ออ่าน workers ไม่ได้ */
+  useEffect(() => {
+    if (!firestore || !assignments?.length || !allWorkers?.length) return;
+    const need = assignments.filter((a) => {
+      if ((a.workerName || '').trim() !== '') return false;
+      return allWorkers.some((w) => w.id === a.workerId);
+    });
+    if (need.length === 0) return;
+
+    const run = async () => {
+      const now = Date.now();
+      const chunkSize = 400;
+      for (let i = 0; i < need.length; i += chunkSize) {
+        const chunk = need.slice(i, i + chunkSize);
+        const batch = writeBatch(firestore);
+        for (const a of chunk) {
+          const w = allWorkers.find((x) => x.id === a.workerId);
+          const name = mobilizationWorkerNameFromWorker(w);
+          if (!name) continue;
+          batch.update(doc(firestore, 'mobilizations', a.id), { workerName: name, updatedAt: now });
+        }
+        await batch.commit();
+      }
+    };
+    void run().catch((e) => console.error('mobilization workerName backfill', e));
+  }, [firestore, assignments, allWorkers]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -405,8 +433,7 @@ function AssignmentsPageContent() {
       const mobCollectionRef = collection(firestore, 'mobilizations');
       const newMobRef = doc(mobCollectionRef);
       
-      const workerDisplayName =
-        `${worker.firstName || ''} ${worker.lastName || ''}`.trim() || worker.workerCode || '';
+      const workerDisplayName = mobilizationWorkerNameFromWorker(worker);
       const newAssignment: Assignment = {
         id: newMobRef.id,
         assignmentNo: finalNo, // Apply unique sequential code

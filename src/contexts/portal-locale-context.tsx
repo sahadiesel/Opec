@@ -16,9 +16,20 @@ type Ctx = {
 
 const PortalLocaleContext = createContext<Ctx | null>(null);
 
-function readStoredLocale(): PortalLocale {
+const PORTAL_LOCALE_UID_KEY = `${PORTAL_STORAGE_KEY}_account`;
+
+/** New or switched portal account defaults to English; same account keeps last choice. */
+function readStoredLocale(accountKey: string | null | undefined): PortalLocale {
   if (typeof window === 'undefined') return 'en';
   try {
+    if (accountKey) {
+      const prev = localStorage.getItem(PORTAL_LOCALE_UID_KEY);
+      if (prev !== accountKey) {
+        localStorage.setItem(PORTAL_LOCALE_UID_KEY, accountKey);
+        localStorage.setItem(PORTAL_STORAGE_KEY, 'en');
+        return 'en';
+      }
+    }
     const v = localStorage.getItem(PORTAL_STORAGE_KEY);
     if (v === 'th' || v === 'en') return v;
   } catch {
@@ -27,12 +38,19 @@ function readStoredLocale(): PortalLocale {
   return 'en';
 }
 
-export function PortalLocaleProvider({ children }: { children: React.ReactNode }) {
+export function PortalLocaleProvider({
+  children,
+  accountKey,
+}: {
+  children: React.ReactNode;
+  /** Firebase uid (or stable portal account id) — new login defaults locale to English */
+  accountKey?: string | null;
+}) {
   const [locale, setLocaleState] = useState<PortalLocale>('en');
 
   useEffect(() => {
-    setLocaleState(readStoredLocale());
-  }, []);
+    setLocaleState(readStoredLocale(accountKey));
+  }, [accountKey]);
 
   const setLocale = useCallback((l: PortalLocale) => {
     setLocaleState(l);

@@ -43,6 +43,7 @@ import { ContractLogsTab } from './_components/contract-logs-tab';
 import { ContractAddRateDialog } from './_components/contract-add-rate-dialog';
 import { ContractEditRateDialog } from './_components/contract-edit-rate-dialog';
 import { ContractSupplementDialog } from './_components/contract-supplement-dialog';
+import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
 import {
   buildSpecialDaysStrings,
   OVERTIME_RULE_OPTIONS,
@@ -372,6 +373,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if ((editedMC.endDate ?? 0) !== (contract.endDate ?? 0)) changedFields.push('endDate');
     if ((editedMC.billingTerms ?? '') !== (contract.billingTerms ?? '')) changedFields.push('billingTerms');
     if ((editedMC.paymentTerms ?? '') !== (contract.paymentTerms ?? '')) changedFields.push('paymentTerms');
+    if ((editedMC.vatPercent ?? 7) !== (contract.vatPercent ?? 7)) changedFields.push('vatPercent');
     if ((editedMC.notes ?? '') !== (contract.notes ?? '')) changedFields.push('notes');
     if ((editedMC.serviceAgreementNo ?? '').trim() !== (contract.serviceAgreementNo ?? '').trim()) {
       changedFields.push('serviceAgreementNo');
@@ -428,6 +430,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           endDate: contract.endDate,
           billingTerms: contract.billingTerms,
           paymentTerms: contract.paymentTerms,
+          vatPercent: contract.vatPercent ?? 7,
           notes: contract.notes || '',
           serviceAgreementNo: contract.serviceAgreementNo || '',
           rateMultiplierPolicy: contract.rateMultiplierPolicy || null,
@@ -438,6 +441,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           endDate: editedMC.endDate,
           billingTerms: editedMC.billingTerms,
           paymentTerms: editedMC.paymentTerms,
+          vatPercent: editedMC.vatPercent ?? 7,
           notes: editedMC.notes || '',
           serviceAgreementNo: editedMC.serviceAgreementNo || '',
           rateMultiplierPolicy: editedMC.rateMultiplierPolicy || null,
@@ -1049,6 +1053,19 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   </div>
                 </div>
 
+                <div className="space-y-2 max-w-xs">
+                  <Label>อัตรา VAT (%) — ใช้คำนวณใบแจ้งหนี้เรียกเก็บ (อ้างอิงสัญญานี้)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    max={100}
+                    disabled={!isEditing || !isPendingContract || isSupplementalContract}
+                    value={isEditing ? (editedMC.vatPercent ?? contract.vatPercent ?? 7) : (contract.vatPercent ?? 7)}
+                    onChange={(e) => setEditedMC({ ...editedMC, vatPercent: Number(e.target.value) })}
+                  />
+                </div>
+
                 <div className="space-y-3 rounded-lg border p-4">
                   <div>
                     <Label className="text-base font-semibold">กฎตัวคูณประจำสัญญา (ใช้กับสัญญานี้และสัญญาเพิ่มเติม)</Label>
@@ -1189,6 +1206,23 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     {isPendingContract && !isEditing && (
                       <p className="text-xs text-muted-foreground">กด &quot;แก้ไขข้อมูล&quot; เพื่อแก้วันหยุด (บันทึกรวมกับปุ่มบันทึกสัญญา)</p>
                     )}
+                  </div>
+                )}
+
+                {currentUser && (
+                  <div className="space-y-3 rounded-lg border bg-muted/10 p-4">
+                    <div>
+                      <Label className="text-base font-semibold">เงื่อนไขอัตราขายราย Event (ฝั่งลูกค้า)</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        ผูกกับสัญญานี้โดยตรง (parent = สัญญาหลัก) — ใช้คู่กับราคา/ตัวคูณด้านบนและ PO; ไม่ต้องสร้าง Sales Terms แยก
+                      </p>
+                    </div>
+                    <RateConditionsEditor
+                      parentType="SALES_CONTRACT"
+                      parentId={contract.id}
+                      appliesTo="SALES"
+                      user={currentUser as User}
+                    />
                   </div>
                 )}
 

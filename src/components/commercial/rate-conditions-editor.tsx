@@ -134,8 +134,11 @@ export function RateConditionsEditor({ parentType, parentId, appliesTo, user }: 
   const [formData, setFormData] = useState<Partial<RateCondition>>({});
 
   const canEdit = useMemo(() => {
-    const module = appliesTo === 'SALES' ? 'sales_contract_terms' : 'labor_cost_contract_terms';
-    return can(module as any).edit;
+    if (appliesTo === 'SALES') {
+      /** เงื่อนไขขายผูกสัญญาหลัก (parentId = main_contracts) — ไม่บังคับเมนู Sales Terms แยก */
+      return can('main_contracts').edit || can('sales_contract_terms').edit;
+    }
+    return can('labor_cost_contract_terms').edit;
   }, [can, appliesTo]);
 
   // 3. Actions

@@ -612,12 +612,9 @@ export default function HrPayrollWorkbenchPage() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="secondary" asChild>
-                  <Link href="/timesheets/wave-excel">คีย์ทั้ง Wave (Excel)</Link>
-                </Button>
                 <Button size="sm" variant="outline" asChild>
-                  <Link href="/timesheets/wave-board">
-                    <Grid3X3 className="mr-1.5 h-3.5 w-3.5" /> Wave Board
+                  <Link href="/timesheets">
+                    <Grid3X3 className="mr-1.5 h-3.5 w-3.5" /> ลงเวลา (PO / Wave)
                   </Link>
                 </Button>
                 <Button size="sm" variant="outline" asChild>

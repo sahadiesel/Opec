@@ -16,13 +16,14 @@ import {
   Calendar,
   Info,
   Loader2,
-  ArrowRight
+  ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Quotation, QuotationStatus, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy } from 'firebase/firestore';
+import { collection, query, orderBy, where, getDocs, deleteDoc, doc, limit, type Firestore } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -39,9 +40,37 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canView, isSystemAdmin } from '@/lib/permissions';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+async function deleteQuotationCascade(firestore: Firestore, quotationId: string) {
+  const poSnap = await getDocs(
+    query(
+      collection(firestore, 'purchase_orders'),
+      where('quotationId', '==', quotationId),
+      limit(1)
+    )
+  );
+  if (!poSnap.empty) {
+    throw new Error('LINKED_PO');
+  }
+
+  const linesSnap = await getDocs(collection(firestore, 'quotations', quotationId, 'lines'));
+  for (const d of linesSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+  await deleteDoc(doc(firestore, 'quotations', quotationId));
+}
 
 export default function QuotationsPage() {
   const router = useRouter();
@@ -51,6 +80,9 @@ export default function QuotationsPage() {
   const { toast } = useToast();
 
   const isAuthorized = useMemo(() => canView(currentUser, 'quotations'), [currentUser]);
+  const showAdminDelete = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const quotationsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -119,6 +151,34 @@ export default function QuotationsPage() {
     }
   };
 
+  const handleConfirmDeleteQuotation = async () => {
+    if (!firestore || !deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      await deleteQuotationCascade(firestore, deleteTarget.id);
+      toast({ title: 'ลบใบเสนอราคาแล้ว', description: `เลขที่ ${deleteTarget.quotationNo}` });
+      setDeleteTarget(null);
+    } catch (e: unknown) {
+      const code = e instanceof Error ? e.message : '';
+      if (code === 'LINKED_PO') {
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่ได้',
+          description: 'มีใบสั่งซื้อลูกค้าอ้างถึงใบเสนอราคานี้ — แก้ที่ PO ก่อน',
+        });
+      } else {
+        console.error(e);
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่สำเร็จ',
+          description: e instanceof Error ? e.message : 'ลองใหม่อีกครั้ง',
+        });
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const getStatusBadge = (status: QuotationStatus) => {
     switch (status) {
       case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
@@ -146,7 +206,7 @@ export default function QuotationsPage() {
     });
   }, [quotations, searchTerm, statusFilter]);
 
-  if (isUserLoading || !currentUser) return null;
+  if (isUserLoading || userLoading || !currentUser) return null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -299,8 +359,33 @@ export default function QuotationsPage() {
                           {q.currency} {(q.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell>{getStatusBadge(q.status)}</TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                        <TableCell
+                          className="text-right pr-6"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="inline-flex items-center justify-end gap-0.5">
+                            {showAdminDelete && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                title="ลบใบเสนอราคา (ผู้ดูแลระบบ)"
+                                onClick={() => setDeleteTarget(q)}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="group-hover:text-primary"
+                              onClick={() => router.push(`/quotations/${q.id}`)}
+                            >
+                              <ChevronRight className="h-5 w-5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -315,6 +400,39 @@ export default function QuotationsPage() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบใบเสนอราคานี้?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {deleteTarget && (
+                  <>
+                    จะลบถาวรเลขที่ <span className="font-mono font-semibold">{deleteTarget.quotationNo}</span> และรายการบรรทัด
+                    {deleteTarget.status !== 'draft' ? (
+                      <span className="block pt-2 text-amber-700">
+                        คำเตือน: เอกสารไม่ใช่ฉบับร่าง — ตรวจสอบให้แน่ใจก่อนลบ
+                      </span>
+                    ) : null}
+                  </>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting} type="button">
+                ยกเลิก
+              </AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isDeleting}
+                onClick={() => void handleConfirmDeleteQuotation()}
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
-import { PayrollBatch, PayrollPeriod, User } from '@/lib/types';
+import { PayrollBatch, PayrollPeriod, PayrollPeriodStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
@@ -42,6 +42,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -79,6 +80,11 @@ export default function PayrollBatchesPage() {
     return query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc'));
   }, [firestore, canViewWorkerPayroll]);
   const { data: periods } = useCollection<PayrollPeriod>(periodsQuery as any);
+
+  const selectablePeriods = useMemo(() => {
+    const allowed: PayrollPeriodStatus[] = ['OPEN', 'PROCESSING', 'DRAFT'];
+    return (periods ?? []).filter((p) => allowed.includes(p.status));
+  }, [periods]);
 
   const [isGenerateOpen, setIsGenerateOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -162,7 +168,7 @@ export default function PayrollBatchesPage() {
               <Coins className="h-8 w-8 shrink-0" /> งวดจ่ายลูกจ้าง (Payroll Batches)
             </h1>
             <p className="text-muted-foreground text-lg italic">
-              <strong>Worker Payroll</strong> — สรุปจาก timesheet รายวันที่ผ่านการอนุมัติแล้ว ต่อรอบ period / wave
+              <strong>Worker Payroll</strong> — รวมเฉพาะรายวันที่ตั้งค่า readyForPayroll แล้ว (หลังผู้จัดการอนุมัติงวดเดือน Wave) ภายในรอบ period ที่เลือก
             </p>
           </div>
           
@@ -178,7 +184,16 @@ export default function PayrollBatchesPage() {
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>ประมวลผล Payroll Batch ใหม่</DialogTitle>
-                <DialogDescription>ระบบจะรวนรวมเฉพาะ Daily Timesheets ที่มีสถานะ "Client Approved" เท่านั้น</DialogDescription>
+                <DialogDescription>
+                  ระบบจะรวบรวมเฉพาะ Daily Timesheets ที่ถูกตั้งค่า <strong>พร้อมจ่าย payroll</strong> (readyForPayroll) แล้ว — โดยปกติเกิดหลัง{' '}
+                  <strong>ผู้จัดการ Ops/HR อนุมัติสรุปลงเวลารายเดือน (Wave)</strong> จากเมนูคิวอนุมัติ — ไม่บังคับให้ลูกค้าอนุมัติก่อน
+                  {' '}
+                  หลังอนุมัติ Wave แล้วระบบจะสร้าง <strong>รอบบัญชีลูกจ้าง</strong> ให้เลือกที่นี่โดยอัตโนมัติ (หรือจัดการเพิ่มที่{' '}
+                  <Link href="/payroll/periods" className="underline font-medium text-foreground">
+                    รอบจ่ายเงิน
+                  </Link>
+                  )
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
@@ -186,13 +201,23 @@ export default function PayrollBatchesPage() {
                   <Select onValueChange={setTargetPeriodId} value={targetPeriodId}>
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกรอบเดือนที่ต้องการจ่าย..." /></SelectTrigger>
                     <SelectContent>
-                      {periods?.filter(p => p.status === 'OPEN' || p.status === 'PROCESSING').map(p => (
+                      {selectablePeriods.map((p) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.label} ({formatStoredDateRangeThaiBE(p.startDate, p.endDate)})
+                          {p.status === 'DRAFT' ? ' · DRAFT' : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectablePeriods.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      ยังไม่มีรอบที่เลือกได้ — รอสักครู่หลังอนุมัติ Wave หรือไปที่{' '}
+                      <Link href="/payroll/periods" className="underline font-medium text-foreground">
+                        รอบจ่ายเงิน
+                      </Link>{' '}
+                      เพื่อสร้างรอบและตั้งสถานะ OPEN
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">ขอบเขตงาน (Scope)</Label>
@@ -255,8 +280,8 @@ export default function PayrollBatchesPage() {
         <PageGuidance 
           title="นโยบายการเบิกจ่าย (Disbursement Policy)"
           tips={[
-            "เฉพาะ timesheet ที่ลูกค้าอนุมัติแล้วเท่านั้นที่จะเข้าสู่รอบการคำนวณเงินเดือน (Payroll Batch)",
-            "ลำดับการอนุมัติ: HR จัดทำ → HR Manager อนุมัติ → บัญชีเตรียมจ่ายเงิน (Finance Prep)",
+            "รายการที่เข้า Payroll Batch ต้องเป็น daily timesheet ที่ระบบตั้ง readyForPayroll แล้ว — โดยปกติหลังผู้จัดการ Ops/HR อนุมัติงวดเดือน (wave month review) ซึ่งจะเปิดให้ลูกค้าเห็นสรุปใน portal และสร้าง Draft Invoice ได้ตามลำดับงาน",
+            "ลำดับการอนุมัติภายใน: HR เตรียมงวด → HR Manager / ผู้จัดการที่เกี่ยวข้องอนุมัติ batch → บัญชีเตรียมจ่ายเงิน (Finance Prep)",
             "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน"
           ]}
         />

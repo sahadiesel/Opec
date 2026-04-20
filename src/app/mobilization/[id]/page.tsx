@@ -265,6 +265,56 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   </CardContent>
                 </Card>
 
+                <Card className="border-blue-200 bg-blue-50/80 text-blue-950">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Info className="h-4 w-4 shrink-0" />
+                      ปุ่มสามขั้น — ทำอะไร แล้วไปต่อที่ไหน?
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm space-y-2 pt-0">
+                    <ol className="list-decimal pl-4 space-y-1.5">
+                      <li>
+                        <strong>ยืนยันความพร้อมเดินทาง</strong> — ยืนยันว่าคนนี้ผ่านเกณฑ์ก่อนออกเดินทาง ระบบตั้งสถานะ deployment เป็น{' '}
+                        <span className="font-mono">READY_TO_MOB</span> (ยังไม่ใช่ “ถึงไซต์”)
+                      </li>
+                      <li>
+                        <strong>เริ่มระดมพล</strong> — กำลังเดินทาง / กำลังไปโครงการ (<span className="font-mono">MOBILIZING</span>)
+                      </li>
+                      <li>
+                        <strong>เข้าหน้างานแล้ว</strong> — ถึงไซต์พร้อมลงเวลา (<span className="font-mono">ACTIVE</span>) ขั้นตอนถัดไปคือไปเมนู{' '}
+                        <strong>ลงเวลา</strong> เพื่อบันทึกชั่วโมงรายวัน — ใช้ลิงก์ด้านล่างจะเปิด Wave Board ให้ตรง PO / Wave นี้โดยไม่ต้องเลือกซ้ำ
+                      </li>
+                    </ol>
+                    <p className="text-xs text-blue-900/90">
+                      รายชื่อใน Mobilization ยังอยู่ในระบบ — ถ้า “หาย” จากมุมมองหนึ่ง ให้ไปที่ Wave / Assignments หรือศูนย์ลงเวลา (ภาพรวม) เพื่อดูทั้งโครงการ
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {assignment.poId && assignment.waveId && (
+                  <Card className="border-green-200 bg-green-50/50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base text-green-900">ขั้นตอนถัดไป: ลงเวลารายวัน</CardTitle>
+                      <CardDescription>
+                        PO / Wave ของคนนี้ถูกผูกไว้แล้ว — เปิด Wave Board จากลิงก์นี้ได้ทันที
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap gap-2">
+                      <Button className="bg-green-700 hover:bg-green-800" asChild>
+                        <Link
+                          href={`/timesheets/wave-board?poId=${encodeURIComponent(assignment.poId)}&waveId=${encodeURIComponent(assignment.waveId)}`}
+                        >
+                          ไปลงเวลา Wave Board (PO / Wave นี้)
+                        </Link>
+                      </Button>
+                      <Button variant="outline" asChild>
+                        <Link href="/timesheets">ดูภาพรวมทุก PO / Wave</Link>
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+
                 <Card className="border-primary/20 bg-primary/5">
                   <CardHeader><CardTitle className="text-lg">การดำเนินการสุดท้าย (Final Clearance)</CardTitle></CardHeader>
                   <CardContent className="flex flex-wrap gap-3">

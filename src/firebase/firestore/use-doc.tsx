@@ -106,7 +106,7 @@ export function useDoc<T = any>(
         }
 
         setError(contextualError)
-        errorEmitter.emit('permission-error', contextualError);
+        // Do not emit globally — callers use hook `error` so UI can show a message instead of crashing the app.
       }
     );
 

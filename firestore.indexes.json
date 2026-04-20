@@ -49,6 +49,15 @@
       ]
     },
     {
+      "collectionGroup": "quotations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "customerId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "mobilizations",
       "queryScope": "COLLECTION",
       "fields": [
@@ -87,6 +96,14 @@
       "collectionGroup": "daily_timesheets",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "readyForPayroll", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "customerId", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "DESCENDING" }
       ]
@@ -113,6 +130,40 @@
       "fields": [
         { "fieldPath": "customerId", "order": "ASCENDING" },
         { "fieldPath": "receiptDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "commercial_invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "customerId", "order": "ASCENDING" },
+        { "fieldPath": "issueDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "commercial_invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "customerId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "issueDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "commercial_invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "poId", "order": "ASCENDING" },
+        { "fieldPath": "waveId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "rate_conditions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "parentType", "order": "ASCENDING" },
+        { "fieldPath": "parentId", "order": "ASCENDING" },
+        { "fieldPath": "displayOrder", "order": "ASCENDING" }
       ]
     }
   ],

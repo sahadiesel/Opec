@@ -2,8 +2,6 @@ import type { ComponentType } from 'react';
 import {
   LayoutGrid,
   Grid3X3,
-  Sheet,
-  Clock,
   Coins,
   CalendarDays,
   Building2,
@@ -18,6 +16,8 @@ import {
   Briefcase,
   ListChecks,
   Database,
+  ShoppingCart,
+  CalendarCheck,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -41,9 +41,13 @@ export const HR_NAV_SUBSECTIONS: Array<{
     icon: ListChecks,
     items: [
       { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
-      { key: 'timesheets', title: 'คีย์ Timesheet (Wave Board)', href: '/timesheets/wave-board', icon: Grid3X3 },
-      { key: 'timesheets', title: 'คีย์ทั้ง Wave (Excel)', href: '/timesheets/wave-excel', icon: Sheet },
-      { key: 'timesheets', title: 'ตรวจ Timesheet รายวัน', href: '/timesheets/daily', icon: Clock },
+      {
+        key: 'timesheets',
+        title: 'ลงเวลา (ภาพรวม PO / Wave → เปิด Wave Board)',
+        href: '/timesheets',
+        icon: Grid3X3,
+      },
+      { key: 'timesheets', title: 'สรุปลงเวลารายเดือน (Wave)', href: '/timesheets/wave-month', icon: CalendarDays },
       { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (Batches)', href: '/payroll/batches', icon: Coins },
       { key: 'worker_payroll', title: 'รอบจ่ายและตัดยอด (งวดคนงาน)', href: '/payroll/periods', icon: CalendarDays },
       { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
@@ -51,11 +55,33 @@ export const HR_NAV_SUBSECTIONS: Array<{
   },
   {
     title: 'อนุมัติ (Approval)',
-    description: 'HR Manager · ตรวจและอนุมัติ',
+    description: 'Manager — ศูนย์อนุมัติแยกตามประเภท',
     icon: ShieldCheck,
     items: [
-      { key: 'hr_hub', title: 'ศูนย์อนุมัติ Payroll (Approval Center)', href: '/hr/payroll-approval', icon: ShieldCheck },
-      { key: 'hr_hub', title: 'รายการรออนุมัติ', href: '/hr/payroll-approval#pending', icon: ClipboardList },
+      {
+        key: 'hr_hub',
+        title: 'ศูนย์อนุมัติ (Overview)',
+        href: '/hr/approval-center',
+        icon: ShieldCheck,
+      },
+      {
+        key: 'hr_hub',
+        title: 'Timesheet รอบเดือน (Wave) — คิวรอตรวจ',
+        href: '/hr/timesheet-month-approval',
+        icon: CalendarCheck,
+      },
+      {
+        key: 'hr_hub',
+        title: 'อนุมัติ Payroll งวดจ่าย',
+        href: '/hr/payroll-approval',
+        icon: Coins,
+      },
+      {
+        key: 'customer_pos',
+        title: 'อนุมัติใบสั่งซื้อ (PO)',
+        href: '/purchase-orders',
+        icon: ShoppingCart,
+      },
       { key: 'hr_hub', title: 'คำขอแก้ไข (Corrections)', href: '/hr/dashboard#hr-action-queue', icon: RotateCcw },
     ],
   },

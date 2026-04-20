@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
 
 export default function ClientBillingRedirect() {
-  redirect('/client-portal/accounting?tab=billing');
+  redirect('/client-portal/accounting?tab=invoices');
 }

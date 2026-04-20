@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useMemo } from 'react';
+import { useState, use, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -46,6 +46,7 @@ import { positionListPrimaryName, type PositionDoc } from '@/lib/position-displa
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
+import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
 
 function deploymentStatusBadge(status: DeploymentStatus) {
   switch (status) {
@@ -140,6 +141,32 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
     [waveAssignments]
   );
 
+  /** ซิงก์ workerName ลง mobilization ให้ client portal แสดงชื่อจริง (ไม่อ่าน workers โดยตรง) */
+  useEffect(() => {
+    if (!firestore || !waveAssignments?.length || !allWorkers?.length) return;
+    const need = waveAssignments.filter((a) => {
+      if ((a.workerName || '').trim() !== '') return false;
+      return allWorkers.some((w) => w.id === a.workerId);
+    });
+    if (need.length === 0) return;
+
+    const run = async () => {
+      const now = Date.now();
+      const chunkSize = 400;
+      for (let i = 0; i < need.length; i += chunkSize) {
+        const batch = writeBatch(firestore);
+        for (const a of need.slice(i, i + chunkSize)) {
+          const w = allWorkers.find((x) => x.id === a.workerId);
+          const name = mobilizationWorkerNameFromWorker(w);
+          if (!name) continue;
+          batch.update(doc(firestore, 'mobilizations', a.id), { workerName: name, updatedAt: now });
+        }
+        await batch.commit();
+      }
+    };
+    void run().catch((e) => console.error('wave mobilization workerName backfill', e));
+  }, [firestore, waveAssignments, allWorkers]);
+
   const timesheetReadyCount = useMemo(
     () =>
       (waveAssignments ?? []).filter((a) => WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus)).length,
@@ -174,9 +201,12 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
       const batch = writeBatch(firestore);
       const now = Date.now();
       for (const a of drafts) {
+        const w = allWorkers?.find((x) => x.id === a.workerId);
+        const workerName = mobilizationWorkerNameFromWorker(w) || (a.workerName || '').trim();
         batch.update(doc(firestore, 'mobilizations', a.id), {
           deploymentStatus: 'READY_TO_MOB' as DeploymentStatus,
           updatedAt: now,
+          ...(workerName ? { workerName } : {}),
         });
       }
       if (wave.status === 'PLANNING' || wave.status === 'RECRUITING') {
@@ -556,7 +586,7 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
                   </Link>
                 </Button>
                 <Button asChild variant="outline">
-                  <Link href="/timesheets/daily">ลงเวลาแบบรายวัน (อื่นๆ)</Link>
+                  <Link href="/timesheets/wave-month">สรุปลงเวลารายเดือน (Wave)</Link>
                 </Button>
               </CardContent>
             </Card>

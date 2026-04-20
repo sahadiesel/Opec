@@ -6,13 +6,19 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, FileText, Building2, Loader2, Info, ChevronRight } from 'lucide-react';
+import { Plus, FileText, Building2, Loader2, Info, ChevronRight, ExternalLink, RefreshCw, Ban, Trash2 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { CommercialInvoice, CommercialInvoiceStatus, Customer, PurchaseOrder, Wave } from '@/lib/types';
+import {
+  CommercialInvoice,
+  Customer,
+  PurchaseOrder,
+  Wave,
+  WaveMonthTimesheetReview,
+} from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate } from '@/lib/permissions';
+import { canView, canCreate, canEdit, isSystemAdmin } from '@/lib/permissions';
 import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -24,22 +30,42 @@ import {
   DialogTrigger,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
-import { createCommercialDraftInvoice } from '@/lib/services/commercial-invoice-service';
+import {
+  createCommercialDraftInvoice,
+  ensureCommercialDraftInvoiceAfterMonthApproval,
+  filterWaveMonthReviewsMissingCommercialDraft,
+  voidCommercialInvoice,
+  deleteCommercialInvoice,
+} from '@/lib/services/commercial-invoice-service';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import Link from 'next/link';
 
-function statusBadge(status: CommercialInvoiceStatus) {
+function statusBadge(inv: CommercialInvoice) {
+  const status = inv.status;
+  if (status === 'PENDING_CUSTOMER' && inv.customerRevisionRequestedAt) {
+    return <Badge className="bg-orange-700">ร้องขอแก้ไข</Badge>;
+  }
   switch (status) {
     case 'DRAFT':
-      return <Badge variant="secondary">DRAFT</Badge>;
+      return <Badge variant="secondary">ตรวจภายใน</Badge>;
     case 'PENDING_CUSTOMER':
       return <Badge className="bg-amber-600">รอลูกค้า</Badge>;
     case 'ISSUED':
-      return <Badge className="bg-green-600">Invoice แล้ว</Badge>;
+      return <Badge className="bg-green-600">ยืนยันแล้ว</Badge>;
     case 'VOID':
       return <Badge variant="outline">ยกเลิก</Badge>;
     default:
@@ -62,6 +88,11 @@ export default function DraftInvoicesPage() {
     () => !!currentUser && canCreate(currentUser, 'draft_invoices'),
     [currentUser]
   );
+  const canVoidInvoice = useMemo(
+    () => !!currentUser && canEdit(currentUser, 'draft_invoices'),
+    [currentUser]
+  );
+  const canHardDeleteInvoice = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
 
   const listQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -84,6 +115,50 @@ export default function DraftInvoicesPage() {
   const [periodStartMs, setPeriodStartMs] = useState(() => Date.now());
   const [periodEndMs, setPeriodEndMs] = useState(() => Date.now());
   const [issueDateMs, setIssueDateMs] = useState(() => Date.now());
+  const [syncRowId, setSyncRowId] = useState<string | null>(null);
+  const [syncingBulk, setSyncingBulk] = useState(false);
+  const [voidTarget, setVoidTarget] = useState<CommercialInvoice | null>(null);
+  const [voidBusy, setVoidBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CommercialInvoice | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const approvedReviewsQuery = useMemoFirebase(
+    () =>
+      firestore && isAuthorized
+        ? query(collection(firestore, 'wave_month_timesheet_reviews'), where('status', '==', 'approved'))
+        : null,
+    [firestore, isAuthorized]
+  );
+  const { data: approvedReviews } = useCollection<WaveMonthTimesheetReview>(approvedReviewsQuery as any);
+
+  const wavesLookupQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'waves') : null),
+    [firestore, isAuthorized]
+  );
+  const { data: allWaves } = useCollection<Wave>(wavesLookupQuery as any);
+
+  const posLookupQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null),
+    [firestore, isAuthorized]
+  );
+  const { data: allPos } = useCollection<PurchaseOrder>(posLookupQuery as any);
+
+  const missingReviews = useMemo(
+    () => filterWaveMonthReviewsMissingCommercialDraft(approvedReviews ?? [], invoices ?? []),
+    [approvedReviews, invoices]
+  );
+
+  const poById = useMemo(() => {
+    const m = new Map<string, PurchaseOrder>();
+    for (const p of allPos ?? []) m.set(p.id, p);
+    return m;
+  }, [allPos]);
+
+  const waveById = useMemo(() => {
+    const m = new Map<string, Wave>();
+    for (const w of allWaves ?? []) m.set(w.id, w);
+    return m;
+  }, [allWaves]);
 
   const poQuery = useMemoFirebase(
     () =>
@@ -139,6 +214,101 @@ export default function DraftInvoicesPage() {
       toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const sortedMissingReviews = useMemo(() => {
+    const list = [...missingReviews];
+    list.sort((a, b) => (a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : 0));
+    return list;
+  }, [missingReviews]);
+
+  const handleEnsureFromReview = async (review: WaveMonthTimesheetReview) => {
+    if (!firestore || !currentUser || !canCreateDoc) return;
+    setSyncRowId(review.id);
+    try {
+      const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, review, currentUser);
+      if (res.ok === true) {
+        toast({
+          title: 'สร้างใบแจ้งหนี้ร่างแล้ว',
+          description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
+        });
+        router.push(`/draft-invoices/${res.id}`);
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'ยังสร้างใบไม่ได้',
+          description: res.reason,
+        });
+      }
+    } finally {
+      setSyncRowId(null);
+    }
+  };
+
+  const handleEnsureAllMissing = async () => {
+    if (!firestore || !currentUser || !canCreateDoc || sortedMissingReviews.length === 0) return;
+    setSyncingBulk(true);
+    let ok = 0;
+    const errors: string[] = [];
+    try {
+      for (const r of sortedMissingReviews) {
+        const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, r, currentUser);
+        if (res.ok === true) ok++;
+        else errors.push(`${r.yearMonth}: ${res.reason}`);
+      }
+      toast({
+        title: 'สร้างจากงวดที่อนุมัติแล้ว',
+        description:
+          errors.length === 0
+            ? `สำเร็จ ${ok} รายการ — ดูในรายการด้านล่าง`
+            : `สำเร็จ ${ok} — มีข้อผิดพลาด ${errors.length} รายการ: ${errors.slice(0, 3).join(' · ')}`,
+        variant: ok === 0 && errors.length > 0 ? 'destructive' : 'default',
+      });
+    } finally {
+      setSyncingBulk(false);
+    }
+  };
+
+  const handleConfirmVoid = async () => {
+    if (!firestore || !currentUser || !voidTarget) return;
+    setVoidBusy(true);
+    try {
+      await voidCommercialInvoice(firestore, voidTarget.id, currentUser);
+      toast({
+        title: 'ยกเลิกแล้ว',
+        description: `${voidTarget.invoiceNo} — สถานะ VOID`,
+      });
+      setVoidTarget(null);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ยกเลิกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setVoidBusy(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!firestore || !currentUser || !deleteTarget || !canHardDeleteInvoice) return;
+    setDeleteBusy(true);
+    try {
+      await deleteCommercialInvoice(firestore, deleteTarget.id, currentUser);
+      toast({
+        title: 'ลบแล้ว',
+        description: `${deleteTarget.invoiceNo} — ถูกลบถาวรจากระบบ`,
+      });
+      setDeleteTarget(null);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -286,10 +456,89 @@ export default function DraftInvoicesPage() {
           </AlertDescription>
         </Alert>
 
+        {sortedMissingReviews.length > 0 && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle className="text-base text-primary">งวด timesheet อนุมัติแล้ว — ยังไม่มีใบแจ้งหนี้ร่าง</CardTitle>
+                <CardDescription>
+                  หลังผู้จัดการอนุมัติรอบเดือน ระบบควรสร้างใบอัตโนมัติ — ถ้ายังไม่มี ให้กดสร้างจากรายการด้านล่างเพื่อนำไปตรวจสอบ พิมพ์ และส่งลูกค้า
+                </CardDescription>
+              </div>
+              {canCreateDoc && (
+                <Button
+                  className="gap-2 shrink-0"
+                  variant="secondary"
+                  disabled={syncingBulk}
+                  onClick={() => void handleEnsureAllMissing()}
+                >
+                  {syncingBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  สร้างใบที่ขาดทั้งหมด ({sortedMissingReviews.length})
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-6">เดือน (งวด)</TableHead>
+                    <TableHead>PO</TableHead>
+                    <TableHead>Wave</TableHead>
+                    <TableHead className="text-right pr-6">การทำงาน</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedMissingReviews.map((r) => {
+                    const po = poById.get(r.poId);
+                    const wv = waveById.get(r.waveId);
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
+                        <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
+                        <TableCell className="text-sm font-mono">{wv?.waveCode ?? r.waveId.slice(0, 10)}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                              <Link
+                                href={`/timesheets/wave-month?month=${encodeURIComponent(r.yearMonth)}&highlightWave=${encodeURIComponent(r.waveId)}`}
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                ดูสรุปรายเดือน
+                              </Link>
+                            </Button>
+                            {canCreateDoc && (
+                              <Button
+                                size="sm"
+                                className="h-8 gap-1"
+                                disabled={syncRowId === r.id || syncingBulk}
+                                onClick={() => void handleEnsureFromReview(r)}
+                              >
+                                {syncRowId === r.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Plus className="h-3.5 w-3.5" />
+                                )}
+                                สร้างใบร่าง
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
-            <CardTitle>รายการ</CardTitle>
-            <CardDescription>เรียงตามวันที่เอกสาร</CardDescription>
+            <CardTitle>รายการใบแจ้งหนี้ร่าง</CardTitle>
+            <CardDescription>
+              เรียงตามวันที่เอกสาร — เปิดเพื่อตรวจยอด / พิมพ์ / ส่งลูกค้า — ยกเลิก (VOID) เมื่อต้องการหยุดใช้งานแต่ยังเก็บประวัติในระบบ —{' '}
+              <span className="text-foreground font-medium">ลบถาวร</span> เฉพาะผู้ดูแลระบบ (System Admin)
+            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -319,13 +568,41 @@ export default function DraftInvoicesPage() {
                       <TableCell className="text-right">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>
-                      <TableCell>{statusBadge(inv.status)}</TableCell>
+                      <TableCell>{statusBadge(inv)}</TableCell>
                       <TableCell className="text-right pr-6">
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/draft-invoices/${inv.id}`}>
-                            เปิด <ChevronRight className="h-4 w-4 ml-1" />
-                          </Link>
-                        </Button>
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/draft-invoices/${inv.id}`}>
+                              เปิด <ChevronRight className="h-4 w-4 ml-1" />
+                            </Link>
+                          </Button>
+                          {canVoidInvoice &&
+                            (inv.status === 'DRAFT' || inv.status === 'PENDING_CUSTOMER') && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                                onClick={() => setVoidTarget(inv)}
+                              >
+                                <Ban className="h-3.5 w-3.5 mr-1 shrink-0" />
+                                ยกเลิก
+                              </Button>
+                            )}
+                          {canHardDeleteInvoice && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="text-destructive border-destructive/40 hover:bg-destructive/15"
+                              onClick={() => setDeleteTarget(inv)}
+                              title="ลบถาวร — เฉพาะผู้ดูแลระบบ"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-1 shrink-0" />
+                              ลบ
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -333,7 +610,7 @@ export default function DraftInvoicesPage() {
                 {(!invoices || invoices.length === 0) && !isLoading && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
-                      ยังไม่มีรายการ — กดสร้างจาก Wave / Timesheet
+                      ยังไม่มีรายการ — ใช้ปุ่มสร้างด้านบน หรือสร้างจากงวดที่อนุมัติแล้ว (กล่องสีฟ้า)
                     </TableCell>
                   </TableRow>
                 )}
@@ -341,6 +618,59 @@ export default function DraftInvoicesPage() {
             </Table>
           </CardContent>
         </Card>
+
+        <AlertDialog open={voidTarget !== null} onOpenChange={(open) => !open && !voidBusy && setVoidTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ยกเลิกใบ {voidTarget?.invoiceNo ?? ''}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                สถานะจะเป็น VOID — สร้างใบใหม่จากงวดหรือ Wave / Timesheet ได้อีกครั้ง (ไม่ลบประวัติเอกสาร)
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={voidBusy}>ไม่</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={voidBusy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmVoid();
+                }}
+              >
+                {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยันยกเลิก'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && !deleteBusy && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบถาวร {deleteTarget?.invoiceNo ?? ''}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                ลบเอกสารออกจากฐานข้อมูล — ไม่สามารถกู้คืนได้ ใช้เมื่อต้องการเคลียร์รายการทดสอบหรือเอกสารผิดพลาดร้ายแรง
+                {deleteTarget?.status === 'ISSUED' || deleteTarget?.status === 'PENDING_CUSTOMER' ? (
+                  <span className="block mt-2 font-medium text-destructive">
+                    ใบนี้เคยส่งลูกค้าหรือยืนยันแล้ว — ตรวจสอบให้แน่ใจก่อนลบ
+                  </span>
+                ) : null}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteBusy}>ไม่</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteBusy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDelete();
+                }}
+              >
+                {deleteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยันลบถาวร'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

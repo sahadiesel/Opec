@@ -380,7 +380,7 @@ export default function HRDashboardPage() {
                   <Link href="/timesheets/wave-board">คีย์ลงเวลา (Wave)</Link>
                 </Button>
                 <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
-                  <Link href="/timesheets/daily">ตรวจ Timesheet รายวัน</Link>
+                  <Link href="/timesheets/wave-month">สรุปลงเวลารายเดือน (Wave)</Link>
                 </Button>
                 <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
                   <Link href="/payroll/periods">รอบจ่ายเงินและตัดยอด</Link>

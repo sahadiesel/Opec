@@ -93,7 +93,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     icon: FileBadge,
     items: [
       { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
-      { key: 'tax_invoices', title: 'ใบกำกับภาษี (Tax Invoices)', href: '/tax-invoices', icon: FileBadge },
+      { key: 'tax_invoices', title: 'ใบกำกับภาษี / ใบเสร็จ', href: '/tax-invoices', icon: FileBadge },
       { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
       { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
     ],
@@ -207,7 +207,7 @@ const navGroups: NavGroup[] = [
       { key: 'client_portal', title: 'หน้าหลัก (Dashboard)', href: '/client-portal/dashboard', icon: LayoutDashboard },
       { key: 'client_portal', title: 'ประวัติกำลังพล (Personnel)', href: '/client-portal/workers', icon: HardHat },
       { key: 'client_portal', title: 'หลักฐานการลงเวลา (Activity)', href: '/client-portal/timesheets', icon: Clock },
-      { key: 'client_portal', title: 'การเงินและวางบิล (Billing)', href: '/client-portal/accounting?tab=billing', icon: FileBarChart },
+      { key: 'client_portal', title: 'การเงินและวางบิล (Billing)', href: '/client-portal/accounting?tab=invoices', icon: FileBarChart },
     ],
   },
 ];

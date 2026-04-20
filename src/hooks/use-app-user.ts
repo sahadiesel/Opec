@@ -6,6 +6,7 @@ import { useFirestore, useUser } from '@/firebase';
 import { useDoc } from '@/firebase/firestore/use-doc';
 import type { User } from '@/lib/types';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { isClient } from '@/lib/permissions';
 
 /**
  * Primary app user profile: prefers live Firestore `users/{uid}`; localStorage is cache/fallback only.
@@ -102,13 +103,19 @@ export function useAppUser() {
    */
   const currentUser = useMemo(() => {
     if (firestoreUser) return firestoreUser;
-    if (docLoading && authUser) return cachedUser;
     if (userDocError) return null;
+    if (docLoading && authUser) {
+      // Customer portal: never use localStorage customerId while users/{uid} is still loading —
+      // Firestore rules compare queries to userData().customerId; a stale cache breaks list queries.
+      if (cachedUser && isClient(cachedUser)) return null;
+      return cachedUser;
+    }
     return null;
   }, [firestoreUser, docLoading, authUser, cachedUser, userDocError]);
 
   const isLoading =
-    authLoading || (!!authUser && docLoading && !firestoreUser && !cachedUser);
+    authLoading ||
+    (!!authUser && docLoading && !firestoreUser && (!cachedUser || isClient(cachedUser)));
 
   return {
     currentUser,

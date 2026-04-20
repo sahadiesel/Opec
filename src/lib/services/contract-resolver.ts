@@ -6,13 +6,16 @@
  * Used by Billing, Payroll, and Profit Estimation modules to ensure consistent rule application.
  */
 
-import { 
-  SalesContractTerm, 
-  LaborCostContractTerm, 
-  RateCondition, 
+import {
+  SalesContractTerm,
+  LaborCostContractTerm,
+  RateCondition,
   JobMode,
-  RateConditionEventType
+  RateConditionEventType,
+  MainContract,
+  PurchaseOrder,
 } from '@/lib/types';
+import { syntheticSalesContractTermFromMainContract } from '@/lib/commercial/synthetic-sales-contract-term';
 import { parseISO, startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
 
 /**
@@ -25,7 +28,39 @@ export interface ResolutionResult<T> {
 }
 
 /**
- * Resolves the most appropriate Sales Contract Term based on PO, Customer, and Date.
+ * วางบิลจาก timesheet: ใช้สัญญาหลัก + PO เท่านั้น (ไม่อ่าน collection sales_contract_terms)
+ */
+export function resolveMainContractBillingTerm(
+  mainContract: MainContract | undefined,
+  po: PurchaseOrder,
+  date: string,
+): ResolutionResult<SalesContractTerm> {
+  if (!mainContract) {
+    return {
+      data: null,
+      warnings: ['PO ยังไม่ผูกสัญญาหลัก (contractId) — ตั้งสัญญาใน PO ก่อนคำนวณวางบิล'],
+      isMatch: false,
+    };
+  }
+  const term = syntheticSalesContractTermFromMainContract(mainContract, po);
+  const targetDate = startOfDay(parseISO(date));
+  const start = startOfDay(parseISO(term.effectiveDate));
+  const end = startOfDay(parseISO(term.endDate));
+  const inRange =
+    (isAfter(targetDate, start) || isSameDay(targetDate, start)) &&
+    (isBefore(targetDate, end) || isSameDay(targetDate, end));
+  if (!inRange) {
+    return {
+      data: null,
+      warnings: [`วันที่ ${date} อยู่นอกช่วงสัญญาหลัก (${term.effectiveDate} – ${term.endDate})`],
+      isMatch: false,
+    };
+  }
+  return { data: term, warnings: [], isMatch: true };
+}
+
+/**
+ * Legacy: เอกสาร sales_contract_terms แยก — ใช้เฉพาะโมดูลที่ยังอ้าง collection นี้โดยตรง
  * PRIORITY: Purchase Order Match > Customer Match.
  */
 export function resolveActiveSalesContractTerm(

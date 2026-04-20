@@ -17,7 +17,7 @@ export default function ClientPortalLayout({ children }: { children: React.React
   }
 
   return (
-    <PortalLocaleProvider>
+    <PortalLocaleProvider accountKey={currentUser?.id ?? null}>
       <ClientPortalShell user={currentUser}>{children}</ClientPortalShell>
     </PortalLocaleProvider>
   );

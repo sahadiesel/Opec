@@ -16,6 +16,7 @@ import { getEffectiveDepartment, getEffectiveLevel, deriveBusinessRoleKey, BUSIN
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { userMayAccessPath } from '@/lib/navigation/nav-access';
+import { isClient } from '@/lib/permissions';
 import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
@@ -193,7 +194,9 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
               <div className="mx-auto flex max-w-lg flex-col items-center gap-4 py-20 text-center">
                 <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</p>
                 <Button asChild variant="default">
-                  <Link href="/">กลับแดชบอร์ด</Link>
+                  <Link href={isClient(user) ? '/client-portal/dashboard' : '/'}>
+                    {isClient(user) ? 'ไปพอร์ทัลลูกค้า' : 'กลับแดชบอร์ด'}
+                  </Link>
                 </Button>
               </div>
             ) : (

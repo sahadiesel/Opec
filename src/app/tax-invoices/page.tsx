@@ -164,10 +164,10 @@ export default function TaxInvoicesPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <FileBadge className="h-8 w-8" /> ใบกำกับภาษี (Tax Invoices)
+            <FileBadge className="h-8 w-8" /> ใบกำกับภาษี / ใบเสร็จรับเงิน
           </h1>
           <p className="text-muted-foreground text-lg">
-            สร้างใบแจ้งหนี้ร่าง (DRAFT) จากใบวางบิล — แนบรูปสลิปลงเวลาได้ก่อนยืนยันออกเอกสารจริง (ISSUED) จึงจะบันทึกลูกหนี้ (AR)
+            สร้างร่างจากใบวางบิล หรือจากใบเรียกเก็บ (หลังลูกค้า/OPEC ยืนยัน) — พิมพ์ฉบับเดียว (ไม่แยกใบกำกับกับใบเสร็จ ไม่ใช่ e-Tax) ก่อนออก ISSUED จึงบันทึกลูกหนี้ (AR)
           </p>
         </div>
 
@@ -175,7 +175,7 @@ export default function TaxInvoicesPage() {
           <Info className="h-5 w-5 text-blue-600" />
           <AlertTitle className="font-bold text-lg">นโยบายเอกสารภาษี (Tax Document Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            สถานะ DRAFT ยังไม่กระทบลูกหนี้ — เมื่อเปลี่ยนเป็น ISSUED ระบบจะสร้าง AR และอัปเดตใบวางบิลเป็น INVOICED
+            สถานะ DRAFT ยังไม่กระทบลูกหนี้ — เมื่อเปลี่ยนเป็น ISSUED ระบบจะสร้าง AR และอัปเดตใบวางบิลเป็น INVOICED (รวมกรณีสร้างใบวางบิลอัตโนมัติจากใบเรียกเก็บ)
           </AlertDescription>
         </Alert>
 

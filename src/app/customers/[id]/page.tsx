@@ -43,7 +43,7 @@ import { useFirestore, useDoc, useCollection, useMemoFirebase, useAuth } from '@
 import { sendPasswordResetEmail, type ActionCodeSettings } from 'firebase/auth';
 import { isSystemAdmin, isOperationsPillarExecutive } from '@/lib/permission-core';
 import { formatDateRangeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
-import { doc, collection, query, where, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, collection, query, where, addDoc, updateDoc, deleteDoc, getDocs, writeBatch, limit } from 'firebase/firestore';
 import { 
   Customer, 
   ContactPerson, 
@@ -431,10 +431,39 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   const handleDeleteContract = async (contractId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!firestore || !isBizExecutive || !canDeleteCustomers) return;
-    if (!confirm('ยืนยันลบสัญญานี้? การลบสัญญาจะมีผลต่อข้อมูลที่อ้างอิงทั้งหมด')) return;
+    if (!firestore || !currentUser || !isSystemAdmin(currentUser) || !canDeleteCustomers) return;
+    if (!confirm('ยืนยันลบสัญญานี้? การลบสัญญาจะมีผลต่อข้อมูลที่อ้างอิงทั้งหมด (เฉพาะ System Admin)')) return;
     try {
-      await deleteDoc(doc(firestore, 'main_contracts', contractId));
+      const poSnap = await getDocs(
+        query(collection(firestore, 'purchase_orders'), where('contractId', '==', contractId), limit(5)),
+      );
+      if (!poSnap.empty) {
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่ได้',
+          description: 'มี Customer PO อ้างอิงสัญญานี้อยู่',
+        });
+        return;
+      }
+      const childSnap = await getDocs(
+        query(collection(firestore, 'main_contracts'), where('parentContractId', '==', contractId), limit(5)),
+      );
+      if (!childSnap.empty) {
+        toast({
+          variant: 'destructive',
+          title: 'ลบไม่ได้',
+          description: 'มีสัญญาฉบับแก้/เพิ่มเติมอ้างอิงสัญญานี้',
+        });
+        return;
+      }
+      const ratesSnap = await getDocs(collection(firestore, 'main_contracts', contractId, 'position_rates'));
+      const refs = [...ratesSnap.docs.map((d) => d.ref), doc(firestore, 'main_contracts', contractId)];
+      const chunk = 400;
+      for (let i = 0; i < refs.length; i += chunk) {
+        const batch = writeBatch(firestore);
+        refs.slice(i, i + chunk).forEach((r) => batch.delete(r));
+        await batch.commit();
+      }
       toast({ title: 'ลบสัญญาสำเร็จ' });
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: err?.message || 'ไม่สามารถลบสัญญาได้' });
@@ -982,8 +1011,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                                   <Pencil className="h-4 w-4 text-primary" />
                                 </Button>
                               )}
-                              {isBizExecutive && !isLocked && contract.status !== 'active' && (
-                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
+                              {isSystemAdmin(currentUser) && !isLocked && contract.status !== 'active' && (
+                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ (Admin)"
                                   onClick={(e) => handleDeleteContract(contract.id, e)}>
                                   <Trash2 className="h-4 w-4" />
                                 </Button>

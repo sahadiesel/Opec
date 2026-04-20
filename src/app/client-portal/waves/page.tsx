@@ -31,6 +31,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, query, where, orderBy, doc } from 'firebase/firestore';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
+import { isClient } from '@/lib/permissions';
 import { ExceptionRequestService } from '@/lib/services/exception-request-service';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -72,8 +73,18 @@ export default function ClientManpowerPage() {
   const asgnQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(asgnQuery as any);
 
-  // Only query workers when user is ready (client scope; rules allow client read)
-  const workersQuery = useMemoFirebase(() => (firestore && currentUser ? collection(firestore, 'workers') : null), [firestore, currentUser]);
+  /** ลูกค้า: อ่านเฉพาะ workers ที่ assignedCustomerIds มี customerId (ตรงกับ firestore.rules) — ห้าม list ทั้งคอลเลกชัน */
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore || !currentUser) return null;
+    if (isClient(currentUser)) {
+      if (!currentUser.customerId) return null;
+      return query(
+        collection(firestore, 'workers'),
+        where('assignedCustomerIds', 'array-contains', currentUser.customerId),
+      );
+    }
+    return collection(firestore, 'workers');
+  }, [firestore, currentUser]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const activePersonnel = useMemo(() => {

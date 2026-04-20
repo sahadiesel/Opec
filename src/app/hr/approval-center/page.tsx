@@ -1,0 +1,109 @@
+'use client';
+
+import Link from 'next/link';
+import { AppShell } from '@/components/layout/app-shell';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { useAppUser } from '@/hooks/use-app-user';
+import { canAccess, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
+import { CalendarCheck, Coins, ShoppingCart, ShieldCheck } from 'lucide-react';
+import type { User } from '@/lib/types';
+
+/**
+ * ศูนย์อนุมัติ — แยกหมวด: Timesheet รอบเดือน (payroll + draft invoice) · Payroll งวดจ่าย · PO
+ * เมนูหลักอยู่ที่แผง HR → อนุมัติ (ผู้จัดการ)
+ */
+export default function HrApprovalCenterPage() {
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const useMatrixGuards = isMatrixControlledRole(currentUser);
+  const canSee = useMatrixGuards
+    ? canAccess(currentUser!, 'payroll_runs', 'view') ||
+      canAccess(currentUser!, 'worker_payroll', 'view') ||
+      canAccess(currentUser!, 'hr_hub', 'view')
+    : isHRStaff(currentUser);
+
+  if (userLoading || !currentUser) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+    );
+  }
+
+  if (!canSee) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="mx-auto max-w-lg py-20 text-center text-muted-foreground">ไม่มีสิทธิ์เข้าหน้านี้</div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell user={currentUser} onLogout={() => {}}>
+      <div className="mx-auto max-w-4xl space-y-8 px-4 py-8">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
+            <ShieldCheck className="h-8 w-8" />
+            ศูนย์อนุมัติ (Approval Center)
+          </h1>
+          <p className="mt-2 text-muted-foreground max-w-2xl">
+            แยกตามประเภทงาน — <strong>Timesheet รอบเดือน</strong> ส่งจาก Payroll/Officer หลังตรวจตัวเลขในแอป (มุมมอง Wave
+            + เดือน) แล้วเข้าคิวให้ผู้จัดการอนุมัติก่อนนำไปคำนวณ payroll และออก Draft Invoice ให้ลูกค้า
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-1">
+          <Card className="border-primary/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <CalendarCheck className="h-5 w-5 text-primary" />
+                3.1 อนุมัติ Timesheet (รอบเดือน / Wave)
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                <span className="font-semibold text-foreground">3.1.1</span> หลังอนุมัติ — นำไปคำนวณ payroll ได้{' '}
+                <span className="mx-1 text-muted-foreground">|</span>{' '}
+                <span className="font-semibold text-foreground">3.1.2</span> เพื่อออกเอกสาร Draft Invoice ส่งลูกค้า
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link href="/hr/timesheet-month-approval">เปิดคิวรอตรวจ (รายเดือน)</Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link href="/timesheets/wave-month">ไปสรุปลงเวลารายเดือน (ฝั่งเตรียมข้อมูล)</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Coins className="h-5 w-5 text-amber-700" />
+                อนุมัติ Payroll งวดจ่าย (Worker / Office)
+              </CardTitle>
+              <CardDescription>ศูนย์อนุมัติงวดจ่ายตาม batch — แยกจาก timesheet รายวัน</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="secondary">
+                <Link href="/hr/payroll-approval">เปิดศูนย์อนุมัติ Payroll</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <ShoppingCart className="h-5 w-5 text-muted-foreground" />
+                3.2 อนุมัติใบสั่งซื้อ (Customer PO)
+              </CardTitle>
+              <CardDescription>อนุมัติ PO ให้เป็น Active ก่อนสร้าง Wave / มอบหมายคน</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild variant="outline">
+                <Link href="/purchase-orders">ไปรายการใบสั่งซื้อ</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </AppShell>
+  );
+}

@@ -29,8 +29,8 @@ import {
   Lock,
   ExternalLink
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
+import { useFirestore, useDoc, useMemoFirebase, useCollection, useUser } from '@/firebase';
+import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField } from 'firebase/firestore';
 import { Quotation, QuotationLine, QuotationStatus, User } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -45,9 +45,13 @@ import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit } from '@/lib/permissions';
 
+import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
+import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
 import { QuotationHistoryTab } from './_components/quotation-history-tab';
 import { QuotationLineDialog } from './_components/quotation-line-dialog';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 type CompanyDocumentProfile = {
   companyNameTh?: string;
@@ -62,7 +66,8 @@ type CompanyDocumentProfile = {
 export default function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { currentUser, isLoading: userLoading, userDocError } = useAppUser();
+  const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
   const canViewQuotations = useMemo(() => canView(currentUser, 'quotations'), [currentUser]);
@@ -73,7 +78,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     () => (firestore && canViewQuotations ? doc(firestore, 'quotations', id) : null),
     [firestore, canViewQuotations, id]
   );
-  const { data: quotation, isLoading: isQuoLoading } = useDoc<Quotation>(quotationRef as any);
+  const { data: quotation, isLoading: isQuoLoading, error: quotationLoadError } = useDoc<Quotation>(quotationRef as any);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && canViewQuotations ? collection(firestore, 'quotations', id, 'lines') : null),
@@ -86,12 +91,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   );
   const { data: companyProfile } = useDoc<CompanyDocumentProfile>(companyProfileRef as any);
 
+  const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
   const [draftLines, setDraftLines] = useState<QuotationLine[]>([]);
   
   const [isLineDialogOpen, setIsLineDialogOpen] = useState(false);
   const [editingLine, setEditingLine] = useState<Partial<QuotationLine> | null>(null);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
 
   useEffect(() => {
     if (quotation) setEditedHeader(quotation);
@@ -103,9 +111,12 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     }
   }, [lines, isEditMode]);
 
+  /** ใช้เฉพาะ Firebase Auth — อย่า redirect เมื่อแค่โปรไฟล์ Firestore ยังโหลดไม่เสร็จ (มิฉะนั้นจะเด้งไป `/` ทั้งที่ล็อกอินอยู่) */
   useEffect(() => {
-    if (!userLoading && !currentUser) router.replace('/');
-  }, [userLoading, currentUser, router]);
+    if (!isUserLoading && !firebaseUser) {
+      router.replace('/');
+    }
+  }, [isUserLoading, firebaseUser, router]);
 
   // --- Workflow Logic ---
   const isDraft = quotation?.status === 'draft';
@@ -126,20 +137,162 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     return { subtotal, taxAmount, grandTotal, discountAmount, taxPercent };
   };
 
+  const handlePrintQuotation = () => {
+    if (!quotation) return;
+    const headerSlice = isEditMode ? editedHeader : quotation;
+    const t = computeTotals(displayLines, headerSlice);
+    const body = buildQuotationPrintHtml({
+      company: companyProfile ?? undefined,
+      quotation,
+      lines: displayLines,
+      totalsOverride: {
+        subtotal: t.subtotal,
+        discountAmount: t.discountAmount,
+        taxAmount: t.taxAmount,
+        grandTotal: t.grandTotal,
+        taxPercent: t.taxPercent,
+      },
+      printedAtMs: Date.now(),
+      locale: printLocale,
+    });
+    if (
+      !openStandardPrintWindow({
+        windowTitle: quotation.quotationNo,
+        bodyInnerHtml: body,
+        htmlLang: printLocale,
+      })
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+        description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+      });
+    }
+  };
+
   const handleUpdateStatus = (newStatus: QuotationStatus) => {
     if (!canEditQuotations) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขสถานะใบเสนอราคา' });
       return;
     }
     if (!quotationRef) return;
-    updateDoc(quotationRef, { status: newStatus, updatedAt: Date.now() });
-    
+    const patch: Record<string, unknown> = { status: newStatus, updatedAt: Date.now() };
+    if (newStatus === 'sent') {
+      patch.customerRevisionRequestedAt = deleteField();
+      patch.customerRevisionRequestNote = deleteField();
+      patch.customerRevisionIssueId = deleteField();
+    }
+    void updateDoc(quotationRef, sanitizeFirestorePayload(patch) as any);
+
     let msg = `เปลี่ยนสถานะเป็น ${newStatus.toUpperCase()}`;
     if (newStatus === 'sent') msg = "ทำเครื่องหมายว่าส่งเอกสารแล้ว (Marked as Sent)";
     if (newStatus === 'accepted') msg = "ลูกค้ายืนยันตกลง (Client Accepted)";
     if (newStatus === 'draft') msg = "เปิดสิทธิ์แก้ไขเอกสาร (Revised to Draft)";
-    
+
     toast({ title: "อัปเดตสถานะสำเร็จ", description: msg });
+  };
+
+  /** ลูกค้าขอแก้ไขใน portal — เปิดฉบับร่างเพื่อแก้แล้วส่งใหม่ */
+  const handleOpenDraftAfterCustomerNegotiation = async () => {
+    if (!canEditQuotations || !quotationRef || !quotation || quotation.status !== 'sent') return;
+    if (!quotation.customerRevisionRequestedAt) return;
+    try {
+      await updateDoc(
+        quotationRef,
+        sanitizeFirestorePayload({
+          status: 'draft',
+          updatedAt: Date.now(),
+          updatedBy: currentUser?.id,
+          customerRevisionRequestedAt: deleteField(),
+          customerRevisionRequestNote: deleteField(),
+          customerRevisionIssueId: deleteField(),
+        }) as any,
+      );
+      toast({
+        title: 'เปิดฉบับร่างแล้ว',
+        description: 'แก้ไขรายการและเงื่อนไข แล้วกดส่งให้ลูกค้าอีกครั้ง',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  /** Persist draft quotation on the same document (no R1 fork). */
+  const handleSaveDraftInPlace = async () => {
+    if (!canEditQuotations) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขใบเสนอราคา' });
+      return;
+    }
+    if (!firestore || !quotation || !quotationRef || !currentUser) return;
+    if (quotation.status !== 'draft') return;
+
+    setIsSavingDraft(true);
+    try {
+      const totals = computeTotals(draftLines, editedHeader);
+
+      await updateDoc(
+        quotationRef,
+        sanitizeFirestorePayload({
+          projectTitle: editedHeader.projectTitle ?? quotation.projectTitle,
+          issueDate: editedHeader.issueDate ?? quotation.issueDate,
+          validUntilDate: editedHeader.validUntilDate ?? quotation.validUntilDate,
+          currency: editedHeader.currency ?? quotation.currency,
+          discountAmount: totals.discountAmount,
+          taxPercent: totals.taxPercent,
+          notes: editedHeader.notes ?? quotation.notes,
+          internalNotes: editedHeader.internalNotes ?? quotation.internalNotes,
+          subtotal: totals.subtotal,
+          taxAmount: totals.taxAmount,
+          grandTotal: totals.grandTotal,
+          updatedAt: Date.now(),
+          updatedBy: currentUser.id,
+        })
+      );
+
+      const previousIds = new Set((lines || []).map((l) => l.id));
+      const currentIds = new Set(draftLines.map((l) => l.id));
+
+      for (const prevId of previousIds) {
+        if (!currentIds.has(prevId)) {
+          await deleteDoc(doc(firestore, 'quotations', id, 'lines', prevId));
+        }
+      }
+
+      for (const line of draftLines) {
+        const linePayload = {
+          quotationId: id,
+          description: line.description,
+          quantity: Number(line.quantity) || 0,
+          unit: line.unit || 'EA',
+          unitPrice: Number(line.unitPrice) || 0,
+          lineTotal: Number(line.lineTotal) || 0,
+          remarks: line.remarks || '',
+          displayOrder: line.displayOrder ?? 0,
+          updatedAt: Date.now(),
+        };
+
+        if (line.id.startsWith('draft-')) {
+          await addDoc(collection(firestore, 'quotations', id, 'lines'), {
+            ...linePayload,
+            createdAt: Date.now(),
+          });
+        } else {
+          await updateDoc(doc(firestore, 'quotations', id, 'lines', line.id), linePayload);
+        }
+      }
+
+      setIsEditMode(false);
+      toast({ title: 'บันทึกร่างสำเร็จ', description: 'ข้อมูลใบเสนอราคาถูกบันทึกแล้ว' });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'กรุณาลองใหม่อีกครั้ง';
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
+    } finally {
+      setIsSavingDraft(false);
+    }
   };
 
   const handleCreateRevision = async () => {
@@ -148,6 +301,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       return;
     }
     if (!firestore || !quotation || !quotationRef || !currentUser) return;
+    if (quotation.status === 'draft') return;
     if (quotation.status === 'revised') {
       toast({ variant: 'destructive', title: 'เอกสารถูกแก้ไขแล้ว', description: 'ฉบับนี้เปิดแก้ไขต่อไม่ได้ ให้เปิดที่ฉบับล่าสุดแทน' });
       return;
@@ -204,7 +358,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   };
 
   const handleStartEdit = () => {
-    if (!canEditQuotations) return;
+    if (!canEditQuotations) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์แก้ไข',
+        description: 'บัญชีของคุณดูใบเสนอราคาได้อย่างเดียว — ติดต่อผู้ดูแลระบบหากต้องการแก้ไข',
+      });
+      return;
+    }
     if (!quotation) return;
     setEditedHeader(quotation);
     setDraftLines([...(lines || [])].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)));
@@ -296,7 +457,35 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     });
   };
 
-  if (userLoading || !currentUser) return null;
+  if (isUserLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+  if (!firebaseUser) {
+    return null;
+  }
+  if (userDocError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-4">
+        <p className="max-w-md text-center text-muted-foreground">
+          โหลดข้อมูลผู้ใช้จากระบบไม่สำเร็จ — ลองรีเฟรชหรือล็อกอินใหม่
+        </p>
+        <Button type="button" variant="outline" onClick={() => router.push('/')}>
+          กลับหน้าหลัก
+        </Button>
+      </div>
+    );
+  }
+  if (userLoading || !currentUser) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!canViewQuotations) {
     return (
@@ -306,8 +495,29 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     );
   }
 
-  if (isQuoLoading || !quotation) {
-    return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
+  if (isQuoLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-12 w-12 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  if (quotationLoadError || !quotation) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-lg mx-auto py-16 px-4 text-center space-y-4">
+          <p className="text-muted-foreground">
+            {quotationLoadError
+              ? 'โหลดข้อมูลไม่สำเร็จ (สิทธิ์การเข้าถึงหรือเครือข่าย) — ลองรีเฟรชหรือตรวจสอบการล็อกอิน'
+              : 'ไม่พบใบเสนอราคานี้ หรืออาจถูกลบแล้ว'}
+          </p>
+          <Button type="button" variant="outline" onClick={() => router.push('/quotations')}>
+            <ArrowLeft className="h-4 w-4 mr-2" /> กลับไปรายการใบเสนอราคา
+          </Button>
+        </div>
+      </AppShell>
+    );
   }
 
   return (
@@ -337,8 +547,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" className="gap-2 border-primary text-primary hover:bg-primary/5 h-11 px-6 shadow-sm" onClick={() => window.print()}>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+            <Button
+              variant="outline"
+              type="button"
+              className="gap-2 border-primary text-primary hover:bg-primary/5 h-11 px-6 shadow-sm"
+              onClick={() => handlePrintQuotation()}
+            >
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
             <Badge variant={(isFinalized || isRevised) ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${(isFinalized || isRevised) ? "bg-slate-900 text-white" : "border-primary/20 bg-primary/5 text-primary"}`}>
@@ -364,6 +580,31 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 "สิ้นสุด (Finalized): เอกสารนี้ถูกปิดสถานะแล้ว ไม่สามารถแก้ไขข้อมูลได้อีก"
               ]}
             />
+
+            {isSent && quotation.customerRevisionRequestedAt && (
+              <Card className="border-amber-400 bg-amber-50/90 dark:border-amber-700 dark:bg-amber-950/40">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base text-amber-950 dark:text-amber-100">
+                    ลูกค้าแจ้งขอแก้ไข / ต่อรอง (Client negotiation request)
+                  </CardTitle>
+                  <CardDescription className="text-amber-900/90 dark:text-amber-200/90">
+                    แจ้งเมื่อ {new Date(quotation.customerRevisionRequestedAt).toLocaleString('th-TH')}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p className="whitespace-pre-wrap rounded-md border border-amber-200/80 bg-white/80 p-3 text-amber-950 dark:border-amber-800 dark:bg-zinc-900/50 dark:text-amber-50">
+                    {quotation.customerRevisionRequestNote?.trim() || '—'}
+                  </p>
+                  <Button
+                    type="button"
+                    className="bg-amber-700 hover:bg-amber-800"
+                    onClick={() => void handleOpenDraftAfterCustomerNegotiation()}
+                  >
+                    เปิดฉบับร่างเพื่อแก้ไขตามที่ลูกค้าขอ แล้วส่งใหม่
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
@@ -504,15 +745,37 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     {isEditMode && (
                       <>
                         <div className="grid grid-cols-2 gap-2">
-                          <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11" onClick={handleCreateRevision}>
-                            <Save className="h-3 w-3 mr-1" /> บันทึก Revision
-                          </Button>
-                          <Button variant="outline" className="bg-transparent border-white/20 text-white hover:bg-white/10 text-xs h-11" onClick={handleCancelEdit}>
+                          {isDraft ? (
+                            <Button
+                              className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11"
+                              disabled={isSavingDraft}
+                              onClick={() => void handleSaveDraftInPlace()}
+                            >
+                              {isSavingDraft ? (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              ) : (
+                                <Save className="h-3 w-3 mr-1" />
+                              )}
+                              บันทึกร่าง
+                            </Button>
+                          ) : (
+                            <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11" onClick={() => void handleCreateRevision()}>
+                              <Save className="h-3 w-3 mr-1" /> บันทึก Revision
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            className="bg-transparent border-white/20 text-white hover:bg-white/10 text-xs h-11"
+                            disabled={isSavingDraft}
+                            onClick={handleCancelEdit}
+                          >
                             <XCircle className="h-3 w-3 mr-1" /> ยกเลิกแก้ไข
                           </Button>
                         </div>
                         <p className="text-[11px] text-white/80">
-                          เมื่อบันทึก ระบบจะสร้างฉบับใหม่ (R) และเปลี่ยนฉบับเดิมเป็นสถานะ "มีการแก้ไข"
+                          {isDraft
+                            ? 'บันทึกลงฉบับร่างเดิม — เลขที่เอกสารไม่เปลี่ยน'
+                            : 'เมื่อบันทึก ระบบจะสร้างฉบับใหม่ (R) และเปลี่ยนฉบับเดิมเป็นสถานะ "มีการแก้ไข"'}
                         </p>
                         <Separator className="bg-white/10" />
                       </>
@@ -524,7 +787,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       </Button>
                     )}
 
-                    {!isEditMode && isSent && (
+                    {!isEditMode && isSent && !quotation.customerRevisionRequestedAt && (
                       <div className="grid grid-cols-2 gap-2">
                         <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11" onClick={() => handleUpdateStatus('accepted')}>
                           <CheckCircle2 className="h-3 w-3 mr-1" /> Accepted

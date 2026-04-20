@@ -10,6 +10,10 @@ declare global {
 }
 
 const FIRESTORE_UNREACHABLE = /Could not reach Cloud Firestore backend/i;
+/** ข้อความจาก Firestore เมื่อ query ต้องการ composite index — URL ในนี้เปิด Console แล้วกดสร้างดัชนีได้ */
+const FIRESTORE_INDEX_NEEDED =
+  /(?:requires an index|Missing composite index|The query requires an index)/i;
+const FIREBASE_CONSOLE_INDEX_URL = /https:\/\/console\.firebase\.google\.com\/[^\s"'<>]+/gi;
 
 export function installFirestoreDevConsoleFilter(): void {
   if (typeof window === 'undefined') return;
@@ -36,6 +40,16 @@ export function installFirestoreDevConsoleFilter(): void {
           '[Firestore] เชื่อมต่อ Cloud ชั่วคราวไม่ได้ — ทำงานแบบ offline จนกว่าเครือข่ายจะพร้อม (ตรวจ VPN/ไฟร์วอลล์ แล้วรีเฟรช)',
         );
         return;
+      }
+      if (FIRESTORE_INDEX_NEEDED.test(text)) {
+        const urls = text.match(FIREBASE_CONSOLE_INDEX_URL);
+        if (urls?.length) {
+          const unique = [...new Set(urls)];
+          console.warn(
+            '[Firestore Index] ยังไม่มี composite index — เปิดลิงก์ด้านล่างในเบราว์เซอร์ แล้วกดสร้างดัชนี (หรือ deploy firestore.indexes.json):\n\n' +
+              unique.join('\n\n'),
+          );
+        }
       }
     } catch {
       /* fall through */

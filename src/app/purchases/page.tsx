@@ -17,7 +17,8 @@ import {
   AlertTriangle,
   Info,
   Loader2,
-  Wallet
+  Wallet,
+  Trash2,
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
@@ -26,8 +27,8 @@ import { Purchase, PurchaseType, User, Vendor, PurchaseStatus, PurchaseLineEntry
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canApprovePurchaseAsManager } from '@/lib/permissions';
-import { collection, query, orderBy } from 'firebase/firestore';
+import { canView, canApprovePurchaseAsManager, isSystemAdmin } from '@/lib/permissions';
+import { collection, query, orderBy, where, getDocs, deleteDoc, doc, type Firestore } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -43,6 +44,44 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+/** Deletes linked top-level docs and subcollections, then the purchase document. */
+async function deletePurchaseCascade(firestore: Firestore, purchaseId: string) {
+  const vbSnap = await getDocs(
+    query(collection(firestore, 'purchase_vendor_bills'), where('purchaseId', '==', purchaseId))
+  );
+  for (const d of vbSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+
+  const linesSnap = await getDocs(collection(firestore, 'purchases', purchaseId, 'lines'));
+  for (const d of linesSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+
+  const milestonesSnap = await getDocs(collection(firestore, 'purchases', purchaseId, 'payment_milestones'));
+  for (const d of milestonesSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+
+  const apSnap = await getDocs(
+    query(collection(firestore, 'ap_bills'), where('purchaseId', '==', purchaseId))
+  );
+  for (const d of apSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+
+  await deleteDoc(doc(firestore, 'purchases', purchaseId));
+}
 
 export default function PurchasesPage() {
   const router = useRouter();
@@ -80,6 +119,9 @@ export default function PurchasesPage() {
   });
 
   const canApprove = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
+  const showAdminDelete = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const [deleteTarget, setDeleteTarget] = useState<Purchase | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const pendingApprovalCount = useMemo(
     () => (purchases || []).filter((p) => p.status === 'PENDING_APPROVAL').length,
     [purchases]
@@ -118,6 +160,28 @@ export default function PurchasesPage() {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างรายการซื้อได้" });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleConfirmDeletePurchase = async () => {
+    if (!firestore || !deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      await deletePurchaseCascade(firestore, deleteTarget.id);
+      toast({
+        title: 'ลบรายการซื้อแล้ว',
+        description: `เลขที่ ${deleteTarget.purchaseNo}`,
+      });
+      setDeleteTarget(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สามารถลบได้',
+        description: 'ลองใหม่อีกครั้งหรือตรวจสอบสิทธิ์การเข้าถึง',
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -297,8 +361,33 @@ export default function PurchasesPage() {
                           ฿ {p.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell>{getStatusBadge(p.status)}</TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                        <TableCell
+                          className="text-right pr-6"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="inline-flex items-center justify-end gap-0.5">
+                            {showAdminDelete && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                title="ลบรายการซื้อ (ผู้ดูแลระบบ)"
+                                onClick={() => setDeleteTarget(p)}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="group-hover:text-primary"
+                              onClick={() => router.push(`/purchases/${p.id}`)}
+                            >
+                              <ChevronRight className="h-5 w-5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -313,6 +402,35 @@ export default function PurchasesPage() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบรายการซื้อนี้?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {deleteTarget && (
+                  <>
+                    จะลบถาวรเลขที่ <span className="font-mono font-semibold">{deleteTarget.purchaseNo}</span> พร้อมรายการบรรทัด งวดชำระ
+                    และเอกสารที่เกี่ยวข้อง (ถ้ามี) การกระทำนี้ไม่สามารถย้อนกลับได้
+                  </>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting} type="button">
+                ยกเลิก
+              </AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isDeleting}
+                onClick={() => void handleConfirmDeletePurchase()}
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

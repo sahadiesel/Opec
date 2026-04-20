@@ -14,26 +14,21 @@ import type {
   DailyTimesheet,
   POLine,
   OtRulesSnapshot,
+  Position,
   PurchaseOrder,
-  SalesContractTerm,
-  RateCondition,
+  RateConditionEventType,
   MainContract,
 } from '@/lib/types';
 import { derivePackageNormalHourlyRate, PACKAGE_OT_TIER_MULT } from '@/lib/commercial/package-hourly-rate';
 import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
 import { resolveSellRestDay, type SellRestDayResolution } from '@/lib/commercial/sell-rest-day';
-import { resolveActiveSalesContractTerm } from '@/lib/services/contract-resolver';
-import {
-  resolveApplicableSalesRateCondition,
-  calculateDailySalesValue,
-  resolveQuantityForUnit,
-} from '@/lib/services/sales-calculator';
 
 export interface GeneratedBillingLine {
   description: string;
   referenceType: 'TIMESHEET';
-  workerId: string;
-  workerName: string;
+  /** รวมตามตำแหน่ง — ไม่ผูกคนเดียว */
+  workerId?: string;
+  workerName?: string;
   positionId: string;
   eventType: string;
   timesheetIds: string[];
@@ -50,14 +45,23 @@ export interface BillingLineGenerationResult {
 }
 
 interface LineAcc {
-  workerId: string;
-  workerName: string;
   positionId: string;
   eventType: string;
   timesheetIds: string[];
+  /** จำนวนคนที่มีส่วนร่วมในบรรทัดนี้ (สำหรับคำอธิบาย) */
+  workerIds: Set<string>;
   totalAmount: number;
   totalQuantity: number;
 }
+
+type PushAccRow = {
+  workerId?: string;
+  positionId: string;
+  eventType: string;
+  timesheetIds: string[];
+  amount: number;
+  quantity: number;
+};
 
 function calcOtAmount(
   hours: number,
@@ -127,9 +131,8 @@ function workDayFromPackageBilling(
     } else if (sellRest.active && sellRest.kind === 'weekly_rest') {
       amt *= Math.max(0, sellRest.weeklyNormalMult ?? 1);
     }
-    pushAcc(map, accKey(wid, pos, 'work_day', amt), {
+    pushAcc(map, accKey(pos, 'work_day', amt), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
       eventType: 'work_day',
       timesheetIds: tid,
@@ -161,9 +164,8 @@ function workDayFromPackageBilling(
   if (wh.legalNormal > 0 && normalPart > 0) {
     const q = wh.legalNormal;
     const up = normalPart / q;
-    pushAcc(map, accKey(wid, pos, 'work_day', up), {
+    pushAcc(map, accKey(pos, 'work_day', up), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
       eventType: 'work_day',
       timesheetIds: tid,
@@ -174,9 +176,8 @@ function workDayFromPackageBilling(
   if (wh.overflowNormal > 0 && overflowPart > 0) {
     const q = wh.overflowNormal;
     const up = overflowPart / q;
-    pushAcc(map, accKey(wid, pos, 'sell_overflow_normal', up), {
+    pushAcc(map, accKey(pos, 'sell_overflow_normal', up), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
       eventType: 'sell_overflow_normal',
       timesheetIds: tid,
@@ -187,9 +188,8 @@ function workDayFromPackageBilling(
   if (wh.o15 > 0 && t15 > 0) {
     const q = wh.o15;
     const up = t15 / q;
-    pushAcc(map, accKey(wid, pos, 'ot_1.5', up), {
+    pushAcc(map, accKey(pos, 'ot_1.5', up), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
       eventType: 'ot_1.5',
       timesheetIds: tid,
@@ -200,9 +200,8 @@ function workDayFromPackageBilling(
   if (wh.o20 > 0 && t20 > 0) {
     const q = wh.o20;
     const up = t20 / q;
-    pushAcc(map, accKey(wid, pos, 'ot_2.0', up), {
+    pushAcc(map, accKey(pos, 'ot_2.0', up), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
       eventType: 'ot_2.0',
       timesheetIds: tid,
@@ -213,9 +212,8 @@ function workDayFromPackageBilling(
   if (wh.o30 > 0 && t30 > 0) {
     const q = wh.o30;
     const up = t30 / q;
-    pushAcc(map, accKey(wid, pos, 'ot_3.0', up), {
+    pushAcc(map, accKey(pos, 'ot_3.0', up), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
       eventType: 'ot_3.0',
       timesheetIds: tid,
@@ -226,31 +224,22 @@ function workDayFromPackageBilling(
 }
 
 function accKey(
-  workerId: string,
   positionId: string,
   eventType: string,
   unitPrice: number,
 ): string {
   const up = roundMoney(unitPrice);
-  return `${workerId}__${positionId}__${eventType}__${up}`;
+  return `${positionId}__${eventType}__${up}`;
 }
 
-function pushAcc(
-  map: Map<string, LineAcc>,
-  key: string,
-  row: Omit<LineAcc, 'totalAmount' | 'totalQuantity'> & {
-    amount: number;
-    quantity: number;
-  },
-) {
+function pushAcc(map: Map<string, LineAcc>, key: string, row: PushAccRow) {
   let a = map.get(key);
   if (!a) {
     a = {
-      workerId: row.workerId,
-      workerName: row.workerName,
       positionId: row.positionId,
       eventType: row.eventType,
       timesheetIds: [],
+      workerIds: new Set<string>(),
       totalAmount: 0,
       totalQuantity: 0,
     };
@@ -258,355 +247,154 @@ function pushAcc(
   }
   a.totalAmount += row.amount;
   a.totalQuantity += row.quantity;
+  if (row.workerId) a.workerIds.add(row.workerId);
   if (!a.timesheetIds.includes(row.timesheetIds[0])) {
     a.timesheetIds.push(row.timesheetIds[0]);
   }
 }
 
-function tsWithoutOtHours(ts: DailyTimesheet): DailyTimesheet {
-  return {
-    ...ts,
-    ot15Hours: 0,
-    ot20Hours: 0,
-    ot30Hours: 0,
-    holidayHours: 0,
-  };
+/**
+ * ประเภทวัน flat รายวัน (ไม่ใช่ work_day): ฐานราคา/วัน จาก PO line × ตัวคูณขายตามสัญญาหลัก
+ */
+function poFallbackSellDayMultiplier(
+  mainContract: MainContract | undefined,
+  eventType: string,
+  poOtRules: OtRulesSnapshot,
+): number {
+  const sell = mainContract?.rateMultiplierPolicy?.sell;
+  const n = (v: number | undefined | null): number | null =>
+    v != null && !Number.isNaN(Number(v)) ? Number(v) : null;
+
+  switch (eventType) {
+    case 'standby_day':
+      return n(sell?.standby) ?? 1;
+    case 'travel_day':
+      return n(sell?.travel) ?? 1;
+    case 'mobilization_day':
+      return n(sell?.mobilization) ?? 1;
+    case 'demobilization_day':
+      return n(sell?.demobilization) ?? 1;
+    case 'public_holiday_worked':
+      return n(sell?.publicHoliday) ?? 1;
+    case 'off_day_worked': {
+      const fromContract = n(sell?.holiday);
+      if (fromContract != null) return fromContract;
+      return poOtRules.holiday ?? 1;
+    }
+    default:
+      return 1;
+  }
 }
 
-function workDayContractParts(
-  ts: DailyTimesheet,
-  term: SalesContractTerm,
-  conditions: RateCondition[],
-): {
-  dailyAnchor: number;
-  workCond: RateCondition;
-  normalWorkHours: number;
-} | null {
-  const workCond = resolveApplicableSalesRateCondition(conditions, ts, term);
-  if (!workCond) return null;
-  const normalWorkHours =
-    ts.normalHours && ts.normalHours > 0 ? ts.normalHours : 12;
-  const tsBase = tsWithoutOtHours(ts);
-  const dailyAnchor = calculateDailySalesValue(tsBase, workCond, 0);
-  return { dailyAnchor, workCond, normalWorkHours };
-}
+const PO_FALLBACK_FLAT_DAILY_EVENTS: RateConditionEventType[] = [
+  'off_day_worked',
+  'standby_day',
+  'travel_day',
+  'mobilization_day',
+  'demobilization_day',
+  'public_holiday_worked',
+];
 
-function workDayFromPoLine(
+/** work_day ไม่ใช่ — คำนวณจาก PO line × ตัวคูณสัญญาเท่านั้น (ไม่ผ่าน sales term / rate_conditions) */
+function billingNonWorkDayFromPoAndContract(
   ts: DailyTimesheet,
   poLine: POLine,
+  mainContract: MainContract | undefined,
   map: Map<string, LineAcc>,
+  warnings: string[],
 ) {
   const sellRate = poLine.sellRateSnapshot;
   const otRules: OtRulesSnapshot = poLine.sellOtRulesSnapshot || {};
-  const normalWorkHours = poLine.normalWorkHoursSnapshot || 12;
-  const w = ts.workerNameSnapshot;
   const wid = ts.workerId;
   const pos = ts.positionId;
   const tid = [ts.id];
 
-  const baseAmt = sellRate;
-  const upBase = baseAmt;
-  pushAcc(map, accKey(wid, pos, 'work_day', upBase), {
-    workerId: wid,
-    workerName: w,
-    positionId: pos,
-    eventType: 'work_day',
-    timesheetIds: tid,
-    amount: baseAmt,
-    quantity: 1,
-  });
-
-  const ot15 = ts.ot15Hours || 0;
-  if (ot15 > 0) {
-    const mult = otRules.afterShift ?? DEFAULT_OT_MULT.ot15;
-    const amt = calcOtAmount(ot15, sellRate, normalWorkHours, mult);
-    const up = (sellRate / normalWorkHours) * mult;
-    pushAcc(map, accKey(wid, pos, 'ot_1.5', up), {
+  if (PO_FALLBACK_FLAT_DAILY_EVENTS.includes(ts.eventType as RateConditionEventType)) {
+    const mult = poFallbackSellDayMultiplier(mainContract, ts.eventType, otRules);
+    const amt = sellRate * mult;
+    pushAcc(map, accKey(pos, ts.eventType, amt), {
       workerId: wid,
-      workerName: w,
       positionId: pos,
-      eventType: 'ot_1.5',
+      eventType: ts.eventType,
       timesheetIds: tid,
       amount: amt,
-      quantity: ot15,
-    });
-  }
-  const ot20 = ts.ot20Hours || 0;
-  if (ot20 > 0) {
-    const mult = DEFAULT_OT_MULT.ot20;
-    const amt = calcOtAmount(ot20, sellRate, normalWorkHours, mult);
-    const up = (sellRate / normalWorkHours) * mult;
-    pushAcc(map, accKey(wid, pos, 'ot_2.0', up), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'ot_2.0',
-      timesheetIds: tid,
-      amount: amt,
-      quantity: ot20,
-    });
-  }
-  const ot30 = ts.ot30Hours || 0;
-  if (ot30 > 0) {
-    const mult = DEFAULT_OT_MULT.ot30;
-    const amt = calcOtAmount(ot30, sellRate, normalWorkHours, mult);
-    const up = (sellRate / normalWorkHours) * mult;
-    pushAcc(map, accKey(wid, pos, 'ot_3.0', up), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'ot_3.0',
-      timesheetIds: tid,
-      amount: amt,
-      quantity: ot30,
-    });
-  }
-}
-
-function workDayFromContract(
-  ts: DailyTimesheet,
-  term: SalesContractTerm,
-  conditions: RateCondition[],
-  poLine: POLine | undefined,
-  map: Map<string, LineAcc>,
-  warnings: string[],
-) {
-  const parts = workDayContractParts(ts, term, conditions);
-  if (!parts) {
-    if (poLine) {
-      warnings.push(
-        `${ts.workerNameSnapshot} (${ts.date}): ไม่พบเงื่อนไขขาย work_day — ใช้ราคา snapshot จาก PO line`,
-      );
-      workDayFromPoLine(ts, poLine, map);
-    } else {
-      warnings.push(
-        `${ts.workerNameSnapshot} (${ts.date}): ไม่พบเงื่อนไขขาย work_day และไม่มี PO line สำหรับตำแหน่งนี้ — ข้าม`,
-      );
-    }
-    return;
-  }
-
-  const { dailyAnchor, workCond, normalWorkHours } = parts;
-  const w = ts.workerNameSnapshot;
-  const wid = ts.workerId;
-  const pos = ts.positionId;
-  const tid = [ts.id];
-
-  if (workCond.unitType === 'HOUR') {
-    const amount = calculateDailySalesValue(ts, workCond, 0);
-    const qty = resolveQuantityForUnit(ts, workCond.unitType);
-    if (qty <= 0) {
-      warnings.push(`${w} (${ts.date}): work_day แบบ HOUR แต่จำนวนชั่วโมงเป็น 0 — ข้าม`);
-      return;
-    }
-    const up = amount / qty;
-    pushAcc(map, accKey(wid, pos, 'work_day', up), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'work_day',
-      timesheetIds: tid,
-      amount,
-      quantity: qty,
-    });
-    return;
-  }
-
-  if (dailyAnchor > 0) {
-    pushAcc(map, accKey(wid, pos, 'work_day', dailyAnchor), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'work_day',
-      timesheetIds: tid,
-      amount: dailyAnchor,
       quantity: 1,
     });
-  }
-
-  const anchor = dailyAnchor > 0 ? dailyAnchor : (workCond.baseRate ?? 0);
-  if (anchor <= 0) {
-    if ((ts.ot15Hours || 0) + (ts.ot20Hours || 0) + (ts.ot30Hours || 0) > 0) {
-      warnings.push(
-        `${w} (${ts.date}): ไม่สามารถคำนวณ OT ได้ (daily rate เป็น 0) — ข้าม OT`,
-      );
-    } else if (dailyAnchor <= 0) {
-      warnings.push(
-        `${w} (${ts.date}): work_day ได้มูลค่า 0 จากเงื่อนไขขาย — ข้าม`,
-      );
-    }
-    return;
-  }
-
-  const ot15 = ts.ot15Hours || 0;
-  if (ot15 > 0) {
-    const mult = DEFAULT_OT_MULT.ot15;
-    const amt = calcOtAmount(ot15, anchor, normalWorkHours, mult);
-    const up = (anchor / normalWorkHours) * mult;
-    pushAcc(map, accKey(wid, pos, 'ot_1.5', up), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'ot_1.5',
-      timesheetIds: tid,
-      amount: amt,
-      quantity: ot15,
-    });
-  }
-  const ot20 = ts.ot20Hours || 0;
-  if (ot20 > 0) {
-    const mult = DEFAULT_OT_MULT.ot20;
-    const amt = calcOtAmount(ot20, anchor, normalWorkHours, mult);
-    const up = (anchor / normalWorkHours) * mult;
-    pushAcc(map, accKey(wid, pos, 'ot_2.0', up), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'ot_2.0',
-      timesheetIds: tid,
-      amount: amt,
-      quantity: ot20,
-    });
-  }
-  const ot30 = ts.ot30Hours || 0;
-  if (ot30 > 0) {
-    const mult = DEFAULT_OT_MULT.ot30;
-    const amt = calcOtAmount(ot30, anchor, normalWorkHours, mult);
-    const up = (anchor / normalWorkHours) * mult;
-    pushAcc(map, accKey(wid, pos, 'ot_3.0', up), {
-      workerId: wid,
-      workerName: w,
-      positionId: pos,
-      eventType: 'ot_3.0',
-      timesheetIds: tid,
-      amount: amt,
-      quantity: ot30,
-    });
-  }
-}
-
-function genericEventFromContract(
-  ts: DailyTimesheet,
-  term: SalesContractTerm,
-  conditions: RateCondition[],
-  poLine: POLine | undefined,
-  map: Map<string, LineAcc>,
-  warnings: string[],
-) {
-  const cond = resolveApplicableSalesRateCondition(conditions, ts, term);
-  if (cond) {
-    const amount = calculateDailySalesValue(ts, cond, 0);
-    const qty = Math.max(resolveQuantityForUnit(ts, cond.unitType), 0);
-    if (qty <= 0 && amount <= 0) return;
-    const q = qty > 0 ? qty : 1;
-    const up = amount / q;
-    pushAcc(map, accKey(ts.workerId, ts.positionId, ts.eventType, up), {
-      workerId: ts.workerId,
-      workerName: ts.workerNameSnapshot,
-      positionId: ts.positionId,
-      eventType: ts.eventType,
-      timesheetIds: [ts.id],
-      amount,
-      quantity: q,
-    });
-    return;
-  }
-
-  if (!poLine) {
-    warnings.push(
-      `${ts.workerNameSnapshot} (${ts.date}, ${ts.eventType}): ไม่พบเงื่อนไขขายและไม่มี PO line — ข้าม`,
-    );
     return;
   }
 
   warnings.push(
-    `${ts.workerNameSnapshot} (${ts.date}, ${ts.eventType}): ไม่พบเงื่อนไขขาย — ใช้ราคา snapshot จาก PO line`,
+    `ข้าม (${ts.date}, ${ts.eventType}) — ยังไม่รองรับในโหมด PO + สัญญา`,
   );
-  const sellRate = poLine.sellRateSnapshot;
-  const otRules: OtRulesSnapshot = poLine.sellOtRulesSnapshot || {};
-  const normalWorkHours = poLine.normalWorkHoursSnapshot || 12;
-  const w = ts.workerNameSnapshot;
-  const wid = ts.workerId;
-  const pos = ts.positionId;
-  const tid = [ts.id];
-
-  switch (ts.eventType) {
-    case 'off_day_worked': {
-      const mult = otRules.holiday ?? 1.0;
-      const amt = sellRate * mult;
-      const up = sellRate * mult;
-      pushAcc(map, accKey(wid, pos, 'off_day_worked', up), {
-        workerId: wid,
-        workerName: w,
-        positionId: pos,
-        eventType: 'off_day_worked',
-        timesheetIds: tid,
-        amount: amt,
-        quantity: 1,
-      });
-      break;
-    }
-    case 'standby_day': {
-      pushAcc(map, accKey(wid, pos, 'standby_day', sellRate), {
-        workerId: wid,
-        workerName: w,
-        positionId: pos,
-        eventType: 'standby_day',
-        timesheetIds: tid,
-        amount: sellRate,
-        quantity: 1,
-      });
-      break;
-    }
-    case 'travel_day': {
-      pushAcc(map, accKey(wid, pos, 'travel_day', sellRate), {
-        workerId: wid,
-        workerName: w,
-        positionId: pos,
-        eventType: 'travel_day',
-        timesheetIds: tid,
-        amount: sellRate,
-        quantity: 1,
-      });
-      break;
-    }
-    default:
-      warnings.push(
-        `${w} (${ts.date}, ${ts.eventType}): ไม่มีเงื่อนไขขายและไม่รองรับ fallback จาก PO — ข้าม`,
-      );
-  }
 }
 
-function descriptionForLine(acc: LineAcc): string {
-  const w = acc.workerName;
+function peoplePrefix(acc: LineAcc): string {
+  const n = acc.workerIds.size;
+  if (n <= 0) return '';
+  return `${n} คน · `;
+}
+
+async function loadPositionLabels(
+  db: Firestore,
+  positionIds: string[],
+): Promise<Map<string, string>> {
+  const uniq = [...new Set(positionIds.filter(Boolean))];
+  const map = new Map<string, string>();
+  await Promise.all(
+    uniq.map(async (pid) => {
+      const snap = await getDoc(doc(db, 'positions', pid));
+      if (snap.exists()) {
+        const p = snap.data() as Position;
+        const label = String(
+          p.positionName || p.positionNameTh || p.positionNameEn || pid,
+        ).trim();
+        map.set(pid, label || pid);
+      } else {
+        map.set(pid, pid);
+      }
+    }),
+  );
+  return map;
+}
+
+function descriptionForLine(acc: LineAcc, positionTitle: string): string {
+  const title = positionTitle || acc.positionId;
+  const pfx = peoplePrefix(acc);
   const q = acc.totalQuantity;
   switch (acc.eventType) {
     case 'work_day':
-      return `${w} — ค่าแรงวันทำงาน (${q} วัน)`;
+      return `${title} — ค่าแรงวันทำงาน (${pfx}${q} วัน)`;
     case 'ot_1.5':
-      return `${w} — OT x1.5 (${q} ชม.)`;
+      return `${title} — OT x1.5 (${pfx}${q} ชม.)`;
     case 'ot_2.0':
-      return `${w} — OT x2 (${q} ชม.)`;
+      return `${title} — OT x2 (${pfx}${q} ชม.)`;
     case 'ot_3.0':
-      return `${w} — OT x3 (${q} ชม.)`;
+      return `${title} — OT x3 (${pfx}${q} ชม.)`;
     case 'off_day_worked':
-      return `${w} — ทำงานวันหยุด (${q} วัน)`;
+      return `${title} — ทำงานวันหยุด (${pfx}${q} วัน)`;
     case 'standby_day':
-      return `${w} — สแตนด์บาย (${q} วัน)`;
+      return `${title} — สแตนด์บาย (${pfx}${q} วัน)`;
     case 'travel_day':
-      return `${w} — วันเดินทาง (${q} วัน)`;
+      return `${title} — วันเดินทาง (${pfx}${q} วัน)`;
+    case 'public_holiday_worked':
+      return `${title} — ทำงานวันหยุดนักขัตฤกษ์ (${pfx}${q} วัน)`;
+    case 'mobilization_day':
+      return `${title} — โมบิไลเซชัน (${pfx}${q} วัน)`;
+    case 'demobilization_day':
+      return `${title} — ดีโมบิไลเซชัน (${pfx}${q} วัน)`;
     case 'sell_overflow_normal':
-      return `${w} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย) (${q} ชม.)`;
+      return `${title} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย) (${pfx}${q} ชม.)`;
     default:
-      return `${w} — ${acc.eventType} (${q} หน่วย)`;
+      return `${title} — ${acc.eventType} (${pfx}${q} หน่วย)`;
   }
 }
 
 /**
- * Generates billing note lines from approved timesheets.
+ * สร้างบรรทัดวางบิลจาก timesheet ที่อนุมัติแล้ว
  *
- * **work_day** + `sellRateSnapshot` > 0: แพ็กขาย 8/12 ชม. + ตัวคูณขาย (PO/สัญญา) สมมาตร payroll — ก่อน rate conditions
- * อื่นๆ / work_day ไม่มีราคา PO: sales terms + rate conditions; PO snapshot เป็น fallback
+ * - **ฐานราคา:** `sellRateSnapshot` / กฎ OT จาก **PO line** (สะท้อนสัญญาที่ผูกกับ PO แล้ว)
+ * - **ตัวคูณวันทำงาน/วันหยุด/OT:** `MainContract.rateMultiplierPolicy.sell` + ปฏิทินวันหยุดฝั่งขายของสัญญา
+ * - **ไม่ใช้** `sales_contract_terms` และ **ไม่ query** `rate_conditions` — ไม่ฟ้องเรื่อง “ไม่พบเงื่อนไขขาย” จาก sales term
  */
 export async function generateBillingLines(
   db: Firestore,
@@ -641,21 +429,12 @@ export async function generateBillingLines(
   ];
   if (waveId) tsConstraints.push(where('waveId', '==', waveId));
 
-  const [poLinesSnap, salesTermsSnap, rateCondSnap, tsSnap] = await Promise.all([
+  const [poLinesSnap, tsSnap] = await Promise.all([
     getDocs(
       query(
         collection(db, 'purchase_orders', poId, 'po_lines'),
         where('status', '==', 'active'),
       ),
-    ),
-    getDocs(
-      query(
-        collection(db, 'sales_contract_terms'),
-        where('customerId', '==', po.customerId),
-      ),
-    ),
-    getDocs(
-      query(collection(db, 'rate_conditions'), where('appliesTo', '==', 'SALES')),
     ),
     getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints)),
   ]);
@@ -668,13 +447,6 @@ export async function generateBillingLines(
     poLinesByPosition.set(pl.positionId, pl);
   }
 
-  const salesTerms = salesTermsSnap.docs.map(
-    (d) => ({ ...d.data(), id: d.id } as SalesContractTerm),
-  );
-  const rateConditions = rateCondSnap.docs
-    .map((d) => ({ ...d.data(), id: d.id } as RateCondition))
-    .filter((c) => c.parentType === 'SALES_CONTRACT');
-
   const timesheets = tsSnap.docs.map(
     (d) => ({ ...d.data(), id: d.id } as DailyTimesheet),
   );
@@ -686,73 +458,37 @@ export async function generateBillingLines(
     return { lines: [], totalAmount: 0, timesheetCount: 0, warnings };
   }
 
-  if (salesTerms.length === 0) {
+  if (!mainContract) {
     warnings.push(
-      'ไม่พบ sales contract terms ของลูกค้านี้ — จะใช้ราคา snapshot จาก PO line เมื่อจำเป็น',
+      'PO ไม่มีสัญญาหลัก (contractId) — การคำนวณวางบิลควรผูกสัญญา; ระบบจะ fallback ไปราคา snapshot จาก PO line เมื่อจำเป็น',
     );
   }
+
+  const positionLabels = await loadPositionLabels(db, [
+    ...poLines.map((pl) => pl.positionId),
+    ...timesheets.map((t) => t.positionId),
+  ]);
 
   const accMap = new Map<string, LineAcc>();
 
   for (const ts of timesheets) {
-    const termRes = resolveActiveSalesContractTerm(salesTerms, {
-      poId,
-      customerId: po.customerId,
-      date: ts.date,
-    });
-    warnings.push(...termRes.warnings);
-
-    const term = termRes.data;
     const poLine = poLinesByPosition.get(ts.positionId);
-    const conditions = term
-      ? rateConditions.filter((c) => c.parentId === term.id)
-      : [];
 
-    if (
-      ts.eventType === 'work_day' &&
-      poLine &&
-      Number(poLine.sellRateSnapshot || 0) > 0
-    ) {
-      workDayFromPackageBilling(
-        ts,
-        poLine,
-        mainContract,
-        accMap,
-        warnings,
-      );
-      continue;
-    }
-
-    if (!term) {
-      if (ts.eventType === 'work_day') {
-        if (poLine) {
-          warnings.push(
-            `${ts.workerNameSnapshot} (${ts.date}): ไม่พบ sales term ที่ใช้ได้ — ใช้ราคา snapshot จาก PO line (legacy)`,
-          );
-          workDayFromPoLine(ts, poLine, accMap);
-        } else {
-          warnings.push(
-            `${ts.workerNameSnapshot} (${ts.date}): ไม่พบ sales term และไม่มี PO line — ข้าม`,
-          );
-        }
-      } else if (poLine) {
-        warnings.push(
-          `${ts.workerNameSnapshot} (${ts.date}): ไม่พบ sales term — ใช้ PO line สำหรับบางประเภทวัน`,
-        );
-        genericEventFromContract(ts, {} as SalesContractTerm, [], poLine, accMap, warnings);
-      } else {
-        warnings.push(
-          `${ts.workerNameSnapshot} (${ts.date}): ไม่พบ sales term และไม่มี PO line — ข้าม`,
-        );
-      }
+    if (!poLine) {
+      warnings.push(`ข้าม ${ts.date} (${ts.eventType}) — ไม่มี PO line สำหรับตำแหน่ง`);
       continue;
     }
 
     if (ts.eventType === 'work_day') {
-      workDayFromContract(ts, term, conditions, poLine, accMap, warnings);
-    } else {
-      genericEventFromContract(ts, term, conditions, poLine, accMap, warnings);
+      if (Number(poLine.sellRateSnapshot || 0) <= 0) {
+        warnings.push(`ข้าม work_day ${ts.date} — ราคาขายใน PO line เป็น 0`);
+        continue;
+      }
+      workDayFromPackageBilling(ts, poLine, mainContract, accMap, warnings);
+      continue;
     }
+
+    billingNonWorkDayFromPoAndContract(ts, poLine, mainContract, accMap, warnings);
   }
 
   const lines: GeneratedBillingLine[] = [];
@@ -761,11 +497,10 @@ export async function generateBillingLines(
     const qty = acc.totalQuantity;
     const amount = roundMoney(acc.totalAmount);
     const unitPrice = qty > 0 ? roundMoney(amount / qty) : 0;
+    const posTitle = positionLabels.get(acc.positionId) || acc.positionId;
     lines.push({
-      description: descriptionForLine(acc),
+      description: descriptionForLine(acc, posTitle),
       referenceType: 'TIMESHEET',
-      workerId: acc.workerId,
-      workerName: acc.workerName,
       positionId: acc.positionId,
       eventType: acc.eventType,
       timesheetIds: acc.timesheetIds,
@@ -776,8 +511,8 @@ export async function generateBillingLines(
   }
 
   lines.sort((a, b) =>
-    `${a.workerName} ${a.eventType}`.localeCompare(
-      `${b.workerName} ${b.eventType}`,
+    `${a.positionId} ${a.eventType}`.localeCompare(
+      `${b.positionId} ${b.eventType}`,
       'th',
     ),
   );
@@ -806,8 +541,8 @@ export async function saveBillingLines(
       billingNoteId,
       description: line.description,
       referenceType: line.referenceType,
-      workerId: line.workerId,
-      workerName: line.workerName,
+      ...(line.workerId ? { workerId: line.workerId } : {}),
+      ...(line.workerName ? { workerName: line.workerName } : {}),
       positionId: line.positionId,
       eventType: line.eventType,
       timesheetIds: line.timesheetIds,

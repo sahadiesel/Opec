@@ -1,463 +1,406 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import { LayoutGrid, ChevronRight, FileText, MapPin, Users, Waves } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  FileText,
-  Search,
-  Filter,
-  Calendar,
-  ChevronRight,
-  FileCheck,
-  MessageSquareWarning,
-  Loader2,
-  Lock,
-  RotateCcw,
-  ShieldCheck,
-} from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import type { DailyTimesheet, DailyTimesheetStatus } from '@/lib/types';
-import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
-import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { useToast } from '@/hooks/use-toast';
-import { CustomerQueryService } from '@/lib/services/customer-query-service';
-import { DisputeService } from '@/lib/services/dispute-service';
-import { ExceptionRequestService } from '@/lib/services/exception-request-service';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Separator } from '@/components/ui/separator';
-import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { useAppUser } from '@/hooks/use-app-user';
+import { CustomerQueryService } from '@/lib/services/customer-query-service';
+import { assignmentReadyForWaveTimesheet } from '@/lib/constants/timesheet-ui';
+import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
+import {
+  formatCustomerPoNumberForPortal,
+  formatYearMonthLabel,
+  getLastNCalendarMonths,
+  mergeWavesWithCommercialReferences,
+  portalTryGetWaveMonthReviewSnap,
+  shouldHidePortalWaveMonthAfterBillingSettlement,
+  yearMonthFromCommercialInvoice,
+} from '@/lib/client-portal/timesheet-portal-utils';
+import { usePortalLocale } from '@/contexts/portal-locale-context';
+import type {
+  AccountsReceivable,
+  Assignment,
+  CommercialInvoice,
+  PurchaseOrder,
+  TaxInvoice,
+  Wave,
+  WaveMonthTimesheetReview,
+} from '@/lib/types';
+import { collection, orderBy, query, where } from 'firebase/firestore';
+import { Loader2 } from 'lucide-react';
 
-/** Shown in portal after operational review — filter client-side so query only needs index customerId + date. */
-const PORTAL_TIMESHEET_STATUSES: DailyTimesheetStatus[] = [
-  'CLIENT_APPROVED',
-  'VERIFIED_PAPER',
-  'LOCKED',
-  'OPS_REVIEWED',
-  'HR_APPROVED',
-  'SUBMITTED',
-];
+type ApprovedMonthRow = {
+  wave: Wave;
+  yearMonth: string;
+  /** Present when the month review doc exists; may be non-approved when tied to commercial billing */
+  review: WaveMonthTimesheetReview | null;
+  reviewDisplay: 'manager' | 'billing';
+};
 
-function eventTypeLabel(t: (k: PortalDictKey) => string, eventType: string): string {
-  const map: Record<string, PortalDictKey> = {
-    work_day: 'evWork',
-    travel_day: 'evTravel',
-    standby_day: 'evStandby',
-    off_day_worked: 'evOffWorked',
-  };
-  const key = map[eventType];
-  return key ? t(key) : eventType;
-}
-
-export default function ClientTimesheetViewPage() {
+export default function ClientPortalTimesheetHubPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
-  const { toast } = useToast();
-  const { t } = usePortalLocale();
+  const { t, locale } = usePortalLocale();
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isDisputeOpen, setIsDisputeOpen] = useState(false);
-  const [isExceptionOpen, setIsExceptionOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [selectedTs, setSelectedTs] = useState<DailyTimesheet | null>(null);
-  const [comment, setComment] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const queryService = useMemo(() => (firestore ? new CustomerQueryService(firestore) : null), [firestore]);
 
-  const tsQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser) return null;
-    const service = new CustomerQueryService(firestore);
-    return service.getScopedTimesheetsQuery(currentUser);
-  }, [firestore, currentUser]);
+  const wavesQuery = useMemoFirebase(() => queryService?.getScopedWavesQuery(currentUser), [queryService, currentUser]);
+  const { data: waves, isLoading: wavesLoading } = useCollection<Wave>(wavesQuery as any);
 
-  const { data: timesheetsRaw, isLoading: isTsLoading, error: tsError } =
-    useCollection<DailyTimesheet>(tsQuery as any);
+  const poQuery = useMemoFirebase(() => queryService?.getScopedPOsQuery(currentUser), [queryService, currentUser]);
+  const { data: pos, isLoading: poLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
-  const timesheets = useMemo(() => {
-    if (!timesheetsRaw) return null;
-    return timesheetsRaw.filter((ts) => PORTAL_TIMESHEET_STATUSES.includes(ts.status));
-  }, [timesheetsRaw]);
+  const mobQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
+  const { data: allMobs, isLoading: mobLoading } = useCollection<Assignment>(mobQuery as any);
 
-  const filteredTimesheets = useMemo(() => {
-    if (!timesheets) return [];
-    const q = searchTerm.trim().toLowerCase();
-    if (!q) return timesheets;
-    return timesheets.filter((ts) => {
-      const name = (ts.workerNameSnapshot || '').toLowerCase();
-      const slip = (ts.sourceDocumentNo || '').toLowerCase();
-      const date = (ts.date || '').toLowerCase();
-      return name.includes(q) || slip.includes(q) || date.includes(q);
-    });
-  }, [timesheets, searchTerm]);
+  const commercialQ = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(
+      collection(firestore, 'commercial_invoices'),
+      where('customerId', '==', currentUser.customerId),
+      where('status', 'in', ['DRAFT', 'PENDING_CUSTOMER', 'ISSUED', 'VOID']),
+      orderBy('issueDate', 'desc'),
+    );
+  }, [firestore, currentUser?.customerId]);
+  const { data: commercialInvoices, isLoading: commercialLoading } = useCollection<CommercialInvoice>(commercialQ as any);
 
-  const handleReportIssue = async () => {
-    if (!selectedTs || !comment || !firestore || !currentUser) return;
-    setIsSubmitting(true);
-    try {
-      const service = new DisputeService(firestore);
-      await service.reportIssue(
-        {
-          category: 'TIMESHEET',
-          referenceId: selectedTs.id,
-          referenceNo: selectedTs.sourceDocumentNo || `TS-${selectedTs.date}`,
-          description: comment,
-        },
-        currentUser
+  const taxQ = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(
+      collection(firestore, 'tax_invoices'),
+      where('customerId', '==', currentUser.customerId),
+      orderBy('issueDate', 'desc'),
+    );
+  }, [firestore, currentUser?.customerId]);
+  const { data: taxInvoices, isLoading: taxLoading } = useCollection<TaxInvoice>(taxQ as any);
+
+  const arQ = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(collection(firestore, 'accounts_receivable'), where('customerId', '==', currentUser.customerId));
+  }, [firestore, currentUser?.customerId]);
+  const { data: arItems, isLoading: arLoading } = useCollection<AccountsReceivable>(arQ as any);
+
+  const monthsForScan = useMemo(() => {
+    const base = getLastNCalendarMonths(48);
+    const set = new Set(base);
+    for (const inv of commercialInvoices ?? []) {
+      const ym = yearMonthFromCommercialInvoice(inv);
+      if (ym) set.add(ym);
+    }
+    return [...set].sort((a, b) => b.localeCompare(a));
+  }, [commercialInvoices]);
+
+  const [approvedRows, setApprovedRows] = useState<ApprovedMonthRow[]>([]);
+  const [scanLoading, setScanLoading] = useState(true);
+
+  useEffect(() => {
+    if (!firestore || !currentUser?.customerId) {
+      setApprovedRows([]);
+      setScanLoading(false);
+      return;
+    }
+    const comm = commercialInvoices ?? [];
+    const hasCommercialForWaveMonth = (waveId: string, ym: string) =>
+      comm.some(
+        (c) =>
+          c.status !== 'VOID' &&
+          c.waveId === waveId &&
+          yearMonthFromCommercialInvoice(c) === ym,
       );
-      toast({
-        title: t('tsToastDispute'),
-        description: t('tsToastDisputeDesc'),
-      });
-      setIsDisputeOpen(false);
-      setComment('');
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast({ variant: 'destructive', title: 'Error', description: msg });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
-  const handleRequestException = async () => {
-    if (!selectedTs || !comment || !firestore || !currentUser) return;
-    setIsSubmitting(true);
-    try {
-      const service = new ExceptionRequestService(firestore);
-      await service.createRequest({
-        type: 'TIMESHEET_CORRECTION',
-        referenceId: selectedTs.id,
-        referenceNo: selectedTs.sourceDocumentNo || `TS-${selectedTs.date}`,
-        reason: comment,
-        user: currentUser,
-      });
-      toast({
-        title: t('tsToastExc'),
-        description: t('tsToastExcDesc'),
-      });
-      setIsExceptionOpen(false);
-      setComment('');
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast({ variant: 'destructive', title: 'Error', description: msg });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    let cancelled = false;
+    setScanLoading(true);
+    void (async () => {
+      const customerId = currentUser.customerId;
+      if (!customerId) return;
+      try {
+        const waveList = await mergeWavesWithCommercialReferences(
+          firestore,
+          customerId,
+          waves ?? [],
+          comm,
+        );
+        if (cancelled) return;
 
-  const openDetail = (row: DailyTimesheet) => {
-    setSelectedTs(row);
-    setIsDetailOpen(true);
-  };
+        const tasks = waveList.flatMap((w) =>
+          monthsForScan.map((ym) =>
+            portalTryGetWaveMonthReviewSnap(firestore, w.id, ym).then((snap) => {
+              /** Permission denied or missing doc — still show row if a commercial draft exists for this wave/month */
+              if (!snap || !snap.exists()) {
+                if (hasCommercialForWaveMonth(w.id, ym)) {
+                  return {
+                    wave: w,
+                    yearMonth: ym,
+                    review: null,
+                    reviewDisplay: 'billing' as const,
+                  };
+                }
+                return null;
+              }
+              const r = { id: snap.id, ...(snap.data() as object) } as WaveMonthTimesheetReview;
+              if (r.status === 'approved') {
+                return { wave: w, yearMonth: ym, review: r, reviewDisplay: 'manager' as const };
+              }
+              if (hasCommercialForWaveMonth(w.id, ym)) {
+                return { wave: w, yearMonth: ym, review: r, reviewDisplay: 'billing' as const };
+              }
+              return null;
+            }),
+          ),
+        );
+        const settled = await Promise.all(tasks);
+        if (cancelled) return;
+        const rows = settled.filter(Boolean) as ApprovedMonthRow[];
+        const seen = new Set(rows.map((x) => `${x.wave.id}_${x.yearMonth}`));
+
+        for (const c of comm) {
+          if (c.status === 'VOID') continue;
+          const ym = yearMonthFromCommercialInvoice(c);
+          if (!ym) continue;
+          const w = waveList.find((x) => x.id === c.waveId);
+          if (!w) continue;
+          const k = `${w.id}_${ym}`;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          rows.push({ wave: w, yearMonth: ym, review: null, reviewDisplay: 'billing' });
+        }
+
+        rows.sort((a, b) => {
+          const cmp = b.yearMonth.localeCompare(a.yearMonth);
+          if (cmp !== 0) return cmp;
+          return (a.wave.waveCode || '').localeCompare(b.wave.waveCode || '', 'th');
+        });
+        setApprovedRows(rows);
+      } catch (e) {
+        console.warn('[portal ts hub]', e);
+        setApprovedRows([]);
+      } finally {
+        if (!cancelled) setScanLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, waves, monthsForScan, commercialInvoices, currentUser?.customerId]);
+
+  const visibleApprovedRows = useMemo(() => {
+    const comm = commercialInvoices ?? [];
+    const tax = taxInvoices ?? [];
+    const ar = arItems ?? [];
+    return approvedRows.filter(
+      (row) =>
+        !shouldHidePortalWaveMonthAfterBillingSettlement(row.wave, row.yearMonth, comm, tax, ar),
+    );
+  }, [approvedRows, commercialInvoices, taxInvoices, arItems]);
+
+  const commercialByWaveMonth = useMemo(() => {
+    const m = new Map<string, CommercialInvoice>();
+    for (const c of commercialInvoices ?? []) {
+      if (c.status === 'VOID') continue;
+      const ym = yearMonthFromCommercialInvoice(c);
+      if (!ym || !c.waveId) continue;
+      m.set(`${c.waveId}_${ym}`, c);
+    }
+    return m;
+  }, [commercialInvoices]);
+
+  const rowsByPoId = useMemo(() => {
+    const m = new Map<string, ApprovedMonthRow[]>();
+    for (const row of visibleApprovedRows) {
+      const pid = row.wave.poId;
+      const list = m.get(pid) ?? [];
+      list.push(row);
+      m.set(pid, list);
+    }
+    return m;
+  }, [visibleApprovedRows]);
+
+  const mobsByWave = useMemo(() => {
+    const m = new Map<string, Assignment[]>();
+    for (const a of allMobs ?? []) {
+      const list = m.get(a.waveId) ?? [];
+      list.push(a);
+      m.set(a.waveId, list);
+    }
+    return m;
+  }, [allMobs]);
+
+  const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
+
+  const poSections = useMemo(() => {
+    return [...rowsByPoId.entries()]
+      .filter(([, rows]) => rows.length > 0)
+      .map(([poId, rows]) => ({ poId, rows, po: poById.get(poId) }))
+      .sort((a, b) => {
+        const la = formatCustomerPoNumberForPortal(a.po, a.poId);
+        const lb = formatCustomerPoNumberForPortal(b.po, b.poId);
+        return la.localeCompare(lb, 'th');
+      });
+  }, [rowsByPoId, poById]);
+
+  const loading =
+    userLoading ||
+    wavesLoading ||
+    poLoading ||
+    mobLoading ||
+    scanLoading ||
+    commercialLoading ||
+    taxLoading ||
+    arLoading;
 
   if (userLoading) {
-    return <p className="text-sm text-muted-foreground">{t('tsLoading')}</p>;
+    return (
+      <p className="text-sm text-muted-foreground flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        {t('tsHubLoading')}
+      </p>
+    );
   }
 
   if (!currentUser) {
     return null;
   }
 
-  if (tsError) {
-    return (
-      <p className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">
-        {tsError.message || String(tsError)}
-      </p>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-primary sm:text-2xl">
-          <FileText className="h-7 w-7 shrink-0" />
-          {t('tsTitle')}
-        </h1>
-        <p className="text-sm text-muted-foreground">{t('tsSubtitle')}</p>
-      </div>
-
-      <Card className="border-primary/15 bg-primary/[0.03]">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold">{t('tsPolicyTitle')}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>• {t('tsPolicy1')}</p>
-          <p>• {t('tsPolicy2')}</p>
-          <p>• {t('tsPolicy3')}</p>
-        </CardContent>
-      </Card>
-
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder={t('tsSearchPlaceholder')}
-            className="h-10 pl-9"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+    <div className="mx-auto w-full space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-primary sm:text-2xl">
+            <LayoutGrid className="h-7 w-7 shrink-0 sm:h-8 sm:w-8" />
+            {t('tsHubPageTitle')}
+          </h1>
+          <p className="text-sm text-muted-foreground max-w-[min(100%,48rem)]">{t('tsHubPageLead')}</p>
         </div>
-        <Button variant="outline" className="h-10 shrink-0 gap-2" type="button" disabled>
-          <Filter className="h-4 w-4" />
-          {t('tsFilter')}
-        </Button>
       </div>
 
-      <Card className="overflow-hidden border-zinc-200 shadow-sm">
-        <CardHeader className="border-b bg-muted/30 py-4">
-          <CardTitle className="text-base">{t('tsActivityTitle')}</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isTsLoading ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">{t('tsLoading')}</div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('tsColDate')}</TableHead>
-                  <TableHead>{t('tsColWorker')}</TableHead>
-                  <TableHead>{t('tsColSlip')}</TableHead>
-                  <TableHead>{t('tsColEvent')}</TableHead>
-                  <TableHead className="text-center">{t('tsColHours')}</TableHead>
-                  <TableHead className="text-right">{t('tsColStatus')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredTimesheets.map((ts) => {
-                  const isLocked = ts.status === 'LOCKED' || ts.status === 'HR_APPROVED';
-                  return (
-                    <TableRow
-                      key={ts.id}
-                      className={`cursor-pointer transition-colors ${isLocked ? 'bg-muted/30' : 'hover:bg-muted/40'}`}
-                      onClick={() => openDetail(ts)}
-                    >
-                      <TableCell>
-                        <span className="inline-flex items-center gap-1.5 text-sm font-medium">
-                          <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                          {ts.date}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="text-sm font-medium">{ts.workerNameSnapshot}</p>
-                          <p className="text-[10px] uppercase text-muted-foreground">{ts.positionId}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {ts.sourceDocumentNo ? (
-                          <span className="font-mono text-xs font-medium text-primary">{ts.sourceDocumentNo}</span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px]">
-                          {eventTypeLabel(t, ts.eventType)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-center text-sm font-semibold">{ts.normalHours}h</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {isLocked && <Lock className="h-3.5 w-3.5 text-amber-600" aria-hidden />}
-                          <Badge
-                            variant={ts.status === 'VERIFIED_PAPER' ? 'default' : 'outline'}
-                            className="text-[10px] uppercase"
-                          >
-                            {ts.status === 'VERIFIED_PAPER' ? 'VERIFIED' : ts.status}
-                          </Badge>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-40" />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-                {filteredTimesheets.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
-                      {t('tsNoRows')}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+      <Card className="border-primary/20 bg-primary/[0.04]">
+        <CardContent className="space-y-2 pt-6 text-sm text-muted-foreground">
+          <p>{t('tsHubPolicyP2')}</p>
+          <p>{t('tsHubPolicyP3')}</p>
         </CardContent>
       </Card>
 
-      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="max-w-2xl border-t-4 border-t-primary">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg">
-              <FileCheck className="h-5 w-5 text-primary" />
-              {t('tsDetailTitle')}
-            </DialogTitle>
-            <DialogDescription>{t('tsReadOnly')}</DialogDescription>
-          </DialogHeader>
-
-          {selectedTs && (
-            <div className="space-y-4 py-2">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <Label className="text-[10px] uppercase text-muted-foreground">{t('tsColWorker')}</Label>
-                  <p className="font-semibold text-primary">{selectedTs.workerNameSnapshot}</p>
-                  <p className="text-xs uppercase text-muted-foreground">{selectedTs.positionId}</p>
-                </div>
-                <div>
-                  <Label className="text-[10px] uppercase text-muted-foreground">{t('tsColDate')}</Label>
-                  <p className="flex items-center gap-2 font-medium">
-                    <Calendar className="h-4 w-4" />
-                    {selectedTs.date}
-                  </p>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                  <p className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">{t('tsColEvent')}</p>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {eventTypeLabel(t, selectedTs.eventType)}
-                  </Badge>
-                </div>
-                <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                  <p className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">{t('tsColHours')}</p>
-                  <p className="text-lg font-bold text-primary">{selectedTs.normalHours}h</p>
-                </div>
-                <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                  <p className="mb-1 text-[10px] font-medium uppercase text-muted-foreground">{t('tsColStatus')}</p>
-                  <Badge className="bg-green-600 text-[10px] uppercase">{selectedTs.status}</Badge>
-                </div>
-              </div>
-
-              <div className="space-y-2 rounded-xl border border-primary/10 bg-primary/5 p-4">
-                <h4 className="flex items-center gap-2 text-xs font-semibold uppercase text-primary">
-                  <ShieldCheck className="h-4 w-4" />
-                  {t('tsEvidenceSection')}
-                </h4>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-[10px] font-medium uppercase text-muted-foreground">{t('tsColSlip')}</span>
-                    <p className="font-mono font-medium text-primary">{selectedTs.sourceDocumentNo || '—'}</p>
+      {loading ? (
+        <p className="text-sm text-muted-foreground py-12 text-center flex items-center justify-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t('tsHubLoading')}
+        </p>
+      ) : poSections.length === 0 ? (
+        <p className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">{t('tsHubEmpty')}</p>
+      ) : (
+        <div className="space-y-8">
+          {poSections.map(({ poId, rows, po }) => {
+            const poLabel = formatCustomerPoNumberForPortal(po, poId);
+            return (
+              <Card key={poId} className="overflow-hidden shadow-sm">
+                <CardHeader className="border-b bg-muted/30">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <FileText className="h-5 w-5 text-primary" />
+                        <span className="font-mono">{poLabel}</span>
+                      </CardTitle>
+                    </div>
+                    <Badge variant="secondary">
+                      {rows.length} {t('tsHubPeriodCount')}
+                    </Badge>
                   </div>
-                  <div>
-                    <span className="text-[10px] font-medium uppercase text-muted-foreground">{t('tsSourceLabel')}</span>
-                    <p className="font-medium">{selectedTs.sourceType || 'PAPER'}</p>
-                  </div>
-                </div>
-              </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('tsHubColWave')}</TableHead>
+                        <TableHead className="whitespace-nowrap min-w-[9rem]">{t('tsHubColCustomerPoNo')}</TableHead>
+                        <TableHead className="whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
+                        <TableHead>{t('tsHubColLocation')}</TableHead>
+                        <TableHead className="text-center">{t('tsHubColWaveStatus')}</TableHead>
+                        <TableHead className="text-center">{t('tsHubColAssigned')}</TableHead>
+                        <TableHead className="text-center max-w-[120px]">{t('tsHubColReady')}</TableHead>
+                        <TableHead className="text-left min-w-[7rem]">{t('tsHubColBillingRef')}</TableHead>
+                        <TableHead className="w-14 text-right">{t('tsHubColDetail')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rows.map(({ wave: w, yearMonth }) => {
+                        const mobs = mobsByWave.get(w.id) ?? [];
+                        const ready = mobs.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
+                        const planned = totalPlannedWorkersOnWave(w) || w.plannedWorkers || 0;
+                        const detailHref = `/client-portal/timesheets/wave/${encodeURIComponent(w.id)}?month=${encodeURIComponent(yearMonth)}`;
+                        const commRow = commercialByWaveMonth.get(`${w.id}_${yearMonth}`);
+                        const billingHref = commRow
+                          ? `/client-portal/commercial-invoices/${encodeURIComponent(commRow.id)}`
+                          : null;
+                        return (
+                          <TableRow key={`${w.id}-${yearMonth}`}>
+                            <TableCell className="font-mono font-semibold">
+                              <span className="flex items-center gap-1">
+                                <Waves className="h-3.5 w-3.5 text-primary" />
+                                {w.waveCode}
+                              </span>
+                            </TableCell>
+                            <TableCell className="font-mono text-sm">{poLabel}</TableCell>
+                            <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
+                              {formatYearMonthLabel(yearMonth, locale)}
+                            </TableCell>
+                            <TableCell>
+                              <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+                                <MapPin className="h-3 w-3 shrink-0" />
+                                {w.siteLocation || '—'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="outline">{w.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <span className="inline-flex items-center justify-center gap-1">
+                                <Users className="h-3.5 w-3.5" />
+                                {w.assignedWorkers ?? mobs.length}
+                                <span className="text-muted-foreground">/</span>
+                                {planned}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-center font-semibold text-green-700">{ready}</TableCell>
+                            <TableCell className="text-sm">
+                              {billingHref && commRow ? (
+                                <Link
+                                  href={billingHref}
+                                  className="font-mono text-primary underline-offset-4 hover:underline"
+                                >
+                                  {commRow.invoiceNo}
+                                </Link>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right p-1">
+                              <Link
+                                href={detailHref}
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
+                                aria-label={t('tsHubColDetail')}
+                              >
+                                <ChevronRight className="h-5 w-5" aria-hidden />
+                              </Link>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
-              <div className="flex flex-wrap gap-2 pt-1">
-                {selectedTs.status === 'LOCKED' || selectedTs.status === 'HR_APPROVED' ? (
-                  <Button
-                    variant="outline"
-                    className="flex-1 border-amber-200 text-amber-800 hover:bg-amber-50"
-                    onClick={() => {
-                      setIsDetailOpen(false);
-                      setIsExceptionOpen(true);
-                    }}
-                  >
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                    {t('tsSpecialCorrection')}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => {
-                      setIsDetailOpen(false);
-                      setIsDisputeOpen(true);
-                    }}
-                  >
-                    <MessageSquareWarning className="mr-2 h-4 w-4" />
-                    {t('tsReportIssue')}
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isDisputeOpen} onOpenChange={setIsDisputeOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('tsDisputeTitle')}</DialogTitle>
-            <DialogDescription>{t('tsDisputeDesc')}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            {selectedTs && (
-              <div className="space-y-1 rounded-lg bg-muted p-3 text-xs">
-                <p>
-                  <b>{t('tsColWorker')}:</b> {selectedTs.workerNameSnapshot}
-                </p>
-                <p>
-                  <b>{t('tsColDate')}:</b> {selectedTs.date}
-                </p>
-                <p>
-                  <b>{t('tsColSlip')}:</b> {selectedTs.sourceDocumentNo || '—'}
-                </p>
-              </div>
-            )}
-            <Textarea
-              placeholder={t('tsDisputeDesc')}
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              className="min-h-[100px]"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDisputeOpen(false)} disabled={isSubmitting}>
-              {t('tsCancel')}
-            </Button>
-            <Button onClick={() => void handleReportIssue()} disabled={isSubmitting || !comment}>
-              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {t('tsSubmitQuery')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isExceptionOpen} onOpenChange={setIsExceptionOpen}>
-        <DialogContent className="border-t-4 border-t-amber-500">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <RotateCcw className="h-5 w-5 text-amber-600" />
-              {t('tsExceptionTitle')}
-            </DialogTitle>
-            <DialogDescription>{t('tsExceptionDesc')}</DialogDescription>
-          </DialogHeader>
-          <Textarea
-            placeholder={t('tsExceptionDesc')}
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            className="min-h-[100px]"
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsExceptionOpen(false)} disabled={isSubmitting}>
-              {t('tsCancel')}
-            </Button>
-            <Button
-              className="bg-amber-600 hover:bg-amber-700"
-              onClick={() => void handleRequestException()}
-              disabled={isSubmitting || !comment}
-            >
-              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {t('tsSubmitHr')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <p className="text-xs text-muted-foreground text-center">
+        {t('tsHubFootnote')}
+      </p>
     </div>
   );
 }

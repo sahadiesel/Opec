@@ -301,6 +301,14 @@ function WavesPageContent() {
       return;
     }
     const headerPoCreate = allPOs?.find((p) => p.id === newWave.poId);
+    if (headerPoCreate?.status === 'closed') {
+      toast({
+        variant: 'destructive',
+        title: 'PO ปิดแล้ว',
+        description: 'ไม่สามารถสร้าง Wave ใน PO นี้ — สร้าง Customer PO ฉบับใหม่',
+      });
+      return;
+    }
     if (!headerPoCreate || headerPoCreate.status !== 'active') {
       toast({
         variant: 'destructive',
@@ -399,6 +407,14 @@ function WavesPageContent() {
       return;
     }
     const headerPoUpdate = allPOs?.find((p) => p.id === newWave.poId);
+    if (headerPoUpdate?.status === 'closed') {
+      toast({
+        variant: 'destructive',
+        title: 'PO ปิดแล้ว',
+        description: 'ไม่สามารถแก้ไข/บันทึกเวฟที่ผูก PO ที่ปิดแล้ว',
+      });
+      return;
+    }
     if (!headerPoUpdate || headerPoUpdate.status !== 'active') {
       toast({
         variant: 'destructive',
