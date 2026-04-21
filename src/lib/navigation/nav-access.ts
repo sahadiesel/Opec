@@ -7,6 +7,7 @@ import type { User, PermissionProfile } from '@/lib/types';
 import {
   type ModuleKey,
   canView,
+  canApprovePurchaseAsManager,
   canSeeHrPillarUi,
   canSeeSalesPillarUi,
   canSeeOperationsPillarUi,
@@ -15,7 +16,12 @@ import {
   isClient,
   isPrimaryHrOfficer,
 } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import {
+  isSystemAdmin,
+  isHrManager,
+  isOperationManager,
+  isPayrollOfficer,
+} from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { getFlattenedHrNavItems, type HrNavItem } from '@/lib/navigation/hr-nav-items';
 
@@ -32,6 +38,20 @@ export function pathMatches(pathname: string, href: string): boolean {
  */
 export function sidebarMatrixVisibilityForPath(_user: User, _pathname: string): boolean | null {
   return null;
+}
+
+/**
+ * หมวด «การจ่ายค่าจ้าง (Payroll)» — จำกัดเมนูย่อยให้ผู้กำกับงานจ่ายค่าจ้างโดยตรง + แอดมิน
+ * (ไม่รวม hr_officer / operations_officer ทั่วไป — ใช้เมนู Operations / ทะเบียน ตามสิทธิ์แทน)
+ */
+export function canViewHrPayrollFlowSubsection(
+  user: User,
+  _profile: PermissionProfile | null,
+  admin: boolean,
+): boolean {
+  if (admin) return true;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  return isHrManager(user) || isOperationManager(user) || isPayrollOfficer(user);
 }
 
 /** เมนูเตรียมจ่าย / อนุมัติ payroll — ไม่แสดงให้ hr_officer */
@@ -58,6 +78,8 @@ export function canViewHrHubItem(
 ): boolean {
   if (admin) return true;
   if (hrOfficerExcludedFromHrNavItem(user, item)) return false;
+  const baseHref = item.href.split('#')[0].split('?')[0];
+  if (baseHref === '/purchases' && canApprovePurchaseAsManager(user)) return true;
   const byMatrix = sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
   if (byMatrix !== null) return byMatrix;
   if (canView(user, item.key, profile)) return true;
@@ -81,6 +103,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounts-receivable', 'accounts_receivable'],
   ['/accounts-payable', 'accounts_payable'],
   ['/accounting/outgoing-review', 'accounts_payable'],
+  ['/accounting/withholding-tax', 'withholding_tax_items'],
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
   ['/bank-accounts', 'bank_accounts'],
@@ -91,12 +114,13 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/store/vendor-bills', 'store_inventory'],
   ['/purchases', 'purchases'],
   ['/ap-bills', 'ap_bills'],
-  ['/receipts', 'receipts'],
   ['/cashbook', 'cashbook'],
   ['/office-staff', 'office_staff'],
   ['/positions', 'positions'],
   ['/workers', 'workers'],
   ['/vendors', 'vendors'],
+  ['/operations/petty-cash', 'operations_petty_cash'],
+  ['/po-active-quota-queue', 'waves'],
   ['/waves', 'waves'],
   ['/store', 'store_inventory'],
 ];
@@ -131,13 +155,13 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   const accountingPrefixes = [
     '/billing-notes',
     '/tax-invoices',
-    '/receipts',
     '/ap-bills',
     '/accounts-receivable',
     '/accounts-payable',
     '/cashbook',
     '/bank-accounts',
     '/accounting/executive-payroll',
+    '/accounting/withholding-tax',
   ];
   if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {
     return accounting;
@@ -168,6 +192,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
 
   for (const [prefix, key] of SORTED_PREFIXES) {
     if (p === prefix || p.startsWith(`${prefix}/`)) {
+      if (prefix === '/purchases' && canApprovePurchaseAsManager(user)) return true;
       const byMatrix = sidebarMatrixVisibilityForPath(user, p);
       if (byMatrix !== null) return byMatrix;
       return canView(user, key, profile);

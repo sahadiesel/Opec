@@ -79,7 +79,7 @@ export const printDocStrings = {
     confirmedTotals: 'ยืนยันยอดเมื่อ',
     printStamp: 'พิมพ์เมื่อ',
     noLines: 'ไม่มีรายการ',
-    whtRateNote: '(คำนวณจากยอดแต่ละงวดชำระตามแผน)',
+    whtRateNote: '(ฐานก่อน VAT ต่องวด — สุทธิจ่าย = ยอดงวดรวม VAT − หัก ณ ที่จ่าย)',
     quotationPartyFooter: 'ผู้รับเอกสาร / ลูกค้า',
     documentRefTitle: 'อ้างอิงเอกสาร',
     docRefLine1: '1.1 เลขที่สัญญา',
@@ -89,6 +89,11 @@ export const printDocStrings = {
     docRefLine1Compact: 'เลขที่สัญญา',
     docRefLine2Compact: 'เลขที่ PO',
     docRefLine3Compact: 'Wave',
+    /** แถวที่ 1 เมื่อใบแจ้งหนี้มาจาก PO สายใบเสนอราคา */
+    docRefLine1Quotation: '1.1 เลขที่ใบเสนอราคา',
+    docRefLine1QuotationCompact: 'เลขที่ QT',
+    /** แถบ Wave เมื่อเป็นสายใบเสนอราคา (ไม่มี Wave) */
+    docRefWaveQuotationPlaceholder: '— (สายใบเสนอราคา)',
   },
   en: {
     tel: 'Tel.',
@@ -144,7 +149,7 @@ export const printDocStrings = {
     confirmedTotals: 'Totals confirmed on',
     printStamp: 'Printed',
     noLines: 'No line items',
-    whtRateNote: '(calculated on each installment per plan)',
+    whtRateNote: '(pre-VAT base per installment; net = installment incl. VAT − WHT)',
     quotationPartyFooter: 'Customer / Recipient',
     documentRefTitle: 'Document reference',
     docRefLine1: '1.1 Contract no.',
@@ -153,6 +158,9 @@ export const printDocStrings = {
     docRefLine1Compact: 'Contract no.',
     docRefLine2Compact: 'PO no.',
     docRefLine3Compact: 'Wave',
+    docRefLine1Quotation: '1.1 Quotation no.',
+    docRefLine1QuotationCompact: 'Quotation no.',
+    docRefWaveQuotationPlaceholder: '— (Quotation — no Wave)',
   },
 } as const;
 

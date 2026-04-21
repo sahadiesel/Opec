@@ -88,7 +88,6 @@ export const ACCOUNTING_DEFAULT_MODULES = [
   'store_inventory',
   'billing_notes',
   'tax_invoices',
-  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',

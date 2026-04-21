@@ -168,17 +168,30 @@ export const SYSTEM_MODULES = [
   {
     group: 'Operations (ปฏิบัติการ)',
     key: 'draft_invoices',
-    label: 'ใบแจ้งหนี้ร่าง — เรียกเก็บลูกค้า (Draft commercial invoice)',
+    label: 'รายการใบแจ้งหนี้ — เรียกเก็บลูกค้า (Commercial invoice / billing)',
+  },
+  {
+    group: 'Operations (ปฏิบัติการ)',
+    key: 'operations_petty_cash',
+    label: 'เบิกจ่าย Petty Cash (หน้างาน)',
   },
   { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การซื้อสินค้า/บริการ (Purchases)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
   { group: 'บัญชี (Accounting)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
-  { group: 'บัญชี (Accounting)', key: 'tax_invoices', label: 'ใบกำกับภาษี (Tax Invoices)' },
-  { group: 'บัญชี (Accounting)', key: 'receipts', label: 'ใบเสร็จรับเงิน (Receipts)' },
+  {
+    group: 'บัญชี (Accounting)',
+    key: 'tax_invoices',
+    label: 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ฉบับเดียว — Tax invoice / receipt)',
+  },
   { group: 'บัญชี (Accounting)', key: 'ap_bills', label: 'รับวางบิลเจ้าหนี้ (AP Bills)' },
   { group: 'บัญชี (Accounting)', key: 'accounts_receivable', label: 'ลูกหนี้การค้า (AR)' },
   { group: 'บัญชี (Accounting)', key: 'accounts_payable', label: 'เจ้าหนี้การค้า (AP)' },
+  {
+    group: 'บัญชี (Accounting)',
+    key: 'withholding_tax_items',
+    label: 'รายการหัก ณ ที่จ่าย (รอนำส่งสรรพากร)',
+  },
   { group: 'บัญชี (Accounting)', key: 'cashbook', label: 'รายรับรายจ่าย (Cashbook)' },
   { group: 'บัญชี (Accounting)', key: 'bank_accounts', label: 'บัญชีธนาคาร (Bank Accounts)' },
   { group: 'บัญชี (Accounting)', key: 'executive_payroll', label: 'เงินเดือนผู้บริหาร (Executive Payroll)' },
@@ -370,6 +383,14 @@ export function getPermissions(
     return isSimpleAccounting(u) ? clonePermission(FULL_ACCESS) : clonePermission(NO_ACCESS);
   }
 
+  /** Petty Cash หน้างาน — ผู้จัดการปฏิบัติการ + บัญชี + แอดมิน */
+  if (moduleKey === 'operations_petty_cash') {
+    if (isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
+    if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
+    if (isOperationManager(u)) return clonePermission(FULL_ACCESS);
+    return clonePermission(NO_ACCESS);
+  }
+
   /** HR Officer: จัดการทะเบียนเอกสารกลางได้ แต่ไม่ลบ (manager/admin ผ่าน FULL_ACCESS ด้านล่าง) */
   if (isPrimaryHrOfficer(u) && moduleKey === 'worker_documents') {
     return clonePermission(OFFICER_ACCESS);
@@ -454,10 +475,10 @@ const ALL_MODULE_KEYS = SYSTEM_MODULES.map((m) => m.key as ModuleKey);
 const ACCOUNTING_KEYS_LIST: ModuleKey[] = [
   'billing_notes',
   'tax_invoices',
-  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',
+  'withholding_tax_items',
   'cashbook',
   'bank_accounts',
   'executive_payroll',
@@ -490,10 +511,10 @@ const STORE_PILLAR_UI_KEYS: ModuleKey[] = ['vendors', 'purchases', 'store_invent
 const ACCOUNTING_PILLAR_UI_KEYS: ModuleKey[] = [
   'billing_notes',
   'tax_invoices',
-  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',
+  'withholding_tax_items',
   'cashbook',
   'bank_accounts',
   'office_payroll',

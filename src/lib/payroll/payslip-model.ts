@@ -7,29 +7,42 @@ import type {
 } from '@/lib/types';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
+export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
+export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
+
+/** ชื่อบริษัทจาก `system/company_profile` (หรือ undefined แล้วใช้ค่าเริ่มต้น) */
+export type PayslipCompanyProfileSource = {
+  companyNameTh?: string;
+  companyNameEn?: string;
+} | null | undefined;
+
+function resolvePayslipCompanyNames(source: PayslipCompanyProfileSource): { companyNameTh: string; companyNameEn: string } {
+  return {
+    companyNameTh: source?.companyNameTh?.trim() || PAYSLIP_DEFAULT_COMPANY_TH,
+    companyNameEn: source?.companyNameEn?.trim() || PAYSLIP_DEFAULT_COMPANY_EN,
+  };
+}
+
+export type PayslipLineItem = { label: string; amount: number };
+
 export type PayslipViewModel = {
+  companyNameTh: string;
+  companyNameEn: string;
   employeeName: string;
   periodLabel: string;
   payrollTypeLabel: string;
   documentRef: string;
   paymentDateLabel: string;
   policyVersionLabel: string;
-  income: {
-    base: number;
-    overtime: number;
-    allowance: number;
-    bonus: number;
-    otherIncome: number;
-    gross: number;
-  };
-  deductions: {
-    socialSecurity: number;
-    tax: number;
-    otherLines: { label: string; amount: number }[];
-    otherTotal: number;
-    total: number;
-  };
+  /** รายการรายได้แต่ละบรรทัด (ครบทั้ง timesheet + HR) */
+  incomeLines: PayslipLineItem[];
+  grossTotal: number;
+  /** รายการหักแต่ละบรรทัด */
+  deductionLines: PayslipLineItem[];
+  deductionsTotal: number;
   netPay: number;
+  /** true ถ้ายอดรวมรายการกับ snapshot คลาดกันเล็กน้อย (ปัดเศษ) */
+  roundingNote?: boolean;
 };
 
 export function formatPolicyVersionFromSnapshot(s?: PayrollLineD8Snapshot | null): string {
@@ -45,43 +58,35 @@ function formatPaymentDate(ts?: number | null): string {
   return formatDateThaiBE(ts);
 }
 
-/** แยก base / OT / allowance จาก earningsBreakdown (คีย์ตาม event ของ timesheet) */
-export function splitWorkerLineEarnings(line: PayrollBatchLine): {
-  base: number;
-  overtime: number;
-  allowance: number;
-} {
-  const b = line.earningsBreakdown || {};
-  let base = 0;
-  let overtime = 0;
-  let allowance = 0;
-  const OT_RE = /ot|overtime|off_day_worked|public_holiday_worked|holiday_worked|sunday/i;
-  for (const [k, v] of Object.entries(b)) {
-    const amt = Number(v) || 0;
-    if (/allowance/i.test(k)) allowance += amt;
-    else if (OT_RE.test(k)) overtime += amt;
-    else base += amt;
-  }
-  if (base + overtime + allowance === 0 && line.grossAmount > 0) {
-    return { base: line.grossAmount, overtime: 0, allowance: 0 };
-  }
-  return { base, overtime, allowance };
+/** แปลงคีย์ earningsBreakdown / earningsComponents เป็นชื่อที่อ่านได้ */
+export function humanizeWorkerEarningsKey(key: string): string {
+  const k = key.replace(/_policy$/i, '').replace(/_package$/i, '');
+  const map: Record<string, string> = {
+    work_day: 'ค่าจ้างวันทำงาน',
+    standby_day: 'Standby / พร้อมปฏิบัติงาน',
+    off_day_worked: 'วันหยุดทำงาน (Off day)',
+    public_holiday_worked: 'วันหยุดนักขัตฤกษ์ (ทำงาน)',
+    mobilization_day: 'Mobilization',
+    demobilization_day: 'Demobilization',
+    travel_day: 'เดินทาง (Travel)',
+    hr_allowances: 'เบี้ยเลี้ยง / รายได้พิเศษ (ปรับ HR)',
+    standby: 'Standby',
+  };
+  if (map[k]) return map[k];
+  if (/_policy$/i.test(key)) return `${humanizeWorkerEarningsKey(k)} (ตาม policy)`;
+  if (/_package$/i.test(key)) return `${humanizeWorkerEarningsKey(k)} (แพ็กเกจ)`;
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function splitDeductionsMap(d: Record<string, number>): PayslipViewModel['deductions'] {
-  const socialSecurity = d.social_security ?? 0;
-  const tax = d.pit_withholding ?? 0;
-  const otherLines: { label: string; amount: number }[] = [];
-  let otherTotal = 0;
-  for (const [k, v] of Object.entries(d)) {
-    if (k === 'social_security' || k === 'pit_withholding') continue;
-    const amt = Number(v) || 0;
-    if (amt === 0) continue;
-    otherLines.push({ label: k, amount: amt });
-    otherTotal += amt;
-  }
-  const total = socialSecurity + tax + otherTotal;
-  return { socialSecurity, tax, otherLines, otherTotal, total };
+function humanizeDeductionKey(key: string): string {
+  if (key.startsWith('manual_ded_')) return key;
+  const map: Record<string, string> = {
+    social_security: 'ประกันสังคม',
+    pit_withholding: 'ภาษี ณ ที่จ่าย (ภงด. 1)',
+  };
+  return map[key] || key.replace(/_/g, ' ');
 }
 
 function workerPaymentTimestamp(batch: PayrollBatch): number | undefined {
@@ -94,36 +99,128 @@ function workerPaymentTimestamp(batch: PayrollBatch): number | undefined {
   );
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * รายได้รายบรรทัด — อ้างอิง snapshot ก่อน แล้วจึง earningsBreakdown + รายการเบี้ยเลี้ยงจาก HR
+ */
+export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLineItem[] {
+  const fromSnapshot = line.d8Snapshot?.earningsComponents;
+  const baseEb = { ...(fromSnapshot && Object.keys(fromSnapshot).length > 0 ? fromSnapshot : line.earningsBreakdown || {}) };
+  const allowanceItems = (line.hrLineAdjustments?.allowanceItems ?? []).filter(
+    (x) => (Number(x.amount) || 0) > 0,
+  );
+
+  if (allowanceItems.length > 0) {
+    delete baseEb.hr_allowances;
+  }
+
+  const lines: PayslipLineItem[] = [];
+
+  for (const it of allowanceItems) {
+    lines.push({
+      label: it.label?.trim() || 'รายได้เพิ่ม (HR)',
+      amount: round2(Number(it.amount) || 0),
+    });
+  }
+
+  const keys = Object.keys(baseEb).sort((a, b) => a.localeCompare(b));
+  for (const k of keys) {
+    const amt = round2(Number(baseEb[k]) || 0);
+    if (Math.abs(amt) < 0.005) continue;
+    lines.push({ label: humanizeWorkerEarningsKey(k), amount: amt });
+  }
+
+  return lines;
+}
+
+export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): PayslipLineItem[] {
+  const d = line.deductionsBreakdown || line.d8Snapshot?.deductions || {};
+  const manual = line.hrLineAdjustments?.deductionItems ?? [];
+  const out: PayslipLineItem[] = [];
+
+  const ss = round2(Number(d.social_security) || 0);
+  out.push({ label: 'ประกันสังคม', amount: ss });
+
+  const pit = round2(Number(d.pit_withholding) || 0);
+  out.push({ label: 'ภาษี ณ ที่จ่าย (ภงด. 1)', amount: pit });
+
+  manual.forEach((item, idx) => {
+    const key = `manual_ded_${idx}`;
+    const amt = round2(Number(d[key]) || 0);
+    if (amt <= 0) return;
+    out.push({
+      label: item.label?.trim() || `รายการหักพิเศษ (${idx + 1})`,
+      amount: amt,
+    });
+  });
+
+  const known = new Set<string>(['social_security', 'pit_withholding']);
+  manual.forEach((_, i) => known.add(`manual_ded_${i}`));
+
+  for (const [k, v] of Object.entries(d)) {
+    if (known.has(k)) continue;
+    const amt = round2(Number(v) || 0);
+    if (amt === 0) continue;
+    out.push({ label: humanizeDeductionKey(k), amount: amt });
+  }
+
+  return out;
+}
+
+function sumLines(lines: PayslipLineItem[]): number {
+  return round2(lines.reduce((s, x) => s + x.amount, 0));
+}
+
 export function buildPayslipFromWorkerLine(
   line: PayrollBatchLine,
   batch: PayrollBatch,
-  periodLabel: string
+  periodLabel: string,
+  companyProfile?: PayslipCompanyProfileSource,
 ): PayslipViewModel {
-  const { base, overtime, allowance } = splitWorkerLineEarnings(line);
-  const d = line.deductionsBreakdown || line.d8Snapshot?.deductions || {};
-  const deductions = splitDeductionsMap(d);
-  const gross = line.grossAmount;
-  const netPay = line.netAmount;
+  const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
+  const incomeLines = buildWorkerPayslipIncomeLines(line);
+  const deductionLines = buildWorkerPayslipDeductionLines(line);
+
+  const snapshotGross = line.d8Snapshot?.gross;
+  const sumIncome = sumLines(incomeLines);
+  const grossTotal =
+    snapshotGross != null && Number.isFinite(snapshotGross)
+      ? round2(snapshotGross)
+      : sumIncome > 0
+        ? sumIncome
+        : round2(line.grossAmount);
+
+  const deductionsTotal = sumLines(deductionLines);
+  const netFromLine = round2(line.netAmount);
+  const netFromSnapshot = line.d8Snapshot?.net != null ? round2(line.d8Snapshot.net) : null;
+  const netPay = netFromSnapshot != null ? netFromSnapshot : netFromLine;
+
+  const impliedNet = round2(grossTotal - deductionsTotal);
+  const roundingNote = Math.abs(impliedNet - netPay) >= 0.02;
 
   return {
+    companyNameTh,
+    companyNameEn,
     employeeName: line.workerNameSnapshot,
-    periodLabel:
-      periodLabel ||
-      `${line.periodStartDate} → ${line.periodEndDate}`,
+    periodLabel: periodLabel || `${line.periodStartDate} → ${line.periodEndDate}`,
     payrollTypeLabel: 'ลูกจ้าง / Worker Payroll (Timesheet batch)',
     documentRef: batch.id,
     paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
     policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
-    income: {
-      base,
-      overtime,
-      allowance,
-      bonus: 0,
-      otherIncome: 0,
-      gross,
-    },
-    deductions,
+    incomeLines:
+      incomeLines.length > 0
+        ? incomeLines
+        : grossTotal > 0
+          ? [{ label: 'รายได้รวม (จากงวดจ่าย)', amount: grossTotal }]
+          : [],
+    grossTotal,
+    deductionLines,
+    deductionsTotal,
     netPay,
+    roundingNote,
   };
 }
 
@@ -131,7 +228,12 @@ function officePaymentTimestamp(run: OfficePayrollRun): number | undefined {
   return run.lockedAt ?? run.updatedAt ?? run.createdAt;
 }
 
-export function buildPayslipFromOfficeLine(line: OfficePayrollLine, run: OfficePayrollRun): PayslipViewModel {
+export function buildPayslipFromOfficeLine(
+  line: OfficePayrollLine,
+  run: OfficePayrollRun,
+  companyProfile?: PayslipCompanyProfileSource,
+): PayslipViewModel {
+  const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
   const ot = Number(line.overtimeAmount ?? 0);
   const otherInc = Number(line.otherIncome ?? 0);
   const bonus = Number(line.bonus ?? 0);
@@ -141,41 +243,57 @@ export function buildPayslipFromOfficeLine(line: OfficePayrollLine, run: OfficeP
 
   const ss = line.socialSecurity;
   const tax = line.tax;
-  const otherTotal = Math.max(0, line.deductions - tax - ss);
-  const otherLines: { label: string; amount: number }[] = [];
+
+  const incomeLines: PayslipLineItem[] = [];
+  if (base > 0) incomeLines.push({ label: 'เงินเดือนฐาน', amount: round2(base) });
+  if (ot > 0) incomeLines.push({ label: 'ค่าล่วงเวลา (OT)', amount: round2(ot) });
+  if (allowance > 0) incomeLines.push({ label: 'เบี้ยเลี้ยง / Allowance', amount: round2(allowance) });
+  if (bonus > 0) incomeLines.push({ label: 'โบนัส', amount: round2(bonus) });
+  if (otherInc > 0) incomeLines.push({ label: 'รายได้อื่น', amount: round2(otherInc) });
+  if (incomeLines.length === 0 && gross > 0) {
+    incomeLines.push({ label: 'รายได้รวม', amount: round2(gross) });
+  }
+
+  const deductionLines: PayslipLineItem[] = [];
+  deductionLines.push({ label: 'ประกันสังคม', amount: round2(ss) });
+  deductionLines.push({ label: 'ภาษี ณ ที่จ่าย (ภงด.)', amount: round2(tax) });
+
   if (line.d8Snapshot?.deductions) {
     for (const [k, v] of Object.entries(line.d8Snapshot.deductions)) {
       if (k === 'social_security' || k === 'pit_withholding') continue;
-      const amt = Number(v) || 0;
-      if (amt !== 0) otherLines.push({ label: k, amount: amt });
+      const amt = round2(Number(v) || 0);
+      if (amt === 0) continue;
+      deductionLines.push({ label: humanizeDeductionKey(k), amount: amt });
     }
-  } else if (otherTotal > 0) {
-    otherLines.push({ label: 'other_deductions', amount: otherTotal });
+  } else {
+    const otherTotal = Math.max(0, line.deductions - tax - ss);
+    if (otherTotal > 0) {
+      deductionLines.push({ label: 'หักอื่น', amount: round2(otherTotal) });
+    }
   }
 
+  const summedDed = sumLines(deductionLines);
+  const deductionsTotal = summedDed;
+  const netPay = round2(line.netPay);
+  const impliedNet = round2(gross - deductionsTotal);
+
   return {
+    companyNameTh,
+    companyNameEn,
     employeeName: line.staffName,
     periodLabel: `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`,
     payrollTypeLabel: 'พนักงานออฟฟิศ / Office Payroll (รายเดือน)',
     documentRef: run.payrollRunNo,
     paymentDateLabel: formatPaymentDate(officePaymentTimestamp(run)),
     policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
-    income: {
-      base,
-      overtime: ot,
-      allowance,
-      bonus,
-      otherIncome: otherInc,
-      gross,
-    },
-    deductions: {
-      socialSecurity: ss,
-      tax,
-      otherLines,
-      otherTotal,
-      total: line.deductions,
-    },
-    netPay: line.netPay,
+    incomeLines,
+    grossTotal: round2(gross),
+    deductionLines,
+    deductionsTotal,
+    netPay,
+    roundingNote:
+      Math.abs(impliedNet - netPay) >= 0.02 ||
+      Math.abs(summedDed - round2(line.deductions)) >= 0.02,
   };
 }
 

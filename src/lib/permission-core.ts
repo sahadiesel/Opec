@@ -180,6 +180,18 @@ function isFutureAccessLevel(value: unknown): value is CoreAccessLevel {
  */
 export function getPrimaryLegacyRole(user: Partial<User> | null): string | null {
   if (!user) return null;
+
+  const profileKeyCandidate =
+    (typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
+      ? user.permissionProfileKey.trim()
+      : null) ??
+    (Array.isArray(user.permissionProfileKeys) &&
+    typeof user.permissionProfileKeys[0] === 'string' &&
+    user.permissionProfileKeys[0].trim() !== ''
+      ? user.permissionProfileKeys[0].trim()
+      : null);
+  const normalizedProfile = normalizePermissionProfileDocumentId(profileKeyCandidate);
+
   const fromAssigned =
     typeof user.assignedRoleKey === 'string' && user.assignedRoleKey.trim() !== ''
       ? user.assignedRoleKey
@@ -199,6 +211,12 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
   if (fromKeysNorm === 'payroll_officer') return 'payroll_officer';
   if (fromKeysNorm) return fromKeysNorm;
 
+  /**
+   * โปรไฟล์ payroll_officer ชัดเจน — ใช้ก่อน scalar `role` เดิมบน user doc
+   * (แก้กรณีค้าง hr_officer ใน role ทำให้ถูกบล็อก office_payroll / office_staff โดย HR officer block)
+   */
+  if (normalizedProfile === 'payroll_officer') return 'payroll_officer';
+
   const fromRoleField =
     typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : null;
   if (fromRoleField) {
@@ -206,18 +224,7 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
     if (normalizedField) return normalizedField;
   }
 
-  const fromProfileKey =
-    typeof user.permissionProfileKey === 'string' && user.permissionProfileKey.trim() !== ''
-      ? user.permissionProfileKey.trim()
-      : null;
-  const fromListZero =
-    Array.isArray(user.permissionProfileKeys) &&
-    typeof user.permissionProfileKeys[0] === 'string' &&
-    user.permissionProfileKeys[0].trim() !== ''
-      ? user.permissionProfileKeys[0].trim()
-      : null;
-
-  return normalizeAssignedPrimaryRole(fromProfileKey ?? fromListZero);
+  return normalizeAssignedPrimaryRole(profileKeyCandidate);
 }
 
 /** True when the resolved primary business role is HR Officer (narrow UI: no sales / payroll run modules). */
@@ -493,12 +500,12 @@ export function canRecordTaxInvoiceBillingCustomerApproval(user: User | null): b
   return false;
 }
 
-/** แก้ฐานเงินเดือน/ค่าจ้างใน master (เช่น office_staff.monthlySalary) — ไม่ให้ hr_officer / payroll */
+/** แก้ฐานเงินเดือน/ค่าจ้างใน master (เช่น office_staff.monthlySalary) — HR/OPS manager + payroll officer */
 export function canEditEmployeeCompensation(user: User | null): boolean {
   if (!user) return false;
   if (isSystemAdmin(user)) return true;
   const r = getPrimaryLegacyRole(user);
-  return r === 'hr_manager' || r === 'operations_manager';
+  return r === 'hr_manager' || r === 'operations_manager' || r === 'payroll_officer';
 }
 
 /**

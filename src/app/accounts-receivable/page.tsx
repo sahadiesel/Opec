@@ -115,7 +115,7 @@ export default function AccountsReceivablePage() {
           <Info className="h-5 w-5 text-primary" />
           <AlertTitle className="font-bold text-lg">Aging Report Policy</AlertTitle>
           <AlertDescription className="text-sm">
-            ระบบจะคำนวณสถานะ OVERDUE อัตโนมัติเมื่อพ้นกำหนดชำระ (Due Date) กรุณาตรวจสอบและอัปเดตสถานะการรับเงินในโมดูล Receipts
+            ระบบจะคำนวณสถานะ OVERDUE อัตโนมัติเมื่อพ้นกำหนดชำระ (Due Date) — บันทึกการรับชำระและปิดลูกหนี้ผ่านบัญชี (Cashbook / ปรับสถานะ AR) ตามนโยบายบริษัท
           </AlertDescription>
         </Alert>
 

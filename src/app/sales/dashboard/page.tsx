@@ -351,7 +351,7 @@ export default function SalesDashboardPage() {
                   <ShortcutItem href="/quotations" label="ใบเสนอราคา" sub="Quotations" icon={FileSignature} />
                   <ShortcutItem href="/main-contracts" label="สัญญาหลัก" sub="MSAs & Rates" icon={FileText} />
                   <ShortcutItem href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="Project POs" icon={ShoppingCart} />
-                  <ShortcutItem href="/billing-notes" label="ใบวางบิล" sub="Billing Notes" icon={FileText} />
+                  <ShortcutItem href="/draft-invoices" label="รายการใบแจ้งหนี้ ( Invoice )" sub="Draft invoices" icon={FileText} />
                   <ShortcutItem href="/client-portal" label="Client Portal Preview" sub="Monitoring View" icon={UserCheck} />
                 </CardContent>
               </Card>

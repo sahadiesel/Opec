@@ -46,10 +46,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
 import {
   createCommercialDraftInvoice,
+  createCommercialDraftFromQuotationPoLines,
   ensureCommercialDraftInvoiceAfterMonthApproval,
   filterWaveMonthReviewsMissingCommercialDraft,
   voidCommercialInvoice,
   deleteCommercialInvoice,
+  QUOTATION_PO_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import Link from 'next/link';
@@ -176,6 +178,13 @@ export default function DraftInvoicesPage() {
   );
   const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
+  const selectedPo = useMemo(() => {
+    if (!poId) return undefined;
+    return (pos ?? []).find((p) => p.id === poId) ?? poById.get(poId);
+  }, [pos, poById, poId]);
+
+  const isQuotationPo = (selectedPo?.poType || 'contract') === 'quotation';
+
   const resetForm = () => {
     setCustomerId('');
     setPoId('');
@@ -188,22 +197,34 @@ export default function DraftInvoicesPage() {
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!poId || !waveId) {
+    if (!poId) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือก PO' });
+      return;
+    }
+    if (!isQuotationPo && !waveId) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือก PO และ Wave' });
       return;
     }
     setCreating(true);
     try {
-      const { id, invoiceNo } = await createCommercialDraftInvoice(firestore, {
-        poId,
-        waveId,
-        periodStart: timestampToHtmlDateValue(periodStartMs),
-        periodEnd: timestampToHtmlDateValue(periodEndMs),
-        issueDate: timestampToHtmlDateValue(issueDateMs),
-        actor: currentUser,
-      });
+      const { id, invoiceNo } = isQuotationPo
+        ? await createCommercialDraftFromQuotationPoLines(firestore, {
+            poId,
+            periodStart: timestampToHtmlDateValue(periodStartMs),
+            periodEnd: timestampToHtmlDateValue(periodEndMs),
+            issueDate: timestampToHtmlDateValue(issueDateMs),
+            actor: currentUser,
+          })
+        : await createCommercialDraftInvoice(firestore, {
+            poId,
+            waveId: waveId!,
+            periodStart: timestampToHtmlDateValue(periodStartMs),
+            periodEnd: timestampToHtmlDateValue(periodEndMs),
+            issueDate: timestampToHtmlDateValue(issueDateMs),
+            actor: currentUser,
+          });
       toast({
-        title: 'สร้างใบแจ้งหนี้ร่างแล้ว',
+        title: 'สร้างใบแจ้งหนี้แล้ว',
         description: `เลขที่ ${invoiceNo} — เอกสารเรียกเก็บ (ยังไม่ใช่ใบกำกับภาษี)`,
       });
       setDialogOpen(false);
@@ -230,7 +251,7 @@ export default function DraftInvoicesPage() {
       const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, review, currentUser);
       if (res.ok === true) {
         toast({
-          title: 'สร้างใบแจ้งหนี้ร่างแล้ว',
+          title: 'สร้างใบแจ้งหนี้แล้ว',
           description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
         });
         router.push(`/draft-invoices/${res.id}`);
@@ -329,25 +350,33 @@ export default function DraftInvoicesPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
               <FileText className="h-7 w-7" />
-              ใบแจ้งหนี้ร่าง (เรียกเก็บลูกค้า)
+              รายการใบแจ้งหนี้ (เรียกเก็บลูกค้า)
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              สร้างจาก timesheet / wave — แยกจากใบกำกับภาษี (บัญชีออกภายหลังเมื่อได้รับเงิน)
+              สายสัญญา: จาก Wave + timesheet — สายใบเสนอราคา: จาก PO Line หรือรายการในใบเสนอราคาที่ PO อ้างอิง (ไม่ใช้ Wave) — แยกจากใบกำกับภาษี
             </p>
           </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2" disabled={!canCreateDoc}>
                 <Plus className="h-4 w-4" />
-                สร้างจาก Wave / Timesheet
+                สร้างใบแจ้งหนี้
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
-                <DialogTitle>สร้างใบแจ้งหนี้ร่าง</DialogTitle>
+                <DialogTitle>สร้างใบแจ้งหนี้</DialogTitle>
                 <DialogDescription>
-                  เลือกลูกค้า → PO → Wave และช่วงวันที่ — ระบบดึง timesheet ที่{' '}
-                  <code className="text-xs">readyForBilling</code> ตามช่วงที่เลือก
+                  {isQuotationPo ? (
+                    <>
+                      PO จากใบเสนอราคา — ดึงยอดจาก PO Line ถ้ามี ไม่เช่นนั้นจากใบเสนอราคาที่ PO อ้างอิง (ไม่ใช้ Wave / timesheet) ระบุช่วงวันที่และวันที่เอกสาร
+                    </>
+                  ) : (
+                    <>
+                      เลือกลูกค้า → PO → Wave และช่วงวันที่ — ระบบดึง timesheet ที่{' '}
+                      <code className="text-xs">readyForBilling</code> ตามช่วงที่เลือก
+                    </>
+                  )}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-2">
@@ -400,26 +429,28 @@ export default function DraftInvoicesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>Wave</Label>
-                  <Select
-                    value={waveId || '__none__'}
-                    onValueChange={(v) => setWaveId(v === '__none__' ? '' : v)}
-                    disabled={!poId}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="เลือก Wave" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">— เลือก —</SelectItem>
-                      {(waves ?? []).map((w) => (
-                        <SelectItem key={w.id} value={w.id}>
-                          {w.waveCode} — {w.projectName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {!isQuotationPo && (
+                  <div className="space-y-2">
+                    <Label>Wave</Label>
+                    <Select
+                      value={waveId || '__none__'}
+                      onValueChange={(v) => setWaveId(v === '__none__' ? '' : v)}
+                      disabled={!poId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="เลือก Wave" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— เลือก —</SelectItem>
+                        {(waves ?? []).map((w) => (
+                          <SelectItem key={w.id} value={w.id}>
+                            {w.waveCode} — {w.projectName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label>ตั้งแต่วันที่</Label>
@@ -441,7 +472,7 @@ export default function DraftInvoicesPage() {
                 </Button>
                 <Button onClick={() => void handleCreate()} disabled={creating}>
                   {creating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  สร้างร่าง
+                  สร้างใบแจ้งหนี้
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -460,7 +491,7 @@ export default function DraftInvoicesPage() {
           <Card className="border-primary/30 bg-primary/5">
             <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <CardTitle className="text-base text-primary">งวด timesheet อนุมัติแล้ว — ยังไม่มีใบแจ้งหนี้ร่าง</CardTitle>
+                <CardTitle className="text-base text-primary">งวด timesheet อนุมัติแล้ว — ยังไม่มีใบแจ้งหนี้</CardTitle>
                 <CardDescription>
                   หลังผู้จัดการอนุมัติรอบเดือน ระบบควรสร้างใบอัตโนมัติ — ถ้ายังไม่มี ให้กดสร้างจากรายการด้านล่างเพื่อนำไปตรวจสอบ พิมพ์ และส่งลูกค้า
                 </CardDescription>
@@ -518,7 +549,7 @@ export default function DraftInvoicesPage() {
                                 ) : (
                                   <Plus className="h-3.5 w-3.5" />
                                 )}
-                                สร้างใบร่าง
+                                สร้างใบแจ้งหนี้
                               </Button>
                             )}
                           </div>
@@ -534,7 +565,7 @@ export default function DraftInvoicesPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>รายการใบแจ้งหนี้ร่าง</CardTitle>
+            <CardTitle>รายการใบแจ้งหนี้</CardTitle>
             <CardDescription>
               เรียงตามวันที่เอกสาร — เปิดเพื่อตรวจยอด / พิมพ์ / ส่งลูกค้า — ยกเลิก (VOID) เมื่อต้องการหยุดใช้งานแต่ยังเก็บประวัติในระบบ —{' '}
               <span className="text-foreground font-medium">ลบถาวร</span> เฉพาะผู้ดูแลระบบ (System Admin)
@@ -564,7 +595,11 @@ export default function DraftInvoicesPage() {
                           {cust?.name ?? inv.customerId}
                         </div>
                       </TableCell>
-                      <TableCell className="text-xs font-mono">{inv.waveCode || `${inv.waveId.slice(0, 8)}…`}</TableCell>
+                      <TableCell className="text-xs font-mono">
+                        {inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
+                          ? 'ใบเสนอราคา (ไม่มี Wave)'
+                          : inv.waveCode || `${inv.waveId.slice(0, 8)}…`}
+                      </TableCell>
                       <TableCell className="text-right">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>

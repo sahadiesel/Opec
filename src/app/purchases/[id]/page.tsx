@@ -22,7 +22,11 @@ import {
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, query, orderBy, where } from 'firebase/firestore';
-import { milestonesCoverTotal } from '@/lib/ops/purchase-payment-milestones';
+import {
+  milestonesCoverTotal,
+  roundMoney2,
+  supplierWithholdingOnMilestone,
+} from '@/lib/ops/purchase-payment-milestones';
 import {
   buildPurchaseOrderPrintHtml,
   openStandardPrintWindow,
@@ -66,7 +70,6 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, canApprovePurchaseAsManager } from '@/lib/permissions';
 import { PurchasePaymentPlanCard } from '@/components/purchases/purchase-payment-plan-card';
 import { Switch } from '@/components/ui/switch';
-import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
 function escapeHtml(s: string): string {
@@ -93,6 +96,24 @@ function statusLabelTh(status: PurchaseStatus): string {
 
 function canEditLinesStatus(status: PurchaseStatus): boolean {
   return status === 'DRAFT' || status === 'RETURNED_FOR_REVISION';
+}
+
+function approvalStatusPillClass(status: PurchaseStatus): string {
+  switch (status) {
+    case 'APPROVED':
+    case 'ISSUED':
+    case 'COMPLETED':
+      return 'bg-green-600 text-white border-transparent hover:bg-green-600';
+    case 'REJECTED':
+    case 'CANCELLED':
+      return 'bg-red-600 text-white border-transparent hover:bg-red-600';
+    case 'PENDING_APPROVAL':
+      return 'bg-amber-500 text-white border-transparent hover:bg-amber-500';
+    case 'RETURNED_FOR_REVISION':
+      return 'bg-orange-500 text-white border-transparent hover:bg-orange-500';
+    default:
+      return 'bg-slate-600 text-white border-transparent hover:bg-slate-600';
+  }
 }
 
 export default function PurchaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -425,8 +446,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     }
     const rows = ms
       .map((m) => {
-        const wht = roundMoney2((m.amount * rate) / 100);
-        const net = roundMoney2(m.amount - wht);
+        const { wht, netPaid: net } = supplierWithholdingOnMilestone(m.amount, rate, purchase);
         return `<tr>
       <td style="padding:6px;border:1px solid #ccc">${m.sequence}</td>
       <td style="padding:6px;border:1px solid #ccc">${escapeHtml(m.label)}</td>
@@ -437,14 +457,16 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       })
       .join('');
     const totalBase = roundMoney2(ms.reduce((s, m) => s + m.amount, 0));
-    const totalWht = roundMoney2(ms.reduce((s, m) => s + roundMoney2((m.amount * rate) / 100), 0));
+    const totalWht = roundMoney2(
+      ms.reduce((s, m) => s + supplierWithholdingOnMilestone(m.amount, rate, purchase).wht, 0)
+    );
     const totalNet = roundMoney2(totalBase - totalWht);
     const vn = vendor?.vendorName || '—';
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปหัก ณ ที่จ่าย ${escapeHtml(purchase.purchaseNo)}</title>
   <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:900px;margin:0 auto} table{border-collapse:collapse;width:100%;margin-top:16px} th{background:#f3f4f6;text-align:left;padding:8px;border:1px solid #ccc}</style></head><body>
   <h1>สรุปหัก ณ ที่จ่าย — ผู้รับเงิน (คู่ค้า)</h1>
   <p><strong>เลขที่ PO:</strong> ${escapeHtml(purchase.purchaseNo)} &nbsp;|&nbsp; <strong>คู่ค้า:</strong> ${escapeHtml(vn)}</p>
-  <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ยอดแต่ละงวดชำระ)</p>
+  <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ส่วนยอดก่อนภาษีมูลค่าเพิ่มของแต่ละงวด ตามสัดส่วนยอด PO — สุทธิจ่าย = ยอดงวดรวม VAT − หัก ณ ที่จ่าย)</p>
   <p><strong>พิมพ์เมื่อ:</strong> ${escapeHtml(formatDateThaiBE(Date.now()))}</p>
   <table>
     <thead><tr>
@@ -466,7 +488,25 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     w.print();
   };
 
-  if (userLoading || !currentUser) return null;
+  if (userLoading) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" aria-label="กำลังโหลด" />
+      </div>
+    );
+  }
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center gap-4 px-4 text-center bg-background">
+        <p className="text-muted-foreground max-w-md">
+          ยังโหลดโปรไฟล์ผู้ใช้ไม่สำเร็จ — ลองรีเฟรชหรือเข้าสู่ระบบใหม่
+        </p>
+        <Button type="button" variant="outline" onClick={() => router.push('/purchases')}>
+          กลับรายการซื้อ
+        </Button>
+      </div>
+    );
+  }
   if (!canViewPurchases) {
     return (
       <AppShell user={currentUser as User} onLogout={() => {}}>
@@ -505,7 +545,10 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             </div>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
-            <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary">
+            <Badge
+              variant="outline"
+              className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary lg:hidden"
+            >
               {statusLabelTh(purchase.status)}
             </Badge>
             {canPrintPurchase && (
@@ -524,43 +567,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
           </div>
         </div>
 
-        {purchase.status === 'REJECTED' && purchase.rejectionReason && (
-          <Card className="border-destructive print:hidden">
-            <CardHeader>
-              <CardTitle className="text-destructive text-base">เหตุผลไม่อนุมัติ</CardTitle>
-              <CardDescription>{purchase.rejectionReason}</CardDescription>
-            </CardHeader>
-          </Card>
-        )}
-
-        {purchase.status === 'PENDING_APPROVAL' && canApprove && (
-          <Card className="border-amber-300 bg-amber-50/50 print:hidden">
-            <CardHeader>
-              <CardTitle className="text-base">อนุมัติการสั่งซื้อ (ผู้จัดการปฏิบัติการ)</CardTitle>
-              <CardDescription>อนุมัติ / ไม่อนุมัติ / ส่งกลับให้คลังแก้ไข</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Textarea
-                placeholder="ความเห็น (ถ้ามี)"
-                value={managerComment}
-                onChange={(e) => setManagerComment(e.target.value)}
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button className="bg-green-600 hover:bg-green-700" onClick={() => managerDecision('APPROVED')}>
-                  <CheckCircle2 className="h-4 w-4 mr-2" /> อนุมัติ
-                </Button>
-                <Button variant="destructive" onClick={() => managerDecision('REJECTED')}>
-                  <XCircle className="h-4 w-4 mr-2" /> ไม่อนุมัติ
-                </Button>
-                <Button variant="outline" onClick={() => managerDecision('RETURNED_FOR_REVISION')}>
-                  <RotateCcw className="h-4 w-4 mr-2" /> ส่งกลับแก้ไข
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        <div className="max-w-4xl mx-auto w-full space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* โซนซ้าย: รายการ + สรุปยอด + หัก ณ ที่จ่าย + แผนงวด */}
+          <div className="order-2 lg:order-1 lg:col-span-7 space-y-6 w-full min-w-0">
             <Card className="shadow-md">
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
@@ -777,7 +786,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <div className="hidden print:block text-sm">
                     {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
                       <p>
-                        <strong>หัก ณ ที่จ่าย:</strong> อัตรา {purchase.supplierWithholdingRatePercent}% (คำนวณจากยอดแต่ละงวด)
+                        <strong>หัก ณ ที่จ่าย:</strong> อัตรา {purchase.supplierWithholdingRatePercent}% (ฐาน = ส่วนก่อน VAT ของแต่ละงวด — สุทธิ = ยอดงวดรวม VAT − หัก ณ ที่จ่าย)
                       </p>
                     ) : (
                       <p>ไม่มีการหัก ณ ที่จ่ายตามการตั้งค่าเอกสารนี้</p>
@@ -785,7 +794,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   </div>
                   {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
                     <p className="text-xs text-muted-foreground print:hidden">
-                      บันทึกแล้ว: หัก {purchase.supplierWithholdingRatePercent}% ต่อยอดแต่ละงวด (ฐาน = ยอดงวดในแผนชำระ)
+                      บันทึกแล้ว: หัก {purchase.supplierWithholdingRatePercent}% จากฐานก่อน VAT ของแต่ละงวด (สัดส่วนตามยอด PO)
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground print:hidden">ยังไม่เปิดใช้ — แผนงวดจะแสดงเฉพาะยอดงวด</p>
@@ -808,8 +817,90 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 currentUser={currentUser}
               />
             ) : null}
+          </div>
 
-            <Card className="bg-primary text-primary-foreground shadow-lg print:hidden">
+          {/* โซนขวา: สถานะ + ความเห็นผู้จัดการ (บน) · การดำเนินการ (ล่าง) */}
+          <div className="order-1 lg:order-2 lg:col-span-5 flex flex-col gap-6 print:hidden lg:sticky lg:top-4 w-full min-w-0 lg:min-h-[min(78vh,880px)] lg:justify-between">
+            <Card className="border shadow-md">
+              <CardHeader className="pb-3 border-b bg-muted/30">
+                <CardTitle className="text-base">สถานะการอนุมัติ</CardTitle>
+                <CardDescription>ผู้จัดการปฏิบัติการ (Operations manager)</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4 space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">สถานะ:</span>
+                  <Badge className={`${approvalStatusPillClass(purchase.status)} border-0`}>
+                    {purchase.status === 'APPROVED'
+                      ? 'อนุมัติ'
+                      : purchase.status === 'REJECTED'
+                        ? 'ไม่อนุมัติ'
+                        : statusLabelTh(purchase.status)}
+                  </Badge>
+                </div>
+
+                {purchase.status === 'REJECTED' && purchase.rejectionReason && (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                    <p className="font-semibold text-destructive mb-1">เหตุผลไม่อนุมัติ</p>
+                    <p className="text-muted-foreground">{purchase.rejectionReason}</p>
+                  </div>
+                )}
+
+                {purchase.status === 'PENDING_APPROVAL' && canApprove ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="mgr-comment">ความเห็น (ผู้จัดการปฏิบัติการ)</Label>
+                      <Textarea
+                        id="mgr-comment"
+                        placeholder="ความเห็นหรือหมายเหตุ (ถ้ามี)"
+                        value={managerComment}
+                        onChange={(e) => setManagerComment(e.target.value)}
+                        rows={4}
+                        className="resize-y min-h-[100px]"
+                      />
+                    </div>
+                    <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                      <Button className="bg-green-600 hover:bg-green-700 font-bold" onClick={() => managerDecision('APPROVED')}>
+                        <CheckCircle2 className="h-4 w-4 mr-2" /> อนุมัติ
+                      </Button>
+                      <Button variant="destructive" onClick={() => managerDecision('REJECTED')}>
+                        <XCircle className="h-4 w-4 mr-2" /> ไม่อนุมัติ
+                      </Button>
+                      <Button variant="outline" onClick={() => managerDecision('RETURNED_FOR_REVISION')}>
+                        <RotateCcw className="h-4 w-4 mr-2" /> ส่งกลับแก้ไข
+                      </Button>
+                    </div>
+                  </>
+                ) : purchase.status === 'PENDING_APPROVAL' && !canApprove ? (
+                  <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md p-3">
+                    รอผู้จัดการปฏิบัติการพิจารณา — คุณดูรายการได้แต่ไม่มีสิทธิ์อนุมัติ
+                  </p>
+                ) : (
+                  <>
+                    {purchase.approvalComment ? (
+                      <div className="space-y-1">
+                        <Label className="text-muted-foreground">ความเห็นผู้จัดการปฏิบัติการ</Label>
+                        <p className="text-sm rounded-md border bg-muted/30 p-3 whitespace-pre-wrap">{purchase.approvalComment}</p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground italic">ยังไม่มีความเห็นในระบบ</p>
+                    )}
+                    {(purchase.status === 'APPROVED' ||
+                      purchase.status === 'REJECTED' ||
+                      purchase.status === 'RETURNED_FOR_REVISION') &&
+                      (purchase.approvalDecisionByName || purchase.approvalDecidedAt) && (
+                        <p className="text-xs text-muted-foreground">
+                          {purchase.approvalDecisionByName ? `โดย ${purchase.approvalDecisionByName}` : ''}
+                          {purchase.approvalDecidedAt
+                            ? ` · ${new Date(purchase.approvalDecidedAt).toLocaleString('th-TH')}`
+                            : ''}
+                        </p>
+                      )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-primary text-primary-foreground shadow-lg">
               <CardHeader className="pb-4 border-b border-white/10">
                 <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-80">การดำเนินการ</CardTitle>
               </CardHeader>
@@ -867,7 +958,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 )}
               </CardContent>
             </Card>
-
+          </div>
         </div>
       </div>
     </AppShell>

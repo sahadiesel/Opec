@@ -59,6 +59,7 @@ import {
 } from '@/lib/payroll/d8';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { useAppUser } from '@/hooks/use-app-user';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -76,6 +77,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
 
   const linesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_payroll_runs', id, 'lines') : null), [firestore, id, isAuthorized]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<OfficePayrollLine>(linesQuery as any);
+  const { profile: companyProfile } = useCompanyDocumentProfile();
 
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -341,7 +343,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                   </TableHeader>
                   <TableBody>
                     {lines?.map(line => {
-                      const slipModel = buildPayslipFromOfficeLine(line, run);
+                      const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
                       return (
                       <TableRow key={line.id} className="hover:bg-muted/20">
                         <TableCell>

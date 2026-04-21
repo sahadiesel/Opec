@@ -7,13 +7,21 @@ import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase
 import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
 import type { PayrollBatch, PayrollBatchLine, User } from '@/lib/types';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 
-function WorkerPayslipRow({ line }: { line: PayrollBatchLine }) {
+function WorkerPayslipRow({
+  line,
+  companyProfile,
+}: {
+  line: PayrollBatchLine;
+  companyProfile?: CompanyDocumentProfileNames | null;
+}) {
   const firestore = useFirestore();
   const batchRef = useMemoFirebase(
     () => (firestore && line.payrollBatchId ? doc(firestore, 'payroll_batches', line.payrollBatchId) : null),
@@ -33,7 +41,7 @@ function WorkerPayslipRow({ line }: { line: PayrollBatchLine }) {
     );
   }
 
-  const model = buildPayslipFromWorkerLine(line, batch, periodLabel);
+  const model = buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined);
 
   return (
     <TableRow>
@@ -54,6 +62,7 @@ function WorkerPayslipRow({ line }: { line: PayrollBatchLine }) {
 
 export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: string; currentUser: User | null }) {
   const firestore = useFirestore();
+  const { profile: companyProfile } = useCompanyDocumentProfile();
   const allowed = canViewPayrollPerFirestoreRules(currentUser);
 
   const linesQuery = useMemoFirebase(
@@ -108,7 +117,11 @@ export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: stri
             </TableHeader>
             <TableBody>
               {sorted.map((line) => (
-                <WorkerPayslipRow key={`${line.payrollBatchId}_${line.id}`} line={line} />
+                <WorkerPayslipRow
+                  key={`${line.payrollBatchId}_${line.id}`}
+                  line={line}
+                  companyProfile={companyProfile}
+                />
               ))}
             </TableBody>
           </Table>

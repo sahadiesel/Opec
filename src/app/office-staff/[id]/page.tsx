@@ -4,7 +4,8 @@ import { useState, use, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
@@ -12,8 +13,7 @@ import { Label } from '@/components/ui/label';
 import { 
   ArrowLeft, 
   Save, 
-  Loader2, 
-  UserSearch,
+  Loader2,
   Building2,
   CreditCard,
   Briefcase,
@@ -21,10 +21,14 @@ import {
   ShieldCheck,
   Info,
   UserCircle,
-  Receipt
+  Receipt,
+  Phone,
+  MapPin,
+  UsersRound,
+  IdCard,
 } from 'lucide-react';
 import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import {
   isSystemAdmin,
   isOperationsPillarExecutive,
@@ -59,6 +63,36 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canEdit } from '@/lib/permissions';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 
+/** ตำแหน่งที่ผูกพนักงานออฟฟิศได้: หมวด Office ทั้งหมด หรือ Onshore/Offshore ที่ฐานเงินเดือนเป็นรายเดือน (เช่น Construction Manager) — ไม่ดึงคนงานรายวัน (DAILY/HOURLY) ทั้งแผง */
+function positionEligibleForOfficeStaff(p: Position): boolean {
+  if (p.active === false) return false;
+  if (p.category === 'OFFICE') return true;
+  if (p.payrollBasis === 'MONTHLY' && (p.category === 'ONSHORE' || p.category === 'OFFSHORE')) return true;
+  return false;
+}
+
+type OfficePaymentKind = 'MONTHLY' | 'DAILY' | 'MONTHLY_NO_ATT' | 'NONE';
+
+function paymentKindFromStaff(f: Partial<OfficeStaff>): OfficePaymentKind {
+  if (f.excludeFromPayrollRuns) return 'NONE';
+  if (f.salaryType === 'DAILY') return 'DAILY';
+  if (f.salaryType === 'MONTHLY' && f.monthlyAttendanceExempt) return 'MONTHLY_NO_ATT';
+  return 'MONTHLY';
+}
+
+function staffPatchForPaymentKind(kind: OfficePaymentKind, f: Partial<OfficeStaff>): Partial<OfficeStaff> {
+  switch (kind) {
+    case 'NONE':
+      return { ...f, excludeFromPayrollRuns: true, salaryType: 'MONTHLY', monthlyAttendanceExempt: false };
+    case 'DAILY':
+      return { ...f, excludeFromPayrollRuns: false, salaryType: 'DAILY', monthlyAttendanceExempt: false };
+    case 'MONTHLY_NO_ATT':
+      return { ...f, excludeFromPayrollRuns: false, salaryType: 'MONTHLY', monthlyAttendanceExempt: true };
+    default:
+      return { ...f, excludeFromPayrollRuns: false, salaryType: 'MONTHLY', monthlyAttendanceExempt: false };
+  }
+}
+
 export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const isNew = id === 'new';
@@ -91,35 +125,50 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
 
   const officeCategoryPositions = useMemo(
-    () =>
-      sortPositionsByDisplayName(
-        (allPositions || []).filter((p) => p.category === 'OFFICE' && p.active !== false)
-      ),
-    [allPositions]
+    () => sortPositionsByDisplayName((allPositions || []).filter(positionEligibleForOfficeStaff)),
+    [allPositions],
   );
 
   const [formData, setFormData] = useState<Partial<OfficeStaff>>({
     staffCode: isNew ? getPreviewPattern('office_staff') : '',
     fullName: '',
     nickname: '',
+    phone: '',
     department: '',
     positionId: undefined,
     positionTitle: '',
     employmentType: 'FULL_TIME',
     salaryType: 'MONTHLY',
     monthlySalary: 0,
+    dailyWage: 0,
+    monthlyAttendanceExempt: false,
+    excludeFromPayrollRuns: false,
     startDate: timestampToHtmlDateValue(Date.now()),
+    employmentEndDate: '',
+    nationalId: '',
+    address: '',
+    emergencyContactName: '',
+    emergencyContactRelation: '',
+    emergencyContactPhone: '',
     bankAccountName: '',
     bankAccountNumber: '',
     bankName: '',
     taxId: '',
     socialSecurityNo: '',
+    socialSecurityStatus: 'ENROLLED',
+    socialSecurityHospital: '',
     status: 'ACTIVE',
     payrollBand: 'OFFICE',
-    notes: ''
+    notes: '',
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const selectedPosition = useMemo(() => {
+    const pid = formData.positionId;
+    if (!pid || !allPositions?.length) return undefined;
+    return allPositions.find((p) => p.id === pid);
+  }, [formData.positionId, allPositions]);
 
   const departmentOptions = useMemo(() => {
     const s = new Set<string>();
@@ -160,7 +209,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
       toast({
         variant: "destructive",
         title: "ข้อมูลไม่ครบ",
-        description: "กรุณาเลือกตำแหน่งจากรายการตำแหน่งงาน (หมวด Office)",
+        description: 'กรุณาเลือกตำแหน่งจากรายการตำแหน่งงาน (Office หรือสายสนามแบบรายเดือน)',
       });
       return;
     }
@@ -175,9 +224,19 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             monthlySalary: staffData.monthlySalary,
             salaryType: staffData.salaryType,
             payrollBand: staffData.payrollBand ?? 'OFFICE',
+            dailyWage: staffData.dailyWage,
+            monthlyAttendanceExempt: staffData.monthlyAttendanceExempt,
+            excludeFromPayrollRuns: staffData.excludeFromPayrollRuns,
           }
         : !canEditMoneyFields && isNew
-          ? { monthlySalary: 0, salaryType: 'MONTHLY' as StaffSalaryType, payrollBand: 'OFFICE' as const }
+          ? {
+              monthlySalary: 0,
+              dailyWage: 0,
+              salaryType: 'MONTHLY' as StaffSalaryType,
+              payrollBand: 'OFFICE' as const,
+              monthlyAttendanceExempt: false,
+              excludeFromPayrollRuns: false,
+            }
           : {};
 
     try {
@@ -208,6 +267,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
           staffRef!,
           sanitizeFirestorePayload({
             ...formData,
+            staffCode: staffData!.staffCode,
             ...compensationPatch,
             positionId: resolvedPositionId,
             positionTitle: resolvedPositionTitle,
@@ -285,34 +345,51 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="basic" className="mt-6">
-            <Card className="shadow-sm">
+          <TabsContent value="basic" className="mt-6 space-y-6">
+            <Card className="shadow-sm overflow-hidden">
               <CardHeader className="bg-primary/5 border-b">
                 <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                  <UserCircle className="h-5 w-5" /> ข้อมูลประวัติและตำแหน่ง (Job Profile)
+                  <UserCircle className="h-5 w-5" /> ข้อมูลบัญชีและตำแหน่ง
                 </CardTitle>
+                <CardDescription>รหัสพนักงานและรหัสตำแหน่งจากระบบ — ชื่อ แผนก และตำแหน่งงานจากทะเบียน</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 pt-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6">
+                  <div className="md:col-span-4 space-y-2">
                     <Label className="font-bold">รหัสพนักงาน (Staff Code) *</Label>
-                    <Input 
-                      value={formData.staffCode} 
-                      disabled={isNew} 
-                      onChange={e => setFormData({...formData, staffCode: e.target.value})} 
-                      className={isNew ? "bg-muted font-mono font-bold text-primary" : ""}
+                    <Input
+                      value={formData.staffCode ?? ''}
+                      readOnly
+                      aria-readonly="true"
+                      autoComplete="off"
+                      className="bg-muted font-mono font-bold text-primary cursor-not-allowed"
                     />
-                    {isNew && <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>}
+                    <p className="text-[10px] text-muted-foreground">
+                      {isNew
+                        ? 'ระบบออกรหัสเมื่อบันทึก — แก้เองไม่ได้'
+                        : 'ออกโดยระบบ — แก้ไม่ได้'}
+                    </p>
                   </div>
-                  <div className="space-y-2 md:col-span-2">
+                  <div className="md:col-span-8 space-y-2">
                     <Label className="font-bold">ชื่อ-นามสกุล (Full Name) *</Label>
-                    <Input value={formData.fullName} onChange={e => setFormData({...formData, fullName: e.target.value})} />
+                    <Input value={formData.fullName} onChange={(e) => setFormData({ ...formData, fullName: e.target.value })} />
                   </div>
-                  <div className="space-y-2">
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold flex items-center gap-2">
+                      <Phone className="h-3.5 w-3.5" /> เบอร์โทร
+                    </Label>
+                    <Input
+                      value={formData.phone ?? ''}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder="0xx-xxx-xxxx"
+                      inputMode="tel"
+                    />
+                  </div>
+                  <div className="md:col-span-4 space-y-2">
                     <Label className="font-bold">ชื่อเล่น (Nickname)</Label>
-                    <Input value={formData.nickname} onChange={e => setFormData({...formData, nickname: e.target.value})} />
+                    <Input value={formData.nickname ?? ''} onChange={(e) => setFormData({ ...formData, nickname: e.target.value })} />
                   </div>
-                  <div className="space-y-2">
+                  <div className="md:col-span-4 space-y-2">
                     <Label className="font-bold">แผนก (Department) *</Label>
                     <Select
                       value={formData.department?.trim() ? formData.department : undefined}
@@ -329,57 +406,77 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-[11px] text-muted-foreground">
-                      รวมค่าแผนกจากพนักงานที่ลงทะเบียนแล้วในระบบ และรายการแผนกมาตรฐาน
+                  </div>
+                  <div className="md:col-span-8 space-y-2">
+                    <Label className="font-bold">ตำแหน่งงาน (จากทะเบียน) *</Label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Select
+                        value={
+                          formData.positionId ||
+                          officeCategoryPositions.find(
+                            (p: Position) =>
+                              (p.positionName || p.positionNameTh) === formData.positionTitle ||
+                              (p.positionName || p.positionNameEn) === formData.positionTitle
+                          )?.id ||
+                          undefined
+                        }
+                        onValueChange={(pid) => {
+                          const p = officeCategoryPositions.find((x: Position) => x.id === pid);
+                          setFormData({
+                            ...formData,
+                            positionId: pid,
+                            positionTitle: p ? (p.positionName || p.positionNameTh) : formData.positionTitle,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="h-10 flex-1">
+                          <SelectValue
+                            placeholder={
+                              officeCategoryPositions.length
+                                ? 'เลือกตำแหน่ง'
+                                : 'ยังไม่มีตำแหน่งที่เข้าเงื่อนไข — ตรวจที่เมนูตำแหน่งงาน'
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {formData.positionId &&
+                          !officeCategoryPositions.some((p: Position) => p.id === formData.positionId) ? (
+                            <SelectItem value={formData.positionId}>
+                              {formData.positionTitle || formData.positionId}{' '}
+                              <span className="text-muted-foreground text-xs">(ไม่อยู่ในรายการที่เลือกได้ตอนนี้)</span>
+                            </SelectItem>
+                          ) : null}
+                          {officeCategoryPositions.map((p: Position) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {`${p.positionCode} — ${p.positionName || p.positionNameTh}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        readOnly
+                        value={selectedPosition?.positionCode ?? '—'}
+                        className="h-10 w-full sm:w-36 shrink-0 bg-muted font-mono text-sm font-bold text-primary cursor-not-allowed"
+                        title="รหัสตำแหน่ง (Position Code)"
+                      />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      ทะเบียน{' '}
+                      <Link href="/positions" className="text-primary underline font-medium">
+                        ตำแหน่งงาน
+                      </Link>{' '}
+                      — Office หรือสายสนามจ่ายรายเดือน
                     </p>
                   </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">ตำแหน่ง (จากตำแหน่งงาน — หมวด Office) *</Label>
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold">ประเภทการจ้าง</Label>
                     <Select
-                      value={
-                        formData.positionId ||
-                        officeCategoryPositions.find(
-                          (p: Position) =>
-                            (p.positionName || p.positionNameTh) === formData.positionTitle ||
-                            (p.positionName || p.positionNameEn) === formData.positionTitle
-                        )?.id ||
-                        undefined
-                      }
-                      onValueChange={(id) => {
-                        const p = officeCategoryPositions.find((x: Position) => x.id === id);
-                        setFormData({
-                          ...formData,
-                          positionId: id,
-                          positionTitle: p ? (p.positionName || p.positionNameTh) : formData.positionTitle,
-                        });
-                      }}
+                      onValueChange={(v: EmploymentType) => setFormData({ ...formData, employmentType: v })}
+                      value={formData.employmentType}
                     >
                       <SelectTrigger className="h-10">
-                        <SelectValue placeholder={officeCategoryPositions.length ? 'เลือกตำแหน่ง' : 'ยังไม่มีตำแหน่งหมวด Office — สร้างที่เมนูตำแหน่งงาน'} />
+                        <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="max-h-72">
-                        {formData.positionId &&
-                        !officeCategoryPositions.some((p: Position) => p.id === formData.positionId) ? (
-                          <SelectItem value={formData.positionId}>
-                            {formData.positionTitle || formData.positionId}{' '}
-                            <span className="text-muted-foreground text-xs">(ไม่อยู่ในรายการ Office ปัจจุบัน)</span>
-                          </SelectItem>
-                        ) : null}
-                        {officeCategoryPositions.map((p: Position) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {`${p.positionCode} — ${p.positionName || p.positionNameTh}${p.positionNameEn ? ` (${p.positionName || p.positionNameEn})` : ''}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-[11px] text-muted-foreground">
-                      ดึงจากเมนู <Link href="/positions" className="text-primary underline font-medium">ตำแหน่งงาน</Link> เฉพาะรายการที่หมวดเป็น Office และสถานะใช้งาน
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">ประเภทการจ้าง (Employment Type)</Label>
-                    <Select onValueChange={(v: EmploymentType) => setFormData({...formData, employmentType: v})} value={formData.employmentType}>
-                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="FULL_TIME">Full Time (ประจำ)</SelectItem>
                         <SelectItem value="PART_TIME">Part Time (ชั่วคราว)</SelectItem>
@@ -387,18 +484,41 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold">วันที่เริ่มงาน</Label>
                     <DatePickerThaiBE
                       className="h-10"
                       value={htmlDateValueToTimestampMs(formData.startDate)}
                       onChange={(ms) => setFormData({ ...formData, startDate: timestampToHtmlDateValue(ms) })}
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold">วันที่สิ้นสุดการจ้าง</Label>
+                    <DatePickerThaiBE
+                      className="h-10"
+                      placeholder="ยังไม่ระบุ"
+                      allowClear
+                      onClear={() => setFormData({ ...formData, employmentEndDate: '' })}
+                      value={
+                        formData.employmentEndDate
+                          ? htmlDateValueToTimestampMs(formData.employmentEndDate)
+                          : undefined
+                      }
+                      onChange={(ms) =>
+                        setFormData({
+                          ...formData,
+                          employmentEndDate: ms ? timestampToHtmlDateValue(ms) : '',
+                        })
+                      }
+                    />
+                    <p className="text-[10px] text-muted-foreground">เว้นว่างได้ถ้ายังไม่มีวันสิ้นสุด</p>
+                  </div>
+                  <div className="md:col-span-4 space-y-2">
                     <Label className="font-bold">สถานะ (Status)</Label>
-                    <Select onValueChange={(v: StaffStatus) => setFormData({...formData, status: v})} value={formData.status}>
-                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                    <Select onValueChange={(v: StaffStatus) => setFormData({ ...formData, status: v })} value={formData.status}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="ACTIVE">ACTIVE (ปกติ)</SelectItem>
                         <SelectItem value="INACTIVE">INACTIVE (ระงับ)</SelectItem>
@@ -407,41 +527,129 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                     </Select>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm overflow-hidden">
+              <CardHeader className="bg-muted/40 border-b">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <IdCard className="h-5 w-5 text-primary" /> ข้อมูลส่วนตัว
+                </CardTitle>
+                <CardDescription>เลขบัตรประชาชนและที่อยู่ติดต่อ</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-4">
                 <div className="space-y-2">
-                  <Label className="font-bold">หมายเหตุ (Notes)</Label>
-                  <Textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="min-h-[100px]" />
+                  <Label className="font-bold">เลขบัตรประชาชน (National ID)</Label>
+                  <Input
+                    value={formData.nationalId ?? ''}
+                    onChange={(e) => setFormData({ ...formData, nationalId: e.target.value })}
+                    placeholder="x-xxxx-xxxxx-xx-x"
+                    className="font-mono"
+                    autoComplete="off"
+                  />
                 </div>
+                <div className="space-y-2">
+                  <Label className="font-bold flex items-center gap-2">
+                    <MapPin className="h-3.5 w-3.5" /> ที่อยู่
+                  </Label>
+                  <Textarea
+                    value={formData.address ?? ''}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    className="min-h-[88px]"
+                    placeholder="บ้านเลขที่ ถนน แขวง/ตำบล เขต/อำเภอ จังหวัด รหัสไปรษณีย์"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm overflow-hidden">
+              <CardHeader className="bg-muted/40 border-b">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <UsersRound className="h-5 w-5 text-primary" /> ผู้ติดต่อฉุกเฉิน
+                </CardTitle>
+                <CardDescription>กรณีฉุกเฉินหรือติดต่อสำรอง</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label className="font-bold">ชื่อ</Label>
+                    <Input
+                      value={formData.emergencyContactName ?? ''}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactName: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ความสัมพันธ์</Label>
+                    <Input
+                      value={formData.emergencyContactRelation ?? ''}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactRelation: e.target.value })}
+                      placeholder="เช่น บิดา, คู่สมรส"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">เบอร์โทร</Label>
+                    <Input
+                      value={formData.emergencyContactPhone ?? ''}
+                      onChange={(e) => setFormData({ ...formData, emergencyContactPhone: e.target.value })}
+                      inputMode="tel"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm overflow-hidden">
+              <CardHeader className="bg-muted/40 border-b">
+                <CardTitle className="text-base">หมายเหตุทั่วไป</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <Textarea
+                  value={formData.notes ?? ''}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  className="min-h-[100px]"
+                  placeholder="บันทึกเพิ่มเติมที่เกี่ยวกับพนักงานท่านนี้"
+                />
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="financial" className="mt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card className="shadow-sm">
-                <CardHeader className="bg-primary/5 border-b">
-                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <CreditCard className="h-5 w-5" /> การจ่ายเงิน (Compensation)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 pt-6">
-                  {!canEditMoneyFields && (
-                    <p className="text-xs text-muted-foreground rounded-md border border-amber-200 bg-amber-50/80 p-2 dark:border-amber-900/50 dark:bg-amber-950/30">
-                      แก้เงินเดือน / รูปแบบเงินเดือน / กลุ่มงวดจ่าย ได้เฉพาะ HR Manager หรือ Operation Manager (หรือ Admin)
-                    </p>
-                  )}
-                  <div className="space-y-2">
-                    <Label className="font-bold">รูปแบบเงินเดือน (Salary Type)</Label>
+          <TabsContent value="financial" className="mt-6 space-y-6">
+            <Card className="shadow-sm overflow-hidden">
+              <CardHeader className="bg-primary/5 border-b">
+                <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                  <CreditCard className="h-5 w-5" /> ข้อมูลฝ่ายบุคคลและการจ่ายเงิน (HR / Payroll)
+                </CardTitle>
+                <CardDescription>ประเภทการจ่าย เงินเดือน/ค่าแรง ภาษี และประกันสังคม</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6 pt-6">
+                {!canEditMoneyFields && (
+                  <p className="text-xs rounded-md border border-amber-200 bg-amber-50/80 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+                    แก้ยอดเงิน ประเภทการจ่าย และกลุ่มงวดจ่าย ได้เฉพาะ HR Manager, Operations Manager, เจ้าหน้าที่เงินเดือน (Payroll) หรือ Admin
+                  </p>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-bold">ประเภทการจ่ายเงิน</Label>
                     <Select
                       disabled={!canEditMoneyFields}
-                      onValueChange={(v: StaffSalaryType) => setFormData({...formData, salaryType: v})}
-                      value={formData.salaryType}
+                      value={paymentKindFromStaff(formData)}
+                      onValueChange={(k: OfficePaymentKind) =>
+                        setFormData(staffPatchForPaymentKind(k, formData) as Partial<OfficeStaff>)
+                      }
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-11">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="MONTHLY">รายเดือน (Monthly)</SelectItem>
-                        <SelectItem value="DAILY">รายวัน (Daily)</SelectItem>
+                        <SelectItem value="MONTHLY">รายเดือน</SelectItem>
+                        <SelectItem value="DAILY">รายวัน</SelectItem>
+                        <SelectItem value="MONTHLY_NO_ATT">รายเดือน (ไม่อ้างอิงสแกน/เวลาเข้างาน)</SelectItem>
+                        <SelectItem value="NONE">ไม่คิดเงินเดือนผ่านงวดออฟฟิศ (จ่ายนอกระบบ / ฝึกงาน ฯลฯ)</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      เลือก &quot;ไม่คิดเงินเดือนผ่านงวด…&quot; จะไม่ดึงเข้าศูนย์งานจ่ายเงินออฟฟิศอัตโนมัติ
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">กลุ่มงวดเงินเดือน (Payroll band)</Label>
@@ -450,59 +658,135 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                       onValueChange={(v: 'OFFICE' | 'EXECUTIVE') => setFormData({ ...formData, payrollBand: v })}
                       value={formData.payrollBand ?? 'OFFICE'}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-11">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="OFFICE">พนักงานสำนักงาน (Office payroll / HR เห็นได้)</SelectItem>
-                        <SelectItem value="EXECUTIVE">ผู้บริหาร (Executive — งวดจ่ายแยกในเมนูบัญชีเท่านั้น)</SelectItem>
+                        <SelectItem value="OFFICE">พนักงานสำนักงาน (Office payroll)</SelectItem>
+                        <SelectItem value="EXECUTIVE">ผู้บริหาร (Executive — งวดในเมนูบัญชี)</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-[11px] text-muted-foreground">
-                      ผู้บริหารจะไม่ถูกดึงเข้างวดเงินเดือนพนักงานสำนักงาน และต้องใช้เมนูเงินเดือนผู้บริหารในฝ่ายบัญชี
-                    </p>
                   </div>
                   <div className="space-y-2">
-                    <Label className="font-bold">เงินเดือนพื้นฐาน (Monthly Salary)</Label>
+                    <Label className="font-bold">รูปแบบในระบบ (Salary type)</Label>
                     <Input
-                      type="number"
-                      disabled={!canEditMoneyFields}
-                      value={formData.monthlySalary}
-                      onChange={(e) => setFormData({ ...formData, monthlySalary: parseFloat(e.target.value) || 0 })}
-                      className="text-lg font-black text-primary"
+                      readOnly
+                      value={
+                        formData.salaryType === 'DAILY'
+                          ? 'รายวัน (DAILY)'
+                          : 'รายเดือน (MONTHLY)'
+                      }
+                      className="h-11 bg-muted font-mono text-sm cursor-not-allowed"
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label className="font-bold">เงินเดือน (บาท/เดือน)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={!canEditMoneyFields}
+                      value={formData.monthlySalary ?? 0}
+                      onChange={(e) => setFormData({ ...formData, monthlySalary: parseFloat(e.target.value) || 0 })}
+                      className="h-11 text-lg font-semibold text-primary"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ค่าแรงรายวัน (บาท/วัน)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={!canEditMoneyFields}
+                      value={formData.dailyWage ?? 0}
+                      onChange={(e) => setFormData({ ...formData, dailyWage: parseFloat(e.target.value) || 0 })}
+                      className="h-11"
+                    />
+                  </div>
+                </div>
+                <Separator />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
                     <Label className="font-bold">เลขผู้เสียภาษี (Tax ID)</Label>
-                    <Input value={formData.taxId} onChange={e => setFormData({...formData, taxId: e.target.value})} />
+                    <Input
+                      value={formData.taxId ?? ''}
+                      onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
+                      className="font-mono"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">เลขประกันสังคม (SSO No.)</Label>
-                    <Input value={formData.socialSecurityNo} onChange={e => setFormData({...formData, socialSecurityNo: e.target.value})} />
+                    <Input
+                      value={formData.socialSecurityNo ?? ''}
+                      onChange={(e) => setFormData({ ...formData, socialSecurityNo: e.target.value })}
+                      className="font-mono"
+                    />
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="space-y-2">
+                    <Label className="font-bold">สิทธิ์ประกันสังคม</Label>
+                    <Select
+                      value={formData.socialSecurityStatus ?? 'ENROLLED'}
+                      onValueChange={(v: 'ENROLLED' | 'EXEMPT') =>
+                        setFormData({ ...formData, socialSecurityStatus: v })
+                      }
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ENROLLED">ยื่นประกันสังคม</SelectItem>
+                        <SelectItem value="EXEMPT">ไม่ยื่นประกันสังคม / ได้รับยกเว้น</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">โรงพยาบาลประกันสังคม</Label>
+                    <Input
+                      value={formData.socialSecurityHospital ?? ''}
+                      onChange={(e) => setFormData({ ...formData, socialSecurityHospital: e.target.value })}
+                      placeholder="ชื่อโรงพยาบาลที่เลือก"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-              <Card className="shadow-sm">
-                <CardHeader className="bg-primary/5 border-b">
-                  <CardTitle className="text-lg flex items-center gap-2 text-primary">
-                    <Building2 className="h-5 w-5" /> บัญชีธนาคาร (Bank Details)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 pt-6">
-                  <div className="space-y-2">
-                    <Label className="font-bold">ชื่อธนาคาร (Bank Name)</Label>
-                    <Input value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} placeholder="เช่น กสิกรไทย, ไทยพาณิชย์" />
+            <Card className="shadow-sm overflow-hidden">
+              <CardHeader className="bg-muted/40 border-b">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Building2 className="h-5 w-5 text-primary" /> บัญชีธนาคาร
+                </CardTitle>
+                <CardDescription>สำหรับโอนเงินเดือน — ครบถ้วนช่วยลดงานในงวดจ่าย</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2 md:col-span-1">
+                    <Label className="font-bold">ชื่อธนาคาร</Label>
+                    <Input
+                      value={formData.bankName ?? ''}
+                      onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
+                      placeholder="เช่น กสิกรไทย"
+                    />
                   </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">ชื่อบัญชี (Account Name)</Label>
-                    <Input value={formData.bankAccountName} onChange={e => setFormData({...formData, bankAccountName: e.target.value})} />
+                  <div className="space-y-2 md:col-span-1">
+                    <Label className="font-bold">ชื่อบัญชี</Label>
+                    <Input
+                      value={formData.bankAccountName ?? ''}
+                      onChange={(e) => setFormData({ ...formData, bankAccountName: e.target.value })}
+                    />
                   </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">เลขที่บัญชี (Account No.)</Label>
-                    <Input value={formData.bankAccountNumber} onChange={e => setFormData({...formData, bankAccountNumber: e.target.value})} placeholder="000-0-00000-0" />
+                  <div className="space-y-2 md:col-span-1">
+                    <Label className="font-bold">เลขที่บัญชี</Label>
+                    <Input
+                      value={formData.bankAccountNumber ?? ''}
+                      onChange={(e) => setFormData({ ...formData, bankAccountNumber: e.target.value })}
+                      placeholder="000-0-00000-0"
+                      className="font-mono"
+                    />
                   </div>
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="admin" className="mt-6">

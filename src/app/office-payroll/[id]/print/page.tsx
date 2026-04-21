@@ -8,6 +8,7 @@ import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase
 import { collection, doc } from 'firebase/firestore';
 import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { canView } from '@/lib/permissions';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -36,11 +37,12 @@ export default function OfficePayrollPrintAllPage({ params }: { params: Promise<
     [firestore, id, isAuthorized]
   );
   const { data: lines, isLoading: loadingLines } = useCollection<OfficePayrollLine>(linesQuery as any);
+  const { profile: companyProfile } = useCompanyDocumentProfile();
 
   const models = useMemo(() => {
     if (!run || !lines?.length) return [];
-    return lines.map((line) => buildPayslipFromOfficeLine(line, run));
-  }, [run, lines]);
+    return lines.map((line) => buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined));
+  }, [run, lines, companyProfile?.companyNameTh, companyProfile?.companyNameEn]);
 
   if (loadingRun || !currentUser) {
     return (

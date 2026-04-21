@@ -272,7 +272,13 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         purchaseOrderId: id,
         afterSummary: 'Approved PO → active',
       });
-      toast({ title: 'อนุมัติ PO แล้ว', description: 'สถานะเป็น Active — เปิดสร้าง Wave ได้' });
+      toast({
+        title: 'อนุมัติ PO แล้ว',
+        description:
+          po.poType === 'quotation'
+            ? 'สถานะ Active — ออกใบวางบิล / ใบกำกับภาษีได้ (ไม่มี Wave / Timesheet)'
+            : 'สถานะเป็น Active — เปิดสร้าง Wave ได้',
+      });
     } catch (e) {
       console.error(e);
       toast({ variant: 'destructive', title: 'อนุมัติไม่สำเร็จ', description: 'ลองใหม่หรือตรวจสิทธิ์ Firestore' });
@@ -335,16 +341,26 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข PO' });
       return;
     }
-    if (!poRef || !firestore || !currentUser || !po || po.status !== 'active' || !isContractBasedPO) return;
-    if (!allWavesTerminalForClose) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังปิด PO ไม่ได้',
-        description: 'ทุก Wave ของ PO ต้องเป็นสถานะ COMPLETED หรือ CLOSED ก่อน',
-      });
-      return;
+    if (!poRef || !firestore || !currentUser || !po || po.status !== 'active') return;
+    if (isContractBasedPO) {
+      if (!allWavesTerminalForClose) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังปิด PO ไม่ได้',
+          description: 'ทุก Wave ของ PO ต้องเป็นสถานะ COMPLETED หรือ CLOSED ก่อน',
+        });
+        return;
+      }
+      if (!confirm('ปิด PO นี้ถาวร?\n\nจะไม่สร้าง Wave หรือส่งตัวเพิ่มใน PO เดิม — งานใหม่ต้องใช้ PO ฉบับใหม่')) return;
+    } else {
+      if (
+        !confirm(
+          'ปิด PO นี้ถาวร?\n\nPO จากใบเสนอราคา (ขายสินค้า/บริการครั้งเดียว) — ไม่มี Wave/Timesheet ใช้เมื่อส่งมอบและวางบิลครบแล้ว',
+        )
+      ) {
+        return;
+      }
     }
-    if (!confirm('ปิด PO นี้ถาวร?\n\nจะไม่สร้าง Wave หรือส่งตัวเพิ่มใน PO เดิม — งานใหม่ต้องใช้ PO ฉบับใหม่')) return;
     setIsClosingPo(true);
     try {
       await updateDoc(poRef, { status: 'closed', updatedAt: Date.now() });
@@ -356,9 +372,16 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         changedFields: ['status'],
         sourceModule: 'commercial',
         purchaseOrderId: id,
-        afterSummary: 'Closed PO — no new waves on this document',
+        afterSummary: isContractBasedPO
+          ? 'Closed PO — no new waves on this document'
+          : 'Closed quotation-based PO — billing path only',
       });
-      toast({ title: 'ปิด PO แล้ว', description: 'ไม่สามารถสร้าง Wave เพิ่มใน PO นี้' });
+      toast({
+        title: 'ปิด PO แล้ว',
+        description: isContractBasedPO
+          ? 'ไม่สามารถสร้าง Wave เพิ่มใน PO นี้'
+          : 'จบงานขาย — ไม่มี Wave/Timesheet ผูก PO นี้',
+      });
     } catch (e) {
       console.error(e);
       toast({ variant: 'destructive', title: 'ปิด PO ไม่สำเร็จ' });
@@ -614,7 +637,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <Badge variant="outline" className="font-mono text-primary border-primary/20">{po.poCode}</Badge>
                 <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
               </div>
-              <p className="text-muted-foreground flex items-center gap-4 mt-1 text-sm">
+              <div className="text-muted-foreground flex flex-wrap items-center gap-4 mt-1 text-sm">
                 <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
                 {isContractBasedPO ? (
                   <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -641,7 +664,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     <Calendar className="h-3.5 w-3.5" /> วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
                   </span>
                 )}
-              </p>
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
@@ -683,6 +706,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               >
                 {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 ปิด PO (ไม่สร้าง Wave เพิ่ม)
+              </Button>
+            )}
+            {!isContractBasedPO && po.status === 'active' && canEditPo && (
+              <Button
+                variant="outline"
+                className="h-10 border-amber-600 text-amber-900"
+                disabled={isClosingPo}
+                onClick={() => void handleClosePo()}
+              >
+                {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                ปิด PO (งานจากใบเสนอราคา)
               </Button>
             )}
           </div>
@@ -907,11 +941,21 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
           </Card>
         )}
 
-        <Tabs defaultValue="lines" className="w-full">
-          <TabsList className="grid grid-cols-3 w-full md:w-[900px] h-auto p-1 bg-muted/50">
-            <TabsTrigger value="info" className="gap-2 py-2 px-6">ข้อมูลหัว PO</TabsTrigger>
-            <TabsTrigger value="lines" className="gap-2 py-2 px-6">PO Lines (โควต้า)</TabsTrigger>
-            <TabsTrigger value="assignments" className="gap-2 py-2 px-6">Assignments (คนงาน)</TabsTrigger>
+        <Tabs defaultValue={isContractBasedPO ? 'lines' : 'info'} className="w-full">
+          <TabsList
+            className={`grid w-full max-w-[900px] h-auto p-1 bg-muted/50 ${isContractBasedPO ? 'grid-cols-3' : 'grid-cols-2'}`}
+          >
+            <TabsTrigger value="info" className="gap-2 py-2 px-6">
+              ข้อมูลหัว PO
+            </TabsTrigger>
+            {isContractBasedPO && (
+              <TabsTrigger value="lines" className="gap-2 py-2 px-6">
+                PO Lines (โควต้า)
+              </TabsTrigger>
+            )}
+            <TabsTrigger value="assignments" className="gap-2 py-2 px-6">
+              {isContractBasedPO ? 'Assignments (คนงาน)' : 'วางบิล / เอกสาร'}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="info" className="mt-6">
@@ -1010,8 +1054,34 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </div>
               </CardContent>
             </Card>
+
+            {!isContractBasedPO && (
+              <Card className="mt-6 border-primary/20 bg-primary/5">
+                <CardHeader>
+                  <CardTitle className="text-base">งานขายจากใบเสนอราคา (ไม่ใช้ PO Lines / Wave)</CardTitle>
+                  <CardDescription>
+                    รายการและราคาอ้างอิงจากใบเสนอราคา — อนุมัติ PO แล้วไปออกใบวางบิล / ใบกำกับภาษีได้เลย
+                    ไม่ต้องเพิ่มแถวโควต้าตำแหน่งในระบบ PO Lines
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2">
+                  {!!po.quotationId?.trim() && (
+                    <Button variant="outline" asChild>
+                      <Link href={`/quotations/${encodeURIComponent(po.quotationId)}`}>เปิดใบเสนอราคา</Link>
+                    </Button>
+                  )}
+                  <Button variant="outline" asChild>
+                    <Link href="/draft-invoices">รายการใบแจ้งหนี้ ( Invoice )</Link>
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/tax-invoices">ใบกำกับภาษี</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
+          {isContractBasedPO && (
           <TabsContent value="lines" className="mt-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
@@ -1319,6 +1389,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               </CardContent>
             </Card>
           </TabsContent>
+          )}
 
           <TabsContent value="assignments" className="mt-6">
             {!isContractBasedPO ? (
@@ -1332,7 +1403,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2">
                   <Button variant="outline" asChild>
-                    <Link href="/billing-notes">ใบวางบิล (Billing Notes)</Link>
+                    <Link href="/draft-invoices">รายการใบแจ้งหนี้ ( Invoice )</Link>
                   </Button>
                   <Button variant="outline" asChild>
                     <Link href="/tax-invoices">ใบกำกับภาษี</Link>

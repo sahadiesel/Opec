@@ -47,11 +47,11 @@ export interface RestDayResolution {
    */
   publicHolidayWrap?: number;
   /**
-   * เสาร์–อาทิตย์ / อาทิตย์อย่างเดียว: ตัวคูณชม.ในกรอบ 8 ชม.แรก (Sunday)
+   * เสาร์–อาทิตย์ / อาทิตย์อย่างเดียว: ตัวคูณฐานชม.ต้นทุน (เช่น 1.5) — ใช้ขยาย h ก่อนคิด 8+4 ชม.
    */
   weeklyNormalMult?: number;
   /**
-   * ชม.เกิน 8: ฐาน × ตัวคูณ OT สัญญา × ค่านี้ (Sunday OT — ถ้าว่างใช้เท่า Sunday)
+   * @deprecated สูตร work_day แพ็กไม่คูณแยก overflow/tier ด้วยค่านี้อีก — เก็บไว้เพื่ออ่านจากสัญญา/แสดงผล
    */
   weeklyOtMult?: number;
 }
@@ -106,6 +106,17 @@ export function resolveCostRestDay(
     };
   }
 
+  // วันอาทิตย์ที่ทำงาน: ใช้ตัวคูณ payroll (cost.sunday) จากสัญญา แม้เลือก "ไม่มีวันหยุดประจำสัปดาห์"
+  // — ไม่ให้คิดเป็นวันธรรมดาเมื่อไม่ได้ตั้ง sunday_only / sat_sun
+  if (dow === 0) {
+    return {
+      active: true,
+      kind: 'weekly_rest',
+      weeklyNormalMult: sunday,
+      weeklyOtMult: sundayOt,
+    };
+  }
+
   return { active: false, kind: 'none' };
 }
 
@@ -141,12 +152,13 @@ export interface WorkDayPackageCostResult {
 }
 
 /**
- * ยอดฐานก่อนคูณวันหยุด: กรอบ 8 ชม.ปกติ + ส่วนเกินใน normal × ตัวคูณ OT สัญญา + OT แยก tier
+ * ยอดฐาน: กรอบ 8 ชม.ปกติ + ส่วนเกินใน normal × ตัวคูณ OT สัญญา (เมื่อใช้) + OT แยก tier
  */
 function computeBaseWorkAmount(
   h: number,
   otContract: number,
   w: ParsedWorkDayHours,
+  overflowMultiplyOtContract: boolean,
 ): { normalPart: number; overflowPart: number; tierPart: number } {
   const tierPart =
     h *
@@ -154,7 +166,8 @@ function computeBaseWorkAmount(
       w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0 +
       w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
   const normalPart = w.legalNormal * h;
-  const overflowPart = w.overflowNormal * h * otContract;
+  const overflowPart =
+    w.overflowNormal * h * (overflowMultiplyOtContract ? otContract : 1);
   return { normalPart, overflowPart, tierPart };
 }
 
@@ -164,8 +177,9 @@ function computeBaseWorkAmount(
  * - กรอบ 8 ชม.แรกจาก normalHours × ฐานชม.
  * - normalHours เกิน 8: ส่วนเกิน × ฐาน × ตัวคูณ OT สัญญา/PO (โครงเดิมเมื่อไม่แยก tier)
  * - ot15 / ot20 / ot30: × 1.5 / × 2 / × 3 ของฐานชม. (ไม่ซ้อนกับตัวคูณ OT สัญญา — tier เป็นตัวกำหนดอัตราแล้ว)
- * - วันหยุดในปฏิทิน: คูณทั้งยอดฐาน × publicHoliday
- * - เสาร์–อาทิตย์: ส่วนปกติ × Sunday; ส่วน overflow + ทุก tier × Sunday OT
+ * - วันหยุดในปฏิทิน / เสาร์–อาทิตย์ (ฝั่งต้นทุน): ขยายฐานชม.ด้วยตัวคูณสัญญา แล้วคิด 8 ชม. + ส่วนเกินใน normalHours
+ *   ที่ **อัตราเดียวกัน** — ไม่ซ้อน otContract กับตัวคูณวันหยุด (กันยอด 4 ชม.ถูกคูณ 1.5 ซ้ำ)
+ *   ตัวอย่าง: แพ็ก 12 ชม. ฐาน 100, OT สัญญา 1.5 → วันธรรมดา 1400; อาทิตย์ ×1.5 → 150/ชม. ×12 = 1800
  */
 export function computeWorkDayCostFromPackage(
   input: WorkDayPackageCostInput,
@@ -181,29 +195,39 @@ export function computeWorkDayCostFromPackage(
   const rest = resolveCostRestDay(input.timesheet.date, input.mainContract);
   const otContract = Math.max(0, input.otAfterShiftMultiplier);
 
-  const { normalPart, overflowPart, tierPart } = computeBaseWorkAmount(
-    h,
-    otContract,
-    w,
-  );
-
   let baseAmount: number;
   let mode: WorkDayPackageCostResult['mode'];
 
   if (!rest.active) {
+    const { normalPart, overflowPart, tierPart } = computeBaseWorkAmount(
+      h,
+      otContract,
+      w,
+      true,
+    );
     baseAmount = normalPart + overflowPart + tierPart;
     mode = 'weekday_split';
   } else if (rest.kind === 'public_holiday') {
-    const wrap = Math.max(0, rest.publicHolidayWrap ?? 1);
-    baseAmount = (normalPart + overflowPart + tierPart) * wrap;
+    const mult = Math.max(0, rest.publicHolidayWrap ?? 1);
+    const hElev = h * mult;
+    const { normalPart, overflowPart, tierPart } = computeBaseWorkAmount(
+      hElev,
+      otContract,
+      w,
+      false,
+    );
+    baseAmount = normalPart + overflowPart + tierPart;
     mode = 'public_holiday_wrap';
   } else {
-    const nM = Math.max(0, rest.weeklyNormalMult ?? 1);
-    const oM = Math.max(0, rest.weeklyOtMult ?? 1);
-    baseAmount =
-      normalPart * nM +
-      overflowPart * oM +
-      tierPart * oM;
+    const sm = Math.max(0, rest.weeklyNormalMult ?? 1);
+    const hElev = h * sm;
+    const { normalPart, overflowPart, tierPart } = computeBaseWorkAmount(
+      hElev,
+      otContract,
+      w,
+      false,
+    );
+    baseAmount = normalPart + overflowPart + tierPart;
     mode = 'weekly_rest_split';
   }
 

@@ -6,9 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Printer, ChevronRight, FileBarChart } from 'lucide-react';
-import type { TaxInvoice, Receipt as ReceiptDoc, ReceiptAllocation, CommercialInvoice } from '@/lib/types';
+import type { TaxInvoice, CommercialInvoice, AccountsReceivable } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { collection, query, where, orderBy } from 'firebase/firestore';
 import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
@@ -19,13 +19,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type MainTab = 'invoices' | 'paid';
 
-/** Payment row: open printable copy via linked tax-invoice id. */
+/** แถวชำระแล้ว — จากลูกหนี้การค้า (ไม่ใช้ collection ใบเสร็จรับเงินแยก) */
 type PaidEvidenceRow = {
-  receiptId: string;
-  receiptDate: string;
+  arId: string;
+  referenceDate: string;
   documentNo: string;
   amount: number;
-  paymentMethod: string;
+  statusLabel: string;
   primaryTaxInvoiceId?: string;
 };
 
@@ -87,15 +87,11 @@ export function AccountingContent() {
 
   const { data: invoices, isLoading: invLoad } = useCollection<TaxInvoice>(invQ as any);
 
-  const recQ = useMemoFirebase(() => {
+  const arQ = useMemoFirebase(() => {
     if (!firestore || !currentUser?.customerId) return null;
-    return query(
-      collection(firestore, 'receipts'),
-      where('customerId', '==', currentUser.customerId),
-      orderBy('receiptDate', 'desc'),
-    );
+    return query(collection(firestore, 'accounts_receivable'), where('customerId', '==', currentUser.customerId));
   }, [firestore, currentUser?.customerId]);
-  const { data: receipts, isLoading: recLoad } = useCollection<ReceiptDoc>(recQ as any);
+  const { data: arItems, isLoading: arLoad } = useCollection<AccountsReceivable>(arQ as any);
 
   const commercialQ = useMemoFirebase(() => {
     if (!firestore || !currentUser?.customerId) return null;
@@ -127,59 +123,21 @@ export function AccountingContent() {
     return rows;
   }, [commercialForPortal, invoices]);
 
-  const [paidRows, setPaidRows] = useState<PaidEvidenceRow[]>([]);
-  const [paidLoading, setPaidLoading] = useState(false);
-
-  useEffect(() => {
-    if (!firestore || !invoices?.length) {
-      setPaidRows([]);
-      setPaidLoading(false);
-      return;
-    }
-    if (!receipts?.length) {
-      setPaidRows([]);
-      setPaidLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setPaidLoading(true);
-
-    void (async () => {
-      const settled = receipts.filter((r) => r.status === 'ISSUED');
-      const rows: PaidEvidenceRow[] = [];
-      for (const r of settled) {
-        const snap = await getDocs(collection(firestore, 'receipts', r.id, 'allocations'));
-        const nos: string[] = [];
-        let firstTid: string | undefined;
-        snap.docs.forEach((d) => {
-          const a = d.data() as ReceiptAllocation;
-          const tid = a.taxInvoiceId;
-          if (!firstTid && tid) firstTid = tid;
-          const inv = invoices.find((i) => i.id === tid);
-          if (inv) nos.push(inv.taxInvoiceNo);
-        });
-        const uniq = [...new Set(nos)];
-        const documentNo = uniq.length ? uniq.join(', ') : r.receiptNo;
-        rows.push({
-          receiptId: r.id,
-          receiptDate: r.receiptDate,
-          documentNo,
-          amount: r.receivedAmount,
-          paymentMethod: String(r.paymentMethod),
-          primaryTaxInvoiceId: firstTid,
-        });
-      }
-      if (!cancelled) {
-        setPaidRows(rows);
-        setPaidLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [firestore, receipts, invoices]);
+  const paidRows = useMemo((): PaidEvidenceRow[] => {
+    const list = (arItems ?? []).filter(
+      (a) => a.status === 'PAID' || (a.outstandingAmount <= 0 && a.creditAmount > 0),
+    );
+    const rows: PaidEvidenceRow[] = list.map((a) => ({
+      arId: a.id,
+      referenceDate: a.issueDate,
+      documentNo: a.referenceNo || a.documentNo,
+      amount: a.debitAmount,
+      statusLabel: a.status,
+      primaryTaxInvoiceId: a.referenceType === 'TAX_INVOICE' ? a.referenceId : undefined,
+    }));
+    rows.sort((x, y) => y.referenceDate.localeCompare(x.referenceDate));
+    return rows;
+  }, [arItems]);
 
   const openHubRow = useCallback(
     (row: HubRow) => {
@@ -329,7 +287,7 @@ export function AccountingContent() {
           <p className="text-xs text-muted-foreground">{t('printHint')}</p>
           <Card>
             <CardContent className="p-0">
-              {recLoad || paidLoading ? (
+              {arLoad ? (
                 <p className="p-6 text-sm">…</p>
               ) : (
                 <Table>
@@ -344,10 +302,10 @@ export function AccountingContent() {
                   </TableHeader>
                   <TableBody>
                     {paidRows.map((row) => (
-                      <TableRow key={row.receiptId}>
+                      <TableRow key={row.arId}>
                         <TableCell className="font-mono text-sm font-medium">{row.documentNo}</TableCell>
-                        <TableCell className="text-sm">{formatStoredDateThaiBE(row.receiptDate)}</TableCell>
-                        <TableCell className="text-xs uppercase text-muted-foreground">{row.paymentMethod}</TableCell>
+                        <TableCell className="text-sm">{formatStoredDateThaiBE(row.referenceDate)}</TableCell>
+                        <TableCell className="text-xs uppercase text-muted-foreground">{row.statusLabel}</TableCell>
                         <TableCell className="text-right text-sm font-medium">
                           ฿ {row.amount.toLocaleString()}
                         </TableCell>

@@ -294,7 +294,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         title: 'บันทึกข้อมูลบัญชีพอร์ทัลแล้ว',
         description:
           portalEditRole === 'approver'
-            ? 'Approver — อนุมัติ billing บนใบแจ้งหนี้ร่างได้'
+            ? 'Approver — อนุมัติ billing บนใบแจ้งหนี้ได้'
             : 'Viewer — ดูอย่างเดียว',
       });
       setIsPortalEditOpen(false);
@@ -1113,7 +1113,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               title="การจัดการสิทธิ์ลูกค้า (Customer Portal Guidance)"
               tips={[
                 "คุณสามารถสร้างบัญชีผู้ใช้ให้พนักงานฝั่งลูกค้าเพื่อเข้าดูสัญญา PO กำลังพล timesheet และเอกสารการเงิน — พอร์ทัลออกแบบให้เรียบง่าย สลับ EN/TH ได้",
-                "บัญชี 'Approver' อนุมัติ billing บนใบแจ้งหนี้ร่าง (draft invoice) — 'Viewer' ดูได้อย่างเดียว — กดปุ่ม แก้ไข ในรายการเมื่อลูกค้าเปลี่ยนผู้รับผิดชอบ/ตำแหน่ง",
+                "บัญชี 'Approver' อนุมัติ billing บนใบแจ้งหนี้ (commercial invoice) — 'Viewer' ดูได้อย่างเดียว — กดปุ่ม แก้ไข ในรายการเมื่อลูกค้าเปลี่ยนผู้รับผิดชอบ/ตำแหน่ง",
                 "อีเมลรีเซ็ตรหัสจาก Firebase — ถ้าไม่เข้า inbox ให้เช็กสแปม และใน Firebase Console → Authentication → Settings → Authorized domains ต้องมีโดเมนที่ใช้รันแอป (เช่น localhost:9003 ตอนพัฒนา)",
                 "สิทธิ์จำกัดตาม Customer ID ของบริษัทนี้เท่านั้น — หลังสร้างบัญชีระบบจะพยายามส่งลิงก์ตั้งรหัสไปที่อีเมลลูกค้า (แจ้งรหัสชั่วคราวใน toast เป็นสำรอง)",
                 "EN: Use Edit on each row for name + Approver/Viewer; password reset uses Firebase email — check spam & Authorized domains.",

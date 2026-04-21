@@ -852,39 +852,40 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     </div>
                   </CardContent>
                 </Card>
-
-                {/* Technical/Commercial Notes */}
-                <Card className="border-none shadow-sm bg-white">
-                  <CardHeader className="pb-2 bg-muted/5 border-b">
-                    <CardTitle className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
-                      <Info className="h-3 w-3" /> เงื่อนไขและหมายเหตุ (Notes)
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4 pt-4">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold text-muted-foreground">เงื่อนไขในเอกสาร (Client Terms)</Label>
-                      <Textarea 
-                        disabled={!isEditable}
-                        placeholder="ระบุเงื่อนไขการเสนอราคาที่ต้องการให้ลูกค้าเห็น..." 
-                        className="text-xs min-h-[80px]"
-                        value={editedHeader.notes || ''}
-                        onChange={e => setEditedHeader({...editedHeader, notes: e.target.value})}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold text-muted-foreground">บันทึกภายใน (Internal Log)</Label>
-                      <Textarea 
-                        disabled={!isEditable}
-                        placeholder="สำหรับบันทึกเฉพาะเจ้าหน้าที่ขาย..." 
-                        className="text-xs min-h-[80px] bg-muted/20"
-                        value={editedHeader.internalNotes || ''}
-                        onChange={e => setEditedHeader({...editedHeader, internalNotes: e.target.value})}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
               </div>
             </div>
+
+            <Card className="border-none shadow-sm bg-white">
+              <CardHeader className="pb-2 bg-muted/5 border-b">
+                <CardTitle className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
+                  <Info className="h-3 w-3" /> เงื่อนไขและหมายเหตุ (Notes)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold text-muted-foreground">เงื่อนไขในเอกสาร (Client Terms)</Label>
+                    <Textarea
+                      disabled={!isEditable}
+                      placeholder="ระบุเงื่อนไขการเสนอราคาที่ต้องการให้ลูกค้าเห็น..."
+                      className="text-xs min-h-[120px]"
+                      value={editedHeader.notes || ''}
+                      onChange={(e) => setEditedHeader({ ...editedHeader, notes: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold text-muted-foreground">บันทึกภายใน (Internal Log)</Label>
+                    <Textarea
+                      disabled={!isEditable}
+                      placeholder="สำหรับบันทึกเฉพาะเจ้าหน้าที่ขาย..."
+                      className="text-xs min-h-[120px] bg-muted/20"
+                      value={editedHeader.internalNotes || ''}
+                      onChange={(e) => setEditedHeader({ ...editedHeader, internalNotes: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="preview" className="mt-6">

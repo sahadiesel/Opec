@@ -55,6 +55,7 @@ import {
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine, buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { cn } from '@/lib/utils';
 
 /** รายการใน D6 รวมงวดย้อนหลังเพื่อเปิดสลิป */
@@ -105,6 +106,7 @@ function CheckRow({ c }: { c: ValidationCheck }) {
 
 export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) {
   const firestore = useFirestore();
+  const { profile: companyProfile } = useCompanyDocumentProfile();
   const { toast } = useToast();
   const { payroll } = usePermissions(currentUser);
   const useMatrixGuards = isMatrixControlledRole(currentUser);
@@ -589,7 +591,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                                 const pl =
                                   periodById.get(selectedBatch.payrollPeriodId)?.label ||
                                   selectedBatch.payrollPeriodId;
-                                const model = buildPayslipFromWorkerLine(line, selectedBatch, pl);
+                                const model = buildPayslipFromWorkerLine(line, selectedBatch, pl, companyProfile ?? undefined);
                                 return (
                                   <TableRow key={line.id}>
                                     <TableCell className="font-medium">{line.workerNameSnapshot}</TableCell>
@@ -820,7 +822,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                             </TableHeader>
                             <TableBody>
                               {officeLines.map((line) => {
-                                const model = buildPayslipFromOfficeLine(line, selectedRun);
+                                const model = buildPayslipFromOfficeLine(line, selectedRun, companyProfile ?? undefined);
                                 return (
                                   <TableRow key={line.id}>
                                     <TableCell className="font-medium">{line.staffName}</TableCell>

@@ -75,10 +75,10 @@ export const ADMIN_ONLY_MODULE_KEYS = new Set<string>([
 export const ACCOUNTING_ONLY_MODULE_KEYS = new Set<string>([
   'billing_notes',
   'tax_invoices',
-  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',
+  'withholding_tax_items',
   'cashbook',
   'bank_accounts',
   'executive_payroll',

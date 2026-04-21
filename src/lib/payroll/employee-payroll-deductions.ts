@@ -6,7 +6,9 @@
 import {
   calculateThaiAnnualPIT,
   calculateAnnualPITFromProgressiveBands,
+  calculateAnnualPITCappedAtMarginalRate,
   type PitProgressiveBand,
+  DEFAULT_PIT_PROGRESSIVE_BANDS,
   DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT,
   DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
 } from '@/lib/hr/pit-thailand';
@@ -38,6 +40,29 @@ export function monthlyEmployeePITWithholding(input: MonthlyPitInput): number {
     bands && bands.length
       ? calculateAnnualPITFromProgressiveBands(net, bands)
       : calculateThaiAnnualPIT(net);
+  return Math.round((annualTax / 12) * 100) / 100;
+}
+
+export type MonthlyPitWithMarginalCeilingInput = MonthlyPitInput & {
+  /** จำกัดไม่ให้คิดภาษีในช่วงที่ marginal สูงกว่าค่านี้ — ใช้ 35 เพื่อเทียบเท่าคำนวณเต็มตามตาราง */
+  maxMarginalRatePercent: number;
+};
+
+/**
+ * หัก ภงด. รายเดือนแบบประมาณการ ×12 แล้วหาร 12 — ใช้ตารางขั้นบันไดจาก HR
+ * เมื่อเลือกอัตรา marginal สูงสุด (เช่น 35%) ผลเทียบเท่ากับ monthlyEmployeePITWithholding
+ */
+export function monthlyEmployeePITWithholdingWithMarginalCeiling(
+  input: MonthlyPitWithMarginalCeilingInput,
+): number {
+  const annualGross = projectedAnnualGrossFromMonthly(input.monthlyTaxableGross);
+  const deductions = input.annualDeductions ?? DEFAULT_ANNUAL_PERSONAL_ALLOWANCE;
+  const net = Math.max(0, annualGross - deductions);
+  const bands =
+    input.pitProgressiveBands && input.pitProgressiveBands.length
+      ? input.pitProgressiveBands
+      : DEFAULT_PIT_PROGRESSIVE_BANDS;
+  const annualTax = calculateAnnualPITCappedAtMarginalRate(net, bands, input.maxMarginalRatePercent);
   return Math.round((annualTax / 12) * 100) / 100;
 }
 

@@ -91,7 +91,9 @@ export default function PurchasesPage() {
   const { toast } = useToast();
 
   const isAuthorized = useMemo(
-    () => !!currentUser && canView(currentUser, 'purchases'),
+    () =>
+      !!currentUser &&
+      (canView(currentUser, 'purchases') || canApprovePurchaseAsManager(currentUser)),
     [currentUser]
   );
 
@@ -208,7 +210,26 @@ export default function PurchasesPage() {
     }
   };
 
-  if (isUserLoading || userLoading || !currentUser) return null;
+  if (isUserLoading || userLoading) {
+    return (
+      <div className="flex min-h-[60vh] w-full items-center justify-center bg-background">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" aria-label="กำลังโหลด" />
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="flex min-h-[60vh] w-full flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-muted-foreground max-w-md">
+          ยังโหลดโปรไฟล์ผู้ใช้ไม่สำเร็จ — ลองรีเฟรช หรือเข้าสู่ระบบใหม่ (ถ้าหน้านี้ว่างนานผิดปกติ ตรวจสอบการเชื่อมต่อและสิทธิ์ Firestore)
+        </p>
+        <Button type="button" variant="outline" onClick={() => router.push('/')}>
+          กลับหน้าหลัก
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>

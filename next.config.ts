@@ -2,6 +2,13 @@ import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
   /* config options here */
+  async redirects() {
+    return [
+      /** โมดูลใบเสร็จรับเงินแยกถูกยกเลิก — เอกสารรับชำระคือใบกำกับภาษี / ใบเสร็จรับเงิน ฉบับเดียว */
+      { source: '/receipts', destination: '/tax-invoices', permanent: true },
+      { source: '/receipts/:path*', destination: '/tax-invoices', permanent: true },
+    ];
+  },
   typescript: {
     ignoreBuildErrors: true,
   },

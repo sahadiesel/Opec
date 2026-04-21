@@ -6,11 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
-import { CalendarCheck, Coins, ShoppingCart, ShieldCheck } from 'lucide-react';
+import { CalendarCheck, Coins, PackageSearch, ShieldCheck } from 'lucide-react';
 import type { User } from '@/lib/types';
 
 /**
- * ศูนย์อนุมัติ — แยกหมวด: Timesheet รอบเดือน (payroll + draft invoice) · Payroll งวดจ่าย · PO
+ * ศูนย์อนุมัติ — แยกหมวด: Timesheet รอบเดือน (payroll + draft invoice) · Payroll งวดจ่าย · ใบสั่งซื้อจัดซื้อ (สโตร์)
  * เมนูหลักอยู่ที่แผง HR → อนุมัติ (ผู้จัดการ)
  */
 export default function HrApprovalCenterPage() {
@@ -91,14 +91,20 @@ export default function HrApprovalCenterPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
-                <ShoppingCart className="h-5 w-5 text-muted-foreground" />
-                3.2 อนุมัติใบสั่งซื้อ (Customer PO)
+                <PackageSearch className="h-5 w-5 text-muted-foreground" />
+                3.2 อนุมัติใบสั่งซื้อจัดซื้อ (คลัง / สโตร์)
               </CardTitle>
-              <CardDescription>อนุมัติ PO ให้เป็น Active ก่อนสร้าง Wave / มอบหมายคน</CardDescription>
+              <CardDescription>
+                คิวขออนุมัติซื้อสินค้า/บริการที่ <strong>เจ้าหน้าที่คลัง (store officer)</strong> ส่งเข้ามา — แยกจากใบสั่งซื้อลูกค้า (Commercial
+                Customer PO)
+              </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-wrap gap-2">
               <Button asChild variant="outline">
-                <Link href="/purchase-orders">ไปรายการใบสั่งซื้อ</Link>
+                <Link href="/purchases">เปิดรายการซื้อ — รออนุมัติ</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/purchase-orders">ใบสั่งซื้อลูกค้า (Commercial PO)</Link>
               </Button>
             </CardContent>
           </Card>

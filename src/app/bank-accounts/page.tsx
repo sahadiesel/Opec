@@ -5,7 +5,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Plus, 
@@ -13,20 +13,49 @@ import {
   Filter, 
   ChevronRight, 
   CreditCard, 
-  Building2, 
   Info, 
   Trash2,
-  Wallet
+  Wallet,
+  Loader2,
+  ArrowLeftRight
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { BankAccount, User } from '@/lib/types';
+import { BankAccount, BankAccountType, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { canView } from '@/lib/permissions';
+import { canView, canCreate } from '@/lib/permissions';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { recordInterBankTransfer } from '@/lib/services/cashbook-bank-movement';
+
+function accountTypeLabel(t: BankAccountType | string): string {
+  switch (t) {
+    case 'SAVINGS':
+      return 'SAVINGS';
+    case 'CURRENT':
+      return 'CURRENT';
+    case 'CASH':
+      return 'CASH';
+    case 'PETTY_CASH':
+      return 'PETTY CASH';
+    default:
+      return String(t);
+  }
+}
 
 export default function BankAccountsPage() {
   const router = useRouter();
@@ -45,12 +74,56 @@ export default function BankAccountsPage() {
     return canView(currentUser, 'bank_accounts');
   }, [currentUser]);
 
+  const canWriteBank = useMemo(
+    () => (currentUser ? canCreate(currentUser, 'bank_accounts') : false),
+    [currentUser]
+  );
+
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [fromId, setFromId] = useState('');
+  const [toId, setToId] = useState('');
+  const [transferAmount, setTransferAmount] = useState(0);
+  const [transferDate, setTransferDate] = useState(timestampToHtmlDateValue(Date.now()));
+  const [transferMemo, setTransferMemo] = useState('โอนระหว่างบัญชี');
+
   const accountsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
     return collection(firestore, 'bank_accounts');
   }, [firestore, isUserLoading, firebaseUser, isAuthorized]);
 
   const { data: accounts, isLoading } = useCollection<BankAccount>(accountsQuery as any);
+
+  const handleTransfer = async () => {
+    if (!firestore || !currentUser) return;
+    if (!fromId || !toId || !transferAmount || transferAmount <= 0) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกบัญชีต้นทาง/ปลายทาง และยอดโอน' });
+      return;
+    }
+    setTransferSubmitting(true);
+    try {
+      const { outEntryNo, inEntryNo } = await recordInterBankTransfer(firestore, currentUser, {
+        fromBankAccountId: fromId,
+        toBankAccountId: toId,
+        amount: transferAmount,
+        entryDate: transferDate,
+        memo: transferMemo,
+      });
+      toast({
+        title: 'บันทึกการโอนสำเร็จ',
+        description: `รายการ ${outEntryNo} / ${inEntryNo}`,
+      });
+      setTransferOpen(false);
+      setFromId('');
+      setToId('');
+      setTransferAmount(0);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'ไม่สามารถบันทึกได้';
+      toast({ variant: 'destructive', title: 'โอนไม่สำเร็จ', description: msg });
+    } finally {
+      setTransferSubmitting(false);
+    }
+  };
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -83,19 +156,119 @@ export default function BankAccountsPage() {
           </AlertDescription>
         </Alert>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามรหัส หรือ ชื่อบัญชี..." className="pl-9 h-11" />
+        <div className="flex flex-col gap-3 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3 flex-1">
+              <div className="relative w-full max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input placeholder="ค้นหาตามรหัส หรือ ชื่อบัญชี..." className="pl-9 h-11" />
+              </div>
+              <Button variant="outline" className="h-11 px-4 gap-2">
+                <Filter className="h-4 w-4" /> ตัวกรอง
+              </Button>
             </div>
-            <Button variant="outline" className="h-11 px-4 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
-          
-          <Button className="gap-2 h-11 px-6 bg-primary font-bold shadow-md" onClick={() => router.push('/bank-accounts/new')}>
-            <Plus className="h-5 w-5" /> เพิ่มบัญชีธนาคาร (Add Account)
-          </Button>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 font-semibold"
+              disabled={!canWriteBank}
+              onClick={() => setTransferOpen(true)}
+            >
+              <ArrowLeftRight className="h-4 w-4" /> โอนระหว่างบัญชี
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 font-semibold"
+              disabled={!canWriteBank}
+              onClick={() => router.push('/bank-accounts/new?preset=petty')}
+            >
+              <Wallet className="h-4 w-4" /> สร้างรายการบัญชี Petty Cash
+            </Button>
+            <Button
+              className="gap-2 h-11 px-6 bg-primary font-bold shadow-md"
+              disabled={!canWriteBank}
+              onClick={() => router.push('/bank-accounts/new')}
+            >
+              <Plus className="h-5 w-5" /> เพิ่มบัญชีธนาคาร (Add Account)
+            </Button>
+          </div>
         </div>
+
+        <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>โอนระหว่างบัญชี</DialogTitle>
+              <DialogDescription>
+                สร้างคู่รายการรับ/จ่ายใน Cashbook และปรับยอดบัญชีทั้งสองบัญชี
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-2">
+              <div className="space-y-2">
+                <Label>จากบัญชี</Label>
+                <Select value={fromId} onValueChange={setFromId}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue placeholder="เลือกบัญชีต้นทาง" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts?.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.accountCode} — {b.bankName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>ไปบัญชี</Label>
+                <Select value={toId} onValueChange={setToId}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue placeholder="เลือกบัญชีปลายทาง" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts?.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.accountCode} — {b.bankName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>วันที่ทำรายการ</Label>
+                <DatePickerThaiBE
+                  className="h-11"
+                  value={htmlDateValueToTimestampMs(transferDate)}
+                  onChange={(ms) => setTransferDate(timestampToHtmlDateValue(ms))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>จำนวนเงิน</Label>
+                <Input
+                  type="number"
+                  className="h-11 font-bold text-lg"
+                  value={transferAmount || ''}
+                  onChange={(e) => setTransferAmount(parseFloat(e.target.value) || 0)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>หมายเหตุ</Label>
+                <Input className="h-11" value={transferMemo} onChange={(e) => setTransferMemo(e.target.value)} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setTransferOpen(false)} disabled={transferSubmitting}>
+                ยกเลิก
+              </Button>
+              <Button className="font-bold" onClick={handleTransfer} disabled={transferSubmitting}>
+                {transferSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                บันทึกการโอน
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
@@ -131,7 +304,7 @@ export default function BankAccountsPage() {
                       <TableCell className="font-mono text-sm">{acc.accountNumber}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-[10px] font-bold">
-                          {acc.accountType}
+                          {accountTypeLabel(acc.accountType)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-black text-primary">
@@ -180,7 +353,7 @@ export default function BankAccountsPage() {
                 <p className="text-muted-foreground text-xs">ใช้สำหรับชำระค่าสินค้าและบริการให้กับคู่ค้า (Vendors)</p>
               </div>
               <div className="p-4 bg-white rounded-md border shadow-sm">
-                <p className="font-bold text-primary mb-1">Customer Receipts</p>
+                <p className="font-bold text-primary mb-1">Tax invoices / AR</p>
                 <p className="text-muted-foreground text-xs">ระบุเป็นบัญชีที่ลูกค้าโอนเงินเข้าเมื่อชำระค่าบริการ</p>
               </div>
               <div className="p-4 bg-white rounded-md border shadow-sm">

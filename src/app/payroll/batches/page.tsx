@@ -20,11 +20,14 @@ import {
   ArrowRight,
   Calculator,
   Loader2,
-  AlertTriangle
+  AlertTriangle,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { PayrollBatch, PayrollPeriod, PayrollPeriodStatus, User } from '@/lib/types';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
@@ -44,6 +47,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateThaiBE } from '@/lib/date-thai';
@@ -68,6 +81,7 @@ export default function PayrollBatchesPage() {
   }, [currentUser, useMatrixGuards]);
   const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
   const canPrepareWorkerPayroll = useMemo(() => canPreparePayroll(currentUser), [currentUser]);
+  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
 
   const batchQuery = useMemoFirebase(() => {
     if (!firestore || !canViewWorkerPayroll) return null;
@@ -92,6 +106,12 @@ export default function PayrollBatchesPage() {
   const [targetPeriodId, setTargetPeriodId] = useState('');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
   const [preflight, setPreflight] = useState<PayrollPreflightResult | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PayrollBatch | null>(null);
+  const [regenTarget, setRegenTarget] = useState<PayrollBatch | null>(null);
+  const [adminBusy, setAdminBusy] = useState(false);
+
+  const adminBatchActionsBlocked = (status: string) =>
+    ['FINANCE_PREPARED', 'PAYMENT_EXPORTED', 'PAID', 'LOCKED'].includes(status);
 
   const handlePreflight = async () => {
     if (!firestore || !targetPeriodId) return;
@@ -135,6 +155,39 @@ export default function PayrollBatchesPage() {
       toast({ variant: "destructive", title: "Generation Failed", description: e.message });
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleAdminDelete = async () => {
+    if (!deleteTarget || !firestore || !currentUser) return;
+    setAdminBusy(true);
+    try {
+      const service = new PayrollService(firestore);
+      await service.adminDeletePayrollBatch(deleteTarget.id, currentUser);
+      toast({ title: 'ลบชุดจ่ายแล้ว', description: deleteTarget.id });
+      setDeleteTarget(null);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ', description: msg });
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const handleAdminRegenerate = async () => {
+    if (!regenTarget || !firestore || !currentUser) return;
+    setAdminBusy(true);
+    try {
+      const service = new PayrollService(firestore);
+      const newBatchId = await service.adminRegeneratePayrollBatch(regenTarget.id, currentUser);
+      toast({ title: 'สร้างชุดจ่ายใหม่แล้ว', description: newBatchId });
+      setRegenTarget(null);
+      router.push(`/payroll/batches/${newBatchId}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'สร้างใหม่ไม่สำเร็จ', description: msg });
+    } finally {
+      setAdminBusy(false);
     }
   };
 
@@ -286,6 +339,55 @@ export default function PayrollBatchesPage() {
           ]}
         />
 
+        <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && !adminBusy && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบชุดจ่าย (Admin)</AlertDialogTitle>
+              <AlertDialogDescription>
+                ยืนยันการลบ <span className="font-mono font-semibold">{deleteTarget?.id}</span> — ระบบจะปลดล็อก daily timesheets ที่เกี่ยวข้อง
+                และลบ snapshot ของงวดนี้ การกระทำนี้ไม่สามารถย้อนกลับได้
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={adminBusy}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleAdminDelete();
+                }}
+                disabled={adminBusy}
+              >
+                {adminBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={regenTarget !== null} onOpenChange={(open) => !open && !adminBusy && setRegenTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>สร้างชุดจ่ายใหม่ (Regenerate)</AlertDialogTitle>
+              <AlertDialogDescription>
+                ระบบจะลบ <span className="font-mono font-semibold">{regenTarget?.id}</span> ปลดล็อก timesheets แล้วประมวลผลใหม่
+                ตามรอบบัญชีและขอบเขตเดิม — จะได้รหัสชุดจ่ายใหม่
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={adminBusy}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleAdminRegenerate();
+                }}
+                disabled={adminBusy}
+              >
+                {adminBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'สร้างใหม่'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isBatchesLoading ? (
@@ -312,8 +414,50 @@ export default function PayrollBatchesPage() {
                       <TableCell className="text-right font-black text-primary text-lg">฿ {b.netAmount.toLocaleString()}</TableCell>
                       <TableCell>{getStatusBadge(b.status)}</TableCell>
                       <TableCell className="text-[10px] text-muted-foreground">{formatDateThaiBE(b.createdAt)}</TableCell>
-                      <TableCell className="text-right pr-6">
-                        <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                      <TableCell
+                        className="text-right pr-4"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-end gap-1 flex-wrap">
+                          {isAdmin && (
+                            <>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                title="ลบชุดจ่าย (Admin)"
+                                disabled={adminBatchActionsBlocked(b.status)}
+                                onClick={() => setDeleteTarget(b)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                                <span className="hidden sm:inline ml-1">ลบ</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-2"
+                                title="สร้างชุดจ่ายใหม่ (Regenerate)"
+                                disabled={adminBatchActionsBlocked(b.status)}
+                                onClick={() => setRegenTarget(b)}
+                              >
+                                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                                <span className="hidden sm:inline ml-1">สร้างใหม่</span>
+                              </Button>
+                            </>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="group-hover:text-primary shrink-0"
+                            title="ดูรายละเอียด"
+                            onClick={() => router.push(`/payroll/batches/${b.id}`)}
+                          >
+                            <ChevronRight className="h-5 w-5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

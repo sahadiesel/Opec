@@ -8,7 +8,7 @@
  * ประเภทที่ให้ยึดรูปแบบนี้ (อ้างอิง PO เป็นต้นแบบ):
  * - ใบสั่งซื้อ (Purchase Order) — ใช้แล้ว: `buildPurchaseOrderPrintHtml`
  * - ใบเสนอราคา (Quotation)
- * - ใบแจ้งหนี้ร่าง / ใบแจ้งหนี้ (Draft Invoice / Invoice)
+ * - รายการใบแจ้งหนี้ / ใบแจ้งหนี้ (commercial billing / Invoice)
  * - ใบกำกับภาษี / ใบเสร็จ (Tax Invoice / Receipt)
  * - ใบบันทึกเวลา (Timesheet) และเอกสารทางการค้าอื่นที่เพิ่มในอนาคต
  *
@@ -122,6 +122,8 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     color: #525252;
     text-align: right;
   }
+  .sd-title-col { flex: 1; min-width: 0; text-align: right; }
+  .sd-title-col .sd-meta-row { margin-top: 4px; font-size: 10pt; text-align: right; white-space: nowrap; }
   .sd-meta-row { margin-top: 4px; font-size: 10pt; text-align: right; }
   .sd-meta-row strong { font-weight: 700; }
   .sd-party {
@@ -361,7 +363,7 @@ export function buildStandardTitleColumnHtml(params: {
     .join('');
   if (locale === 'en') {
     const main = (params.documentTitleEn?.trim() || params.documentTitleTh).trim();
-    return `<div>
+    return `<div class="sd-title-col">
       <h1 class="sd-doc-title">${escapeHtmlDoc(main)}</h1>
       ${rows}
     </div>`;
@@ -369,7 +371,7 @@ export function buildStandardTitleColumnHtml(params: {
   const en = params.documentTitleEn?.trim()
     ? `<span class="sd-doc-title-en">${escapeHtmlDoc(params.documentTitleEn.trim())}</span>`
     : '';
-  return `<div>
+  return `<div class="sd-title-col">
       <h1 class="sd-doc-title">${escapeHtmlDoc(params.documentTitleTh)}${en}</h1>
       ${rows}
     </div>`;
@@ -589,28 +591,66 @@ function customerPartyDetailLines(
 
 const DOC_REF_EMPTY = '—';
 
+const QUOTATION_PO_WAVE_ID = '__quotation_po__';
+
+function formatQuotationRefForPrint(q: Quotation, locale: PrintDocumentLocale): string {
+  const no = (q.quotationNo || '').trim();
+  const ext = (q.referenceNo || '').trim();
+  if (!no && !ext) return DOC_REF_EMPTY;
+  if (ext && ext !== no) {
+    return locale === 'en' ? `${no || ext} (Ref. ${ext})` : `${no || ext} (อ้างอิง ${ext})`;
+  }
+  return no || ext || DOC_REF_EMPTY;
+}
+
 function resolveCommercialPrintDocumentRef(
   invoice: CommercialInvoice,
-  purchaseOrder?: PurchaseOrder | null,
-  mainContract?: MainContract | null,
-): { contractNo: string; customerPo: string; wave: string } {
-  const contractNo = mainContract?.contractNumber?.trim() || DOC_REF_EMPTY;
+  purchaseOrder: PurchaseOrder | null | undefined,
+  mainContract: MainContract | null | undefined,
+  quotation: Quotation | null | undefined,
+  locale: PrintDocumentLocale,
+): { firstRowIsQuotation: boolean; firstValue: string; customerPo: string; wave: string } {
   const customerPo =
     purchaseOrder?.customerPONumber?.trim() ||
     purchaseOrder?.poCode?.trim() ||
     DOC_REF_EMPTY;
-  const wave = invoice.waveCode?.trim() || invoice.waveId?.trim() || DOC_REF_EMPTY;
-  return { contractNo, customerPo, wave };
+
+  const isQuotationPo =
+    invoice.waveId === QUOTATION_PO_WAVE_ID || (purchaseOrder?.poType || 'contract') === 'quotation';
+
+  if (isQuotationPo) {
+    const firstValue = quotation ? formatQuotationRefForPrint(quotation, locale) : DOC_REF_EMPTY;
+    return {
+      firstRowIsQuotation: true,
+      firstValue,
+      customerPo,
+      wave: printT(locale, 'docRefWaveQuotationPlaceholder'),
+    };
+  }
+
+  const contractNo = mainContract?.contractNumber?.trim() || DOC_REF_EMPTY;
+  let wave =
+    invoice.waveCode?.trim() ||
+    (invoice.waveId && invoice.waveId !== QUOTATION_PO_WAVE_ID ? invoice.waveId.trim() : '') ||
+    DOC_REF_EMPTY;
+  if (wave === QUOTATION_PO_WAVE_ID) wave = DOC_REF_EMPTY;
+
+  return {
+    firstRowIsQuotation: false,
+    firstValue: contractNo,
+    customerPo,
+    wave,
+  };
 }
 
 function buildCommercialDocumentReferenceHtml(
   L: PrintDocumentLocale,
-  ref: { contractNo: string; customerPo: string; wave: string },
+  ref: { firstRowIsQuotation: boolean; firstValue: string; customerPo: string; wave: string },
 ): string {
-  const l1 = printT(L, 'docRefLine1');
+  const l1 = printT(L, ref.firstRowIsQuotation ? 'docRefLine1Quotation' : 'docRefLine1');
   const l2 = printT(L, 'docRefLine2');
   const l3 = printT(L, 'docRefLine3');
-  const c1 = printT(L, 'docRefLine1Compact');
+  const c1 = printT(L, ref.firstRowIsQuotation ? 'docRefLine1QuotationCompact' : 'docRefLine1Compact');
   const c2 = printT(L, 'docRefLine2Compact');
   const c3 = printT(L, 'docRefLine3Compact');
   const lab = (full: string, compact: string) =>
@@ -618,7 +658,7 @@ function buildCommercialDocumentReferenceHtml(
   return `<div class="sd-doc-ref sd-doc-ref--inline">
     <p class="sd-doc-ref-title">${escapeHtmlDoc(printT(L, 'documentRefTitle'))}</p>
     <div class="sd-doc-ref-cols">
-      <div class="sd-doc-ref-cell">${lab(l1, c1)} ${escapeHtmlDoc(ref.contractNo)}</div>
+      <div class="sd-doc-ref-cell">${lab(l1, c1)} ${escapeHtmlDoc(ref.firstValue)}</div>
       <div class="sd-doc-ref-cell">${lab(l2, c2)} ${escapeHtmlDoc(ref.customerPo)}</div>
       <div class="sd-doc-ref-cell">${lab(l3, c3)} ${escapeHtmlDoc(ref.wave)}</div>
     </div>
@@ -635,6 +675,8 @@ export function buildCommercialInvoicePrintHtml(params: {
   /** สำหรับบล็อกอ้างอิงเอกสาร (เลขที่สัญญา / PO ลูกค้า) — โหลดจาก Firestore ถ้ามี */
   purchaseOrder?: PurchaseOrder | null;
   mainContract?: MainContract | null;
+  /** PO สายใบเสนอราคา — ใช้แสดงเลขที่ QT แทนเลขที่สัญญาในเอกสารพิมพ์ */
+  quotation?: Quotation | null;
   lines: CommercialInvoiceLine[];
   amountBeforeTax: number;
   vatAmount: number;
@@ -643,15 +685,39 @@ export function buildCommercialInvoicePrintHtml(params: {
   /** ภาษาของข้อความบนเอกสารพิมพ์ (ค่าเริ่มต้น ไทย) */
   locale?: PrintDocumentLocale;
 }): string {
-  const { company, invoice, lines, amountBeforeTax, vatAmount, totalAmount, printedAtMs, purchaseOrder, mainContract } =
-    params;
+  const {
+    company,
+    invoice,
+    customer,
+    lines,
+    amountBeforeTax,
+    vatAmount,
+    totalAmount,
+    printedAtMs,
+    purchaseOrder,
+    mainContract,
+  } = params;
   const locale = params.locale ?? 'th';
   const L = locale;
   const titles = commercialInvoiceDocTitles();
   const docDate =
     L === 'en' ? formatStoredDateGregorian(invoice.issueDate) : formatStoredDateThaiBE(invoice.issueDate);
-  const docRef = resolveCommercialPrintDocumentRef(invoice, purchaseOrder, mainContract);
+  const docRef = resolveCommercialPrintDocumentRef(
+    invoice,
+    purchaseOrder,
+    mainContract,
+    params.quotation ?? null,
+    L,
+  );
   const docRefHtml = buildCommercialDocumentReferenceHtml(L, docRef);
+
+  const partyName =
+    params.customerPartyNameOverride?.trim() || customer?.name?.trim() || '—';
+  const partyHtml = buildStandardPartyBoxHtml({
+    boxLabel: printT(L, 'customerInfo'),
+    partyName,
+    detailLines: customerPartyDetailLines(customer, L),
+  });
 
   const lineRows = (lines || [])
     .map((line, idx) => {
@@ -741,7 +807,8 @@ export function buildCommercialInvoicePrintHtml(params: {
     invoice.status === 'VOID'
       ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'status'))}:</strong> ${escapeHtmlDoc(printT(L, 'voidedDoc'))}</p>`
       : `<p class="sd-notes" style="font-size:9pt">${escapeHtmlDoc(printT(L, 'commercialNotTaxInvoice'))}</p>`;
-  const mainHtml = `${docRefHtml}
+  const mainHtml = `${partyHtml}
+  ${docRefHtml}
   ${tableHtml}
   ${totalsHtml}
   ${statusNote}
@@ -1041,9 +1108,9 @@ export function buildQuotationPrintHtml(params: {
     : '';
   const mainHtml = `${partyHtml}
   ${projectBlock}
-  ${notesBlock}
   ${tableHtml}
-  ${totalsHtml}`;
+  ${totalsHtml}
+  ${notesBlock}`;
   const footerHtml = buildStandardSignFooterHtml({
     left: { roleLine: printT(L, 'signPreparedSales'), name: q.createdBy || '—' },
     right: { roleLine: printT(L, 'quotationPartyFooter'), name: '—' },

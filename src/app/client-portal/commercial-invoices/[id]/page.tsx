@@ -6,7 +6,14 @@ import { ArrowLeft, CheckCircle2, Loader2, MessageSquareWarning, Printer } from 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { CommercialInvoice, Customer, MainContract, PurchaseOrder, User } from '@/lib/types';
+import type {
+  CommercialInvoice,
+  Customer,
+  MainContract,
+  PurchaseOrder,
+  Quotation,
+  User,
+} from '@/lib/types';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { isClient } from '@/lib/permissions';
@@ -89,6 +96,15 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
   );
   const { data: mainContract } = useDoc<MainContract>(mainContractRef as any);
 
+  const quotationRef = useMemoFirebase(
+    () =>
+      ready && purchaseOrder?.quotationId
+        ? doc(firestore!, 'quotations', purchaseOrder.quotationId)
+        : null,
+    [firestore, purchaseOrder?.quotationId, ready],
+  );
+  const { data: quotation } = useDoc<Quotation>(quotationRef as any);
+
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
   const isApprover = currentUser?.portalRole === 'approver';
@@ -113,6 +129,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
           : undefined,
       purchaseOrder: purchaseOrder ?? undefined,
       mainContract: mainContract ?? undefined,
+      quotation: quotation ?? undefined,
       lines: invoice.lines ?? [],
       amountBeforeTax: invoice.amountBeforeTax,
       vatAmount: invoice.vatAmount,

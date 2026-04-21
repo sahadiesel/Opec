@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, use, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -34,6 +34,7 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
   const { id } = use(params);
   const isNew = id === 'new';
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -68,10 +69,28 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
     }
   }, [accData]);
 
+  useEffect(() => {
+    if (!isNew) return;
+    if (searchParams.get('preset') !== 'petty') return;
+    setFormData((prev) => ({
+      ...prev,
+      accountCode: getPreviewPattern('petty_cash_account'),
+      accountType: 'PETTY_CASH',
+      bankName: 'Petty Cash',
+      accountName: prev.accountName?.trim() ? prev.accountName : 'กองเงินสดย่อย (Petty Cash)',
+      accountNumber: prev.accountNumber?.trim() ? prev.accountNumber : '—',
+    }));
+  }, [isNew, searchParams]);
+
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
-    if (!formData.accountName || !formData.accountNumber) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบัญชี และเลขที่บัญชี" });
+    const isPetty = formData.accountType === 'PETTY_CASH';
+    if (!formData.accountName?.trim()) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบัญชี" });
+      return;
+    }
+    if (!isPetty && !formData.accountNumber?.trim()) {
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขที่บัญชี" });
       return;
     }
 
@@ -80,8 +99,8 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
     
     try {
       if (isNew) {
-        // Atomic Code Generation
-        const { code: finalCode } = await generateNextDocumentCode(firestore, 'bank_account', { actor: currentUser.displayName });
+        const seqKey = isPetty ? 'petty_cash_account' : 'bank_account';
+        const { code: finalCode } = await generateNextDocumentCode(firestore, seqKey, { actor: currentUser.displayName });
 
         const newRef = doc(collection(firestore, 'bank_accounts'));
         await setDoc(newRef, {
@@ -176,7 +195,8 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
                     <SelectContent>
                       <SelectItem value="SAVINGS">ออมทรัพย์ (SAVINGS)</SelectItem>
                       <SelectItem value="CURRENT">กระแสรายวัน (CURRENT)</SelectItem>
-                      <SelectItem value="CASH">เงินสด (CASH / PETTY CASH)</SelectItem>
+                      <SelectItem value="CASH">เงินสด (CASH)</SelectItem>
+                      <SelectItem value="PETTY_CASH">เงินสดย่อย Petty Cash (หน้างาน)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

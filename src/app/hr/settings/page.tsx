@@ -193,11 +193,11 @@ export default function HrSettingsPage() {
       const taxPolicy: PayrollPolicyRecord = {
         id: HR_STATUTORY_POLICY_TAX_OFFICE_ID,
         kind: 'tax',
-        name: 'Office monthly PIT estimate TH (HR settings)',
+        name: 'Monthly PIT estimate TH — HR settings (Office & Worker)',
         effectiveFrom: '2000-01-01',
         effectiveTo: null,
         status: 'active',
-        appliesTo: 'office',
+        appliesTo: 'all',
         config: {
           mode: 'th_pit_monthly_annualized',
           annualPersonalAllowance: allowance,
@@ -212,7 +212,7 @@ export default function HrSettingsPage() {
 
       toast({
         title: 'บันทึกตั้งค่าแล้ว',
-        description: 'งวด Office / Executive payroll ที่กดคำนวณใหม่จะใช้อัตราชุดนี้ — บรรทัดเก็บ snapshot เดิมไม่เปลี่ยน',
+        description: 'งวดเงินเดือน Office / ค่าจ้าง Worker ที่คำนวณใหม่จะใช้อัตราชุดนี้ — บรรทัดเก็บ snapshot เดิมไม่เปลี่ยน',
       });
       await load();
     } catch (e: unknown) {
@@ -306,8 +306,8 @@ export default function HrSettingsPage() {
               <PayrollScopeTag scope="both" />
               <h1 className="text-2xl font-bold tracking-tight">ตั้งค่า HR — ภาษีและประกันสังคม</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                ค่าที่บันทึกจะเขียนลง <code className="text-xs bg-muted px-1 rounded">payroll_policies</code> — ระบบคำนวณ Office
-                payroll / Executive payroll / Worker payroll (SSO) จะอ่านชุดนี้เมื่อรันงวด (ฐานเงินเดือนระบุต่อคนที่ Office Staff / Worker)
+                ค่าที่บันทึกจะเขียนลง <code className="text-xs bg-muted px-1 rounded">payroll_policies</code> — ภาษีเงินได้หัก ณ ที่จ่าย (ภงด.)
+                แบบรายเดือนและประกันสังคม (SSO) ใช้ชุดนี้ทั้ง Office และ Worker เมื่อรันงวด
               </p>
             </div>
           </div>

@@ -108,6 +108,12 @@ function poLinePositionCode(line: POLine, positions: Position[] | null | undefin
   return line.positionId ? `ID:${line.positionId.slice(0, 8)}…` : '—';
 }
 
+/** เวฟเชื่อม quota/timesheet ตามสัญญา — ใช้ได้เฉพาะ PO สายสัญญา ไม่ใช้ PO จากใบเสนอราคา */
+function isContractBasedPo(p: PurchaseOrder | undefined | null): boolean {
+  if (!p) return false;
+  return (p.poType || 'contract') === 'contract';
+}
+
 const defaultNewWaveState = (): Partial<Wave> => ({
   waveCode: getPreviewPattern('wave'),
   status: 'PLANNING',
@@ -186,12 +192,28 @@ function WavesPageContent() {
     [filterPoId, allPOs]
   );
 
-  /** สร้างเวฟใหม่ได้เฉพาะ PO ที่อนุมัติแล้ว (active) */
+  /** สร้างเวฟใหม่ได้เฉพาะ PO สายสัญญาที่อนุมัติแล้ว (active) */
   const activePOsForNewWave = useMemo(
-    () => (allPOs || []).filter((p) => p.status === 'active'),
+    () =>
+      (allPOs || []).filter((p) => p.status === 'active' && isContractBasedPo(p)),
     [allPOs],
   );
-  const filterPoAllowsNewWave = !filterPoId || filterPO?.status === 'active';
+
+  /** ฟอร์มเวฟ: สร้างใหม่ = เฉพาะสายสัญญา — แก้ไขเวฟ = รวม PO ปัจจุบันถ้าเป็น PO ใบเสนอราคา (เอกสารเก่า) */
+  const posForWaveSelect = useMemo(() => {
+    if (!editingWave) return activePOsForNewWave;
+    const base = (allPOs || []).filter((p) => p.status === 'active' && isContractBasedPo(p));
+    const curId = editingWave.poId;
+    if (!curId) return base;
+    const cur = allPOs?.find((p) => p.id === curId);
+    if (cur && !base.some((p) => p.id === curId)) {
+      return [...base, cur].sort((a, b) => a.poCode.localeCompare(b.poCode, undefined, { numeric: true }));
+    }
+    return base;
+  }, [allPOs, activePOsForNewWave, editingWave]);
+
+  const filterPoAllowsNewWave =
+    !filterPoId || (filterPO?.status === 'active' && isContractBasedPo(filterPO));
 
   const wantOpenNewWaveFromPo = searchParams.get('newWave') === '1';
   const newWaveAutoOpenRef = useRef(false);
@@ -207,6 +229,16 @@ function WavesPageContent() {
         variant: 'destructive',
         title: 'ยังสร้างเวฟไม่ได้',
         description: 'Customer PO ต้องได้รับการอนุมัติ (สถานะ Active) ก่อน — ไปที่หน้า PO แล้วกดอนุมัติ',
+      });
+      router.replace(`/waves?poId=${encodeURIComponent(filterPoId)}`, { scroll: false });
+      return;
+    }
+    if (filterPO && !isContractBasedPo(filterPO)) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังสร้างเวฟไม่ได้',
+        description:
+          'สร้างเวฟได้เฉพาะ PO ที่มาจากสัญญา — PO จากใบเสนอราคาไม่ใช้ Wave / timesheet',
       });
       router.replace(`/waves?poId=${encodeURIComponent(filterPoId)}`, { scroll: false });
       return;
@@ -317,6 +349,15 @@ function WavesPageContent() {
       });
       return;
     }
+    if (!isContractBasedPo(headerPoCreate)) {
+      toast({
+        variant: 'destructive',
+        title: 'ใช้ PO สายสัญญาเท่านั้น',
+        description:
+          'เวฟงานเชื่อมกับ quota ตามสัญญาและ timesheet — PO จากใบเสนอราคาไม่สร้าง Wave',
+      });
+      return;
+    }
 
     const allocations: WaveLineAllocation[] = [];
     for (const line of eligiblePoLinesForCreate) {
@@ -420,6 +461,17 @@ function WavesPageContent() {
         variant: 'destructive',
         title: 'PO ยังไม่ Active',
         description: 'อนุมัติ Customer PO ให้เป็น Active ก่อนบันทึกเวฟ',
+      });
+      return;
+    }
+    if (
+      !isContractBasedPo(headerPoUpdate) &&
+      headerPoUpdate.id !== editingWave.poId
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'เลือกได้เฉพาะ PO สายสัญญา',
+        description: 'เปลี่ยนเวฟไปผูก PO จากใบเสนอราคาไม่ได้ — ใช้ได้เฉพาะ PO ที่มาจากสัญญา',
       });
       return;
     }
@@ -658,6 +710,16 @@ function WavesPageContent() {
           </Alert>
         )}
 
+        {filterPoId && filterPO && filterPO.status === 'active' && !isContractBasedPo(filterPO) && (
+          <Alert variant="destructive" className="bg-destructive/5 border-destructive/30">
+            <AlertCircle className="h-5 w-5" />
+            <AlertTitle>PO จากใบเสนอราคา — ไม่สร้างเวฟที่นี่</AlertTitle>
+            <AlertDescription className="text-sm">
+              เวฟงานใช้กับ <strong>PO สายสัญญา</strong> เท่านั้น (Wave + timesheet) — งานจากใบเสนอราคาเรียกเก็บผ่านใบแจ้งหนี้ตาม PO Line / ใบเสนอราคา ไม่ผ่าน Wave
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
@@ -677,11 +739,22 @@ function WavesPageContent() {
             className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
             disabled={!isStaff || !filterPoAllowsNewWave}
             title={
-              !filterPoAllowsNewWave
-                ? 'PO นี้ยัง Pending — อนุมัติที่หน้า Customer PO ให้เป็น Active ก่อน'
-                : undefined
+              filterPoId && filterPO && filterPO.status === 'active' && !isContractBasedPo(filterPO)
+                ? 'สร้างเวฟได้เฉพาะ PO ที่มาจากสัญญา — PO จากใบเสนอราคาไม่ใช้ Wave'
+                : filterPoId && filterPO && filterPO.status !== 'active'
+                  ? 'PO นี้ยัง Pending — อนุมัติที่หน้า Customer PO ให้เป็น Active ก่อน'
+                  : undefined
             }
             onClick={() => {
+              if (filterPoId && filterPO && filterPO.status === 'active' && !isContractBasedPo(filterPO)) {
+                toast({
+                  variant: 'destructive',
+                  title: 'ยังสร้างเวฟไม่ได้',
+                  description:
+                    'สร้างเวฟได้เฉพาะ PO จากสัญญา — PO จากใบเสนอราคาไม่ใช้ Wave / timesheet',
+                });
+                return;
+              }
               if (!filterPoAllowsNewWave) {
                 toast({
                   variant: 'destructive',
@@ -722,7 +795,7 @@ function WavesPageContent() {
                   <DialogDescription>
                     {editingWave
                       ? 'อัปเดตวันที่ โควต้าต่อบรรทัด PO และจำนวนคนตามแผน — รหัสเวฟเดิมคงเดิม'
-                      : 'เลือก Customer PO แล้วกำหนดจำนวนคนต่อบรรทัด PO ได้หลายตำแหน่งในเวฟเดียว — สถานที่ปฏิบัติงานดึงจาก workLocation ของแต่ละบรรทัด'}
+                      : 'เลือก Customer PO สายสัญญา (Active) แล้วกำหนดจำนวนคนต่อบรรทัด PO ได้หลายตำแหน่งในเวฟเดียว — สถานที่ปฏิบัติงานดึงจาก workLocation ของแต่ละบรรทัด — PO จากใบเสนอราคาไม่แสดงในรายการนี้'}
                   </DialogDescription>
                 </DialogHeader>
               </div>
@@ -760,15 +833,17 @@ function WavesPageContent() {
                   >
                     <SelectTrigger><SelectValue placeholder="เลือก PO..." /></SelectTrigger>
                     <SelectContent>
-                      {(editingWave ? allPOs : activePOsForNewWave)?.length ? (
-                        (editingWave ? allPOs : activePOsForNewWave)!.map((po) => (
+                      {posForWaveSelect?.length ? (
+                        posForWaveSelect.map((po) => (
                           <SelectItem key={po.id} value={po.id}>
                             {po.poCode} - {po.title}
                           </SelectItem>
                         ))
                       ) : (
                         <div className="px-2 py-3 text-sm text-muted-foreground text-center">
-                          {editingWave ? 'ไม่มี PO' : 'ไม่มี PO ที่ Active — อนุมัติ PO ก่อน'}
+                          {editingWave
+                            ? 'ไม่มี PO'
+                            : 'ไม่มี PO สายสัญญาที่ Active — อนุมัติ PO จากสัญญาก่อน'}
                         </div>
                       )}
                     </SelectContent>

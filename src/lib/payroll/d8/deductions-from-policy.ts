@@ -3,7 +3,10 @@ import {
   DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
   normalizePitBands,
 } from '@/lib/hr/pit-thailand';
-import { monthlyEmployeePITWithholding } from '@/lib/payroll/employee-payroll-deductions';
+import {
+  monthlyEmployeePITWithholding,
+  monthlyEmployeePITWithholdingWithMarginalCeiling,
+} from '@/lib/payroll/employee-payroll-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
 export function socialSecurityFromPolicy(grossForSS: number, policy: PayrollPolicyRecord | null): number {
@@ -24,6 +27,25 @@ export function pitFromPolicy(monthlyTaxableGross: number, policy: PayrollPolicy
     monthlyTaxableGross,
     annualDeductions: Number.isFinite(annual) ? annual : undefined,
     pitProgressiveBands: bands,
+  });
+}
+
+/** หัก ภงด. รายเดือนตามขั้นบันได โดยจำกัดไม่ให้คิดช่วงที่ marginal สูงกว่า `maxMarginalRatePercent` */
+export function pitFromPolicyWithMarginalCeiling(
+  monthlyTaxableGross: number,
+  policy: PayrollPolicyRecord | null,
+  maxMarginalRatePercent: number,
+): number {
+  if (!policy) return 0;
+  const mode = String(policy.config.mode ?? 'none');
+  if (mode !== 'th_pit_monthly_annualized') return 0;
+  const annual = Number(policy.config.annualPersonalAllowance);
+  const bands = normalizePitBands(policy.config.pitProgressiveBands) ?? undefined;
+  return monthlyEmployeePITWithholdingWithMarginalCeiling({
+    monthlyTaxableGross,
+    annualDeductions: Number.isFinite(annual) ? annual : undefined,
+    pitProgressiveBands: bands,
+    maxMarginalRatePercent,
   });
 }
 

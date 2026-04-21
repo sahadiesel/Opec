@@ -62,6 +62,7 @@ import {
   normalizeCurrentUserPermissions,
   isSystemAdmin,
   isStoreOfficer,
+  getPrimaryLegacyRole,
   canSeeHrPillarUi,
   canSeeSalesPillarUi,
   canSeeOperationsPillarUi,
@@ -197,6 +198,11 @@ export default function Home() {
 
       if (latestUserDoc.userType !== 'customer_portal' && isStoreOfficer(latestUserDoc)) {
         router.replace('/store');
+      } else if (latestUserDoc.userType !== 'customer_portal') {
+        const rk = getPrimaryLegacyRole(latestUserDoc);
+        if (rk === 'hr_officer' || rk === 'payroll_officer' || rk === 'hr_manager') {
+          router.replace('/hr/dashboard');
+        }
       }
 
       // Sync State and Cache with Normalized Data
@@ -260,7 +266,12 @@ export default function Home() {
         if (userData.userType === 'customer_portal') {
           router.replace('/client-portal/dashboard');
         } else if (isStoreOfficer(userData)) {
-          router.push('/store');
+          router.replace('/store');
+        } else {
+          const rk = getPrimaryLegacyRole(userData);
+          if (rk === 'hr_officer' || rk === 'payroll_officer' || rk === 'hr_manager') {
+            router.replace('/hr/dashboard');
+          }
         }
       } else {
         await signOut(auth);
@@ -827,6 +838,13 @@ export default function Home() {
                   check('timesheets', 'view') ||
                   check('worker_payroll', 'view')) && (
                   <ShortcutGroup title="HR — Worker Payroll" icon={HardHat} color="border-l-amber-600">
+                    {(check('waves', 'view') || check('assignments', 'view')) && (
+                      <ShortcutLink
+                        href="/po-active-quota-queue"
+                        label="คิวเติมโควต้า (PO Active)"
+                        sub="PO ยังไม่ครบโควต้า"
+                      />
+                    )}
                     {check('workers', 'view') && (
                       <ShortcutLink href="/workers" label="ทะเบียนลูกจ้าง" sub="Timesheet + batch" />
                     )}
@@ -876,6 +894,9 @@ export default function Home() {
 
             {showOpsUi && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
+                {(check('waves', 'view') || check('assignments', 'view')) && (
+                  <ShortcutLink href="/po-active-quota-queue" label="คิวเติมโควต้า (PO Active)" sub="PO ยังไม่ครบโควต้า" />
+                )}
                 {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
                 {check('assignments', 'view') && (
                   <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
@@ -888,8 +909,8 @@ export default function Home() {
 
             {showAccountingUi && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
-                {check('billing_notes', 'view') && (
-                  <ShortcutLink href="/billing-notes" label="ใบวางบิล" sub="Billing" />
+                {check('draft_invoices', 'view') && (
+                  <ShortcutLink href="/draft-invoices" label="รายการใบแจ้งหนี้" sub="เรียกเก็บ" />
                 )}
                 {check('cashbook', 'view') && (
                   <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />

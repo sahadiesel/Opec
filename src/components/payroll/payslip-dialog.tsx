@@ -31,9 +31,10 @@ export function PayslipDialog({
     const node = printRef.current;
     if (!node) return;
     w.document.write(
-      `<!DOCTYPE html><html><head><title>Payslip</title>
+      `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Payslip</title>
+      <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap" rel="stylesheet"/>
       <style>
-        body { font-family: system-ui, sans-serif; margin: 16px; color: #111; }
+        body { font-family: "Sarabun", system-ui, sans-serif; margin: 16px; color: #111827; background: #fff; }
         @media print { body { margin: 0; } }
       </style>
       </head><body>${node.innerHTML}</body></html>`
@@ -53,7 +54,7 @@ export function PayslipDialog({
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>ข้อมูลจาก Payroll Line (snapshot)</DialogDescription>

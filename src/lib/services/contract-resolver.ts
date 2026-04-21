@@ -14,8 +14,10 @@ import {
   RateConditionEventType,
   MainContract,
   PurchaseOrder,
+  DailyTimesheet,
 } from '@/lib/types';
 import { syntheticSalesContractTermFromMainContract } from '@/lib/commercial/synthetic-sales-contract-term';
+import { syntheticLaborCostContractTermFromMainContract } from '@/lib/commercial/synthetic-labor-cost-contract-term';
 import { parseISO, startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
 
 /**
@@ -157,6 +159,31 @@ export function resolveActiveLaborCostContractTerm(
   }
 
   return { data: null, warnings: ['No applicable labor cost term found for this context.'], isMatch: false };
+}
+
+/**
+ * Payroll / preflight: ลำดับ wave → PO → สัญญาหลัก — ใช้แถว labor_cost_contract_terms ถ้ามี
+ * ถ้าไม่มี ให้สังเคราะห์ขอบเขตจาก main_contracts (ต้นทุนตามสัญญา ไม่ผูก sales_contract_terms)
+ */
+export function resolvePayrollLaborCostContractTerm(
+  ts: DailyTimesheet,
+  allCostTerms: LaborCostContractTerm[],
+  contractMap: Map<string, MainContract>,
+  poById: Map<string, PurchaseOrder>,
+): LaborCostContractTerm | null {
+  const direct = allCostTerms.find(
+    (ct) =>
+      ct.id === ts.laborCostContractTermId ||
+      (ct.relatedPurchaseOrderId === ts.purchaseOrderId && ct.status === 'ACTIVE'),
+  );
+  if (direct) return direct;
+
+  const main = ts.contractId ? contractMap.get(ts.contractId) : undefined;
+  const po = ts.purchaseOrderId ? poById.get(ts.purchaseOrderId) : undefined;
+  if (main && po && main.status === 'active') {
+    return syntheticLaborCostContractTermFromMainContract(main, po);
+  }
+  return null;
 }
 
 /**

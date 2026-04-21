@@ -7,7 +7,6 @@ import {
   Building2,
   ShieldCheck,
   ClipboardList,
-  RotateCcw,
   HardHat,
   UserSearch,
   Activity,
@@ -16,7 +15,7 @@ import {
   Briefcase,
   ListChecks,
   Database,
-  ShoppingCart,
+  PackageSearch,
   CalendarCheck,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
@@ -29,16 +28,30 @@ export interface HrNavItem {
   icon: ComponentType<{ className?: string }>;
 }
 
-export const HR_NAV_SUBSECTIONS: Array<{
+export interface HrNavSubsection {
   title: string;
   description: string;
   icon: ComponentType<{ className?: string }>;
   items: HrNavItem[];
-}> = [
+  /**
+   * true = แสดงหมวดนี้เฉพาะ hr_manager, operations_manager, payroll_officer และแอดมิน
+   * (ไม่ใช่แค่สิทธิ์โมดูลทั่วไป — ให้สอดคล้องกับการจ่ายค่าจ้างเป็นหลัก)
+   */
+  audiencePayrollLeadsOnly?: boolean;
+}
+
+export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
   {
-    title: 'เตรียมจ่าย (Preparation)',
-    description: 'HR Officer · งานประจำวัน',
+    title: 'ภาพรวม',
+    description: 'Dashboard — จุดเริ่มงาน HR',
+    icon: Briefcase,
+    items: [{ key: 'hr_hub', title: 'แดชบอร์ด HR (ภาพรวม)', href: '/hr/dashboard', icon: Briefcase }],
+  },
+  {
+    title: 'การจ่ายค่าจ้าง (Payroll)',
+    description: 'hr_manager · operations_manager · payroll_officer',
     icon: ListChecks,
+    audiencePayrollLeadsOnly: true,
     items: [
       { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
       {
@@ -77,12 +90,11 @@ export const HR_NAV_SUBSECTIONS: Array<{
         icon: Coins,
       },
       {
-        key: 'customer_pos',
-        title: 'อนุมัติใบสั่งซื้อ (PO)',
-        href: '/purchase-orders',
-        icon: ShoppingCart,
+        key: 'purchases',
+        title: 'อนุมัติใบสั่งซื้อจัดซื้อ (สโตร์)',
+        href: '/purchases',
+        icon: PackageSearch,
       },
-      { key: 'hr_hub', title: 'คำขอแก้ไข (Corrections)', href: '/hr/dashboard#hr-action-queue', icon: RotateCcw },
     ],
   },
   {
@@ -95,7 +107,6 @@ export const HR_NAV_SUBSECTIONS: Array<{
       { key: 'positions', title: 'ตำแหน่งงาน', href: '/positions', icon: Activity },
       { key: 'worker_documents', title: 'เอกสารบุคลากร (Catalog)', href: '/worker-document-catalog', icon: FileText },
       { key: 'hr_hub', title: 'ตั้งค่า HR', href: '/hr/settings', icon: Settings },
-      { key: 'hr_hub', title: 'แดชบอร์ด HR (ภาพรวม)', href: '/hr/dashboard', icon: Briefcase },
     ],
   },
 ];

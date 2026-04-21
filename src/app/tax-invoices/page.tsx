@@ -5,7 +5,7 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Plus, 
@@ -18,19 +18,15 @@ import {
   Info,
   Loader2
 } from 'lucide-react';
-import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { Input } from '@/components/ui/input';
 import {
-  htmlDateValueToTimestampMs,
-  timestampToHtmlDateValue,
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
-import { TaxInvoice, TaxInvoiceStatus, User, Customer, BillingNote } from '@/lib/types';
+import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
-import { collection, query, orderBy, doc, addDoc } from 'firebase/firestore';
+import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
@@ -44,12 +40,14 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { Input } from '@/components/ui/input';
+import { getPreviewPattern } from '@/lib/services/numbering-service';
+import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
 
 export default function TaxInvoicesPage() {
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -73,76 +71,52 @@ export default function TaxInvoicesPage() {
   const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const billingNotesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'billing_notes') : null), [firestore, isAuthorized]);
-  const { data: billingNotes } = useCollection<BillingNote>(billingNotesQuery as any);
+  /** ใบแจ้งหนี้เชิงพาณิชย์ที่อนุมัติแล้ว (ISSUED) และยังไม่มีใบกำกับภาษี */
+  const commercialIssuedQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return query(collection(firestore, 'commercial_invoices'), where('status', '==', 'ISSUED'));
+  }, [firestore, isAuthorized]);
+  const { data: issuedCommercial } = useCollection<CommercialInvoice>(commercialIssuedQuery as any);
+
+  const availableCommercialInvoices = useMemo(() => {
+    if (!issuedCommercial?.length) return [];
+    return issuedCommercial.filter((c) => !c.linkedTaxInvoiceId);
+  }, [issuedCommercial]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [newInvoice, setNewInvoice] = useState<Partial<TaxInvoice>>({
-    taxInvoiceNo: getPreviewPattern('tax_invoice'),
-    issueDate: timestampToHtmlDateValue(Date.now()),
-    currency: 'THB',
-    status: 'DRAFT',
-    notes: ''
-  });
-
-  // Billing notes already linked to a tax invoice should not appear in dropdown
-  const usedBillingNoteIds = useMemo(() => {
-    if (!invoices) return new Set<string>();
-    return new Set(invoices.filter(i => i.status !== 'CANCELLED').map(i => i.billingNoteId));
-  }, [invoices]);
-
-  const availableBillingNotes = useMemo(() => {
-    if (!billingNotes) return [];
-    return billingNotes.filter(n =>
-      (n.status === 'ISSUED' || n.status === 'SUBMITTED') && !usedBillingNoteIds.has(n.id)
-    );
-  }, [billingNotes, usedBillingNoteIds]);
+  const [selectedCommercialId, setSelectedCommercialId] = useState<string>('');
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!newInvoice.billingNoteId) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุใบวางบิลอ้างอิง" });
-      return;
-    }
-
-    const sourceNote = billingNotes?.find(n => n.id === newInvoice.billingNoteId);
-    if (!sourceNote) return;
-
-    if (usedBillingNoteIds.has(sourceNote.id)) {
-      toast({ variant: "destructive", title: "ใบวางบิลนี้ออกใบกำกับภาษีแล้ว", description: "ไม่สามารถสร้างซ้ำได้" });
+    if (!selectedCommercialId) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'เลือกใบแจ้งหนี้ (รายการเรียกเก็บ) ที่อนุมัติแล้ว',
+      });
       return;
     }
 
     setIsCreating(true);
     try {
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'tax_invoice', { actor: currentUser.displayName });
-
-      const invoicePayload: Record<string, unknown> = {
-        ...newInvoice,
-        status: 'DRAFT',
-        taxInvoiceNo: finalNo,
-        customerId: sourceNote.customerId,
-        taxableAmount: sourceNote.amountBeforeTax,
-        vatAmount: sourceNote.vatAmount,
-        withholdingTaxAmount: sourceNote.withholdingTaxAmount || 0,
-        currency: sourceNote.currency || 'THB',
-        totalAmount: sourceNote.netAmount,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      if (sourceNote.waveId) invoicePayload.waveId = sourceNote.waveId;
-      const docRef = await addDoc(collection(firestore, 'tax_invoices'), invoicePayload);
+      const { taxInvoiceId, taxInvoiceNo } = await createTaxInvoiceDraftFromIssuedCommercial(
+        firestore,
+        selectedCommercialId,
+        currentUser as User,
+      );
 
       setIsDialogOpen(false);
+      setSelectedCommercialId('');
       toast({
-        title: 'สร้างใบแจ้งหนี้ร่างสำเร็จ',
-        description: `เลขที่ ${finalNo} — แนบสลิปได้ที่หน้ารายละเอียด ก่อนกดออกเอกสารจริง (ISSUED)`,
+        title: 'สร้างใบกำกับภาษีร่างสำเร็จ',
+        description: `เลขที่ ${taxInvoiceNo} — แนบสลิปได้ที่หน้ารายละเอียด ก่อนกดออกเอกสารจริง (ISSUED)`,
       });
-      router.push(`/tax-invoices/${docRef.id}`);
-    } catch (e) {
+      router.push(`/tax-invoices/${taxInvoiceId}`);
+    } catch (e: unknown) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างใบกำกับภาษีได้" });
+      const msg = e instanceof Error ? e.message : 'ไม่สามารถสร้างใบกำกับภาษีได้';
+      toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
     } finally {
       setIsCreating(false);
     }
@@ -167,7 +141,7 @@ export default function TaxInvoicesPage() {
             <FileBadge className="h-8 w-8" /> ใบกำกับภาษี / ใบเสร็จรับเงิน
           </h1>
           <p className="text-muted-foreground text-lg">
-            สร้างร่างจากใบวางบิล หรือจากใบเรียกเก็บ (หลังลูกค้า/OPEC ยืนยัน) — พิมพ์ฉบับเดียว (ไม่แยกใบกำกับกับใบเสร็จ ไม่ใช่ e-Tax) ก่อนออก ISSUED จึงบันทึกลูกหนี้ (AR)
+            ออกจากใบแจ้งหนี้ (รายการเรียกเก็บ) ที่ลูกค้า/ผู้จัดการอนุมัติแล้ว — พิมพ์ฉบับเดียว (ไม่แยกใบกำกับกับใบเสร็จ ไม่ใช่ e-Tax) หลังรับเงินตามยอดที่อนุมัติ จึงกด ISSUED เพื่อบันทึกลูกหนี้ (AR)
           </p>
         </div>
 
@@ -175,7 +149,7 @@ export default function TaxInvoicesPage() {
           <Info className="h-5 w-5 text-blue-600" />
           <AlertTitle className="font-bold text-lg">นโยบายเอกสารภาษี (Tax Document Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            สถานะ DRAFT ยังไม่กระทบลูกหนี้ — เมื่อเปลี่ยนเป็น ISSUED ระบบจะสร้าง AR และอัปเดตใบวางบิลเป็น INVOICED (รวมกรณีสร้างใบวางบิลอัตโนมัติจากใบเรียกเก็บ)
+            สถานะ DRAFT ยังไม่กระทบลูกหนี้ — เมื่อเปลี่ยนเป็น ISSUED ระบบจะสร้าง AR ตามยอดใบแจ้งหนี้ที่อ้างอิง (ข้อมูลอ้างอิงมาจากเมนู «รายการใบแจ้งหนี้» ไม่ต้องใช้เมนูใบวางบิล)
           </AlertDescription>
         </Alert>
 
@@ -188,57 +162,59 @@ export default function TaxInvoicesPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isAuthorized && canCreateInvoice && isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog
+            open={isAuthorized && canCreateInvoice && isDialogOpen}
+            onOpenChange={(open) => {
+              setIsDialogOpen(open);
+              if (!open) setSelectedCommercialId('');
+            }}
+          >
             <DialogTrigger asChild>
               <Button
                 className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
                 disabled={!canCreateInvoice}
               >
-                <Plus className="h-5 w-5" /> สร้างใบแจ้งหนี้ร่าง (Draft)
+                <Plus className="h-5 w-5" /> สร้างใบกำกับภาษีร่าง
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-xl">
               <DialogHeader>
-                <DialogTitle>สร้างใบแจ้งหนี้ร่าง (Draft Tax Invoice)</DialogTitle>
+                <DialogTitle>สร้างใบกำกับภาษีร่าง</DialogTitle>
                 <DialogDescription>
-                  เลือกใบวางบิลต้นทาง ระบบจะสร้างสถานะ DRAFT — ยังไม่บันทึกลูกหนี้จนกว่าจะยืนยัน ISSUED ที่หน้ารายละเอียด
+                  เลือกใบแจ้งหนี้จากเมนู «รายการใบแจ้งหนี้» ที่ลูกค้า/ผู้จัดการอนุมัติแล้ว (สถานะ ISSUED) และยังไม่เคยออกใบกำกับภาษี — ระบบจะสร้างสถานะ DRAFT สำหรับบัญชีพิมพ์และยืนยันเมื่อรับเงิน
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>เลขที่ใบกำกับภาษี (Tax Invoice No.)</Label>
-                  <Input value={newInvoice.taxInvoiceNo} disabled className="bg-muted/50 font-mono font-bold text-primary" />
+              <div className="grid grid-cols-1 gap-4 py-4">
+                <div className="space-y-2">
+                  <Label>เลขที่ใบกำกับภาษี (คาดการณ์)</Label>
+                  <Input value={getPreviewPattern('tax_invoice')} disabled className="bg-muted/50 font-mono font-bold text-primary" />
+                  <p className="text-xs text-muted-foreground">เลขจริงออกตอนบันทึก</p>
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>อ้างอิงใบวางบิล (Source Billing Note) *</Label>
-                  <Select onValueChange={v => setNewInvoice({...newInvoice, billingNoteId: v})}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกใบวางบิล..." /></SelectTrigger>
+                <div className="space-y-2">
+                  <Label>อ้างอิงใบแจ้งหนี้ (รายการเรียกเก็บ) *</Label>
+                  <Select value={selectedCommercialId || undefined} onValueChange={setSelectedCommercialId}>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกใบแจ้งหนี้ที่อนุมัติแล้ว..." /></SelectTrigger>
                     <SelectContent>
-                      {availableBillingNotes.map(n => (
-                        <SelectItem key={n.id} value={n.id}>
-                          {n.billingNoteNo} | {customers?.find(c => c.id === n.customerId)?.name} | {n.currency} {n.netAmount.toLocaleString()}
+                      {availableCommercialInvoices.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.invoiceNo} | {customers?.find((x) => x.id === c.customerId)?.name ?? c.customerId} |{' '}
+                          {c.currency ?? 'THB'} {c.totalAmount.toLocaleString()}
                         </SelectItem>
                       ))}
-                      {availableBillingNotes.length === 0 && (
-                        <div className="py-3 px-4 text-sm text-muted-foreground italic">ไม่มีใบวางบิลที่พร้อมออกใบกำกับภาษี</div>
+                      {availableCommercialInvoices.length === 0 && (
+                        <div className="py-3 px-4 text-sm text-muted-foreground italic">
+                          ไม่มีใบแจ้งหนี้ที่พร้อมออกใบกำกับภาษี — ต้องอนุมัติใบในเมนู «รายการใบแจ้งหนี้» และยังไม่เคยสร้างใบกำกับจากใบนั้น
+                        </div>
                       )}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>วันที่ออกเอกสาร (Issue Date)</Label>
-                  <DatePickerThaiBE
-                    className="h-11"
-                    value={htmlDateValueToTimestampMs(newInvoice.issueDate)}
-                    onChange={(ms) => setNewInvoice({ ...newInvoice, issueDate: timestampToHtmlDateValue(ms) })}
-                  />
-                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                <Button onClick={() => void handleCreate()} className="bg-primary font-bold" disabled={isCreating || !selectedCommercialId}>
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  สร้างร่าง (Create draft)
+                  สร้างร่าง
                 </Button>
               </DialogFooter>
             </DialogContent>

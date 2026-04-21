@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, getDoc } from 'firebase/firestore';
 import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod, Worker } from '@/lib/types';
@@ -75,6 +76,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
 
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
+  const { profile: companyProfile } = useCompanyDocumentProfile();
 
   useEffect(() => {
     if (!firestore || !lines?.length) {
@@ -274,57 +276,81 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
 
           <TabsContent value="lines" className="mt-6">
             <Card className="shadow-lg border-none overflow-hidden">
-              <CardContent className="p-0">
-                <Table>
+              <CardContent className="p-0 overflow-x-auto">
+                <Table className="table-fixed min-w-[860px] w-full">
                   <TableHeader className="bg-muted/30">
                     <TableRow>
-                      <TableHead className="pl-6 py-4">Worker (Snapshot)</TableHead>
-                      <TableHead>Payment Method</TableHead>
-                      <TableHead className="text-right">Gross</TableHead>
-                      <TableHead className="text-right">Deductions</TableHead>
-                      <TableHead className="text-right font-bold">Net Amount</TableHead>
-                      <TableHead className="text-right pr-2 w-[100px]">สลิป</TableHead>
-                      <TableHead className="text-right pr-6">Status</TableHead>
+                      <TableHead className="pl-6 py-3 w-[26%] min-w-[160px] max-w-[300px] align-middle">
+                        Worker (Snapshot)
+                      </TableHead>
+                      <TableHead className="w-[118px] whitespace-nowrap align-middle">Payment Method</TableHead>
+                      <TableHead className="w-[96px] align-middle">Status</TableHead>
+                      <TableHead className="w-[92px] text-right tabular-nums align-middle">Gross</TableHead>
+                      <TableHead className="w-[96px] text-right tabular-nums align-middle">Deductions</TableHead>
+                      <TableHead className="w-[100px] text-right font-bold tabular-nums align-middle">Net Amount</TableHead>
+                      <TableHead className="w-[76px] text-right align-middle pr-2">สลิป</TableHead>
+                      <TableHead className="w-11 pr-5 text-right align-middle">
+                        <span className="sr-only">รายละเอียด</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {lines?.map(line => {
                       const periodLabel = period?.label || batch.payrollPeriodId;
-                      const slipModel = buildPayslipFromWorkerLine(line, batch, periodLabel);
+                      const slipModel = buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined);
                       return (
                       <TableRow key={line.id} className="hover:bg-muted/10">
-                        <TableCell className="pl-6">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{line.workerNameSnapshot}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{line.workerId}</span>
+                        <TableCell className="pl-6 align-top py-3 min-w-0 max-w-[300px]">
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="font-bold text-sm text-primary leading-snug break-words">
+                              {line.workerNameSnapshot}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground uppercase truncate font-mono">
+                              {line.workerId}
+                            </span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-xs">
-                            <CreditCard className="h-3 w-3 text-muted-foreground" />
-                            {line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH'}
+                        <TableCell className="align-middle py-3 whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 text-xs">
+                            <CreditCard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span>{line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH'}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right text-xs font-medium">฿{line.grossAmount.toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-xs text-red-600">
+                        <TableCell className="align-middle py-3">
+                          <Badge variant="outline" className="text-[9px] uppercase font-bold whitespace-nowrap">
+                            {line.exportStatus}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-3">
+                          ฿{line.grossAmount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-red-600 tabular-nums align-middle py-3">
                           ฿{lineDeductionsTotal(line).toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-right font-black text-primary">฿{line.netAmount.toLocaleString()}</TableCell>
-                        <TableCell className="text-right pr-2">
+                        <TableCell className="text-right font-black text-primary tabular-nums align-middle py-3 text-sm">
+                          ฿{line.netAmount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right align-middle py-3 pr-2">
                           {canGenerateWorkerPayslips ? (
                             <PayslipDialog model={slipModel} />
                           ) : (
-                            <Badge variant="outline" className="text-[9px]">รอเตรียม/อนุมัติ</Badge>
+                            <Badge variant="outline" className="text-[9px] whitespace-nowrap">
+                              รอเตรียม/อนุมัติ
+                            </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Badge variant="outline" className="text-[9px] uppercase font-bold">{line.exportStatus}</Badge>
+                        <TableCell className="text-right align-middle py-3 pr-3">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" asChild title="รายละเอียดรายคน · รายวัน · ปรับยอด">
+                            <Link href={`/payroll/batches/${id}/workers/${line.workerId}`}>
+                              <ChevronRight className="h-5 w-5" />
+                            </Link>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );})}
                     {(!lines || lines.length === 0) && !isLinesLoading && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
+                        <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

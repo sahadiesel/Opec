@@ -41,7 +41,8 @@ function pickLatest(
     const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_SSO_ID);
     if (hr) return hr;
   }
-  if (kind === 'tax' && scope === 'office') {
+  /** ชุดเดียวกับหน้า HR settings — ใช้ได้ทั้ง Office และ Worker เมื่อ appliesTo รวม scope นั้น */
+  if (kind === 'tax') {
     const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_TAX_OFFICE_ID);
     if (hr) return hr;
   }

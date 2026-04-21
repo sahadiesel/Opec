@@ -79,3 +79,34 @@ export function milestoneStatusLabelTh(s: PurchasePaymentMilestoneStatus): strin
   };
   return m[s] || s;
 }
+
+/**
+ * ส่วนของยอดก่อนภาษีมูลค่าเพิ่มของหนึ่งงวด (งวดเก็บยอดรวม VAT)
+ * ใช้สัดส่วน amountBeforeTax / totalAmount — สอดคล้องกับการหัก ณ ที่จ่าย 3% ฐานก่อนภาษี
+ */
+export function milestoneAmountBeforeVAT(
+  milestoneAmountInclVat: number,
+  purchase: Pick<Purchase, 'totalAmount' | 'amountBeforeTax'>
+): number {
+  const total = Math.max(0, roundMoney2(Number(purchase.totalAmount) || 0));
+  const before = Math.max(0, roundMoney2(Number(purchase.amountBeforeTax) || 0));
+  const m = Math.max(0, roundMoney2(Number(milestoneAmountInclVat) || 0));
+  if (m < 0.005) return 0;
+  if (total < 0.01) return m;
+  /** ไม่มียอดแยกก่อนภาษีในเอกสาร — ถือว่าทั้งงวดเป็นฐานหัก (เช่น ไม่มี VAT) */
+  if (before < 0.01) return m;
+  return roundMoney2((m * before) / total);
+}
+
+/** หัก ณ ที่จ่ายผู้รับเงิน: % จากฐานก่อน VAT ของงวด — สุทธิจ่าย = ยอดงวดรวม VAT − หัก ณ ที่จ่าย */
+export function supplierWithholdingOnMilestone(
+  milestoneAmountInclVat: number,
+  ratePercent: number,
+  purchase: Pick<Purchase, 'totalAmount' | 'amountBeforeTax'>
+): { wht: number; netPaid: number; baseBeforeVat: number } {
+  const rate = Math.max(0, Number(ratePercent) || 0);
+  const gross = roundMoney2(Number(milestoneAmountInclVat) || 0);
+  const baseBeforeVat = milestoneAmountBeforeVAT(milestoneAmountInclVat, purchase);
+  const wht = rate > 0.005 ? roundMoney2((baseBeforeVat * rate) / 100) : 0;
+  return { wht, netPaid: roundMoney2(gross - wht), baseBeforeVat };
+}

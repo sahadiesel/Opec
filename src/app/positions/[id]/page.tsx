@@ -160,8 +160,12 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขตำแหน่งงาน' });
       return;
     }
-    if (!posRef) return;
-    updateDocumentNonBlocking(posRef, { ...editedPos, updatedAt: Date.now() });
+    if (!posRef || !position) return;
+    updateDocumentNonBlocking(posRef, {
+      ...editedPos,
+      positionCode: position.positionCode,
+      updatedAt: Date.now(),
+    });
     setIsEditing(false);
     toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลหลักของตำแหน่งงานถูกอัปเดตแล้ว" });
   };
@@ -406,11 +410,16 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">รหัสตำแหน่ง (Position Code) *</Label>
-                    <Input 
-                      disabled={!isEditing} 
-                      value={isEditing ? editedPos.positionCode : position.positionCode} 
-                      onChange={e => setEditedPos({...editedPos, positionCode: e.target.value})}
+                    <Input
+                      readOnly
+                      aria-readonly="true"
+                      autoComplete="off"
+                      value={position.positionCode ?? ''}
+                      className="bg-muted font-mono font-bold text-primary cursor-not-allowed"
                     />
+                    <p className="text-[10px] text-muted-foreground">
+                      รหัสออกโดยระบบตอนสร้างตำแหน่ง — ไม่สามารถแก้ไขเพื่อป้องกันการชนกับรหัสที่มีอยู่
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">นโยบายการทำงาน (Job Mode) *</Label>

@@ -46,6 +46,7 @@ import {
   milestoneStatusLabelTh,
   milestonesCoverTotal,
   roundMoney2,
+  supplierWithholdingOnMilestone,
   syncPurchasePaymentClosure,
 } from '@/lib/ops/purchase-payment-milestones';
 import { formatDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -759,8 +760,10 @@ export function PurchasePaymentPlanCard({
               <TableBody>
                 {list.map((m) => {
                   const linkedBill = m.vendorBillId ? vendorBills?.find((b) => b.id === m.vendorBillId) : undefined;
-                  const whtAmt = whtRate > 0 ? roundMoney2((m.amount * whtRate) / 100) : 0;
-                  const netPay = whtRate > 0 ? roundMoney2(m.amount - whtAmt) : m.amount;
+                  const { wht: whtAmt, netPaid: netPay } =
+                    whtRate > 0
+                      ? supplierWithholdingOnMilestone(m.amount, whtRate, purchase)
+                      : { wht: 0, netPaid: m.amount };
                   return (
                   <TableRow key={m.id}>
                     <TableCell className="font-mono text-xs">{m.sequence}</TableCell>

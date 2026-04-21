@@ -25,6 +25,9 @@ export const DEFAULT_PIT_PROGRESSIVE_BANDS: PitProgressiveBand[] = [
   { fromBaht: 5_000_000, toBaht: null, ratePercent: 35 },
 ];
 
+/** อัตรา marginal มาตรฐานในตารางขั้นบันได (ใช้เป็นตัวเลือก UI — ไม่ใช่หัก % จากยอดเดือนแบบเหมา) */
+export const THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS = [0, 5, 10, 15, 20, 25, 30, 35] as const;
+
 function formatBaht(n: number): string {
   return n.toLocaleString('th-TH');
 }
@@ -75,6 +78,53 @@ export function calculateAnnualPITFromProgressiveBands(
     }
   }
   return tax;
+}
+
+/**
+ * ภาษีรายปีเมื่อนับเฉพาะขั้นที่อัตรา marginal ไม่เกิน `maxMarginalRatePercent`
+ * (รายได้ในช่วงที่อัตราสูงกว่าเลือกไม่นำมาคิดภาษี — ใช้เมื่อ HR กำหนดเพดานหัก ณ ที่จ่าย)
+ */
+export function calculateAnnualPITCappedAtMarginalRate(
+  netAssessableIncomeAnnual: number,
+  bands: PitProgressiveBand[],
+  maxMarginalRatePercent: number,
+): number {
+  if (maxMarginalRatePercent <= 0) return 0;
+  const n = Math.max(0, netAssessableIncomeAnnual);
+  if (!bands.length) return 0;
+  const sorted = [...bands].sort((a, b) => a.fromBaht - b.fromBaht);
+  const maxR = Math.max(...sorted.map((b) => b.ratePercent));
+  if (maxMarginalRatePercent >= maxR) {
+    return calculateAnnualPITFromProgressiveBands(n, sorted);
+  }
+  let tax = 0;
+  for (const b of sorted) {
+    if (b.ratePercent > maxMarginalRatePercent) break;
+    if (n <= b.fromBaht) break;
+    const top = b.toBaht == null ? n : Math.min(n, b.toBaht);
+    const slice = top - b.fromBaht;
+    if (slice > 0) {
+      tax += slice * (b.ratePercent / 100);
+    }
+  }
+  return tax;
+}
+
+/** marginal สูงสุดที่เงินได้สุทธิรายปี `net` ไปถึง (สำหรับเลือกค่าเริ่มต้นใน UI) */
+export function topMarginalRatePercentForNetAnnual(
+  netAssessableIncomeAnnual: number,
+  bands: PitProgressiveBand[],
+): number {
+  const n = Math.max(0, netAssessableIncomeAnnual);
+  if (!bands.length) return 0;
+  const sorted = [...bands].sort((a, b) => a.fromBaht - b.fromBaht);
+  let top = 0;
+  for (const b of sorted) {
+    if (n <= b.fromBaht) break;
+    const topEdge = b.toBaht == null ? n : Math.min(n, b.toBaht);
+    if (topEdge > b.fromBaht) top = b.ratePercent;
+  }
+  return top;
 }
 
 /**

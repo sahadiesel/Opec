@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { 
   User, 
-  BillingNote, 
+  CommercialInvoice,
   TaxInvoice, 
   AccountsReceivable, 
   AccountsPayable, 
@@ -52,11 +52,15 @@ export default function AccountingDashboardPage() {
 
   // --- Financial Data Queries ---
   
-  const bnQuery = useMemoFirebase(() => {
+  const commercialDraftQuery = useMemoFirebase(() => {
     if (!firestore || !isAccountingAuthorized) return null;
-    return query(collection(firestore, 'billing_notes'), where('status', 'in', ['ISSUED', 'SUBMITTED', 'PARTIALLY_PAID']), limit(20));
+    return query(
+      collection(firestore, 'commercial_invoices'),
+      where('status', 'in', ['DRAFT', 'PENDING_CUSTOMER']),
+      limit(30),
+    );
   }, [firestore, isAccountingAuthorized]);
-  const { data: billingNotes } = useCollection<BillingNote>(bnQuery as any);
+  const { data: commercialDrafts } = useCollection<CommercialInvoice>(commercialDraftQuery as any);
 
   const invQuery = useMemoFirebase(() => {
     if (!firestore || !isAccountingAuthorized) return null;
@@ -92,14 +96,14 @@ export default function AccountingDashboardPage() {
 
   const stats = useMemo(() => {
     return {
-      pendingBilling: billingNotes?.length || 0,
+      pendingBilling: commercialDrafts?.length || 0,
       draftInvoices: draftInvoices?.length || 0,
       outstandingAR: arItems?.reduce((sum, item) => sum + item.outstandingAmount, 0) || 0,
       pendingAP: apItems?.reduce((sum, item) => sum + item.outstandingAmount, 0) || 0,
       payrollWaiting: pendingPayroll?.length || 0,
       totalCash: bankAccounts?.reduce((sum, acc) => sum + acc.currentBalance, 0) || 0,
     };
-  }, [billingNotes, draftInvoices, arItems, apItems, pendingPayroll, bankAccounts]);
+  }, [commercialDrafts, draftInvoices, arItems, apItems, pendingPayroll, bankAccounts]);
 
   const urgentTasks = useMemo(() => {
     const tasks: any[] = [];
@@ -175,7 +179,7 @@ export default function AccountingDashboardPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard title="ลูกหนี้ค้างรับ" value={`฿${stats.outstandingAR.toLocaleString()}`} sub="Total AR Portfolio" icon={ArrowUpRight} colorClass="border-l-blue-600" />
           <StatCard title="เจ้าหนี้ค้างจ่าย" value={`฿${stats.pendingAP.toLocaleString()}`} sub="Total AP Liability" icon={ArrowDownLeft} colorClass="border-l-red-600" />
-          <StatCard title="ใบวางบิลค้าง" value={stats.pendingBilling} sub="Pending Billing Notes" icon={Receipt} colorClass="border-l-amber-500" />
+          <StatCard title="ใบแจ้งหนี้ค้าง" value={stats.pendingBilling} sub="Draft / รอลูกค้า" icon={Receipt} colorClass="border-l-amber-500" />
           <StatCard title="ใบกำกับภาษีร่าง" value={stats.draftInvoices} sub="Draft Tax Invoices" icon={FileBadge} colorClass="border-l-indigo-500" />
           <StatCard title="รอจ่ายเงินเดือน" value={stats.payrollWaiting} sub="Payroll Handoff" icon={Coins} colorClass="border-l-purple-600" />
           <StatCard title="ยอดเงินสดรวม" value={`฿${stats.totalCash.toLocaleString()}`} sub="All Bank Balances" icon={Wallet} colorClass="border-l-green-600" />
@@ -297,9 +301,13 @@ export default function AccountingDashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 space-y-2">
-                <ShortcutItem href="/billing-notes" label="ใบวางบิลลูกหนี้" sub="Billing Notes" icon={FileText} />
-                <ShortcutItem href="/tax-invoices" label="ใบกำกับภาษี" sub="Tax Invoices" icon={FileBadge} />
-                <ShortcutItem href="/receipts" label="การรับชำระเงิน" sub="Customer Receipts" icon={Receipt} />
+                <ShortcutItem href="/draft-invoices" label="รายการใบแจ้งหนี้ ( Invoice )" sub="Draft invoices" icon={FileText} />
+                <ShortcutItem
+                  href="/tax-invoices"
+                  label="ใบกำกับภาษี / ใบเสร็จรับเงิน"
+                  sub="ฉบับเดียว — ไม่มีเมนูใบเสร็จแยก"
+                  icon={FileBadge}
+                />
                 <ShortcutItem href="/accounts-receivable" label="ลูกหนี้การค้า (AR)" sub="AR Aging" icon={ArrowUpRight} />
                 <ShortcutItem href="/accounts-payable" label="เจ้าหนี้การค้า (AP)" sub="AP Tracking" icon={ArrowDownLeft} />
                 <ShortcutItem href="/cashbook" label="สมุดรายรับรายจ่าย" sub="Cashbook Entries" icon={History} />
@@ -314,7 +322,7 @@ export default function AccountingDashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-[10px] text-blue-700 leading-relaxed">
-                กรุณาตรวจสอบความถูกต้องของ Billing Note ก่อนออก Tax Invoice ทุกครั้ง และตรวจสอบหัก ณ ที่จ่าย (WHT) ให้ตรงตามเงื่อนไขสัญญา
+                ตรวจยอด «รายการใบแจ้งหนี้ (เรียกเก็บ)» ก่อนออกใบกำกับภาษี และตรวจหัก ณ ที่จ่าย (WHT) ให้ตรงตามเงื่อนไขสัญญา
               </CardContent>
             </Card>
 

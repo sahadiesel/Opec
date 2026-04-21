@@ -462,6 +462,8 @@ export interface OfficeStaff {
   staffCode: string;
   fullName: string;
   nickname?: string;
+  /** เบอร์ติดต่อ */
+  phone?: string;
   department: string;
   /** Optional link to {@link Position} when chosen from ตำแหน่งงาน (category OFFICE). */
   positionId?: string;
@@ -471,12 +473,30 @@ export interface OfficeStaff {
   employmentType: 'FULL_TIME' | 'PART_TIME' | 'CONTRACT';
   salaryType: 'MONTHLY' | 'DAILY';
   monthlySalary: number;
+  /** ค่าจ้างรายวัน (เมื่อจ่ายแบบรายวันหรืออ้างอิงประกอบสลิป) */
+  dailyWage?: number;
+  /** รายเดือนแต่ไม่อ้างอิงการสแกน/เวลาเข้างาน */
+  monthlyAttendanceExempt?: boolean;
+  /** ไม่นำเข้างวดจ่ายเงินเดือนออฟฟิศอัตโนมัติ (เช่น ฝึกงาน / จ่ายนอกระบบ) */
+  excludeFromPayrollRuns?: boolean;
   startDate: string;
+  /** วันสิ้นสุดการจ้าง (ถ้ามี) */
+  employmentEndDate?: string;
+  /** เลขบัตรประชาชน */
+  nationalId?: string;
+  address?: string;
+  emergencyContactName?: string;
+  emergencyContactRelation?: string;
+  emergencyContactPhone?: string;
   bankName?: string;
   bankAccountName?: string;
   bankAccountNumber?: string;
   taxId?: string;
   socialSecurityNo?: string;
+  /** สถานะการขึ้นทะเบียนประกันสังคม */
+  socialSecurityStatus?: 'ENROLLED' | 'EXEMPT';
+  /** โรงพยาบาลประกันสังคมที่เลือก */
+  socialSecurityHospital?: string;
   status: 'ACTIVE' | 'INACTIVE' | 'RESIGNED';
   notes?: string;
   linkedUserId?: string;
@@ -1175,7 +1195,7 @@ export interface BankAccount {
   updatedAt: number;
 }
 
-export type BankAccountType = 'SAVINGS' | 'CURRENT' | 'CASH';
+export type BankAccountType = 'SAVINGS' | 'CURRENT' | 'CASH' | 'PETTY_CASH';
 export type BankAccountStatus = 'ACTIVE' | 'INACTIVE';
 
 export interface BillingNote {
@@ -1244,8 +1264,8 @@ export interface CommercialInvoiceLine {
   quantity: number;
   unitPrice: number;
   amount: number;
-  /** จาก timesheet อัตโนมัติ vs ปรับยอดด้วยมือ (ส่วนลด/เพิ่ม) */
-  lineSource?: 'timesheet' | 'manual';
+  /** จาก timesheet อัตโนมัติ vs ปรับยอดด้วยมือ (ส่วนลด/เพิ่ม) vs รายการ PO vs รายการใบเสนอราคา */
+  lineSource?: 'timesheet' | 'manual' | 'po_line' | 'quotation_line';
 }
 
 export interface CommercialInvoice {
@@ -1312,9 +1332,20 @@ export interface CashbookEntry {
   paymentMethod: PaymentMethod;
   createdAt: number;
   updatedAt: number;
+  /** ยอดเต็มงวด (ก่อนหัก ณ ที่จ่าย) — ใช้ประกอบรายการจ่ายคู่ค้า */
+  grossPaymentAmount?: number;
+  /** หัก ณ ที่จ่ายที่ไม่ได้ตัดจากบัญชีธนาคาร (รอนำส่งสรรพากร) */
+  supplierWithholdingAmount?: number;
 }
 
-export type CashbookEntryType = 'CUSTOMER_RECEIPT' | 'SUPPLIER_PAYMENT' | 'PAYROLL' | 'TAX' | 'TRANSFER' | 'OTHER';
+export type CashbookEntryType =
+  | 'CUSTOMER_RECEIPT'
+  | 'SUPPLIER_PAYMENT'
+  | 'PAYROLL'
+  | 'TAX'
+  | 'TRANSFER'
+  | 'PETTY_CASH'
+  | 'OTHER';
 export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CHEQUE' | 'OTHER';
 
 export interface OfficePayrollRun {
@@ -1456,6 +1487,22 @@ export interface PayrollBatch {
   updatedAt: number;
 }
 
+/** ปรับยอดรายคนใน batch (เงินพิเศษ / หักเพิ่ม / ภาษี ณ ที่จ่าย) — คำนวณ net ใหม่ตาม HR settings */
+export interface HrPayrollLineAdjustments {
+  allowanceItems: Array<{ label: string; amount: number }>;
+  deductionItems: Array<{ label: string; amount: number }>;
+  /** null = คำนวณ ภงด. รายเดือนตาม policy ใน HR settings จากยอดรวมหลังเบี้ยเลี้ยง */
+  pitWithholdingOverride: number | null;
+  /**
+   * กำหนด ภงด. โดยเลือกอัตรา marginal สูงสุด (0–35) — ระบบคำนวณยอดบาทจากตารางขั้นบันไดใน HR
+   * ถ้ามีค่านี้จะใช้แทน pitWithholdingOverride (ยอดบาทตรง ๆ)
+   */
+  pitWithholdingOverrideMaxMarginalRatePercent?: number | null;
+  notes?: string;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
 export interface PayrollBatchLine {
   id: string;
   payrollBatchId: string;
@@ -1474,6 +1521,8 @@ export interface PayrollBatchLine {
   d8Snapshot?: PayrollLineD8Snapshot;
   exportStatus: 'pending' | 'exported' | 'failed';
   remarks?: string;
+  /** ปรับเพิ่มเบี้ยเลี้ยง/หักพิเศษ/ภาษี — grossAmount ยังเป็นยอดจาก timesheet เดิม */
+  hrLineAdjustments?: HrPayrollLineAdjustments | null;
 }
 
 /**
@@ -1672,7 +1721,7 @@ export interface Purchase {
   status: PurchaseStatus;
   /** แบบที่ 1 เลือกจากคลัง / แบบที่ 2 สั่งจ้างคีย์มือ */
   purchaseLineMode?: PurchaseLineEntryMode;
-  /** งานจ้างเหมา — แสดง/คำนวณหัก ณ ที่จ่ายตามงวด (ฐาน = ยอดงวด) */
+  /** งานจ้างเหมา — แสดง/คำนวณหัก ณ ที่จ่ายตามงวด (ฐาน = ส่วนก่อน VAT ของงวด ตามสัดส่วน amountBeforeTax/totalAmount) */
   supplierWithholdingEnabled?: boolean;
   /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
   supplierWithholdingRatePercent?: number;
@@ -1751,6 +1800,33 @@ export interface PurchasePaymentMilestone {
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
 export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PAID';
+
+/** รายการหัก ณ ที่จ่าย (ผู้รับเงิน) — สะสมเพื่อสรุปนำส่งสรรพากร ไม่ตัดบัญชีธนาคารตอนจ่ายคู่ค้า */
+export type WithholdingAtSourceStatus = 'OUTSTANDING' | 'REMITTED' | 'VOID';
+
+export interface WithholdingAtSourceItem {
+  id: string;
+  vendorId: string;
+  vendorName?: string;
+  purchaseId: string;
+  purchaseNo?: string;
+  vendorBillId: string;
+  receiptNo?: string;
+  milestoneId?: string;
+  /** ยอดงวดรวม VAT (ก่อนหัก) */
+  grossPaymentAmount: number;
+  baseBeforeVat: number;
+  whtAmount: number;
+  ratePercent: number;
+  status: WithholdingAtSourceStatus;
+  cashbookEntryId: string;
+  cashbookEntryNo: string;
+  entryDate: string;
+  remittedAt?: number;
+  remittedNote?: string;
+  createdAt: number;
+  updatedAt: number;
+}
 
 export interface PurchaseVendorBill {
   id: string;
@@ -1869,50 +1945,6 @@ export interface StoreTransaction {
 
 export type TransactionType = 'RECEIVE' | 'ISSUE' | 'RETURN' | 'WRITEOFF' | 'DAMAGED' | 'LOST';
 
-export interface Receipt {
-  id: string;
-  receiptNo: string;
-  customerId: string;
-  receiptDate: string;
-  /**
-   * ยอดตามใบเสร็จ — ต้องตรงกับใบกำกับภาษีเมื่อชำระครบ (เช่น 100+VAT = 107)
-   */
-  receivedAmount: number;
-  /**
-   * เงินโอนเข้าบัญชีจริง — น้อยกว่า receivedAmount เมื่อมีหัก ณ (เช่น 104)
-   * ถ้าไม่ระบุ = ไม่มีหัก ณ ที่แยก ใช้ receivedAmount ทั้งหมดเป็นยอดเข้าบัญชี
-   */
-  cashDepositAmount?: number;
-  /**
-   * ภาษีหัก ณ ที่จ่ายคู่กับใบกำกับ — ปิดลูกหนี้ด้วยเอกสารหัก ณ ไม่ผ่านเงินเข้าบัญชี (เช่น 3)
-   * receivedAmount ≈ cashDepositAmount + withholdingTaxAmount
-   */
-  withholdingTaxAmount?: number;
-  /** เลขที่หนังสือหัก ณ ที่จ่าย (ระดับใบเสร็จ ถ้ามี) */
-  whtCertificateNo?: string;
-  paymentMethod: PaymentMethod;
-  bankAccountId: string;
-  status: ReceiptStatus;
-  notes?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type ReceiptStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
-
-export interface ReceiptAllocation {
-  id: string;
-  receiptId: string;
-  taxInvoiceId: string;
-  /** เงินโอน — ตัดลูกหนี้และนับในยอดเข้าบัญชี (ส่วนของยอดใบเสร็จที่เป็นเงินสด) */
-  amountAllocated: number;
-  /** หัก ณ คู่ใบกำกับ — ตัดลูกหนี้ด้วยเอกสารหัก ณ ไม่ผ่านเงินเข้าบัญชี */
-  withholdingTaxAmount?: number;
-  /** เลขที่หนังสือหัก ณ ที่จ่าย */
-  whtCertificateNo?: string;
-  createdAt: number;
-}
-
 /** เหตุการณ์อนุมัติ/ล็อกที่เก็บบนเอกสาร (คู่กับ audit_logs กลาง) */
 export interface DocumentApprovalEvent {
   id: string;
@@ -1928,7 +1960,7 @@ export interface DocumentApprovalEvent {
   note?: string;
 }
 
-/** รูปสลิปลงเวลา/เอกสารลงนามแนบกับใบแจ้งหนี้ร่าง (ก่อน ISSUED) */
+/** รูปสลิปลงเวลา/เอกสารลงนามแนบกับใบแจ้งหนี้ (ก่อน ISSUED) */
 export interface TaxInvoiceTimesheetAttachment {
   id: string;
   storagePath: string;
@@ -1943,6 +1975,7 @@ export interface TaxInvoiceTimesheetAttachment {
 export interface TaxInvoice {
   id: string;
   taxInvoiceNo: string;
+  /** อ้างอิงใบวางบิล (มักสร้างอัตโนมัติจากใบแจ้งหนี้เชิงพาณิชย์ — ผู้ใช้เลือกจาก «รายการใบแจ้งหนี้» ไม่ใช่เมนูใบวางบิล) */
   billingNoteId: string;
   /** สร้างจากใบเรียกเก็บ (commercial) หลังลูกค้า/OPEC ยืนยัน — พร้อม snapshot ใบวางบิล */
   sourceCommercialInvoiceId?: string;

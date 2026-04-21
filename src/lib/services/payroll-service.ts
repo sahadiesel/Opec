@@ -12,6 +12,7 @@ import {
   writeBatch, 
   updateDoc,
   deleteField,
+  deleteDoc,
   CollectionReference,
   limit
 } from 'firebase/firestore';
@@ -25,7 +26,11 @@ import {
   RateCondition,
   LaborCostContractTerm,
   MainContract,
+  PurchaseOrder,
+  PayrollLineD8Snapshot,
+  PayrollBatchStatus,
 } from '@/lib/types';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
 import {
@@ -43,7 +48,9 @@ import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
 } from '@/lib/payroll/d8';
+import { pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
 import { computeWorkDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
+import { resolvePayrollLaborCostContractTerm } from '@/lib/services/contract-resolver';
 
 export interface PayrollPreflightZeroWorker {
   workerId: string;
@@ -94,6 +101,15 @@ function resolvePolicyFallbackCost(
     default:
       return 0;
   }
+}
+
+function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
+  return (
+    status === 'FINANCE_PREPARED' ||
+    status === 'PAYMENT_EXPORTED' ||
+    status === 'PAID' ||
+    status === 'LOCKED'
+  );
 }
 
 function resolveContractCostPolicy(
@@ -162,6 +178,55 @@ export class PayrollService {
     const allConditions = condSnap.docs.map((d) => ({ ...d.data(), id: d.id } as RateCondition));
     const allCostTerms = termsSnap.docs.map((d) => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
 
+    const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+    const poById = new Map<string, PurchaseOrder>();
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const snap = await getDoc(doc(this.db, 'purchase_orders', poId));
+        if (snap.exists()) {
+          poById.set(poId, { id: snap.id, ...(snap.data() as object) } as PurchaseOrder);
+        }
+      }),
+    );
+
+    const contractMap = new Map<string, MainContract>();
+    const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
+    await Promise.all(
+      contractIds.map(async (cid) => {
+        const contractSnap = await getDoc(doc(this.db, 'main_contracts', cid));
+        if (contractSnap.exists()) {
+          contractMap.set(cid, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        }
+      }),
+    );
+    const inheritIds = Array.from(
+      new Set(
+        Array.from(contractMap.values())
+          .filter((c) => (c.contractType || 'master') === 'supplemental')
+          .map((c) => c.inheritTermsFromContractId || c.parentContractId)
+          .filter(Boolean) as string[],
+      ),
+    );
+    await Promise.all(
+      inheritIds.map(async (cid) => {
+        if (contractMap.has(cid)) return;
+        const contractSnap = await getDoc(doc(this.db, 'main_contracts', cid));
+        if (contractSnap.exists()) {
+          contractMap.set(cid, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        }
+      }),
+    );
+
+    const poLineById = new Map<string, Record<string, unknown>>();
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
+        linesSnap.docs.forEach((lineDoc) =>
+          poLineById.set(lineDoc.id, lineDoc.data() as Record<string, unknown>),
+        );
+      }),
+    );
+
     const workerTsMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach((ts) => {
       if (!workerTsMap[ts.workerId]) workerTsMap[ts.workerId] = [];
@@ -176,33 +241,48 @@ export class PayrollService {
       const missingReasons = new Set<string>();
 
       for (const ts of workerTs) {
-        const term = allCostTerms.find(
-          (ct) =>
-            ct.id === ts.laborCostContractTermId ||
-            (ct.relatedPurchaseOrderId === ts.purchaseOrderId && ct.status === 'ACTIVE'),
-        );
+        const term = resolvePayrollLaborCostContractTerm(ts, allCostTerms, contractMap, poById);
 
         if (!term) {
-          missingReasons.add('ไม่มี Labor Cost Term สำหรับ PO นี้');
+          missingReasons.add(
+            'ไม่มีขอบเขตต้นทุน (เอกสาร labor term หรือสัญญาหลักจาก PO) สำหรับรายการนี้',
+          );
+          continue;
+        }
+
+        const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+        const baseCost = Number(poLine?.costBaselineSnapshot ?? 0);
+        const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
+
+        const useWorkDayPackage = ts.eventType === 'work_day' && baseCost > 0;
+        if (useWorkDayPackage) {
+          hasAnyRate = true;
           continue;
         }
 
         const condition = resolveApplicableCostRateCondition(allConditions, ts, term);
-        if (!condition) {
-          missingReasons.add(`ไม่มี Rate Condition สำหรับ ${ts.eventType}`);
+        if (condition) {
+          if (
+            condition.calculationMethod === 'FIXED' ||
+            condition.calculationMethod === 'FLAT' ||
+            condition.baseRate
+          ) {
+            hasAnyRate = true;
+          } else {
+            missingReasons.add(`${ts.eventType}: baseRate = 0 (method: ${condition.calculationMethod})`);
+          }
           continue;
         }
 
-        if (
-          condition.calculationMethod !== 'FIXED' &&
-          condition.calculationMethod !== 'FLAT' &&
-          !condition.baseRate
-        ) {
-          missingReasons.add(`${ts.eventType}: baseRate = 0 (method: ${condition.calculationMethod})`);
+        const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, fallbackPolicy);
+        if (fallbackCost > 0) {
+          hasAnyRate = true;
           continue;
         }
 
-        hasAnyRate = true;
+        missingReasons.add(
+          `ไม่มี Rate Condition สำหรับ ${ts.eventType} และตัวคูณตามสัญญาได้ 0 (ตรวจ PO line / สัญญา)`,
+        );
       }
 
       if (!hasAnyRate) {
@@ -294,11 +374,18 @@ export class PayrollService {
 
     const poLineById = new Map<string, any>();
     const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+    const poById = new Map<string, PurchaseOrder>();
     await Promise.all(
       poIds.map(async (poId) => {
-        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
+        const [linesSnap, poSnap] = await Promise.all([
+          getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines')),
+          getDoc(doc(this.db, 'purchase_orders', poId)),
+        ]);
         linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data()));
-      })
+        if (poSnap.exists()) {
+          poById.set(poId, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+        }
+      }),
     );
 
     // Aggregate by Worker
@@ -342,11 +429,13 @@ export class PayrollService {
       let usedPackageLaborCost = false;
 
       for (const ts of workerTs) {
-        const contract = allCostTerms.find(ct => 
-          ct.id === ts.laborCostContractTermId || 
-          (ct.relatedPurchaseOrderId === ts.purchaseOrderId && ct.status === 'ACTIVE')
+        const contract = resolvePayrollLaborCostContractTerm(
+          ts,
+          allCostTerms,
+          contractMap,
+          poById,
         );
-        
+
         if (contract) {
           laborTermIds.add(contract.id);
           const poLine = poLineById.get(ts.poLineId) || {};
@@ -518,6 +607,108 @@ export class PayrollService {
     return batchId;
   }
 
+  private async unlockTimesheetsForPayrollBatchAdmin(timesheetIds: string[]): Promise<void> {
+    const unique = [...new Set(timesheetIds)].filter(Boolean);
+    const chunkSize = 400;
+    const now = Date.now();
+    for (let i = 0; i < unique.length; i += chunkSize) {
+      const slice = unique.slice(i, i + chunkSize);
+      const wb = writeBatch(this.db);
+      for (const id of slice) {
+        const tsRef = doc(this.db, 'daily_timesheets', id);
+        wb.update(tsRef, {
+          status: 'VERIFIED_PAPER',
+          lockedAt: deleteField(),
+          lockedBy: deleteField(),
+          updatedAt: now,
+        });
+      }
+      await wb.commit();
+    }
+  }
+
+  private async deletePayrollBatchSubcollectionAndDoc(batchId: string): Promise<void> {
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
+    const chunkSize = 400;
+    const refs = linesSnap.docs.map((d) => d.ref);
+    for (let i = 0; i < refs.length; i += chunkSize) {
+      const wb = writeBatch(this.db);
+      for (const r of refs.slice(i, i + chunkSize)) {
+        wb.delete(r);
+      }
+      await wb.commit();
+    }
+    await deleteDoc(doc(this.getBatchCollection(), batchId));
+  }
+
+  /**
+   * System admin only: unlock source timesheets, delete all lines and the batch document.
+   * Blocked once the batch is handed to finance or paid.
+   */
+  async adminDeletePayrollBatch(batchId: string, user: User): Promise<void> {
+    if (!isSystemAdmin(user)) {
+      throw new Error('เฉพาะผู้ดูแลระบบ (System Admin) เท่านั้น');
+    }
+    const batchRef = doc(this.getBatchCollection(), batchId);
+    const snap = await getDoc(batchRef);
+    if (!snap.exists()) throw new Error('ไม่พบ payroll batch');
+    const batch = snap.data() as PayrollBatch;
+    if (isAdminPayrollBatchDeleteBlocked(batch.status)) {
+      throw new Error('ลบไม่ได้: งวดนี้ส่งบัญชีหรือจ่ายแล้ว');
+    }
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
+    const tsIds: string[] = [];
+    linesSnap.forEach((d) => {
+      const line = d.data() as PayrollBatchLine;
+      line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
+    });
+    await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+    await this.deletePayrollBatchSubcollectionAndDoc(batchId);
+    await writeAuditLog(this.db, user, {
+      actionType: 'DELETE',
+      entityType: 'PayrollBatch',
+      entityId: batchId,
+      payrollBatchId: batchId,
+      sourceModule: 'hr',
+      afterSummary: 'Admin deleted payroll batch; source daily timesheets unlocked (VERIFIED_PAPER)',
+    });
+  }
+
+  /**
+   * System admin only: same as delete, then runs generate again for the same period + work-mode scope (new batch id).
+   */
+  async adminRegeneratePayrollBatch(batchId: string, user: User): Promise<string> {
+    if (!isSystemAdmin(user)) {
+      throw new Error('เฉพาะผู้ดูแลระบบ (System Admin) เท่านั้น');
+    }
+    const batchRef = doc(this.getBatchCollection(), batchId);
+    const snap = await getDoc(batchRef);
+    if (!snap.exists()) throw new Error('ไม่พบ payroll batch');
+    const batch = snap.data() as PayrollBatch;
+    if (isAdminPayrollBatchDeleteBlocked(batch.status)) {
+      throw new Error('สร้างใหม่ไม่ได้: งวดนี้ส่งบัญชีหรือจ่ายแล้ว');
+    }
+    const periodId = batch.payrollPeriodId;
+    const scope = batch.workModeScope;
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
+    const tsIds: string[] = [];
+    linesSnap.forEach((d) => {
+      const line = d.data() as PayrollBatchLine;
+      line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
+    });
+    await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+    await this.deletePayrollBatchSubcollectionAndDoc(batchId);
+    await writeAuditLog(this.db, user, {
+      actionType: 'DELETE',
+      entityType: 'PayrollBatch',
+      entityId: batchId,
+      payrollBatchId: batchId,
+      sourceModule: 'hr',
+      afterSummary: 'Admin removed batch before regenerate (unlock + delete)',
+    });
+    return this.generatePayrollBatch(periodId, user, { workModeScope: scope });
+  }
+
   async approveBatch(id: string, user: User) {
     if (!canApprovePayroll(user)) {
       throw new Error('Permission denied: approve payroll');
@@ -684,6 +875,155 @@ export class PayrollService {
       payrollBatchId: id,
       sourceModule: 'accounting',
       afterSummary: 'Payroll Batch Permanently Locked'
+    });
+  }
+
+  /**
+   * HR ปรับเบี้ยเลี้ยง / หักพิเศษ / ภาษี ณ ที่จ่ายรายคน — คำนวณ net + SS + PIT ใหม่ตาม policy ใน HR settings
+   * (อนุญาตเฉพาะก่อนส่งบัญชีจัดจ่ายจริง)
+   */
+  async applyWorkerLineHrAdjustments(
+    batchId: string,
+    workerId: string,
+    user: User,
+    input: {
+      allowanceItems: Array<{ label: string; amount: number }>;
+      deductionItems: Array<{ label: string; amount: number }>;
+      /** legacy: ระบุยอดหักเป็นบาท — ใช้เมื่อไม่มี pitWithholdingOverrideMaxMarginalRatePercent */
+      pitWithholdingOverride: number | null;
+      /** เลือกอัตรา marginal สูงสุด 0–35 — คำนวณยอดหักจากขั้นบันไดใน HR */
+      pitWithholdingOverrideMaxMarginalRatePercent?: number | null;
+      notes?: string;
+    },
+  ): Promise<void> {
+    assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    const lineId = `${batchId}_${workerId}`;
+    const batchRef = doc(this.getBatchCollection(), batchId);
+    const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', lineId);
+
+    const [batchSnap, lineSnap] = await Promise.all([getDoc(batchRef), getDoc(lineRef)]);
+    if (!batchSnap.exists()) throw new Error('ไม่พบ payroll batch');
+    if (!lineSnap.exists()) throw new Error('ไม่พบบรรทัดลูกจ้างในงวดนี้');
+
+    const batch = batchSnap.data() as PayrollBatch;
+    const line = lineSnap.data() as PayrollBatchLine;
+
+    const blocked = ['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
+    if ((blocked as readonly string[]).includes(batch.status)) {
+      throw new Error(
+        'แก้ไขรายคนได้เฉพาะก่อนส่งต่อบัญชี (สถานะ GENERATED / HR_REVIEWED / HR_APPROVED)',
+      );
+    }
+
+    const periodSnap = await getDoc(doc(this.db, 'payroll_periods', batch.payrollPeriodId));
+    if (!periodSnap.exists()) throw new Error('ไม่พบรอบบัญชี');
+    const period = periodSnap.data() as PayrollPeriod;
+    const asOf = period.endDate;
+
+    const policies = await loadPayrollPoliciesFromFirestore(this.db);
+    const resolved = resolvePayrollPoliciesForDate(asOf, policies, 'worker');
+
+    const allowanceTotal = input.allowanceItems.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const effectiveGross = Math.max(0, line.grossAmount + allowanceTotal);
+
+    const rateSummary = line.d8Snapshot?.rate;
+    const d8Line = computeWorkerPayrollLineD8({
+      asOfDate: asOf,
+      policies: resolved,
+      grossFromTimesheets: effectiveGross,
+      rate: rateSummary
+        ? {
+            summary: rateSummary.summary,
+            conditionIds: rateSummary.conditionIds,
+            laborTermIds: rateSummary.laborTermIds,
+          }
+        : { summary: 'hr_line_adjustment' },
+      earningsBreakdown: {
+        ...line.earningsBreakdown,
+        hr_allowances: allowanceTotal,
+      },
+    });
+
+    const deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
+    const mr = input.pitWithholdingOverrideMaxMarginalRatePercent;
+    if (mr != null && Number.isFinite(mr)) {
+      const clamped = Math.max(0, Math.min(35, mr));
+      deductions.pit_withholding = pitFromPolicyWithMarginalCeiling(effectiveGross, resolved.tax, clamped);
+    } else if (input.pitWithholdingOverride != null && Number.isFinite(input.pitWithholdingOverride)) {
+      deductions.pit_withholding = Math.max(0, input.pitWithholdingOverride);
+    }
+    input.deductionItems.forEach((d, idx) => {
+      deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
+    });
+
+    const dedTotal = Object.values(deductions).reduce((a, b) => a + (Number(b) || 0), 0);
+    const netAmount = Math.round((effectiveGross - dedTotal) * 100) / 100;
+
+    const d8Snapshot: PayrollLineD8Snapshot = {
+      ...d8Line.snapshot,
+      gross: effectiveGross,
+      deductions: { ...deductions },
+      net: netAmount,
+      earningsComponents: {
+        ...(d8Line.snapshot.earningsComponents || {}),
+        hr_allowances: allowanceTotal,
+      },
+    };
+
+    const trimmedNotes = input.notes?.trim();
+    const useMr = mr != null && Number.isFinite(mr);
+    const hrLineAdjustments = {
+      allowanceItems: input.allowanceItems,
+      deductionItems: input.deductionItems,
+      pitWithholdingOverride: useMr ? null : input.pitWithholdingOverride ?? null,
+      pitWithholdingOverrideMaxMarginalRatePercent: useMr ? Math.max(0, Math.min(35, mr)) : null,
+      notes: trimmedNotes ? trimmedNotes : null,
+      updatedAt: Date.now(),
+      updatedBy: user.displayName || user.email || user.id,
+    };
+
+    await updateDoc(lineRef, {
+      deductionsBreakdown: deductions,
+      netAmount,
+      d8Snapshot,
+      hrLineAdjustments,
+      updatedAt: Date.now(),
+    });
+
+    await this.recalculateBatchTotalsFromLines(batchId, user);
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'PayrollBatchLine',
+      entityId: lineId,
+      payrollBatchId: batchId,
+      sourceModule: 'hr',
+      afterSummary: `HR adjustments for worker ${workerId} (allowances +${allowanceTotal.toFixed(2)})`,
+    });
+  }
+
+  private async recalculateBatchTotalsFromLines(batchId: string, user: User): Promise<void> {
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
+    let batchGross = 0;
+    let batchDed = 0;
+    let batchNet = 0;
+    for (const d of linesSnap.docs) {
+      const line = d.data() as PayrollBatchLine;
+      const allowanceExtra = (line.hrLineAdjustments?.allowanceItems ?? []).reduce(
+        (s, x) => s + (Number(x.amount) || 0),
+        0,
+      );
+      const effGross = line.grossAmount + allowanceExtra;
+      batchGross += effGross;
+      batchDed += Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+      batchNet += Number(line.netAmount) || 0;
+    }
+    await updateDoc(doc(this.getBatchCollection(), batchId), {
+      grossAmount: Math.round(batchGross * 100) / 100,
+      totalDeductions: Math.round(batchDed * 100) / 100,
+      netAmount: Math.round(batchNet * 100) / 100,
+      updatedAt: Date.now(),
+      updatedBy: user.displayName || user.email || user.id,
     });
   }
 }

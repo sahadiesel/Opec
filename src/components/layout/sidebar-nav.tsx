@@ -20,7 +20,6 @@ import {
   Truck,
   Store,
   CreditCard,
-  Receipt,
   Coins,
   ArrowUpRight,
   ArrowDownLeft,
@@ -39,6 +38,7 @@ import {
   Building2,
   FlaskConical,
   ChevronRight,
+  Percent,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -61,7 +61,16 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HR_NAV_SUBSECTIONS } from '@/lib/navigation/hr-nav-items';
-import { pathMatches, sidebarMatrixVisibilityForPath, canViewHrHubItem } from '@/lib/navigation/nav-access';
+import {
+  pathMatches,
+  sidebarMatrixVisibilityForPath,
+  canViewHrHubItem,
+  canViewHrPayrollFlowSubsection,
+} from '@/lib/navigation/nav-access';
+import { cn } from '@/lib/utils';
+
+/** ข้อความเมนูหลัก sidebar — ตัวหนา ขนาดเล็กกว่าเดิม (text-xs) ให้พอดีกับความกว้างแถบ */
+const SIDEBAR_MAIN_ITEM_TEXT = 'text-xs font-bold leading-snug tracking-tight text-foreground';
 
 type NavAudience = 'internal' | 'client' | 'admin' | 'accounting';
 
@@ -82,29 +91,39 @@ interface NavGroup {
   accountingStructured?: boolean;
 }
 
-/** แยกหมวดบัญชี: ลูกหนี้ / เจ้าหนี้ / สมุดรายวัน — ไม่รวมเงินเดือน (อยู่ใน ACCOUNTING_PAYROLL_SUBSECTIONS) */
+/** แยกหมวดบัญชี: ระบบลูกหนี้ / ระบบเจ้าหนี้ / สมุดรายวัน — ไม่รวมเงินเดือน (อยู่ใน ACCOUNTING_PAYROLL_SUBSECTIONS) */
 const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
   title: string;
   icon: ComponentType<{ className?: string }>;
   items: NavItem[];
 }> = [
   {
-    title: 'ลูกหนี้ — วางบิล / ใบกำกับ / ใบเสร็จ',
+    title: 'ระบบลูกหนี้',
     icon: FileBadge,
     items: [
-      { key: 'billing_notes', title: 'ใบวางบิลลูกหนี้ (Billing Notes)', href: '/billing-notes', icon: FileText },
-      { key: 'tax_invoices', title: 'ใบกำกับภาษี / ใบเสร็จ', href: '/tax-invoices', icon: FileBadge },
-      { key: 'receipts', title: 'ใบเสร็จรับเงิน (Receipts)', href: '/receipts', icon: Receipt },
+      { key: 'draft_invoices', title: 'รายการใบแจ้งหนี้ ( Invoice )', href: '/draft-invoices', icon: FileText },
+      {
+        key: 'tax_invoices',
+        title: 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ฉบับเดียว)',
+        href: '/tax-invoices',
+        icon: FileBadge,
+      },
       { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
     ],
   },
   {
-    title: 'เจ้าหนี้ — รับวางบิล / ตรวจจ่าย',
+    title: 'ระบบเจ้าหนี้',
     icon: Inbox,
     items: [
       { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
       { key: 'accounts_payable', title: 'ตรวจสอบรายจ่าย (ใบรับวางบิล)', href: '/accounting/outgoing-review', icon: Banknote },
       { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
+      {
+        key: 'withholding_tax_items',
+        title: 'รายการหัก ณ ที่จ่าย',
+        href: '/accounting/withholding-tax',
+        icon: Percent,
+      },
     ],
   },
   {
@@ -136,6 +155,9 @@ function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
   return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
 
+/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า» */
+const OPS_WAREHOUSE_SUB_PATHS = ['/store', '/store/vendor-bills', '/vendors', '/purchases'] as const;
+
 const navGroups: NavGroup[] = [
   {
     label: 'ภาพรวม (Overview)',
@@ -162,6 +184,12 @@ const navGroups: NavGroup[] = [
     label: 'งานปฏิบัติการ (Operations)',
     audience: 'internal',
     items: [
+      {
+        key: 'waves',
+        title: 'คิวเติมโควต้า (PO Active)',
+        href: '/po-active-quota-queue',
+        icon: ClipboardList,
+      },
       { key: 'waves', title: UI_LABELS.WAVES, href: '/waves', icon: Waves },
       { key: 'assignments', title: UI_LABELS.ASSIGNMENTS, href: '/assignments', icon: UserPlus },
       { key: 'mobilization', title: UI_LABELS.MOBILIZATION, href: '/mobilization', icon: Truck },
@@ -176,9 +204,15 @@ const navGroups: NavGroup[] = [
       },
       {
         key: 'draft_invoices',
-        title: 'ใบแจ้งหนี้ร่าง (เรียกเก็บ)',
+        title: 'รายการใบแจ้งหนี้ ( Invoice )',
         href: '/draft-invoices',
         icon: FileText,
+      },
+      {
+        key: 'operations_petty_cash',
+        title: 'เบิกจ่าย Petty Cash',
+        href: '/operations/petty-cash',
+        icon: Banknote,
       },
     ],
   },
@@ -286,7 +320,7 @@ export function SidebarNav({
             <Settings className="h-5 w-5" />
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden overflow-hidden">
-            <span className="text-lg tracking-tight truncate leading-tight">OPEC OpsFlow</span>
+            <span className="text-base tracking-tight truncate leading-tight">OPEC OpsFlow</span>
             <span className="text-[8px] opacity-60 uppercase tracking-widest font-black truncate">Platform v2.0</span>
           </div>
         </div>
@@ -331,7 +365,7 @@ export function SidebarNav({
                             <CollapsibleTrigger asChild>
                               <SidebarMenuButton tooltip={sub.title} className="transition-all duration-200 h-auto min-h-10 py-2">
                                 <sub.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="font-semibold text-[11px] tracking-tight text-left leading-snug line-clamp-2">
+                                <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'text-left leading-snug line-clamp-2')}>
                                   {sub.title}
                                 </span>
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
@@ -368,7 +402,7 @@ export function SidebarNav({
                             <CollapsibleTrigger asChild>
                               <SidebarMenuButton tooltip={sub.title} className="transition-all duration-200">
                                 <sub.icon className="h-4 w-4 text-muted-foreground" />
-                                <span className="font-semibold text-xs tracking-tight truncate">{sub.title}</span>
+                                <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'truncate')}>{sub.title}</span>
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                               </SidebarMenuButton>
                             </CollapsibleTrigger>
@@ -404,7 +438,12 @@ export function SidebarNav({
           if (group.hrStructured) {
             const subsections = HR_NAV_SUBSECTIONS.map((sub) => ({
               ...sub,
-              visibleItems: sub.items.filter((item) => canViewHrHubItem(user, profile, admin, item)),
+              visibleItems: sub.items.filter((item) => {
+                if (sub.audiencePayrollLeadsOnly && !canViewHrPayrollFlowSubsection(user, profile, admin)) {
+                  return false;
+                }
+                return canViewHrHubItem(user, profile, admin, item);
+              }),
             })).filter((s) => s.visibleItems.length > 0);
 
             if (subsections.length === 0) return null;
@@ -419,6 +458,27 @@ export function SidebarNav({
                   <SidebarMenu>
                     {subsections.map((sub) => {
                       const isSubActive = sub.visibleItems.some((it) => pathMatches(pathname, it.href));
+                      if (sub.visibleItems.length === 1) {
+                        const item = sub.visibleItems[0];
+                        const active = pathMatches(pathname, item.href);
+                        return (
+                          <SidebarMenuItem key={sub.title}>
+                            <SidebarMenuButton
+                              asChild
+                              isActive={active}
+                              tooltip={`${sub.title} — ${sub.description}`}
+                              className="transition-all duration-200"
+                            >
+                              <Link href={item.href}>
+                                <item.icon
+                                  className={`h-4 w-4 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                />
+                                <span className={SIDEBAR_MAIN_ITEM_TEXT}>{item.title}</span>
+                              </Link>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      }
                       return (
                         <Collapsible key={sub.title} defaultOpen={isSubActive} className="group">
                           <SidebarMenuItem>
@@ -429,10 +489,8 @@ export function SidebarNav({
                               >
                                 <sub.icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                                 <div className="grid min-w-0 flex-1 gap-0.5 pr-1 text-left leading-tight">
-                                  <span className="line-clamp-2 text-[11px] font-semibold tracking-tight text-foreground">
-                                    {sub.title}
-                                  </span>
-                                  <span className="line-clamp-2 text-[9px] font-normal text-muted-foreground">
+                                  <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'line-clamp-2')}>{sub.title}</span>
+                                  <span className="line-clamp-2 text-[10px] font-normal text-muted-foreground">
                                     {sub.description}
                                   </span>
                                 </div>
@@ -485,22 +543,24 @@ export function SidebarNav({
 
           if (visibleItems.length === 0) return null;
 
-          const staffingBasePaths = ['/waves', '/assignments', '/mobilization'];
-          const storeBillingExactHrefs = ['/store', '/store/vendor-bills'];
+          const staffingBasePaths = ['/po-active-quota-queue', '/waves', '/assignments', '/mobilization'];
+          const warehousePathSet = new Set<string>(OPS_WAREHOUSE_SUB_PATHS);
           const staffingItems =
             group.label === 'งานปฏิบัติการ (Operations)'
               ? visibleItems.filter((item) => staffingBasePaths.includes(item.href.split('?')[0]))
               : [];
           const storeBillingItems =
             group.label === 'งานปฏิบัติการ (Operations)'
-              ? visibleItems.filter((item) => storeBillingExactHrefs.includes(item.href.split('?')[0]))
+              ? OPS_WAREHOUSE_SUB_PATHS.map((path) =>
+                  visibleItems.find((item) => item.href.split('?')[0] === path),
+                ).filter((x): x is NavItem => x != null)
               : [];
           const restItems =
             group.label === 'งานปฏิบัติการ (Operations)'
               ? visibleItems.filter(
                   (item) =>
                     !staffingBasePaths.includes(item.href.split('?')[0]) &&
-                    !storeBillingExactHrefs.includes(item.href.split('?')[0]),
+                    !warehousePathSet.has(item.href.split('?')[0]),
                 )
               : visibleItems;
 
@@ -522,7 +582,7 @@ export function SidebarNav({
                           <CollapsibleTrigger asChild>
                             <SidebarMenuButton tooltip="Wave → มอบหมาย → เตรียมส่งตัว" className="transition-all duration-200">
                               <Waves className="h-4 w-4 text-muted-foreground" />
-                              <span className="font-semibold text-xs tracking-tight">จัดคนงานตาม PO</span>
+                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>การจัดการ Manpower</span>
                               <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                             </SidebarMenuButton>
                           </CollapsibleTrigger>
@@ -554,13 +614,13 @@ export function SidebarNav({
                           asChild
                           isActive={pathMatches(pathname, singleStoreBilling.href)}
                           tooltip={singleStoreBilling.title}
-                          className={`transition-all duration-200 ${pathMatches(pathname, singleStoreBilling.href) ? 'font-bold' : ''}`}
+                          className="transition-all duration-200"
                         >
                           <Link href={singleStoreBilling.href}>
                             <SingleStoreBillingIcon
                               className={`h-4 w-4 ${pathMatches(pathname, singleStoreBilling.href) ? 'text-primary' : 'text-muted-foreground'}`}
                             />
-                            <span className="font-semibold text-xs tracking-tight">{singleStoreBilling.title}</span>
+                            <span className={SIDEBAR_MAIN_ITEM_TEXT}>{singleStoreBilling.title}</span>
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -570,11 +630,11 @@ export function SidebarNav({
                         <SidebarMenuItem>
                           <CollapsibleTrigger asChild>
                             <SidebarMenuButton
-                              tooltip="คลังอุปกรณ์และรับวางบิลคู่ค้า"
+                              tooltip="คลัง รับวางบิล คู่ค้า และจัดซื้อ"
                               className="transition-all duration-200"
                             >
                               <Warehouse className="h-4 w-4 text-muted-foreground" />
-                              <span className="font-semibold text-xs tracking-tight">คลัง / วางบิลคู่ค้า</span>
+                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>การจัดการคลังสินค้า</span>
                               <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                             </SidebarMenuButton>
                           </CollapsibleTrigger>
@@ -606,13 +666,13 @@ export function SidebarNav({
                           asChild
                           isActive={pathMatches(pathname, item.href)}
                           tooltip={item.title}
-                          className={`transition-all duration-200 ${pathMatches(pathname, item.href) ? 'font-bold' : ''}`}
+                          className="transition-all duration-200"
                         >
                           <Link href={item.href}>
                             <item.icon
                               className={`h-4 w-4 ${pathMatches(pathname, item.href) ? 'text-primary' : 'text-muted-foreground'}`}
                             />
-                            <span className="font-semibold text-xs tracking-tight">{item.title}</span>
+                            <span className={SIDEBAR_MAIN_ITEM_TEXT}>{item.title}</span>
                           </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -637,13 +697,13 @@ export function SidebarNav({
                         asChild
                         isActive={pathMatches(pathname, item.href)}
                         tooltip={item.title}
-                        className={`transition-all duration-200 ${pathMatches(pathname, item.href) ? 'font-bold' : ''}`}
+                        className="transition-all duration-200"
                       >
                         <Link href={item.href}>
                           <item.icon
                             className={`h-4 w-4 ${pathMatches(pathname, item.href) ? 'text-primary' : 'text-muted-foreground'}`}
                           />
-                          <span className="font-semibold text-xs tracking-tight">{item.title}</span>
+                          <span className={SIDEBAR_MAIN_ITEM_TEXT}>{item.title}</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>

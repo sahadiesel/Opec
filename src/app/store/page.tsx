@@ -229,7 +229,7 @@ export default function StoreDashboardPage() {
         </div>
 
         {/* Action Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <QuickActionCard 
             title="เบิกอุปกรณ์" 
             sub="Issue to Worker" 
@@ -606,8 +606,8 @@ function QuickActionCard({ title, sub, icon: Icon, href, color }: any) {
             <Icon className="h-5 w-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-sm text-primary truncate leading-tight">{title}</p>
-            <p className="text-[10px] text-muted-foreground font-medium truncate">{sub}</p>
+            <p className="font-bold text-sm text-primary leading-snug line-clamp-2">{title}</p>
+            <p className="text-[10px] text-muted-foreground font-medium leading-snug line-clamp-2 mt-0.5">{sub}</p>
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
         </CardContent>

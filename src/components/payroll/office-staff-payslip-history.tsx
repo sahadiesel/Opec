@@ -7,13 +7,21 @@ import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase
 import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
 import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 
-function StaffPayslipRow({ line }: { line: OfficePayrollLine }) {
+function StaffPayslipRow({
+  line,
+  companyProfile,
+}: {
+  line: OfficePayrollLine;
+  companyProfile?: CompanyDocumentProfileNames | null;
+}) {
   const firestore = useFirestore();
   const runId = line.officePayrollRunId;
   const runRef = useMemoFirebase(
@@ -43,7 +51,7 @@ function StaffPayslipRow({ line }: { line: OfficePayrollLine }) {
     );
   }
 
-  const model = buildPayslipFromOfficeLine(line, run);
+  const model = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
 
   return (
     <TableRow>
@@ -64,6 +72,7 @@ function StaffPayslipRow({ line }: { line: OfficePayrollLine }) {
 
 export function OfficeStaffPayslipHistory({ staffId, currentUser }: { staffId: string; currentUser: User | null }) {
   const firestore = useFirestore();
+  const { profile: companyProfile } = useCompanyDocumentProfile();
   const allowed = canViewPayrollPerFirestoreRules(currentUser);
 
   const linesQuery = useMemoFirebase(
@@ -118,7 +127,7 @@ export function OfficeStaffPayslipHistory({ staffId, currentUser }: { staffId: s
             </TableHeader>
             <TableBody>
               {sorted.map((line) => (
-                <StaffPayslipRow key={line.id} line={line} />
+                <StaffPayslipRow key={line.id} line={line} companyProfile={companyProfile} />
               ))}
             </TableBody>
           </Table>

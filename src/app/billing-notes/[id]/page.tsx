@@ -242,7 +242,7 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
       <div className="max-w-[1600px] mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => router.push('/billing-notes')}>
+            <Button variant="ghost" size="icon" onClick={() => router.push('/draft-invoices')}>
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
@@ -260,6 +260,18 @@ export default function BillingNoteDetailPage({ params }: { params: Promise<{ id
             </Badge>
           </div>
         </div>
+
+        <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+          <Info className="h-4 w-4 text-amber-800" />
+          <AlertTitle>งานเรียกเก็บหลักอยู่ที่ «รายการใบแจ้งหนี้ (เรียกเก็บ)»</AlertTitle>
+          <AlertDescription className="text-sm">
+            ระบบใหม่สร้างและติดตามที่{' '}
+            <Link href="/draft-invoices" className="font-semibold underline">
+              /draft-invoices
+            </Link>{' '}
+            แทนใบวางบิล — หน้านี้เหลือสำหรับเอกสารเก่าที่อ้างอิงแล้ว
+          </AlertDescription>
+        </Alert>
 
         {linkedInvoicesIndexUrl || (linkedInvoicesError && isFirestoreMissingIndexError(linkedInvoicesError)) ? (
           <Alert variant="destructive">

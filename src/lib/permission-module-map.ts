@@ -28,6 +28,7 @@ export const DOMAIN_TO_MODULE_MAP: Record<string, string> = {
   'store_return_slips': 'store_inventory',
   'store_writeoffs': 'store_inventory',
   'cashbook_entries': 'cashbook',
+  'withholding_at_source_items': 'withholding_tax_items',
   'number_sequences': 'document_numbering',
 };
 

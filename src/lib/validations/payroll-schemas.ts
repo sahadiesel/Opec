@@ -81,4 +81,16 @@ export const PayrollBatchLineSchema = z.object({
   d8Snapshot: z.record(z.any()).optional().nullable(),
   exportStatus: z.enum(['pending', 'exported', 'failed']),
   remarks: z.string().optional().nullable(),
+  hrLineAdjustments: z
+    .object({
+      allowanceItems: z.array(z.object({ label: z.string(), amount: z.number() })).default([]),
+      deductionItems: z.array(z.object({ label: z.string(), amount: z.number() })).default([]),
+      pitWithholdingOverride: z.number().nullable().optional(),
+      pitWithholdingOverrideMaxMarginalRatePercent: z.number().min(0).max(35).nullable().optional(),
+      notes: z.string().optional().nullable(),
+      updatedAt: z.number().optional(),
+      updatedBy: z.string().optional(),
+    })
+    .optional()
+    .nullable(),
 });

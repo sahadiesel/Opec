@@ -8,6 +8,7 @@ import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase
 import { collection, doc } from 'firebase/firestore';
 import type { PayrollBatch, PayrollBatchLine, PayrollPeriod, User } from '@/lib/types';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -35,11 +36,12 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
 
   const periodLabel = period?.label || `${batch?.payrollPeriodId ?? ''}`;
+  const { profile: companyProfile } = useCompanyDocumentProfile();
 
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
-    return lines.map((line) => buildPayslipFromWorkerLine(line, batch, periodLabel));
-  }, [batch, lines, periodLabel]);
+    return lines.map((line) => buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined));
+  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn]);
 
   const handlePrintAll = () => window.print();
 

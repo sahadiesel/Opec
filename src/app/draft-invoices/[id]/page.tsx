@@ -28,6 +28,7 @@ import {
   Customer,
   MainContract,
   PurchaseOrder,
+  Quotation,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
@@ -38,6 +39,8 @@ import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,6 +58,7 @@ import {
   sendCommercialDraftToCustomer,
   voidCommercialInvoice,
   updateCommercialDraftInvoice,
+  QUOTATION_PO_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
 import {
   buildCommercialInvoicePrintHtml,
@@ -114,6 +118,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [taxFromComBusy, setTaxFromComBusy] = useState(false);
   const [offerTaxDialogOpen, setOfferTaxDialogOpen] = useState(false);
   const [draftLines, setDraftLines] = useState<CommercialInvoiceLine[]>([]);
+  const [notesDraft, setNotesDraft] = useState('');
 
   const canSee = useMemo(
     () => !!currentUser && canView(currentUser, 'draft_invoices'),
@@ -137,6 +142,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   useEffect(() => {
     if (!invoice) return;
     setDraftLines((invoice.lines ?? []).map((l) => ({ ...l })));
+    setNotesDraft(invoice.notes ?? '');
   }, [invoice?.id, invoice?.updatedAt]);
 
   const custRef = useMemoFirebase(
@@ -176,6 +182,15 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   );
   const { data: mainContract } = useDoc<MainContract>(mainContractRef as any);
 
+  const quotationRef = useMemoFirebase(
+    () =>
+      firestore && purchaseOrder?.quotationId
+        ? doc(firestore, 'quotations', purchaseOrder.quotationId)
+        : null,
+    [firestore, purchaseOrder?.quotationId],
+  );
+  const { data: quotation } = useDoc<Quotation>(quotationRef as any);
+
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
   const previewTotals = useMemo(() => {
@@ -189,12 +204,15 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const handlePrintCommercial = () => {
     if (!invoice) return;
+    const invoiceForPrint =
+      invoice.status === 'DRAFT' && canAct ? { ...invoice, notes: notesDraft } : invoice;
     const body = buildCommercialInvoicePrintHtml({
       company: companyProfile ?? undefined,
-      invoice,
+      invoice: invoiceForPrint,
       customer: customer ?? undefined,
       purchaseOrder: purchaseOrder ?? undefined,
       mainContract: mainContract ?? undefined,
+      quotation: quotation ?? undefined,
       lines: draftLines,
       amountBeforeTax: previewTotals.before,
       vatAmount: previewTotals.vat,
@@ -304,8 +322,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     if (!firestore || !currentUser || !canAct || !invoice || invoice.status !== 'DRAFT') return;
     setSaveBusy(true);
     try {
-      await updateCommercialDraftInvoice(firestore, invoice.id, draftLines, currentUser);
-      toast({ title: 'บันทึกแล้ว', description: 'อัปเดตรายการและยอดก่อน VAT / VAT / รวม' });
+      await updateCommercialDraftInvoice(firestore, invoice.id, draftLines, currentUser, {
+        notes: notesDraft,
+      });
+      toast({ title: 'บันทึกแล้ว', description: 'อัปเดตรายการ เงื่อนไข/หมายเหตุ และยอดก่อน VAT / VAT / รวม' });
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
@@ -531,7 +551,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         <Card>
           <CardHeader>
             <CardTitle>หัวเอกสาร</CardTitle>
-            <CardDescription>อ้างอิง PO / Wave และช่วง timesheet</CardDescription>
+            <CardDescription>อ้างอิง PO / Wave (หรือ PO ใบเสนอราคา) และช่วงวางบิล</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 text-sm">
             <div className="flex items-start gap-2">
@@ -546,7 +566,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <div>{formatStoredDateThaiBE(invoice.issueDate)}</div>
             </div>
             <div>
-              <div className="text-muted-foreground text-xs">ช่วง timesheet</div>
+              <div className="text-muted-foreground text-xs">
+                {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER ? 'ช่วงวางบิล' : 'ช่วง timesheet'}
+              </div>
               <div>
                 {formatStoredDateThaiBE(invoice.periodStart)} — {formatStoredDateThaiBE(invoice.periodEnd)}
               </div>
@@ -554,10 +576,16 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             <div>
               <div className="text-muted-foreground text-xs">Wave</div>
               <div className="font-mono">
-                {invoice.waveCode || '—'}{' '}
-                <Link className="text-primary text-xs underline ml-2" href={`/waves`}>
-                  (รหัส {invoice.waveId.slice(0, 10)}…)
-                </Link>
+                {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER ? (
+                  <span>ใบเสนอราคา (ไม่มี Wave / timesheet)</span>
+                ) : (
+                  <>
+                    {invoice.waveCode || '—'}{' '}
+                    <Link className="text-primary text-xs underline ml-2" href={`/waves`}>
+                      (รหัส {invoice.waveId.slice(0, 10)}…)
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
             <div>
@@ -608,7 +636,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>ยกเลิกใบแจ้งหนี้ร่างนี้?</AlertDialogTitle>
+                  <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                   <AlertDialogDescription>
                     ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง — สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
                     ได้อีกครั้ง (ไม่ลบประวัติเอกสาร)
@@ -767,36 +795,52 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="pt-6 flex flex-col sm:flex-row sm:justify-end gap-2 text-sm">
-            <div className="text-right space-y-1">
-              <div>
-                <span className="text-muted-foreground">ยอดก่อน VAT ({invoice.vatPercent}%) </span>
-                <span className="font-mono font-medium">
-                  ฿
-                  {(invoice.status === 'DRAFT' && canAct
-                    ? previewTotals.before
-                    : invoice.amountBeforeTax
-                  ).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-                </span>
+        <Card className="border-none shadow-sm bg-white">
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+              <div className="space-y-2 order-2 lg:order-1">
+                <Label className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
+                  <Info className="h-3 w-3" /> Term &amp; Note (เงื่อนไขและหมายเหตุ)
+                </Label>
+                <Textarea
+                  className="text-sm min-h-[120px] resize-y"
+                  placeholder="ระบุเงื่อนไขการเรียกเก็บหรือหมายเหตุที่ต้องการแสดงในเอกสารพิมพ์..."
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  disabled={invoice.status !== 'DRAFT' || !canAct}
+                />
               </div>
-              <div>
-                <span className="text-muted-foreground">VAT </span>
-                <span className="font-mono font-medium">
-                  ฿
-                  {(invoice.status === 'DRAFT' && canAct ? previewTotals.vat : invoice.vatAmount).toLocaleString(
-                    'th-TH',
-                    { minimumFractionDigits: 2 },
-                  )}
-                </span>
-              </div>
-              <div className="text-lg font-bold text-primary pt-2">
-                รวม ฿
-                {(invoice.status === 'DRAFT' && canAct ? previewTotals.total : invoice.totalAmount).toLocaleString(
-                  'th-TH',
-                  { minimumFractionDigits: 2 },
-                )}{' '}
-                {invoice.currency}
+              <div className="flex flex-col sm:flex-row sm:justify-end text-sm order-1 lg:order-2">
+                <div className="text-right space-y-1 w-full">
+                  <div>
+                    <span className="text-muted-foreground">ยอดก่อน VAT ({invoice.vatPercent}%) </span>
+                    <span className="font-mono font-medium">
+                      ฿
+                      {(invoice.status === 'DRAFT' && canAct
+                        ? previewTotals.before
+                        : invoice.amountBeforeTax
+                      ).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">VAT </span>
+                    <span className="font-mono font-medium">
+                      ฿
+                      {(invoice.status === 'DRAFT' && canAct ? previewTotals.vat : invoice.vatAmount).toLocaleString(
+                        'th-TH',
+                        { minimumFractionDigits: 2 },
+                      )}
+                    </span>
+                  </div>
+                  <div className="text-lg font-bold text-primary pt-2">
+                    รวม ฿
+                    {(invoice.status === 'DRAFT' && canAct ? previewTotals.total : invoice.totalAmount).toLocaleString(
+                      'th-TH',
+                      { minimumFractionDigits: 2 },
+                    )}{' '}
+                    {invoice.currency}
+                  </div>
+                </div>
               </div>
             </div>
           </CardContent>

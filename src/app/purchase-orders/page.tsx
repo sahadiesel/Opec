@@ -239,12 +239,18 @@ function CustomerPOsPageContent() {
     }
   };
 
-  const approvePoFromList = async (poId: string) => {
+  const approvePoFromList = async (po: PurchaseOrder) => {
     if (!firestore || !currentUser || !canApprovePO) return;
-    setListActionId(poId);
+    setListActionId(po.id);
     try {
-      await updateDoc(doc(firestore, 'purchase_orders', poId), { status: 'active', updatedAt: Date.now() });
-      toast({ title: 'อนุมัติ PO แล้ว', description: 'สถานะ Active — สร้าง Wave ได้' });
+      await updateDoc(doc(firestore, 'purchase_orders', po.id), { status: 'active', updatedAt: Date.now() });
+      toast({
+        title: 'อนุมัติ PO แล้ว',
+        description:
+          po.poType === 'quotation'
+            ? 'สถานะ Active — ออกใบวางบิล / ใบกำกับภาษีได้ (ไม่มี Wave / Timesheet)'
+            : 'สถานะ Active — สร้าง Wave ได้',
+      });
     } catch (e) {
       console.error(e);
       toast({ variant: 'destructive', title: 'อนุมัติไม่สำเร็จ' });
@@ -548,7 +554,7 @@ function CustomerPOsPageContent() {
                                       size="icon"
                                       className="h-8 w-8 shrink-0 bg-emerald-600 hover:bg-emerald-700"
                                       disabled={listActionId === po.id}
-                                      onClick={() => void approvePoFromList(po.id)}
+                                      onClick={() => void approvePoFromList(po)}
                                     >
                                       {listActionId === po.id ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -560,7 +566,11 @@ function CustomerPOsPageContent() {
                                   </span>
                                 </TooltipTrigger>
                                 <TooltipContent side="top">
-                                  <p>อนุมัติ PO — สถานะ Active (สร้าง Wave ได้)</p>
+                                  <p>
+                                    {po.poType === 'quotation'
+                                      ? 'อนุมัติ PO — Active (ออกใบวางบิล/ใบกำกับ — ไม่มี Wave)'
+                                      : 'อนุมัติ PO — สถานะ Active (สร้าง Wave ได้)'}
+                                  </p>
                                 </TooltipContent>
                               </Tooltip>
                             )}
@@ -629,16 +639,16 @@ function CustomerPOsPageContent() {
                 <div>
                   <p className="font-bold">ระบุรายการสั่งจอง (Manage PO Lines)</p>
                   <p className="text-muted-foreground text-xs">
-                    สายสัญญา: เพิ่มโควต้า → Wave → มอบหมาย / สายใบเสนอราคา: ขายสินค้าหรือบริการครั้งเดียวจบ (ไม่ใช้ Wave) ส่งมอบแล้ววางบิล — ทั้งสองสายต้องมี Sales Term และใบวางบิลผูก PO ก่อนออกใบกำกับ
+                    สายสัญญา: เพิ่มโควต้า → Wave → มอบหมาย / สายใบเสนอราคา: ขายสินค้าหรือบริการครั้งเดียวจบ (ไม่ใช้ Wave) — ทั้งสองสายเรียกเก็บผ่าน «รายการใบแจ้งหนี้» ก่อนออกใบกำกับภาษี
                   </p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">สร้าง Wave แล้วมอบหมายคนงาน (Wave → Assignments)</p>
+                  <p className="font-bold">สายสัญญา: Wave → มอบหมายคนงาน (สายใบเสนอราคาไม่ใช้ขั้นนี้)</p>
                   <p className="text-muted-foreground text-xs">
-                    สร้างหรือเลือก Wave ที่ผูกกับ PO/PO Line ของใบสั่งซื้อนี้ จากนั้นไปที่การมอบหมาย เลือก Wave แล้วส่งรายชื่อคนงานที่พร้อม (Ready) — การมอบหมายไม่ได้ผูกกับ PO Line โดยตรง
+                    PO จากสัญญา — Wave + timesheet แล้วสร้างใบแจ้งหนี้ — PO จากใบเสนอราคาใช้รายการ PO Line → ใบแจ้งหนี้ → ใบกำกับภาษี → รับเงิน
                   </p>
                 </div>
               </div>

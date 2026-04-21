@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Loader2, Send, Banknote, ClipboardCheck } from 'lucide-react';
+import { ArrowLeft, Loader2, Send, Banknote, ClipboardCheck, Printer } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { collection, doc, setDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -24,6 +24,9 @@ import {
   Vendor,
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
+import { supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
+import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -43,7 +46,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
@@ -126,6 +136,84 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     const first = bankAccounts.find((b) => b.status === 'ACTIVE');
     if (first) setPayoutBankId(first.id);
   }, [bankAccounts, bill?.id, payoutBankId]);
+
+  const grossForPayment = useMemo(() => {
+    if (!purchase || !bill) return 0;
+    return Number(bill.billAmount ?? purchase.totalAmount) || 0;
+  }, [bill, purchase]);
+
+  /** ยอดงวดรวม VAT สำหรับคำนวณหัก (ให้ตรงกับ milestone ถ้ามี) */
+  const grossInclVatForBill = useMemo(() => {
+    if (!purchase || !bill) return 0;
+    if (linkedMilestone != null) return Number(linkedMilestone.amount) || 0;
+    return Number(bill.billAmount ?? purchase.totalAmount) || 0;
+  }, [purchase, bill, linkedMilestone]);
+
+  /** ฐานหัก ณ ที่จ่ายตาม PO — ใช้ยอดงวดถ้ามี milestone */
+  const withholdingPreview = useMemo(() => {
+    if (!purchase?.supplierWithholdingEnabled) return null;
+    const rate = Number(purchase.supplierWithholdingRatePercent) || 0;
+    if (rate < 0.005) return null;
+    if (!bill) return null;
+    const grossInclVat =
+      linkedMilestone != null
+        ? Number(linkedMilestone.amount) || 0
+        : Number(bill.billAmount ?? purchase.totalAmount) || 0;
+    if (grossInclVat < 0.01) return null;
+    return supplierWithholdingOnMilestone(grossInclVat, rate, purchase);
+  }, [purchase, linkedMilestone, bill]);
+
+  const canPrintWithholdingSummary = !!withholdingPreview && withholdingPreview.wht > 0.005;
+
+  /** ตรงกับ executeVendorBillPayment: ตัดธนาคารเฉพาะสุทธิจ่ายคู่ค้า — หัก ณ ที่จ่ายไม่ผ่านบัญชี */
+  const bankDebitAmount = useMemo(() => {
+    if (withholdingPreview && withholdingPreview.wht > 0.005) return withholdingPreview.netPaid;
+    return grossInclVatForBill || grossForPayment;
+  }, [withholdingPreview, grossForPayment, grossInclVatForBill]);
+
+  const handlePrintWithholding = () => {
+    if (!purchase || !bill || !vendor || !withholdingPreview || !canPrintWithholdingSummary) return;
+    const m = linkedMilestone;
+    const seq = m?.sequence ?? 1;
+    const label = m?.label || 'ชำระตามใบรับวางบิล';
+    const gross = m ? m.amount : grossForPayment;
+    const { wht, netPaid } = withholdingPreview;
+    const rate = Number(purchase.supplierWithholdingRatePercent) || 0;
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const vn = vendor.vendorName || '—';
+    const rows = `<tr>
+      <td style="padding:6px;border:1px solid #ccc">${seq}</td>
+      <td style="padding:6px;border:1px solid #ccc">${escapeHtml(label)}</td>
+      <td style="padding:6px;border:1px solid #ccc;text-align:right">${gross.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+      <td style="padding:6px;border:1px solid #ccc;text-align:right">${wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+      <td style="padding:6px;border:1px solid #ccc;text-align:right;font-weight:bold">${netPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+    </tr>`;
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปหัก ณ ที่จ่าย ${escapeHtml(bill.receiptNo)}</title>
+  <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:900px;margin:0 auto} table{border-collapse:collapse;width:100%;margin-top:16px} th{background:#f3f4f6;text-align:left;padding:8px;border:1px solid #ccc}</style></head><body>
+  <h1>สรุปหัก ณ ที่จ่าย — ผู้รับเงิน (คู่ค้า)</h1>
+  <p><strong>เลขที่ PO:</strong> ${escapeHtml(purchase.purchaseNo || purchase.id)} &nbsp;|&nbsp; <strong>คู่ค้า:</strong> ${escapeHtml(vn)}</p>
+  <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ยอดแต่ละงวดชำระ)</p>
+  <p><strong>พิมพ์เมื่อ:</strong> ${escapeHtml(formatDateThaiBE(Date.now()))}</p>
+  <table>
+    <thead><tr>
+      <th>งวด</th><th>รายละเอียด</th><th style="text-align:right">ฐานจ่าย (บาท)</th><th style="text-align:right">หัก ณ ที่จ่าย (บาท)</th><th style="text-align:right">สุทธิจ่าย (บาท)</th>
+    </tr></thead>
+    <tbody>${rows}
+    <tr style="font-weight:bold;background:#fafafa">
+      <td colspan="2" style="padding:8px;border:1px solid #ccc">รวม</td>
+      <td style="padding:8px;border:1px solid #ccc;text-align:right">${gross.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+      <td style="padding:8px;border:1px solid #ccc;text-align:right">${wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+      <td style="padding:8px;border:1px solid #ccc;text-align:right">${netPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+    </tr>
+    </tbody>
+  </table>
+  <p style="margin-top:24px;font-size:12px;color:#666">เอกสารสำหรับแผนกบัญชี — ตรวจสอบอัตราตามประกาศกรมสรรพากร</p>
+  </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
 
   const saveDraft = async () => {
     if (!billRef || !bill || bill.status !== 'DRAFT') return;
@@ -312,7 +400,11 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   <CardDescription>
                     {isCashPo ? (
                       <>
-                        สร้างรายการ cashbook แบบจ่ายออก หักยอดบัญชีธนาคาร ปิดเจ้าหนี้ — แนะนำทำจากเมนู{' '}
+                        ลง cashbook เป็นจ่ายออก — <strong>ตัดบัญชีธนาคารเฉพาะสุทธิโอนให้คู่ค้า</strong>
+                        {purchase?.supplierWithholdingEnabled
+                          ? ' (ส่วนหัก ณ ที่จ่ายสะสมที่เมนูรายการหัก ณ ที่จ่าย ไม่ตัดบัญชีตอนโอน)'
+                          : ''}
+                        {' — แนะนำทำจากเมนู '}
                         <Link href="/accounting/outgoing-review" className="font-semibold underline">
                           ตรวจสอบรายจ่าย
                         </Link>{' '}
@@ -325,54 +417,101 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                     )}
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-4">
-                  <div className="space-y-2">
-                    <Label>บัญชีธนาคารที่ตัดจ่าย</Label>
-                    <Select value={payoutBankId || undefined} onValueChange={setPayoutBankId}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="เลือกบัญชี..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(bankAccounts || [])
-                          .filter((b) => b.status === 'ACTIVE')
-                          .map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
-                              {b.bankName} · {b.accountNumber} (฿{b.currentBalance.toLocaleString()})
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2 min-w-0">
+                      <Label>บัญชีธนาคารที่ตัดจ่าย</Label>
+                      <Select value={payoutBankId || undefined} onValueChange={setPayoutBankId}>
+                        <SelectTrigger className="h-11 w-full">
+                          <SelectValue placeholder="เลือกบัญชี..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(bankAccounts || [])
+                            .filter((b) => b.status === 'ACTIVE')
+                            .map((b) => (
+                              <SelectItem key={b.id} value={b.id}>
+                                {b.bankName} · {b.accountNumber} (฿{b.currentBalance.toLocaleString()})
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2 min-w-0">
+                      <Label>วิธีชำระ</Label>
+                      <Select value={payoutMethod} onValueChange={(v) => setPayoutMethod(v as PaymentMethod)}>
+                        <SelectTrigger className="h-11 w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="TRANSFER">โอนเงิน</SelectItem>
+                          <SelectItem value="CASH">เงินสด</SelectItem>
+                          <SelectItem value="CHEQUE">เช็ค</SelectItem>
+                          <SelectItem value="OTHER">อื่น ๆ</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>วิธีชำระ</Label>
-                    <Select value={payoutMethod} onValueChange={(v) => setPayoutMethod(v as PaymentMethod)}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="TRANSFER">โอนเงิน</SelectItem>
-                        <SelectItem value="CASH">เงินสด</SelectItem>
-                        <SelectItem value="CHEQUE">เช็ค</SelectItem>
-                        <SelectItem value="OTHER">อื่น ๆ</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2 min-w-0">
+                      <Label>วันที่ทำรายการ (cashbook)</Label>
+                      <DatePickerThaiBE
+                        className="h-11 w-full"
+                        value={htmlDateValueToTimestampMs(payoutEntryDate)}
+                        onChange={(ms) => setPayoutEntryDate(timestampToHtmlDateValue(ms))}
+                      />
+                    </div>
+                    <div className="space-y-2 min-w-0">
+                      <Label>ยอดตัดจากบัญชีธนาคาร (โอนสุทธิให้คู่ค้า)</Label>
+                      <Input
+                        readOnly
+                        className="h-11 font-mono font-bold text-right bg-muted/50"
+                        value={`฿ ${bankDebitAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                      />
+                      {withholdingPreview && withholdingPreview.wht > 0.005 ? (
+                        <div className="text-[11px] text-muted-foreground leading-snug space-y-1">
+                          <p>
+                            ยอดงวด (รวม VAT) ฿
+                            {grossInclVatForBill.toLocaleString(undefined, { minimumFractionDigits: 2 })} — หัก ณ ที่จ่าย ฿
+                            {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })} (
+                            {purchase?.supplierWithholdingRatePercent}%) ไม่ตัดจากบัญชีตอนโอน — สะสมที่{' '}
+                            <Link href="/accounting/withholding-tax" className="font-semibold text-primary underline">
+                              รายการหัก ณ ที่จ่าย
+                            </Link>{' '}
+                            เพื่อสรุปนำส่งสรรพากร
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">
+                          ไม่มีหัก ณ ที่จ่าย — ตัดบัญชีเท่ายอดงวด/ใบวางบิล
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>วันที่ทำรายการ (cashbook)</Label>
-                    <DatePickerThaiBE
-                      className="h-11"
-                      value={htmlDateValueToTimestampMs(payoutEntryDate)}
-                      onChange={(ms) => setPayoutEntryDate(timestampToHtmlDateValue(ms))}
-                    />
+                  <div className="flex flex-col sm:flex-row flex-wrap gap-3 pt-1">
+                    <Button
+                      className="bg-green-600 hover:bg-green-700 font-bold gap-2 sm:flex-1 min-h-11"
+                      disabled={paying || !payoutBankId}
+                      onClick={() => void markPaid()}
+                    >
+                      {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
+                      ยืนยันจ่ายเงิน + ลง cashbook
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="font-bold gap-2 border-primary/30 min-h-11 sm:flex-1"
+                      disabled={!canPrintWithholdingSummary}
+                      onClick={() => handlePrintWithholding()}
+                      title={
+                        canPrintWithholdingSummary
+                          ? 'พิมพ์สรุปหัก ณ ที่จ่าย (ผู้รับเงิน)'
+                          : 'เปิดใช้เมื่อ PO เปิดหัก ณ ที่จ่ายและมียอดหักจากงวดนี้'
+                      }
+                    >
+                      <Printer className="h-4 w-4" />
+                      สร้างใบหัก ณ ที่จ่าย (พิมพ์)
+                    </Button>
                   </div>
-                  <Button
-                    className="bg-green-600 hover:bg-green-700 font-bold gap-2 w-fit"
-                    disabled={paying || !payoutBankId}
-                    onClick={() => void markPaid()}
-                  >
-                    {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
-                    ยืนยันจ่ายเงิน + ลง cashbook
-                  </Button>
                 </CardContent>
               </Card>
             )}

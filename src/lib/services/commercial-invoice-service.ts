@@ -17,8 +17,10 @@ import type {
   CommercialInvoice,
   CommercialInvoiceLine,
   MainContract,
+  POLine,
   PurchaseOrder,
   Quotation,
+  QuotationLine,
   User,
   WaveMonthTimesheetReview,
 } from '@/lib/types';
@@ -33,19 +35,34 @@ function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** PO จากใบเสนอราคา — ไม่มี Wave; ใช้เป็นค่า waveId เพื่อแยกจากงาน timesheet */
+export const QUOTATION_PO_WAVE_PLACEHOLDER = '__quotation_po__';
+
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 }
 
-/** VAT สำหรับใบแจ้งหนี้เรียกเก็บ — อ้างอิงสัญญาหลักก่อน แล้วจึง quotation */
-async function resolveVatPercent(db: Firestore, customerId: string, contractId?: string): Promise<number> {
+/** VAT สำหรับใบแจ้งหนี้เรียกเก็บ — อ้างอิงสัญญาหลักก่อน แล้วจึงใบเสนอราคาที่ระบุ แล้วจึง quotation ของลูกค้า */
+async function resolveVatPercent(
+  db: Firestore,
+  customerId: string,
+  contractId?: string,
+  quotationId?: string,
+): Promise<number> {
   if (contractId) {
     const mcSnap = await getDoc(doc(db, 'main_contracts', contractId));
     if (mcSnap.exists()) {
       const mc = mcSnap.data() as MainContract;
       if (mc.vatPercent != null && !Number.isNaN(Number(mc.vatPercent))) return Number(mc.vatPercent);
+    }
+  }
+  if (quotationId) {
+    const qSnap = await getDoc(doc(db, 'quotations', quotationId));
+    if (qSnap.exists()) {
+      const q = qSnap.data() as Quotation;
+      if (q.taxPercent != null && !Number.isNaN(Number(q.taxPercent))) return Number(q.taxPercent);
     }
   }
   const quotationsSnap = await getDocs(
@@ -57,7 +74,7 @@ async function resolveVatPercent(db: Firestore, customerId: string, contractId?:
 }
 
 /**
- * สร้างใบแจ้งหนี้ร่าง (เรียกเก็บ) จาก timesheet ที่พร้อมวางบิล — แยกจากใบกำกับภาษี
+ * สร้างใบแจ้งหนี้ (เรียกเก็บ) จาก timesheet ที่พร้อมวางบิล — แยกจากใบกำกับภาษี
  */
 export async function findCommercialInvoiceByWaveMonthReview(
   db: Firestore,
@@ -76,10 +93,10 @@ export async function findCommercialInvoiceByWaveMonthReview(
 }
 
 /**
- * หลังผู้จัดการอนุมัติรอบเดือน — สร้างใบแจ้งหนี้ร่างอัตโนมัติ (ช่วงวันที่จาก review)
+ * หลังผู้จัดการอนุมัติรอบเดือน — สร้างใบแจ้งหนี้อัตโนมัติ (ช่วงวันที่จาก review)
  */
 /** กันสร้างซ้ำเมื่อมีใบเก่าที่ยังไม่มี sourceWaveMonthReviewId */
-/** ใช้บนหน้า list — รู้ว่า review งวดนี้มีใบแจ้งหนี้ร่างแล้วหรือยัง (รวมใบเก่าที่ไม่มี sourceWaveMonthReviewId) */
+/** ใช้บนหน้า list — รู้ว่า review งวดนี้มีใบแจ้งหนี้แล้วหรือยัง (รวมใบเก่าที่ไม่มี sourceWaveMonthReviewId) */
 export function commercialInvoiceCoversMonthReview(
   inv: CommercialInvoice,
   review: WaveMonthTimesheetReview,
@@ -121,6 +138,203 @@ async function findCommercialInvoiceByPoWaveAndPeriod(
   return null;
 }
 
+async function findCommercialInvoiceByQuotationPoPeriod(
+  db: Firestore,
+  poId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<{ id: string; invoiceNo: string } | null> {
+  const q = query(
+    collection(db, 'commercial_invoices'),
+    where('poId', '==', poId),
+    where('waveId', '==', QUOTATION_PO_WAVE_PLACEHOLDER),
+  );
+  const snap = await getDocs(q);
+  for (const d of snap.docs) {
+    const x = d.data() as CommercialInvoice;
+    if (x.status === 'VOID') continue;
+    if (x.periodStart === periodStart && x.periodEnd === periodEnd) {
+      return { id: d.id, invoiceNo: String(x.invoiceNo || '') };
+    }
+  }
+  return null;
+}
+
+/**
+ * สร้างใบแจ้งหนี้จาก PO สายใบเสนอราคา — ถ้ามี `po_lines` ใช้จาก PO ไม่เช่นนั้นดึงรายการจากใบเสนอราคาที่ PO อ้างอิง (ไม่ใช้ Wave / timesheet)
+ */
+export async function createCommercialDraftFromQuotationPoLines(
+  db: Firestore,
+  params: {
+    poId: string;
+    periodStart: string;
+    periodEnd: string;
+    issueDate: string;
+    currency?: string;
+    actor: User;
+    notes?: string;
+  },
+): Promise<{ id: string; invoiceNo: string }> {
+  const { poId, periodStart, periodEnd, issueDate, actor } = params;
+  const currency = params.currency || 'THB';
+
+  const periodDup = await findCommercialInvoiceByQuotationPoPeriod(db, poId, periodStart, periodEnd);
+  if (periodDup?.id) {
+    throw new Error(
+      `มีใบในงวดเดียวกันแล้ว (${periodDup.invoiceNo || periodDup.id}) — เปิดจากรายการด้านล่าง`,
+    );
+  }
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
+  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
+  const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+  if ((po.poType || 'contract') !== 'quotation') {
+    throw new Error('ใช้กับ PO จากใบเสนอราคาเท่านั้น — PO จากสัญญาให้ใช้ Wave + timesheet');
+  }
+
+  const quotationIdRef = (po.quotationId || '').trim();
+
+  const linesSnap = await getDocs(collection(db, 'purchase_orders', poId, 'po_lines'));
+  const poLines: POLine[] = linesSnap.docs.map((d) => {
+    const raw = d.data() as Omit<POLine, 'id'>;
+    return { ...raw, id: d.id };
+  });
+  const activePoLines = poLines.filter((l) => l.status !== 'cancelled');
+
+  let lines: CommercialInvoiceLine[];
+  let generationWarnings: string[];
+  let auditLineSource: string;
+
+  if (activePoLines.length > 0) {
+    lines = activePoLines.map((line) => {
+      const qty = Math.max(0, Number(line.quantity) || 0);
+      const unit = roundMoney(Number(line.sellRateSnapshot) || 0);
+      const amount = roundMoney(qty * unit);
+      const loc = (line.workLocation || '').trim();
+      const unitLabel = line.billingUnitSnapshot || 'unit';
+      return {
+        id: newLineId(),
+        description: loc
+          ? `${loc} — ${qty} × ${unit.toLocaleString()} (${unitLabel})`
+          : `PO Line — ${qty} × ${unit.toLocaleString()} (${unitLabel})`,
+        positionId: line.positionId,
+        quantity: qty,
+        unitPrice: unit,
+        amount,
+        lineSource: 'po_line' as const,
+      };
+    });
+    generationWarnings = ['สร้างจากรายการ PO Line (สายใบเสนอราคา) — ไม่มี timesheet / Wave'];
+    auditLineSource = 'PO Line';
+  } else {
+    if (!quotationIdRef) {
+      throw new Error(
+        'ไม่มีรายการใน PO และ PO ไม่ได้อ้างอิงใบเสนอราคา — เพิ่มรายการใน PO หรือเลือกใบเสนอราคาตอนลงทะเบียน PO',
+      );
+    }
+    const qLineSnap = await getDocs(collection(db, 'quotations', quotationIdRef, 'lines'));
+    const quoLines: QuotationLine[] = qLineSnap.docs.map((d) => {
+      const raw = d.data() as Omit<QuotationLine, 'id'>;
+      return { ...raw, id: d.id };
+    });
+    quoLines.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+    if (quoLines.length === 0) {
+      throw new Error(
+        'ไม่มีรายการในใบเสนอราคา — เพิ่มรายการในใบเสนอราคาก่อน หรือเพิ่มรายการใน PO',
+      );
+    }
+    lines = quoLines.map((line) => {
+      const qty = Math.max(0, Number(line.quantity) || 0);
+      const unit = roundMoney(Number(line.unitPrice) || 0);
+      const rawTotal = Number(line.lineTotal);
+      const amount = roundMoney(
+        Number.isFinite(rawTotal) && rawTotal !== 0 ? rawTotal : qty * unit,
+      );
+      const desc = (line.description || '').trim() || 'รายการ';
+      const unitLabel = (line.unit || '').trim();
+      const remarks = (line.remarks || '').trim();
+      const head = unitLabel ? `${desc} (${unitLabel})` : desc;
+      const tail = remarks ? `${head} — ${remarks}` : head;
+      const description = `${tail} — ${qty} × ${unit.toLocaleString()}`;
+      return {
+        id: newLineId(),
+        description,
+        quantity: qty,
+        unitPrice: unit,
+        amount,
+        lineSource: 'quotation_line' as const,
+      };
+    });
+    generationWarnings = ['สร้างจากรายการใบเสนอราคาที่ PO อ้างอิง — ไม่มี timesheet / Wave'];
+    auditLineSource = 'ใบเสนอราคา';
+  }
+
+  const amountBeforeTax = roundMoney(lines.reduce((s, l) => s + l.amount, 0));
+  if (amountBeforeTax <= 0) {
+    throw new Error('ยอดรวมเป็น 0 — ตรวจราคา/จำนวนในใบเสนอราคาหรือ PO Line');
+  }
+
+  const vatPercent = await resolveVatPercent(
+    db,
+    po.customerId,
+    po.contractId?.trim() || undefined,
+    quotationIdRef || undefined,
+  );
+  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
+  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+
+  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
+    actor: actor.displayName,
+    userId: actor.id,
+  });
+
+  const now = Date.now();
+  const payload: Omit<CommercialInvoice, 'id'> = {
+    invoiceNo,
+    status: 'DRAFT',
+    customerId: po.customerId,
+    contractId: po.contractId || undefined,
+    poId,
+    waveId: QUOTATION_PO_WAVE_PLACEHOLDER,
+    periodStart,
+    periodEnd,
+    issueDate,
+    currency,
+    vatPercent,
+    amountBeforeTax,
+    vatAmount,
+    withholdingTaxAmount: 0,
+    totalAmount,
+    lines,
+    generationWarnings,
+    timesheetCount: 0,
+    notes: params.notes,
+    createdAt: now,
+    createdByUid: actor.id,
+    createdByName: actor.displayName,
+    updatedAt: now,
+  };
+
+  const ref = await addDoc(
+    collection(db, 'commercial_invoices'),
+    sanitizeFirestorePayload(payload as Record<string, unknown>),
+  );
+
+  const linkedIds = [po.customerId, poId, quotationIdRef || undefined].filter(Boolean) as string[];
+
+  await writeAuditLog(db, actor, {
+    actionType: 'CREATE_COMMERCIAL_INVOICE',
+    entityType: 'CommercialInvoice',
+    entityId: ref.id,
+    entityLabel: `${invoiceNo} (PO ใบเสนอราคา)`,
+    sourceModule: 'commercial_invoices',
+    linkedIds,
+    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก ${auditLineSource}`,
+  });
+
+  return { id: ref.id, invoiceNo };
+}
+
 export async function ensureCommercialDraftInvoiceAfterMonthApproval(
   db: Firestore,
   review: WaveMonthTimesheetReview,
@@ -128,7 +342,7 @@ export async function ensureCommercialDraftInvoiceAfterMonthApproval(
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
   const existing = await findCommercialInvoiceByWaveMonthReview(db, review.id);
   if (existing?.id) {
-    return { ok: false, reason: `มีใบแจ้งหนี้ร่างแล้ว (${existing.invoiceNo || existing.id})` };
+    return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
   }
   const { start, end } = resolveWaveMonthPeriodBounds(review);
   const periodDup = await findCommercialInvoiceByPoWaveAndPeriod(db, review.poId, review.waveId, start, end);
@@ -254,7 +468,7 @@ export async function createCommercialDraftInvoice(
     entityLabel: `${invoiceNo} (wave ${waveId})`,
     sourceModule: 'commercial_invoices',
     linkedIds: [po.customerId, poId, waveId],
-    afterSummary: `สร้างใบแจ้งหนี้ร่าง (เรียกเก็บ) ${invoiceNo}`,
+    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo}`,
   });
 
   return { id: ref.id, invoiceNo };
@@ -268,7 +482,7 @@ export async function reopenCommercialInvoiceForCustomerRevision(
 ): Promise<void> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้ร่าง');
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
   if (cur.status !== 'PENDING_CUSTOMER') {
     throw new Error('เปิดแก้ไขได้เฉพาะใบที่ส่งลูกค้าแล้วและรอตรวจ');
@@ -305,7 +519,7 @@ export async function sendCommercialDraftToCustomer(
 ): Promise<void> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้ร่าง');
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
   if (cur.status !== 'DRAFT') throw new Error('ส่งได้เฉพาะเอกสารสถานะ DRAFT (ตรวจยอดภายในก่อน)');
 
@@ -333,7 +547,7 @@ export async function sendCommercialDraftToCustomer(
     entityLabel: `${cur.invoiceNo} → ส่งลูกค้า`,
     sourceModule: 'commercial_invoices',
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
-    afterSummary: 'ส่งใบแจ้งหนี้ร่างให้ลูกค้าตรวจสอบใน portal',
+    afterSummary: 'ส่งใบแจ้งหนี้ให้ลูกค้าตรวจสอบใน portal',
   });
 }
 
@@ -393,7 +607,7 @@ function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceL
   });
 }
 
-/** ยกเลิกใบร่างเมื่อคำนวณผิดหรือต้องสร้างใหม่ — ไม่ลบเอกสาร (VOID) */
+/** ยกเลิกใบแจ้งหนี้เมื่อคำนวณผิดหรือต้องสร้างใหม่ — ไม่ลบเอกสาร (VOID) */
 export async function voidCommercialInvoice(
   db: Firestore,
   invoiceId: string,
@@ -401,7 +615,7 @@ export async function voidCommercialInvoice(
 ): Promise<void> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้ร่าง');
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
   if (cur.status === 'VOID') return;
   if (cur.status === 'ISSUED') {
@@ -426,7 +640,7 @@ export async function voidCommercialInvoice(
     entityLabel: `${cur.invoiceNo} → ยกเลิก`,
     sourceModule: 'commercial_invoices',
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
-    afterSummary: 'ยกเลิกใบแจ้งหนี้ร่าง (รอสร้างใหม่จากงวด / PO)',
+    afterSummary: 'ยกเลิกใบแจ้งหนี้ (รอสร้างใหม่จากงวด / PO)',
   });
 }
 
@@ -438,7 +652,7 @@ export async function deleteCommercialInvoice(
 ): Promise<void> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้ร่าง');
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
 
   await deleteDoc(ref);
@@ -450,7 +664,7 @@ export async function deleteCommercialInvoice(
     entityLabel: cur.invoiceNo,
     sourceModule: 'commercial_invoices',
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
-    afterSummary: `ลบใบแจ้งหนี้ร่างถาวร (สถานะเดิม ${cur.status})`,
+    afterSummary: `ลบใบแจ้งหนี้ถาวร (สถานะเดิม ${cur.status})`,
   });
 }
 
@@ -460,10 +674,11 @@ export async function updateCommercialDraftInvoice(
   invoiceId: string,
   nextLines: CommercialInvoiceLine[],
   actor: User,
+  extra?: { notes?: string },
 ): Promise<void> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้ร่าง');
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
   if (cur.status !== 'DRAFT') {
     throw new Error('แก้ไขรายการได้เฉพาะใบสถานะ DRAFT (ตรวจภายใน)');
@@ -476,18 +691,20 @@ export async function updateCommercialDraftInvoice(
   const totalAmount = roundMoney(amountBeforeTax + vatAmount);
   const now = Date.now();
 
-  await updateDoc(
-    ref,
-    sanitizeFirestorePayload({
-      lines: normalized,
-      amountBeforeTax,
-      vatAmount,
-      totalAmount,
-      updatedAt: now,
-      updatedByUid: actor.id,
-      updatedByName: actor.displayName || actor.email || actor.id,
-    }),
-  );
+  const payload: Record<string, unknown> = {
+    lines: normalized,
+    amountBeforeTax,
+    vatAmount,
+    totalAmount,
+    updatedAt: now,
+    updatedByUid: actor.id,
+    updatedByName: actor.displayName || actor.email || actor.id,
+  };
+  if (extra && 'notes' in extra) {
+    payload.notes = (extra.notes ?? '').trim();
+  }
+
+  await updateDoc(ref, sanitizeFirestorePayload(payload as Record<string, unknown>) as any);
 
   await writeAuditLog(db, actor, {
     actionType: 'UPDATE',
@@ -496,6 +713,6 @@ export async function updateCommercialDraftInvoice(
     entityLabel: `${cur.invoiceNo} → แก้ไขรายการ`,
     sourceModule: 'commercial_invoices',
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
-    afterSummary: 'บันทึกการแก้ไขรายการใบแจ้งหนี้ร่าง (รวมส่วนลด/เพิ่ม)',
+    afterSummary: 'บันทึกการแก้ไขรายการใบแจ้งหนี้ (รวมส่วนลด/เพิ่ม)',
   });
 }

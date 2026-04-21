@@ -110,8 +110,8 @@ export default function TimesheetMonthApprovalQueuePage() {
         const billing = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, approvedRow, currentUser);
         const billingLine =
           billing.ok === true
-            ? ` — สร้างใบแจ้งหนี้ร่าง ${billing.invoiceNo} อัตโนมัติ (ตรวจยอดที่เมนูใบแจ้งหนี้ร่างก่อนส่งลูกค้า)`
-            : ` — ใบแจ้งหนี้ร่าง: ${billing.reason}`;
+            ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} อัตโนมัติ (ตรวจยอดที่เมนูรายการใบแจ้งหนี้ก่อนส่งลูกค้า)`
+            : ` — ใบแจ้งหนี้: ${billing.reason}`;
         const zeroPayrollHint =
           updated === 0
             ? ' — ไม่พบ timesheet ที่อัปเดตได้ในช่วงงวด (หรือถูก LOCKED หมด) — เปิดสรุปลงเวลารายเดือน (Wave) เดือนเดียวกัน แล้วกด «ซิงค์พร้อมจ่าย payroll»'

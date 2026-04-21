@@ -42,12 +42,15 @@ export function embeddedDefaultPayrollPolicies(): PayrollPolicyRecord[] {
     {
       id: 'embedded-tax-worker-th-v1',
       kind: 'tax',
-      name: 'Worker timesheet payroll — no PIT withhold (embedded)',
+      name: 'Worker payroll — PIT estimate TH (embedded default)',
       effectiveFrom: '2000-01-01',
       effectiveTo: null,
       status: 'active',
       appliesTo: 'worker',
-      config: { mode: 'none' },
+      config: {
+        mode: 'th_pit_monthly_annualized',
+        annualPersonalAllowance: DEFAULT_ANNUAL_PERSONAL_ALLOWANCE,
+      },
       createdAt: t,
       updatedAt: t,
     },

@@ -8,7 +8,11 @@ import type {
 } from '@/lib/types';
 
 export function isActiveOfficePayrollStaff(s: OfficeStaff): boolean {
-  return s.status === 'ACTIVE' && s.payrollBand !== 'EXECUTIVE';
+  return (
+    s.status === 'ACTIVE' &&
+    s.payrollBand !== 'EXECUTIVE' &&
+    s.excludeFromPayrollRuns !== true
+  );
 }
 
 export function officeStaffHasBank(s: OfficeStaff): boolean {
