@@ -98,6 +98,7 @@ type WaveBoardBlockProps = {
   wave: Wave;
   po: PurchaseOrder | undefined;
   targetDate: string;
+  onBoardDateChange: (timestampMs: number) => void;
   currentUser: User;
   workers: Worker[] | undefined;
   positionLabel: (id?: string) => string;
@@ -112,6 +113,7 @@ function WaveBoardBlock({
   wave,
   po,
   targetDate,
+  onBoardDateChange,
   currentUser,
   workers,
   positionLabel,
@@ -384,16 +386,31 @@ function WaveBoardBlock({
             ตั้งทั้งแผง: 8 ชม.
           </Button>
 
-          <div className="flex w-full min-w-[200px] flex-1 flex-wrap items-center justify-end gap-2 border-t border-dashed border-muted-foreground/25 pt-3 sm:ml-auto sm:w-auto sm:border-t-0 sm:pt-0 sm:pl-3 sm:border-l">
-            <Button
-              size="sm"
-              className="gap-1.5 bg-primary font-bold shadow-sm"
-              onClick={() => void handleSaveDraft()}
-              disabled={isSaving || !canEditTimesheets || isWaveMonthPeriodLocked}
-            >
-              {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-              บันทึกร่าง (เฉพาะ Wave นี้)
-            </Button>
+          <div className="flex w-full min-w-0 flex-1 flex-col gap-3 border-t border-dashed border-muted-foreground/25 pt-3 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:items-end sm:justify-end sm:gap-3 sm:border-t-0 sm:pt-0 sm:pl-3 sm:border-l sm:border-muted-foreground/25">
+            <div className="space-y-1.5 w-full min-w-[11rem] sm:w-auto shrink-0">
+              <Label className="text-[10px] font-black uppercase text-muted-foreground">
+                วันที่ปฏิบัติงาน (ใช้ร่วมทุก Wave)
+              </Label>
+              <DatePickerThaiBE
+                className="h-11"
+                value={htmlDateValueToTimestampMs(targetDate)}
+                onChange={onBoardDateChange}
+              />
+            </div>
+            <div className="flex flex-col items-stretch gap-1 sm:items-end sm:min-w-[7rem]">
+              <Button
+                size="sm"
+                className="gap-1.5 bg-primary font-bold shadow-sm"
+                onClick={() => void handleSaveDraft()}
+                disabled={isSaving || !canEditTimesheets || isWaveMonthPeriodLocked}
+              >
+                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                บันทึก
+              </Button>
+              <span className="text-[10px] text-muted-foreground text-center sm:text-right leading-tight">
+                บันทึกเฉพาะ Wave นี้
+              </span>
+            </div>
           </div>
         </div>
 
@@ -753,22 +770,10 @@ export default function WaveTimesheetBoardPage() {
           ]}
         />
 
-        <Card className="shadow-sm border-none bg-card">
-          <CardContent className="p-6">
-            <div className="space-y-2 max-w-md">
-              <Label className="text-[10px] font-black uppercase text-muted-foreground">วันที่ปฏิบัติงาน (ใช้ร่วมทุก Wave)</Label>
-              <DatePickerThaiBE
-                className="h-11"
-                value={htmlDateValueToTimestampMs(targetDate)}
-                onChange={handleBoardDateChange}
-              />
-            </div>
-            <p className="text-sm text-muted-foreground mt-3">
-              แสดง {sortedWaves.length} Wave ที่ยังไม่ปิด
-              {pos != null ? ` · ${pos.length} PO (pending/active)` : ''}
-            </p>
-          </CardContent>
-        </Card>
+        <p className="text-sm text-muted-foreground">
+          แสดง {sortedWaves.length} Wave ที่ยังไม่ปิด
+          {pos != null ? ` · ${pos.length} PO (pending/active)` : ''}
+        </p>
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
@@ -784,6 +789,7 @@ export default function WaveTimesheetBoardPage() {
                 wave={wave}
                 po={poById.get(wave.poId)}
                 targetDate={targetDate}
+                onBoardDateChange={handleBoardDateChange}
                 currentUser={currentUser}
                 workers={workers ?? undefined}
                 positionLabel={positionLabel}

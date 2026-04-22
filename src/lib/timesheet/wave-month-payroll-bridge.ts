@@ -115,8 +115,11 @@ export async function ensureOpenPayrollPeriodForWaveMonthReview(
     generatedAt: now,
   };
 
+  /** หลังอนุมัติ Wave เดือน — รอบลูกจ้างถือว่าพร้อมเข้าขั้นตอน payroll (ไม่ใช่แค่รับข้อมูลทั่วไป) */
+  const approvedReadyStatus: PayrollPeriodStatus = 'PROCESSING';
+
   if (!snap.exists()) {
-    await setDoc(ref, { ...base, status: 'OPEN' as PayrollPeriodStatus });
+    await setDoc(ref, { ...base, status: approvedReadyStatus });
     return { periodId, created: true };
   }
 
@@ -125,14 +128,11 @@ export async function ensureOpenPayrollPeriodForWaveMonthReview(
     return { periodId, created: false };
   }
 
-  const nextStatus: PayrollPeriodStatus =
-    existing.status === 'PROCESSING' ? 'PROCESSING' : 'OPEN';
-
   await setDoc(
     ref,
     {
       ...base,
-      status: nextStatus,
+      status: approvedReadyStatus,
       label: existing.label?.trim() ? existing.label : defaultLabel,
     },
     { merge: true },

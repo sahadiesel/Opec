@@ -624,11 +624,8 @@ export default function HrPayrollWorkbenchPage() {
                 </Button>
                 <Button size="sm" variant="outline" asChild>
                   <Link href="/payroll/batches">
-                    <Coins className="mr-1.5 h-3.5 w-3.5" /> งวดจ่ายลูกจ้าง
+                    <Coins className="mr-1.5 h-3.5 w-3.5" /> งวดจ่ายลูกจ้าง (Batches)
                   </Link>
-                </Button>
-                <Button size="sm" variant="ghost" asChild>
-                  <Link href="/payroll/periods">รอบตัดยอด</Link>
                 </Button>
               </div>
             </CardContent>

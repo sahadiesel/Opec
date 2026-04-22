@@ -45,7 +45,6 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertDialog,
@@ -241,11 +240,7 @@ export default function PayrollBatchesPage() {
                   ระบบจะรวบรวมเฉพาะ Daily Timesheets ที่ถูกตั้งค่า <strong>พร้อมจ่าย payroll</strong> (readyForPayroll) แล้ว — โดยปกติเกิดหลัง{' '}
                   <strong>ผู้จัดการ Ops/HR อนุมัติสรุปลงเวลารายเดือน (Wave)</strong> จากเมนูคิวอนุมัติ — ไม่บังคับให้ลูกค้าอนุมัติก่อน
                   {' '}
-                  หลังอนุมัติ Wave แล้วระบบจะสร้าง <strong>รอบบัญชีลูกจ้าง</strong> ให้เลือกที่นี่โดยอัตโนมัติ (หรือจัดการเพิ่มที่{' '}
-                  <Link href="/payroll/periods" className="underline font-medium text-foreground">
-                    รอบจ่ายเงิน
-                  </Link>
-                  )
+                  หลังอนุมัติ Wave แล้วระบบจะสร้าง <strong>รอบบัญชีลูกจ้าง</strong> ให้เลือกในรายการด้านล่างโดยอัตโนมัติ
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -264,11 +259,7 @@ export default function PayrollBatchesPage() {
                   </Select>
                   {selectablePeriods.length === 0 && (
                     <p className="text-xs text-muted-foreground">
-                      ยังไม่มีรอบที่เลือกได้ — รอสักครู่หลังอนุมัติ Wave หรือไปที่{' '}
-                      <Link href="/payroll/periods" className="underline font-medium text-foreground">
-                        รอบจ่ายเงิน
-                      </Link>{' '}
-                      เพื่อสร้างรอบและตั้งสถานะ OPEN
+                      ยังไม่มีรอบที่เลือกได้ — รอสักครู่หลังอนุมัติสรุปลงเวลารายเดือน (Wave) ระบบจะสร้างรอบบัญชีอัตโนมัติ หรือให้ผู้ดูแลระบบตรวจสอบคอลเลกชัน payroll_periods
                     </p>
                   )}
                 </div>

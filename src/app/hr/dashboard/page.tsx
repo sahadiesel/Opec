@@ -383,9 +383,6 @@ export default function HRDashboardPage() {
                   <Link href="/timesheets/wave-month">สรุปลงเวลารายเดือน (Wave)</Link>
                 </Button>
                 <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
-                  <Link href="/payroll/periods">รอบจ่ายเงินและตัดยอด</Link>
-                </Button>
-                <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
                   <Link href="/payroll/batches">งวดจ่ายลูกจ้าง (Batches)</Link>
                 </Button>
               </CardContent>

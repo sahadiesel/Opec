@@ -12,22 +12,29 @@ import {
   Filter, 
   ChevronRight, 
   Coins, 
-  Calendar,
   AlertTriangle,
   Info,
   Clock,
-  CheckCircle2,
-  FileText,
   Loader2,
-  ShieldAlert
+  ShieldAlert,
+  Trash2,
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
+import { OfficePayrollRun, PayrollRunStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, doc, query, orderBy } from 'firebase/firestore';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  writeBatch,
+  type Firestore,
+} from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
@@ -43,8 +50,41 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { canView, canCreate } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+/** ลบบรรทัดใน subcollection แล้วลบเอกสารงวด — ใช้เมื่อ admin ลบรายการจากรายการ */
+async function deleteOfficePayrollRunCascade(firestore: Firestore, runId: string): Promise<void> {
+  const linesCol = collection(firestore, 'office_payroll_runs', runId, 'lines');
+  const snap = await getDocs(linesCol);
+  const refs = snap.docs.map((d) => d.ref);
+  const chunkSize = 400;
+  for (let i = 0; i < refs.length; i += chunkSize) {
+    const batch = writeBatch(firestore);
+    for (const ref of refs.slice(i, i + chunkSize)) {
+      batch.delete(ref);
+    }
+    await batch.commit();
+  }
+  await deleteDoc(doc(firestore, 'office_payroll_runs', runId));
+}
+
+function adminOfficePayrollDeleteBlocked(run: OfficePayrollRun): boolean {
+  if (run.status === 'LOCKED' || run.status === 'PAID' || run.status === 'FINANCE_APPROVED') return true;
+  if (run.financeCashbookEntryId) return true;
+  return false;
+}
 
 export default function OfficePayrollPage() {
   const router = useRouter();
@@ -54,6 +94,10 @@ export default function OfficePayrollPage() {
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
   const canCreateOfficePayroll = useMemo(() => canCreate(currentUser, 'office_payroll'), [currentUser]);
+  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+
+  const [deleteTarget, setDeleteTarget] = useState<OfficePayrollRun | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -109,6 +153,37 @@ export default function OfficePayrollPage() {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างงวดการจ่ายเงินได้" });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleConfirmDeleteRun = async () => {
+    if (!firestore || !deleteTarget || !currentUser || !isSystemAdmin(currentUser)) return;
+    if (adminOfficePayrollDeleteBlocked(deleteTarget)) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่ได้',
+        description: 'งวดที่ล็อกหรืออนุมัติการเงิน/จ่ายแล้ว — ใช้เฉพาะแก้รายการร่างหรือก่อนปิดงบ',
+      });
+      setDeleteTarget(null);
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      await deleteOfficePayrollRunCascade(firestore, deleteTarget.id);
+      toast({
+        title: 'ลบงวดแล้ว',
+        description: `เลขที่ ${deleteTarget.payrollRunNo}`,
+      });
+      setDeleteTarget(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: 'ลองใหม่หรือตรวจสอบการเชื่อมต่อ',
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -264,8 +339,38 @@ export default function OfficePayrollPage() {
                         ฿{run.netAmount.toLocaleString()}
                       </TableCell>
                       <TableCell>{getStatusBadge(run.status)}</TableCell>
-                      <TableCell className="text-right pr-6">
-                        <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                      <TableCell
+                        className="text-right pr-6"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="inline-flex items-center justify-end gap-0.5">
+                          {isAdmin && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              disabled={adminOfficePayrollDeleteBlocked(run)}
+                              title={
+                                adminOfficePayrollDeleteBlocked(run)
+                                  ? 'ลบไม่ได้ — งวดล็อกหรืออนุมัติการเงิน/จ่ายแล้ว'
+                                  : 'ลบงวดนี้ (เฉพาะผู้ดูแลระบบ)'
+                              }
+                              onClick={() => setDeleteTarget(run)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="group-hover:text-primary"
+                            onClick={() => router.push(`/office-payroll/${run.id}`)}
+                          >
+                            <ChevronRight className="h-5 w-5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -279,6 +384,33 @@ export default function OfficePayrollPage() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบงวดเงินเดือนออฟฟิศ?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span className="block">
+                  จะลบ <span className="font-mono font-semibold">{deleteTarget?.payrollRunNo}</span> และรายพนักงานทั้งหมดในงวดนี้
+                  การกระทำนี้ย้อนกลับไม่ได้
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={isDeleting}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDeleteRun();
+                }}
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

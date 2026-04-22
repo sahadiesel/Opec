@@ -559,23 +559,40 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             <CardTitle className="text-base">ข้อมูลใบรับวางบิล</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <div className="space-y-2">
-              <Label>วันที่รับวางบิล</Label>
-              <DatePickerThaiBE
-                className="h-11"
-                value={htmlDateValueToTimestampMs(billingDate)}
-                onChange={(ms) => setBillingDate(timestampToHtmlDateValue(ms))}
-                disabled={readOnly}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>วันที่ตั้งใจจ่ายเงิน</Label>
-              <DatePickerThaiBE
-                className="h-11"
-                value={htmlDateValueToTimestampMs(payDate)}
-                onChange={(ms) => setPayDate(timestampToHtmlDateValue(ms))}
-                disabled={readOnly}
-              />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="space-y-2 min-w-0">
+                <Label>วันที่วางบิล</Label>
+                <DatePickerThaiBE
+                  className="h-11"
+                  value={htmlDateValueToTimestampMs(billingDate)}
+                  onChange={(ms) => setBillingDate(timestampToHtmlDateValue(ms))}
+                  disabled={readOnly}
+                />
+              </div>
+              <div className="space-y-2 min-w-0">
+                <Label>วันที่จะจ่าย</Label>
+                <DatePickerThaiBE
+                  className="h-11"
+                  value={htmlDateValueToTimestampMs(payDate)}
+                  onChange={(ms) => setPayDate(timestampToHtmlDateValue(ms))}
+                  disabled={readOnly}
+                />
+              </div>
+              <div className="space-y-2 min-w-0">
+                <Label>วันที่จ่ายเงิน</Label>
+                {bill.status === 'PAID' && bill.paidAt ? (
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={bill.paidAt}
+                    onChange={() => {}}
+                    disabled
+                  />
+                ) : (
+                  <div className="flex h-11 min-h-[2.75rem] items-center rounded-md border border-dashed border-muted-foreground/25 bg-muted/30 px-3 text-sm text-muted-foreground">
+                    {bill.status === 'SUBMITTED' ? 'ยังไม่จ่าย' : '—'}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               <Label>หมายเหตุ</Label>

@@ -855,10 +855,11 @@ export default function Home() {
                       </>
                     )}
                     {check('worker_payroll', 'view') && (
-                      <>
-                        <ShortcutLink href="/payroll/periods" label="รอบจ่ายและตัดยอด" sub="งวดคนงาน" />
-                        <ShortcutLink href="/payroll/batches" label="งวดจ่ายลูกจ้าง" sub="Payroll batches" />
-                      </>
+                      <ShortcutLink
+                        href="/payroll/batches"
+                        label="งวดจ่ายลูกจ้าง (Batches)"
+                        sub="เลือกรอบบัญชี · สร้าง payroll batch"
+                      />
                     )}
                   </ShortcutGroup>
                 )}
