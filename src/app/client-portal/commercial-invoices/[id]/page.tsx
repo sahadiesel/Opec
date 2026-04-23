@@ -14,14 +14,18 @@ import type {
   Quotation,
   User,
 } from '@/lib/types';
-import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
+import { useFirebaseApp, useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
-import { confirmCommercialInvoiceBilling } from '@/lib/services/commercial-invoice-service';
+import {
+  confirmCommercialInvoiceBilling,
+  reportCustomerPaymentForIssuedCommercial,
+} from '@/lib/services/commercial-invoice-service';
+import { uploadCommercialPaymentProof } from '@/lib/storage/commercial-payment-proofs';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { DisputeService } from '@/lib/services/dispute-service';
 import { buildCommercialInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
@@ -39,6 +43,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 
 export default function ClientCommercialInvoicePage({ params }: { params: Promise<{ id: string }> }) {
@@ -49,7 +54,11 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
   const { toast } = useToast();
   const { locale, t } = usePortalLocale();
   const en = locale === 'en';
+  const firebaseApp = useFirebaseApp();
   const [busy, setBusy] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payFile, setPayFile] = useState<File | null>(null);
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeText, setDisputeText] = useState('');
   const [disputeBusy, setDisputeBusy] = useState(false);
@@ -216,6 +225,38 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
     }
   };
 
+  const handleSavePaymentReport = async () => {
+    if (!firestore || !invoice || !currentUser || !isApprover || !payFile) return;
+    setPayBusy(true);
+    try {
+      const { downloadUrl, fileName, contentType } = await uploadCommercialPaymentProof(
+        firebaseApp,
+        invoice.id,
+        currentUser.id,
+        payFile,
+      );
+      await reportCustomerPaymentForIssuedCommercial(firestore, invoice, currentUser as User, {
+        proofUrl: downloadUrl,
+        fileName,
+        contentType,
+      });
+      setPayOpen(false);
+      setPayFile(null);
+      toast({
+        title: en ? 'Notified' : 'แจ้งแล้ว',
+        description: t('commPayWaitingOpec'),
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPayBusy(false);
+    }
+  };
+
   const col = (L: PrintDocumentLocale) =>
     L === 'en'
       ? { desc: 'Description', qty: 'Qty', amt: 'Amount' }
@@ -374,7 +415,70 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
             {t('openDisputeCommercial')}
           </Button>
         )}
+        {invoice.status === 'ISSUED' &&
+          isApprover &&
+          !invoice.opecPaymentVerifiedAt &&
+          !invoice.customerPaymentReportedAt && (
+            <Button className="gap-2" type="button" onClick={() => setPayOpen(true)}>
+              {t('commBtnConfirmPay')}
+            </Button>
+          )}
+        {invoice.status === 'ISSUED' && isApprover && invoice.customerPaymentReportedAt && !invoice.opecPaymentVerifiedAt && (
+          <p className="w-full text-sm text-amber-800 dark:text-amber-200 rounded-lg border border-amber-200 bg-amber-50/80 dark:bg-amber-950/30 px-3 py-2">
+            {t('commPayWaitingOpec')}
+            {invoice.customerPaymentProofUrl ? (
+              <a
+                className="ml-2 text-primary underline font-medium"
+                href={invoice.customerPaymentProofUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t('commPayViewProof')}
+              </a>
+            ) : null}
+          </p>
+        )}
       </div>
+
+      <Dialog
+        open={payOpen}
+        onOpenChange={(o) => {
+          setPayOpen(o);
+          if (!o) setPayFile(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('commPayDialogTitle')}</DialogTitle>
+            <DialogDescription>{t('commPayDialogDesc')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label className="block">{en ? 'File' : 'ไฟล์'}</Label>
+            <Input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(e) => setPayFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setPayOpen(false);
+                setPayFile(null);
+              }}
+              disabled={payBusy}
+            >
+              {en ? 'Cancel' : 'ยกเลิก'}
+            </Button>
+            <Button type="button" onClick={() => void handleSavePaymentReport()} disabled={payBusy || !payFile}>
+              {payBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {t('commPaySave')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={disputeOpen} onOpenChange={setDisputeOpen}>
         <DialogContent>

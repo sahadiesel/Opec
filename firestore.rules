@@ -260,6 +260,46 @@ service cloud.firestore {
       ]);
     }
 
+    /** ลูกค้าแนบสลิป/หลักฐาน — เอกสารยืนยัน ISSUED แล้ว, ยังไม่รับรอง OPEC */
+    function portalCommercialPaymentProofKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'customerPaymentReportedAt',
+        'customerPaymentReportedByUid',
+        'customerPaymentReportedByName',
+        'customerPaymentProofUrl',
+        'customerPaymentProofFileName',
+        'updatedAt',
+        'updatedByUid',
+        'updatedByName'
+      ]);
+    }
+
+    function portalCommercialPaymentReportAllowed() {
+      return portalIsApprover()
+        && portalOwnsResourceCustomerId()
+        && resource.data.status == 'ISSUED'
+        && !resource.data.keys().hasAny(['opecPaymentVerifiedAt']);
+    }
+
+    /** ลูกหนี้ (AR) จากยืนยันยอด — documentNo คงที่ ไม่ต้องใช้ number_sequences ใน portal */
+    function portalArComFromCommercialCreateOk() {
+      return clientPortalUserActive()
+        && portalIsApprover()
+        && request.resource.data.keys().hasAll(['customerId', 'documentNo', 'referenceType', 'referenceId', 'issueDate', 'dueDate', 'debitAmount', 'creditAmount', 'outstandingAmount', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.referenceType == 'COMMERCIAL_INVOICE'
+        && request.resource.data.referenceId is string
+        && request.resource.data.documentNo == ('AR-COM-' + request.resource.data.referenceId)
+        && request.resource.data.customerId == userData().customerId
+        && request.resource.data.status == 'OPEN'
+        && request.resource.data.creditAmount == 0
+        && request.resource.data.debitAmount is number
+        && request.resource.data.debitAmount > 0
+        && request.resource.data.outstandingAmount == request.resource.data.debitAmount
+        && exists(/databases/$(database)/documents/commercial_invoices/$(request.resource.data.referenceId))
+        && get(/databases/$(database)/documents/commercial_invoices/$(request.resource.data.referenceId)).data.customerId == userData().customerId
+        && get(/databases/$(database)/documents/commercial_invoices/$(request.resource.data.referenceId)).data.status == 'ISSUED';
+    }
+
     /** ลูกค้าแจ้งร้องขอแก้ไข (Open Dispute) — คงสถานะ PENDING_CUSTOMER */
     function portalCommercialInvoiceRevisionRequestKeysOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -416,6 +456,11 @@ service cloud.firestore {
           && resource.data.status == 'PENDING_CUSTOMER'
           && request.resource.data.status == 'PENDING_CUSTOMER'
           && portalCommercialInvoiceRevisionRequestKeysOnly()
+        )
+        || (
+          portalCommercialPaymentReportAllowed()
+          && request.resource.data.status == 'ISSUED'
+          && portalCommercialPaymentProofKeysOnly()
         );
       allow delete: if isAdmin() || (isInternalUser() && resource.data.status == 'DRAFT');
     }
@@ -453,7 +498,8 @@ service cloud.firestore {
 
     match /accounts_receivable/{id} {
       allow read: if isAccountingOrAdmin() || portalOwnsResourceCustomerId();
-      allow write: if isAccountingOrAdmin();
+      allow create: if isAccountingOrAdmin() || portalArComFromCommercialCreateOk();
+      allow update, delete: if isAccountingOrAdmin();
     }
 
     // Internal users may create rows from store workflow (vendor bill); accounting still controls payment in UI.
@@ -475,6 +521,11 @@ service cloud.firestore {
     }
 
     match /cashbook_entries/{id} {
+      allow read, write: if canAccessBankAccountsAndCashbook();
+    }
+
+    /** รับ/จ่าย Petty Cash หน้างาน — ไม่ใช่รายการ cashbook หลัก */
+    match /petty_cash_entries/{id} {
       allow read, write: if canAccessBankAccountsAndCashbook();
     }
 

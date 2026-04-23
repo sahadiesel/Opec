@@ -172,6 +172,9 @@ export function AccountingContent() {
           {t('accounting')}
         </h2>
         <p className="text-sm leading-relaxed text-muted-foreground">{t('accountingLead')}</p>
+        <p className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm leading-relaxed text-foreground/90">
+          {t('accountingWorkflowInfo')}
+        </p>
       </div>
 
       <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)} className="w-full">
@@ -225,8 +228,12 @@ export function AccountingContent() {
                                 <Badge variant="outline">{en ? 'Pending review' : 'รอตรวจ'}</Badge>
                               ) : inv.status === 'VOID' ? (
                                 <Badge variant="secondary">{en ? 'Void' : 'ยกเลิก'}</Badge>
+                              ) : inv.opecPaymentVerifiedAt ? (
+                                <Badge className="bg-slate-700">{t('ciStatusOpecDone')}</Badge>
+                              ) : inv.customerPaymentReportedAt ? (
+                                <Badge className="bg-amber-700">{t('ciStatusPayReported')}</Badge>
                               ) : (
-                                <Badge className="bg-green-600">{en ? 'Confirmed' : 'ยืนยันแล้ว'}</Badge>
+                                <Badge className="bg-emerald-800">{t('ciStatusAwaitingPayment')}</Badge>
                               )}
                             </TableCell>
                             <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>

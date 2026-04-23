@@ -169,6 +169,7 @@ const navGroups: NavGroup[] = [
     audience: 'internal',
     items: [
       { key: 'customers', title: UI_LABELS.CUSTOMERS, href: '/customers', icon: Users },
+      { key: 'customers', title: 'สรุปฐานวางบิล (Client)', href: '/billing-client', icon: FileBarChart },
       { key: 'quotations', title: UI_LABELS.QUOTATIONS, href: '/quotations', icon: FileSignature },
       { key: 'main_contracts', title: UI_LABELS.MAIN_CONTRACTS, href: '/main-contracts', icon: ClipboardList },
       { key: 'customer_pos', title: UI_LABELS.CUSTOMER_POS, href: '/purchase-orders', icon: ShoppingCart },

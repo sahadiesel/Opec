@@ -184,6 +184,22 @@ export interface PayrollLineD8Snapshot {
   frozenAt: number;
 }
 
+/** โหมดงานสำหรับต้นทุนค่าแรง (OPEC) — ไม่อ้าง main_contract/position_rates */
+export type LaborCostWorkMode = 'onshore' | 'offshore';
+
+export type LaborCostSourceKind = 'position_default' | 'worker_custom';
+
+/**
+ * Snapshot ตอน generate รอบเงิน — ฐานต้นทุน/อัตราแรงที่ใช้ (ยึด position + worker; อ่านจากสนามนี้เท่านั้น ไม่อ่านย้อนสัญญา)
+ */
+export interface LaborCostResolutionSnapshot {
+  source: LaborCostSourceKind;
+  positionId: string;
+  workMode: LaborCostWorkMode;
+  effectiveBaseRate: number;
+  resolvedAt: number;
+}
+
 /** คำขอแก้ไขหลัง approve/paid — เก็บใน `payroll_correction_requests` */
 export interface PayrollCorrectionRequest {
   id: string;
@@ -330,6 +346,12 @@ export interface Position {
   active: boolean;
   description?: string;
   notes?: string;
+  /**
+   * ต้นทุนค่าแรงมาตรฐาน (OPEC จ่าย) ตาม workMode — ไม่อ้าง main_contract/position_rates ฝั่งสัญญา
+   * (เฟส 1+ backfill จาก `main_contracts/.../position_rates` ชุดเดิม แล้ว UI สัญญาไม่เก็บต้นทุน)
+   */
+  defaultLaborCostOnshore?: number;
+  defaultLaborCostOffshore?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -388,6 +410,16 @@ export interface Worker {
   skills: string[];
   notes?: string;
   disciplinaryNotes?: string;
+  /**
+   * ต้นทุนค่าแรง: `true` / undefined = ยึด `defaultLaborCost*` ของ Position ตาม `currentPositionId` ทุกงาน/สัญญา
+   * `false` = ใช้ `laborCostCustom*` ทุกที่
+   */
+  laborCostUsePositionDefault?: boolean;
+  laborCostCustomOnshore?: number;
+  laborCostCustomOffshore?: number;
+  /** audit — migration เฟส 1 จาก main contract เดียว */
+  laborCostMigratedFromMainContractId?: string;
+  laborCostMigratedAt?: number;
   /** ลูกค้าในรายการนี้สามารถเปิดดูโปรไฟล์/เอกสารคนงานในพอร์ทัลได้ (จำกัดสิทธิ์ใน Firestore rules) */
   assignedCustomerIds?: string[];
   createdAt: number;
@@ -1142,7 +1174,8 @@ export interface AccountsReceivable {
   id: string;
   customerId: string;
   documentNo: string;
-  referenceType: 'TAX_INVOICE' | 'BILLING_NOTE';
+  /** ลูกหนี้ยังไม่ออกใบกำกับ — อ้างใบแจ้งหนี้เรียกเก็บ; รับเงิน + ออกใบกำกับแล้วจะย้ายไปอ้าง TAX_INVOICE ได้ */
+  referenceType: 'TAX_INVOICE' | 'BILLING_NOTE' | 'COMMERCIAL_INVOICE';
   referenceId: string;
   /** เลขที่ใบกำกับ (แสดงผล / audit) */
   referenceNo?: string;
@@ -1305,6 +1338,18 @@ export interface CommercialInvoice {
   customerApprovedByUid?: string;
   customerApprovedByName?: string;
   customerApprovalSource?: 'CLIENT_PORTAL' | 'INTERNAL';
+  /** ลูกค้าแนบสลิป/หลักฐานการจ่ายเงิน (หลังอนุมัติยอดเรียกเก็บแล้ว) */
+  customerPaymentReportedAt?: number;
+  customerPaymentReportedByUid?: string;
+  customerPaymentReportedByName?: string;
+  customerPaymentProofUrl?: string;
+  customerPaymentProofFileName?: string;
+  /** บัญชี OPEC รับรองรับเงิน + ออกใบกำกับ/ลง cashbook */
+  opecPaymentVerifiedAt?: number;
+  opecPaymentVerifiedByUid?: string;
+  opecPaymentVerifiedByName?: string;
+  opecPaymentBankAccountId?: string;
+  opecPaymentCashbookEntryId?: string;
   generationWarnings?: string[];
   timesheetCount?: number;
   notes?: string;
@@ -1336,6 +1381,25 @@ export interface CashbookEntry {
   grossPaymentAmount?: number;
   /** หัก ณ ที่จ่ายที่ไม่ได้ตัดจากบัญชีธนาคาร (รอนำส่งสรรพากร) */
   supplierWithholdingAmount?: number;
+}
+
+/**
+ * รายการรับ/จ่ายเงินสดย่อยหน้างาน — อัปเดตยอด Petty Cash โดยตรง ไม่สร้างแถวใน `cashbook_entries`
+ * (เงินก้อนจากบริษัทตัดใน cashbook ตอนโอนเข้า Petty แล้ว; คืนเข้าบริษัทค่อยลง cashbook อีกครั้ง)
+ */
+export interface PettyCashEntry {
+  id: string;
+  entryNo: string;
+  bankAccountId: string;
+  entryDate: string;
+  direction: 'IN' | 'OUT';
+  amount: number;
+  description: string;
+  paymentMethod: 'CASH';
+  createdAt: number;
+  createdByUid: string;
+  createdByName: string;
+  updatedAt: number;
 }
 
 export type CashbookEntryType =
@@ -1519,6 +1583,8 @@ export interface PayrollBatchLine {
   grossAmount: number;
   netAmount: number;
   d8Snapshot?: PayrollLineD8Snapshot;
+  /** ฐานต้นทุนค่าแรง ณ generate — ใช้ต่อในเฟส 3+ (PayrollService) */
+  laborCostResolutionSnapshot?: LaborCostResolutionSnapshot;
   exportStatus: 'pending' | 'exported' | 'failed';
   remarks?: string;
   /** ปรับเพิ่มเบี้ยเลี้ยง/หักพิเศษ/ภาษี — grossAmount ยังเป็นยอดจาก timesheet เดิม */

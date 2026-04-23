@@ -107,6 +107,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
   ['/bank-accounts', 'bank_accounts'],
+  ['/billing-client', 'customers'],
   ['/customers', 'customers'],
   ['/quotations', 'quotations'],
   ['/assignments', 'assignments'],

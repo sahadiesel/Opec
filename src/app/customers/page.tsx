@@ -157,7 +157,7 @@ export default function CustomersPage() {
           <Info className="h-5 w-5 text-primary" />
           <AlertTitle className="font-bold text-lg">นโยบายข้อมูลคู่ค้า (Commercial Data Policy)</AlertTitle>
           <AlertDescription className="text-sm">
-            การแก้ไขรหัสลูกค้า (Customer Code) จะมีผลต่อการอ้างอิงในสัญญาหลัก (Main Contracts) และใบสั่งซื้อทั้งหมด กรุณาตรวจสอบความถูกต้องของเลขประจำตัวผู้เสียภาษี (Tax ID) เพื่อความถูกต้องของการวางบิล
+            รหัสลูกค้าออกโดยระบบอัตโนมัติและใช้เป็นหลักอ้างอิงในสัญญาและ PO — กรุณาตรวจสอบความถูกต้องของเลขประจำตัวผู้เสียภาษี (Tax ID) เพื่อความถูกต้องของการวางบิล
           </AlertDescription>
         </Alert>
 
@@ -232,7 +232,10 @@ export default function CustomersPage() {
                   <Textarea value={newCustomer.registeredAddress} onChange={e => setNewCustomer({...newCustomer, registeredAddress: e.target.value})} />
                 </div>
                 <div className="grid gap-2 col-span-2">
-                  <Label>ที่อยู่วางบิล (Billing Address)</Label>
+                  <Label>ที่อยู่อื่นๆ</Label>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    ที่อยู่เพิ่มเติมนอกเหนือที่อยู่จดทะเบียน (เช่น สำนักงานในประเทศไทย สำหรับวางบิล/เอกสาร)
+                  </p>
                   <Textarea value={newCustomer.billingAddress} onChange={e => setNewCustomer({...newCustomer, billingAddress: e.target.value})} />
                 </div>
               </div>

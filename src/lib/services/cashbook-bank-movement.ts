@@ -49,21 +49,25 @@ export async function recordCashbookMovementWithBalance(
   const cashbookRef = doc(collection(db, 'cashbook_entries'));
   const delta = params.direction === 'IN' ? amt : -amt;
 
-  const batch = writeBatch(db);
-  batch.set(cashbookRef, {
+  const now = Date.now();
+  const cashbookRow: Record<string, unknown> = {
     entryNo,
     bankAccountId: params.bankAccountId,
     entryDate: params.entryDate,
     direction: params.direction,
     entryType: params.entryType,
     referenceType: params.referenceType ?? 'OTHER',
-    referenceId: params.referenceId,
     amount: amt,
     description: params.description,
     paymentMethod: params.paymentMethod,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
+    createdAt: now,
+    updatedAt: now,
+  };
+  const ref = params.referenceId?.trim();
+  if (ref) cashbookRow.referenceId = ref;
+
+  const batch = writeBatch(db);
+  batch.set(cashbookRef, cashbookRow);
 
   batch.update(bankRef, {
     currentBalance: increment(delta),
@@ -73,6 +77,66 @@ export async function recordCashbookMovementWithBalance(
   await batch.commit();
 
   return { cashbookEntryId: cashbookRef.id, entryNo };
+}
+
+/**
+ * รับ/จ่าย Petty Cash หน้างาน — ปรับ `bank_accounts.currentBalance` เฉพาะกอง Petty
+ * ไม่สร้างเอกสารใน `cashbook_entries` (ฝ่ายบัญชีตัดเงินออกจำนวนก้อนตอนโอนเข้า Petty แล้ว; รายรับรายจ่ายนี้คือการทำบัญชีภายในกองเท่านั้น)
+ */
+export async function recordPettyCashMovement(
+  db: Firestore,
+  user: User,
+  params: {
+    bankAccountId: string;
+    direction: 'IN' | 'OUT';
+    amount: number;
+    entryDate: string;
+    description: string;
+  },
+): Promise<{ pettyCashEntryId: string; entryNo: string }> {
+  const amt = roundMoney2(Number(params.amount));
+  if (!params.bankAccountId?.trim()) throw new Error('กรุณาเลือกบัญชี');
+  if (amt <= 0) throw new Error('ยอดเงินต้องมากกว่า 0');
+
+  const bankRef = doc(db, 'bank_accounts', params.bankAccountId);
+  const bankSnap = await getDoc(bankRef);
+  if (!bankSnap.exists()) throw new Error('ไม่พบบัญชีธนาคาร');
+  if (String(bankSnap.data()?.accountType) !== 'PETTY_CASH') {
+    throw new Error('รายการนี้รองรับเฉพาะบัญชีประเภท Petty Cash');
+  }
+  const status = bankSnap.data()?.status;
+  if (status && status !== 'ACTIVE') throw new Error('บัญชีนี้ไม่ ACTIVE');
+
+  const { code: entryNo } = await generateNextDocumentCode(db, 'petty_cash_entry', {
+    actor: user.displayName,
+    userId: user.id,
+  });
+
+  const entryRef = doc(collection(db, 'petty_cash_entries'));
+  const delta = params.direction === 'IN' ? amt : -amt;
+  const now = Date.now();
+
+  const batch = writeBatch(db);
+  batch.set(entryRef, {
+    entryNo,
+    bankAccountId: params.bankAccountId,
+    entryDate: params.entryDate,
+    direction: params.direction,
+    amount: amt,
+    description: params.description,
+    paymentMethod: 'CASH',
+    createdAt: now,
+    createdByUid: user.id,
+    createdByName: String(user.displayName || user.email || user.id).trim() || user.id,
+    updatedAt: now,
+  });
+  batch.update(bankRef, {
+    currentBalance: increment(delta),
+    updatedAt: now,
+  });
+  await batch.commit();
+
+  return { pettyCashEntryId: entryRef.id, entryNo };
 }
 
 export async function recordInterBankTransfer(

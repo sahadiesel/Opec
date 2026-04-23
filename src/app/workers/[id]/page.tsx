@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, use, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -67,8 +68,33 @@ import { WorkerPositionStoreTab } from './_components/worker-position-store-tab'
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const WORKER_TAB_VALUES = [
+  'info',
+  'certs',
+  'medical',
+  'drug',
+  'docs',
+  'worklog',
+  'ppe_list',
+  'tools_list',
+] as const;
+type WorkerProfileTab = (typeof WORKER_TAB_VALUES)[number];
+
+function isWorkerProfileTab(s: string | null): s is WorkerProfileTab {
+  return s != null && (WORKER_TAB_VALUES as readonly string[]).includes(s);
+}
+
 export default function WorkerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<WorkerProfileTab>(() =>
+    isWorkerProfileTab(tabFromUrl) ? tabFromUrl : 'info',
+  );
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    if (isWorkerProfileTab(t)) setActiveTab(t);
+  }, [searchParams]);
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading: authHydrationLoading } = useUser();
   const firestore = useFirestore();
@@ -483,7 +509,11 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="info" className="w-full">
+        <Tabs
+          value={activeTab}
+          onValueChange={(v) => setActiveTab((v as WorkerProfileTab) || 'info')}
+          className="w-full"
+        >
           <TabsList className="flex flex-wrap w-full md:w-fit h-auto p-1 bg-muted/50 gap-1">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><User className="h-4 w-4" /> ข้อมูลประวัติ (Info)</TabsTrigger>
             <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบเซอร์ (Certs)</TabsTrigger>

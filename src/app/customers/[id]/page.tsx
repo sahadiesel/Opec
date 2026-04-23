@@ -28,7 +28,8 @@ import {
   Info,
   XCircle,
   FileSignature,
-  Pencil
+  Pencil,
+  FileBarChart
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -186,7 +187,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุเลขสาขา' });
       return;
     }
-    const { id: _docId, ...dataWithoutId } = editedCust as Partial<Customer> & { id?: string };
+    const { id: _docId, customerCode: _omitImmutableCode, ...dataWithoutId } = editedCust as Partial<Customer> & { id?: string };
     try {
       await updateDoc(custRef, { ...dataWithoutId, branchNo: normalizedBranchNo, updatedAt: Date.now() } as Partial<Customer>);
       setIsEditing(false);
@@ -533,7 +534,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               <Building2 className="h-4 w-4" /> Tax ID: {customer.taxId || 'N/A'} | {customer.branchType === 'branch' ? `สาขา ${customer.branchNo || '-'}` : 'สำนักงานใหญ่'}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" asChild>
+              <Link href={`/customers/${id}/billing-client`} className="gap-2">
+                <FileBarChart className="h-4 w-4" />
+                สรุปฐานวางบิล (Client)
+              </Link>
+            </Button>
             <Button variant="outline" onClick={() => { setEditedCust(customer); setIsEditing(!isEditing); }}>
               {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
             </Button>
@@ -585,7 +592,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                   </div>
                   <div className="space-y-2">
                     <Label>รหัสลูกค้า</Label>
-                    <Input disabled={!isEditing} value={isEditing ? editedCust.customerCode : customer.customerCode} onChange={e => setEditedCust({...editedCust, customerCode: e.target.value})} />
+                    <Input
+                      readOnly
+                      disabled
+                      className="bg-muted font-mono font-semibold text-primary cursor-not-allowed"
+                      value={customer.customerCode || '—'}
+                    />
+                    <p className="text-[10px] text-muted-foreground">ออกโดยระบบตอนลงทะเบียนลูกค้า — แก้ไขไม่ได้</p>
                   </div>
                   <div className="space-y-2">
                     <Label>เลขประจำตัวผู้เสียภาษี</Label>
@@ -633,7 +646,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <Textarea disabled={!isEditing} className="min-h-[100px]" value={isEditing ? editedCust.registeredAddress : customer.registeredAddress} onChange={e => setEditedCust({...editedCust, registeredAddress: e.target.value})} />
                   </div>
                   <div className="space-y-2">
-                    <Label>ที่อยู่วางบิล (Billing Address)</Label>
+                    <Label>ที่อยู่อื่นๆ</Label>
+                    <p className="text-[10px] text-muted-foreground -mt-1">
+                      ที่อยู่เพิ่มเติมนอกเหนือที่อยู่จดทะเบียน (เช่น สำนักงานในประเทศไทย สำหรับวางบิล/เอกสาร)
+                    </p>
                     <Textarea disabled={!isEditing} className="min-h-[100px]" value={isEditing ? editedCust.billingAddress : customer.billingAddress} onChange={e => setEditedCust({...editedCust, billingAddress: e.target.value})} />
                   </div>
                 </div>

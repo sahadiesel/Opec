@@ -162,7 +162,37 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
   };
 
+  const workerId = assignment.workerId;
+  const workerManageHref = (tab: string) => `/workers/${encodeURIComponent(workerId)}?tab=${encodeURIComponent(tab)}`;
+
   const isFullyReady = assignment.readinessStatus === 'ready';
+
+  const finalClearanceDeploymentLabel = (() => {
+    const ds = assignment.deploymentStatus;
+    const ms = assignment.mobilizationStatus;
+    if (ds === 'ACTIVE' || ms === 'ACTIVE') {
+      return 'เข้าหน้างานแล้ว (ACTIVE) — ลงเวลา Wave Board ได้';
+    }
+    if (ds === 'MOBILIZING' || ms === 'MOBILIZING') {
+      return 'กำลังระดมพล / เดินทาง (MOBILIZING)';
+    }
+    if (ds === 'READY_TO_MOB' || ms === 'READY_TO_MOBILIZE') {
+      return 'พร้อมเดินทาง — ยืนยันความพร้อมแล้ว (READY_TO_MOB)';
+    }
+    const byDeployment: Partial<Record<DeploymentStatus, string>> = {
+      DRAFT: 'ร่าง (DRAFT) — ยังไม่ผ่านขั้น Final',
+      READINESS_CHECK: 'ตรวจความพร้อม (READINESS_CHECK)',
+      CLIENT_SUBMITTED: 'ส่งลูกค้าพิจารณา (CLIENT_SUBMITTED)',
+      CLIENT_APPROVED: 'ลูกค้าอนุมัติ (CLIENT_APPROVED)',
+      CONFIRMED: 'ยืนยันมอบหมาย (CONFIRMED)',
+      DEMOBILIZED: 'สิ้นสุดการส่งตัว (DEMOBILIZED)',
+      CLOSED: 'ปิดรายการ (CLOSED)',
+    };
+    if (ds && byDeployment[ds]) return byDeployment[ds]!;
+    if (ms === 'PENDING') return 'รอดำเนินการ (PENDING)';
+    if (ms === 'DEMOBILIZED') return 'ถอนกำลังแล้ว (DEMOBILIZED)';
+    return `${ds || '—'}${ms ? ` · ${ms}` : ''}`;
+  })();
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -226,39 +256,82 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         <TableRow>
                           <TableHead className="w-[50px]"></TableHead>
                           <TableHead>หัวข้อการตรวจสอบ (Operational Item)</TableHead>
-                          <TableHead className="text-right">สถานะ</TableHead>
+                          <TableHead className="w-[120px] text-left">สถานะ</TableHead>
+                          <TableHead className="w-[100px] text-right pr-4">การจัดการ</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.passportValid)}</TableCell>
                           <TableCell className="font-medium text-sm">หนังสือเดินทาง / บัตรประชาชน (Passport/ID Valid)</TableCell>
-                          <TableCell className="text-right capitalize text-xs">{assignment.readinessSummary.passportValid}</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.passportValid}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียนลูกจ้าง — ข้อมูลบัตร/พาส">
+                              <Link href={workerManageHref('info')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.medicalValid)}</TableCell>
                           <TableCell className="font-medium text-sm">ใบรับรองแพทย์ (Medical Certificate Valid)</TableCell>
-                          <TableCell className="text-right capitalize text-xs">{assignment.readinessSummary.medicalValid}</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.medicalValid}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — ตรวจร่างกาย">
+                              <Link href={workerManageHref('medical')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.certificatesComplete)}</TableCell>
                           <TableCell className="font-medium text-sm">ใบเซอร์บังคับประจำตำแหน่ง (Position Certificates)</TableCell>
-                          <TableCell className="text-right capitalize text-xs">{assignment.readinessSummary.certificatesComplete}</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.certificatesComplete}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — ใบเซอร์">
+                              <Link href={workerManageHref('certs')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.clientApproved)}</TableCell>
                           <TableCell className="font-medium text-sm">ได้รับการอนุมัติจากลูกค้า (Client Approval)</TableCell>
-                          <TableCell className="text-right capitalize text-xs">{assignment.readinessSummary.clientApproved}</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.clientApproved}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — เอกสาร/หลักฐาน">
+                              <Link href={workerManageHref('docs')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.ppeIssued)}</TableCell>
                           <TableCell className="font-medium text-sm">เบิกอุปกรณ์ PPE ครบถ้วน (PPE Issued)</TableCell>
-                          <TableCell className="text-right capitalize text-xs">{assignment.readinessSummary.ppeIssued}</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.ppeIssued}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — รายการ PPE">
+                              <Link href={workerManageHref('ppe_list')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.toolsIssued)}</TableCell>
                           <TableCell className="font-medium text-sm">เบิกเครื่องมือช่าง (Tools Issued)</TableCell>
-                          <TableCell className="text-right capitalize text-xs">{assignment.readinessSummary.toolsIssued}</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.toolsIssued}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — รายการอุปกรณ์">
+                              <Link href={workerManageHref('tools_list')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       </TableBody>
                     </Table>
@@ -292,31 +365,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   </CardContent>
                 </Card>
 
-                {assignment.poId && assignment.waveId && (
-                  <Card className="border-green-200 bg-green-50/50">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base text-green-900">ขั้นตอนถัดไป: ลงเวลารายวัน</CardTitle>
-                      <CardDescription>
-                        PO / Wave ของคนนี้ถูกผูกไว้แล้ว — เปิด Wave Board จากลิงก์นี้ได้ทันที
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-2">
-                      <Button className="bg-green-700 hover:bg-green-800" asChild>
-                        <Link
-                          href={`/timesheets/wave-board?poId=${encodeURIComponent(assignment.poId)}&waveId=${encodeURIComponent(assignment.waveId)}`}
-                        >
-                          ไปลงเวลา Wave Board (PO / Wave นี้)
-                        </Link>
-                      </Button>
-                      <Button variant="outline" asChild>
-                        <Link href="/timesheets">ดูภาพรวมทุก PO / Wave</Link>
-                      </Button>
-                    </CardContent>
-                  </Card>
-                )}
-
                 <Card className="border-primary/20 bg-primary/5">
-                  <CardHeader><CardTitle className="text-lg">การดำเนินการสุดท้าย (Final Clearance)</CardTitle></CardHeader>
+                  <CardHeader>
+                    <CardTitle className="text-lg flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span>การดำเนินการสุดท้าย (Final Clearance)</span>
+                      <span className="text-base font-semibold text-primary/90" title="สถานะ deployment ปัจจุบัน">
+                        — {finalClearanceDeploymentLabel}
+                      </span>
+                    </CardTitle>
+                  </CardHeader>
                   <CardContent className="flex flex-wrap gap-3">
                     <Button 
                       disabled={!canEditMobilization || !isFullyReady || assignment.mobilizationStatus === 'MOBILIZING'}
@@ -342,6 +399,40 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     </Button>
                   </CardContent>
                 </Card>
+
+                {assignment.poId && assignment.waveId && (
+                  <Card className="border-green-200 bg-green-50/50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base text-green-900">ขั้นตอนถัดไป: ลงเวลารายวัน</CardTitle>
+                      <CardDescription>
+                        PO / Wave ของคนนี้ถูกผูกไว้แล้ว — เปิด Wave Board จากลิงก์นี้ได้ทันที
+                        {assignment.deploymentStatus === 'ACTIVE' && (
+                          <span className="block mt-1 text-green-800 font-medium">
+                            สถานะ deployment = ACTIVE แล้ว — เหมาะสมสำหรับลงเวลาต่อเนื่อง
+                          </span>
+                        )}
+                        {assignment.deploymentStatus &&
+                          assignment.deploymentStatus !== 'ACTIVE' && (
+                            <span className="block mt-1 text-amber-900/90 text-xs">
+                              แนะนำให้กด «เข้าหน้างานแล้ว (Mark as Active)» ก่อนลงเวลา หากยังเดินทางหรือยังไม่พร้อม
+                            </span>
+                          )}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap gap-2">
+                      <Button className="bg-green-700 hover:bg-green-800" asChild>
+                        <Link
+                          href={`/timesheets/wave-board?poId=${encodeURIComponent(assignment.poId)}&waveId=${encodeURIComponent(assignment.waveId)}`}
+                        >
+                          ไปลงเวลา Wave Board (PO / Wave นี้)
+                        </Link>
+                      </Button>
+                      <Button variant="outline" asChild>
+                        <Link href="/timesheets">ดูภาพรวมทุก PO / Wave</Link>
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
 
               <TabsContent value="docs" className="mt-6 space-y-6">

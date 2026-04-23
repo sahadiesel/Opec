@@ -29,13 +29,16 @@ import {
   MainContract,
   PurchaseOrder,
   Quotation,
+  BankAccount,
+  User,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
+import { useCollection, useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canCreate, canEdit, canView } from '@/lib/permissions';
-import { doc } from 'firebase/firestore';
-import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
+import { canCreate, canEdit, canView, isSystemAdmin } from '@/lib/permissions';
+import { isSimpleAccounting } from '@/lib/simple-tier-model';
+import { collection, doc, orderBy, query, where } from 'firebase/firestore';
+import { formatDateTimeThaiBE, formatStoredDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
@@ -67,6 +70,14 @@ import {
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
+import { verifyOpecCustomerPaymentForCommercial } from '@/lib/services/commercial-payment-flow-service';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
@@ -119,6 +130,14 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [offerTaxDialogOpen, setOfferTaxDialogOpen] = useState(false);
   const [draftLines, setDraftLines] = useState<CommercialInvoiceLine[]>([]);
   const [notesDraft, setNotesDraft] = useState('');
+  const [verifyPayBusy, setVerifyPayBusy] = useState(false);
+  const [verifyBankId, setVerifyBankId] = useState<string>('');
+  const [verifyEntryDate, setVerifyEntryDate] = useState('');
+
+  const isAccountingActor = useMemo(
+    () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser)),
+    [currentUser],
+  );
 
   const canSee = useMemo(
     () => !!currentUser && canView(currentUser, 'draft_invoices'),
@@ -139,11 +158,25 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   );
   const { data: invoice, isLoading } = useDoc<CommercialInvoice>(invRef as any);
 
+  const bankListQ = useMemoFirebase(() => {
+    if (!firestore || !isAccountingActor) return null;
+    return query(
+      collection(firestore, 'bank_accounts'),
+      where('status', '==', 'ACTIVE'),
+      orderBy('accountName', 'asc'),
+    );
+  }, [firestore, isAccountingActor]);
+  const { data: bankList } = useCollection<BankAccount>(bankListQ as any);
+
   useEffect(() => {
     if (!invoice) return;
     setDraftLines((invoice.lines ?? []).map((l) => ({ ...l })));
     setNotesDraft(invoice.notes ?? '');
   }, [invoice?.id, invoice?.updatedAt]);
+
+  useEffect(() => {
+    setVerifyEntryDate((d) => (d ? d : timestampToHtmlDateValue(Date.now())));
+  }, []);
 
   const custRef = useMemoFirebase(
     () =>
@@ -379,6 +412,35 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     }
   };
 
+  const handleVerifyOpecPayment = async () => {
+    if (!firestore || !currentUser || !invoice) return;
+    if (!verifyBankId.trim() || !verifyEntryDate?.trim()) {
+      toast({ variant: 'destructive', title: 'กรุณาเลือกบัญชีและวันที่รับเงิน' });
+      return;
+    }
+    setVerifyPayBusy(true);
+    try {
+      const r = await verifyOpecCustomerPaymentForCommercial(
+        firestore,
+        invoice.id,
+        currentUser as User,
+        { bankAccountId: verifyBankId, entryDate: verifyEntryDate },
+      );
+      toast({
+        title: 'บันทึกรับเงิน/ออกใบกำกับแล้ว',
+        description: `INV ${r.taxInvoiceNo} · สมุด ${r.entryNo} — เปิดจากรายการใบกำกับฯ ได้`,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setVerifyPayBusy(false);
+    }
+  };
+
   const patchDraftLine = (lineId: string, patch: Partial<CommercialInvoiceLine>) => {
     setDraftLines((rows) =>
       rows.map((r) => {
@@ -511,6 +573,78 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             ยืนยันเรียกเก็บแล้ว {formatDateTimeThaiBE(invoice.customerApprovedAt)}
             {invoice.customerApprovedByName ? ` · ${invoice.customerApprovedByName}` : ''}
             {invoice.customerApprovalSource === 'CLIENT_PORTAL' ? ' (ลูกค้า)' : ' (OPEC)'}
+          </p>
+        )}
+
+        {invoice.status === 'ISSUED' && invoice.customerPaymentReportedAt && !invoice.opecPaymentVerifiedAt && (
+          <Alert className="border-amber-200 bg-amber-50/80 dark:bg-amber-950/25">
+            <AlertTitle>ลูกค้าแจ้งชำระเงิน</AlertTitle>
+            <AlertDescription className="space-y-3 text-sm">
+              {invoice.customerPaymentProofUrl ? (
+                <p>
+                  หลักฐานแนบ:{' '}
+                  <a
+                    className="text-primary underline font-medium"
+                    href={invoice.customerPaymentProofUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    เปิดไฟล์
+                  </a>
+                  {invoice.customerPaymentProofFileName ? ` (${invoice.customerPaymentProofFileName})` : ''}
+                </p>
+              ) : (
+                <p>ไม่มี URL แนบ (ข้อมูลเก่า)</p>
+              )}
+              {isAccountingActor ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                  <div className="space-y-1 min-w-[200px]">
+                    <Label className="text-xs">รับเข้าบัญชีธนาคาร</Label>
+                    <Select value={verifyBankId} onValueChange={setVerifyBankId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="เลือกบัญชี" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(bankList ?? []).map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.accountName} — {b.bankName} ({b.accountNumber})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">วันที่รับเงิน (ลงสมุด)</Label>
+                    <Input
+                      type="date"
+                      className="w-[11rem]"
+                      value={verifyEntryDate}
+                      onChange={(e) => setVerifyEntryDate(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    className="gap-2"
+                    disabled={verifyPayBusy || !verifyBankId}
+                    onClick={() => void handleVerifyOpecPayment()}
+                  >
+                    {verifyPayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    ยืนยันรับเงิน + ออกใบกำกับ + ลง cashbook
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-xs">เฉพาะบัญชี/แอดมิน — ตรวจสอบหลักฐานแล้วกดยืนยันตามขั้นตอน</p>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {invoice.status === 'ISSUED' && invoice.opecPaymentVerifiedAt && (
+          <p className="text-sm text-slate-700 dark:text-slate-300">
+            รับรองรับเงินแล้ว {formatDateTimeThaiBE(invoice.opecPaymentVerifiedAt)}
+            {invoice.opecPaymentCashbookEntryId
+              ? ` · cashbook: ${invoice.opecPaymentCashbookEntryId.slice(0, 8)}…`
+              : ''}
           </p>
         )}
 

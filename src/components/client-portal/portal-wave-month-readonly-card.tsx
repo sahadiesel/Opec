@@ -1,9 +1,12 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { collection, getDocs, limit, query } from 'firebase/firestore';
 import { FileText, Waves } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useFirestore } from '@/firebase';
 import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 import {
   isWaveMonthAttachmentPdf,
@@ -11,11 +14,16 @@ import {
   timesheetCellSummary,
   timesheetEventCellBadgeClasses,
 } from '@/lib/timesheet/wave-month-utils';
-import { formatCustomerPoNumberForPortal, workerDisplayName } from '@/lib/client-portal/timesheet-portal-utils';
+import {
+  formatCustomerPoNumberForPortal,
+  workerDisplayName,
+  workerPositionIdForRoster,
+} from '@/lib/client-portal/timesheet-portal-utils';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import type {
   Assignment,
   DailyTimesheet,
+  Position,
   PurchaseOrder,
   Wave,
   WaveMonthTimesheetPhotoAttachment,
@@ -46,6 +54,31 @@ export function PortalWaveMonthReadonlyCard({
   waveSheets: DailyTimesheet[];
   t: (k: PortalDictKey) => string;
 }) {
+  const firestore = useFirestore();
+  const [positionLabels, setPositionLabels] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!firestore) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDocs(query(collection(firestore, 'positions'), limit(500)));
+        if (cancelled) return;
+        const m: Record<string, string> = {};
+        snap.docs.forEach((d) => {
+          const x = d.data() as Position;
+          m[d.id] = (x.positionName || x.positionCode || d.id).trim();
+        });
+        setPositionLabels(m);
+      } catch {
+        /* ลูกค้าอาจอ่าน positions ไม่ได้ — ยังแสดง positionId ตัวอักษรได้ */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore]);
+
   const byWorkerDate = new Map<string, DailyTimesheet>();
   for (const row of waveSheets) {
     byWorkerDate.set(`${row.workerId}|${row.date}`, row);
@@ -59,7 +92,12 @@ export function PortalWaveMonthReadonlyCard({
   const rosterWorkers = [...new Set(waveAssignments.map((x) => x.workerId).filter(Boolean))]
     .map((wid) => {
       const mob = waveAssignments.find((m) => m.workerId === wid);
-      return { workerId: wid, name: workerDisplayName(wid, mob, waveSheets) };
+      const positionId = workerPositionIdForRoster(wid, mob, waveSheets);
+      return {
+        workerId: wid,
+        name: workerDisplayName(wid, mob, waveSheets),
+        positionId,
+      };
     })
     .sort((a, b) => a.name.localeCompare(b.name, 'th'));
 
@@ -151,7 +189,7 @@ export function PortalWaveMonthReadonlyCard({
             <Table className="min-w-max text-xs">
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="sticky left-0 z-20 min-w-[140px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
+                  <TableHead className="sticky left-0 z-20 min-w-[160px] max-w-[220px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
                     {t('tsColWorker')}
                   </TableHead>
                   {days.map((d) => (
@@ -163,10 +201,23 @@ export function PortalWaveMonthReadonlyCard({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rosterWorkers.map((rw) => (
+                {rosterWorkers.map((rw) => {
+                  const posText =
+                    rw.positionId && (positionLabels[rw.positionId] || rw.positionId).trim();
+                  return (
                   <TableRow key={rw.workerId}>
-                    <TableCell className="sticky left-0 z-10 bg-background font-medium text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
-                      {rw.name}
+                    <TableCell className="sticky left-0 z-10 bg-background text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)] min-w-[160px] max-w-[220px]">
+                      <div className="flex flex-col gap-0.5 pr-1">
+                        <span className="font-medium leading-snug">{rw.name}</span>
+                        {posText ? (
+                          <span
+                            className="text-[10px] font-normal text-muted-foreground leading-tight line-clamp-2"
+                            title={posText}
+                          >
+                            {posText}
+                          </span>
+                        ) : null}
+                      </div>
                     </TableCell>
                     {days.map((d) => {
                       const ts = byWorkerDate.get(`${rw.workerId}|${d}`);
@@ -195,7 +246,8 @@ export function PortalWaveMonthReadonlyCard({
                     })}
                     <TableCell className="text-center font-bold text-sm">{rowTotals.get(rw.workerId) ?? 0}</TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
             <div className="border-t px-4 py-3 text-xs text-muted-foreground">

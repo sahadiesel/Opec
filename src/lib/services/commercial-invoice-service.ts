@@ -9,6 +9,7 @@ import {
   query,
   where,
   getDocs,
+  limit,
   updateDoc,
   deleteDoc,
   deleteField,
@@ -25,7 +26,7 @@ import type {
   WaveMonthTimesheetReview,
 } from '@/lib/types';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
-import { timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { generateBillingLines } from '@/lib/services/billing-line-generator';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
@@ -551,6 +552,80 @@ export async function sendCommercialDraftToCustomer(
   });
 }
 
+function addDaysToHtmlDate(issueYmd: string, days: number): string {
+  const ms = htmlDateValueToTimestampMs(issueYmd?.trim() || '');
+  if (ms == null) return issueYmd;
+  return timestampToHtmlDateValue(ms + days * 86400000);
+}
+
+/** รับตั้งลูกหนี้จากใบแจ้งหนี้เรียกเก็บ หลังลูกค้า/ฝ่าย OPEC ยืนยันยอด (ISSUED) */
+export async function ensureAccountsReceivableForIssuedCommercial(
+  db: Firestore,
+  com: Pick<CommercialInvoice, 'id' | 'customerId' | 'invoiceNo' | 'totalAmount' | 'issueDate' | 'status'>,
+  actor: User,
+): Promise<void> {
+  if (com.status !== 'ISSUED') return;
+  const dup = await getDocs(
+    query(
+      collection(db, 'accounts_receivable'),
+      where('referenceId', '==', com.id),
+      where('referenceType', '==', 'COMMERCIAL_INVOICE' as const),
+      limit(1),
+    ),
+  );
+  if (!dup.empty) return;
+  const documentNo = `AR-COM-${com.id}`;
+  const dueYmd = addDaysToHtmlDate(com.issueDate, 30);
+  await addDoc(
+    collection(db, 'accounts_receivable'),
+    sanitizeFirestorePayload({
+      customerId: com.customerId,
+      documentNo,
+      referenceType: 'COMMERCIAL_INVOICE' as const,
+      referenceId: com.id,
+      referenceNo: com.invoiceNo,
+      issueDate: com.issueDate,
+      dueDate: dueYmd,
+      debitAmount: com.totalAmount,
+      creditAmount: 0,
+      outstandingAmount: com.totalAmount,
+      status: 'OPEN' as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+/** ลูกค้า: แจ้งชำระเงิน + URL แนบเอกสาร (หลังยืนยันยอด ISSUED) */
+export async function reportCustomerPaymentForIssuedCommercial(
+  db: Firestore,
+  com: CommercialInvoice,
+  actor: User,
+  params: { proofUrl: string; fileName: string; contentType: string },
+): Promise<void> {
+  if (com.status !== 'ISSUED') {
+    throw new Error('แจ้งชำระเงินได้หลังยืนยันยอดเรียกเก็บแล้ว (ISSUED) เท่านั้น');
+  }
+  if (com.opecPaymentVerifiedAt) {
+    throw new Error('บัญชี OPEC รับรองรายการนี้แล้ว');
+  }
+  const now = Date.now();
+  const ref = doc(db, 'commercial_invoices', com.id);
+  await updateDoc(
+    ref,
+    sanitizeFirestorePayload({
+      customerPaymentReportedAt: now,
+      customerPaymentReportedByUid: actor.id,
+      customerPaymentReportedByName: actor.displayName || actor.email || actor.id,
+      customerPaymentProofUrl: params.proofUrl,
+      customerPaymentProofFileName: params.fileName,
+      updatedAt: now,
+      updatedByUid: actor.id,
+      updatedByName: actor.displayName || actor.email || actor.id,
+    }),
+  );
+}
+
 export async function confirmCommercialInvoiceBilling(
   db: Firestore,
   invoice: CommercialInvoice,
@@ -589,6 +664,19 @@ export async function confirmCommercialInvoiceBilling(
     afterSummary:
       source === 'CLIENT_PORTAL' ? 'ลูกค้ายืนยันยอดเรียกเก็บ (portal)' : 'ผู้จัดการ/ทีม OPEC ยืนยันยอดเรียกเก็บ',
   });
+
+  await ensureAccountsReceivableForIssuedCommercial(
+    db,
+    {
+      id: invoice.id,
+      customerId: invoice.customerId,
+      invoiceNo: invoice.invoiceNo,
+      totalAmount: invoice.totalAmount,
+      issueDate: invoice.issueDate,
+      status: 'ISSUED',
+    },
+    actor,
+  );
 }
 
 function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceLine[] {

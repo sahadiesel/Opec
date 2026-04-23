@@ -18,12 +18,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Banknote, BookOpen, Loader2, Plus, Wallet } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { BankAccount, CashbookEntry, User } from '@/lib/types';
+import { BankAccount, PettyCashEntry, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, limit, orderBy, query, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { canView } from '@/lib/permissions';
-import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-movement';
+import { recordPettyCashMovement } from '@/lib/services/cashbook-bank-movement';
 import { useAppUser } from '@/hooks/use-app-user';
 
 export default function OperationsPettyCashPage() {
@@ -62,14 +62,14 @@ export default function OperationsPettyCashPage() {
   const entriesQuery = useMemoFirebase(() => {
     if (!firestore || !selectedAccountId || !allowed) return null;
     return query(
-      collection(firestore, 'cashbook_entries'),
+      collection(firestore, 'petty_cash_entries'),
       where('bankAccountId', '==', selectedAccountId),
       orderBy('createdAt', 'desc'),
       limit(80)
     );
   }, [firestore, selectedAccountId, allowed]);
 
-  const { data: entries, isLoading: loadingEntries } = useCollection<CashbookEntry>(entriesQuery as any);
+  const { data: entries, isLoading: loadingEntries } = useCollection<PettyCashEntry>(entriesQuery as any);
 
   const selectedAccount = pettyAccounts?.find((a) => a.id === selectedAccountId);
 
@@ -91,17 +91,14 @@ export default function OperationsPettyCashPage() {
     }
     setSaving(true);
     try {
-      const { entryNo } = await recordCashbookMovementWithBalance(firestore, currentUser as User, {
+      const { entryNo } = await recordPettyCashMovement(firestore, currentUser as User, {
         bankAccountId: selectedAccountId,
         direction,
         amount,
         entryDate,
         description: description.trim(),
-        paymentMethod: 'CASH',
-        entryType: 'PETTY_CASH',
-        referenceType: 'OTHER',
       });
-      toast({ title: 'บันทึกรายการแล้ว', description: `เลขที่ ${entryNo}` });
+      toast({ title: 'บันทึกรายการแล้ว', description: `เลขที่ ${entryNo} (เงินสดย่อย — ไม่ลง Cashbook)` });
       setAmount(0);
       setDescription('');
     } catch (e) {
@@ -131,15 +128,17 @@ export default function OperationsPettyCashPage() {
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <Banknote className="h-8 w-8" /> เบิกจ่าย Petty Cash (หน้างาน)
           </h1>
-          <p className="text-muted-foreground text-lg">
-            บันทึกรายรับ/รายจายจากกองเงินสดย่อย — รายการเดียวกันปรากฏใน Cashbook ฝั่งบัญชี
+          <p className="text-muted-foreground text-lg max-w-3xl">
+            บันทึกรับ/จ่ายเงินสดย่อยหน้างาน — อัปเดตเฉพาะยอด Petty Cash นี้ ไม่สร้างรายการใน Cashbook
+            (เงินก้อนจากบริษัทตัดในสมุดบัญชีตอนโอนเข้า Petty แล้ว) เมื่อโอนเงินคืนเข้าบัญชีบริษัทให้ฝ่ายบัญชีบันทึก/โอนผ่าน{' '}
+            <span className="whitespace-nowrap">Cashbook</span> ตามปกติ
           </p>
           {canSeeCashbook && (
             <Link
               href="/cashbook"
-              className="text-sm font-semibold text-primary inline-flex items-center gap-1 w-fit hover:underline"
+              className="text-sm text-muted-foreground inline-flex items-center gap-1 w-fit hover:underline"
             >
-              <BookOpen className="h-4 w-4" /> ไปยังรายรับรายจาย (Cashbook)
+              <BookOpen className="h-4 w-4" /> ดูสมุดรายรับรายจาย (โอนเข้า-ออกกอง, ฯลฯ)
             </Link>
           )}
         </div>
@@ -169,7 +168,7 @@ export default function OperationsPettyCashPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">บันทึกรายการ</CardTitle>
-                <CardDescription>เลือกกองเงินสดย่อย แล้วระบุรับหรือจ่าย</CardDescription>
+                <CardDescription>รายการนี้ลงฐาน Petty อย่างเดียว — ไม่ซ้ำใน Cashbook</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">

@@ -43,6 +43,20 @@ export function workerDisplayName(
   return workerId;
 }
 
+/**
+ * ตำแหน่งงานใน roster เดือน (ใช้จาก mobilization/assignment ก่อน, สำรองจาก timesheet แถวแรกของคนนั้น)
+ */
+export function workerPositionIdForRoster(
+  workerId: string,
+  mob: Assignment | undefined,
+  waveSheets: DailyTimesheet[],
+): string {
+  const fromMob = mob?.positionId?.trim();
+  if (fromMob) return fromMob;
+  const ts = waveSheets.find((s) => s.workerId === workerId);
+  return (ts?.positionId || '').trim();
+}
+
 /** Most recent calendar months as yyyy-MM (current month first). */
 export function getLastNCalendarMonths(n: number): string[] {
   const out: string[] = [];

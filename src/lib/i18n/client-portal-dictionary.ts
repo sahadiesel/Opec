@@ -68,6 +68,8 @@ export const portalNav = {
     accounting: 'Billing & documents',
     accountingLead:
       'Open documents from the lists below — billing and tax lines in the first tab, payment records in the second. Status is shown in each table.',
+    accountingWorkflowInfo:
+      'If you press Confirm the billed amount, the document is approved in your name as approver, and you may print it for your internal requisition. OPEC records accounts receivable automatically. After you pay, use Confirm payment again to attach a slip (image or PDF). When OPEC has verified the receipt and recorded the entry to the selected bank account, a tax invoice/receipt will appear in the “Tax invoice / receipt” tab for you to print or keep — and the cash book/bank position is updated.',
     contractsPoHint: 'Click a contract row to show purchase orders. POs not tied to a contract are listed below.',
     posForContract: 'POs for this contract',
     otherPOs: 'Other purchase orders',
@@ -191,6 +193,16 @@ export const portalNav = {
     accTabBilling: 'Overview',
     docPrintLocaleHint: 'Choose language for printing',
     accColAction: 'Action',
+    ciStatusAwaitingPayment: 'Approved — await payment',
+    ciStatusPayReported: 'Payment proof sent — with OPEC',
+    ciStatusOpecDone: 'Cleared (tax / receipt on next tab when issued)',
+    commBtnConfirmPay: 'Confirm payment',
+    commPayDialogTitle: 'Attach payment evidence',
+    commPayDialogDesc: 'Image or PDF (max. about 10 MB for PDF, images may be compressed).',
+    commPaySave: 'Save and notify OPEC',
+    commPayViewProof: 'View upload',
+    commPayWaitingOpec: 'OPEC is verifying your payment. You will get the tax/receipt in the other tab when issued.',
+    commPayReupload: 'Replace file',
     accInvoiceHubLead:
       'Service billing and tax-invoice rows in one table — open a row to review or print; status is in the list. The next tab shows payments received.',
     accDraftLead: 'Draft invoice — check quantities and hours against timesheets before you confirm.',
@@ -280,6 +292,8 @@ export const portalNav = {
     accounting: 'บัญชีและเอกสาร',
     accountingLead:
       'เปิดดูเอกสารจากรายการด้านล่าง — แท็บแรกเป็นใบเรียกเก็บและใบกำกับภาษี แท็บถัดไปเป็นรายการรับชำระ ดูสถานะได้จากแต่ละตาราง',
+    accountingWorkflowInfo:
+      'หากท่านกดยืนยันตามยอดที่เรียกเก็บ เอกสารจะมีสถานะ approved โดยมีชื่อท่านเป็นผู้อนุมัติบนเอกสาร และท่านสามารถพิมพ์เอกสารฉบับนี้เพื่อตั้งเบิกในระบบของท่านได้ ระบบ OPEC จะรับตั้งลูกหนี้ไว้โดยอัตโนมัติ เมื่อท่านชำระเงินแล้ว กรุณากด «ยืนยันการชำระเงิน» อีกครั้งเพื่อแนบเอกสาร (รูปหรือ PDF) — เมื่อฝ่ายบัญชี OPEC ตรวจรับเงินและลงบัญชีธนาคารที่ถูกต้อง ระบบจะสร้าง/แสดง «ใบกำกับภาษี/ใบเสร็จรับเงิน» ในแท็บเดียวกัน — ดาวน์โหลดหรือพิมพ์ต่อไป (สมุดรับจ่าย/ยอดธนาคารอัปเดตอัตโนมัติ)',
     contractsPoHint: 'กดแถวสัญญาเพื่อดู PO ภายใต้สัญญานั้น — PO ที่ไม่ผูกสัญญาอยู่ด้านล่าง',
     posForContract: 'ใบสั่งซื้อภายใต้สัญญานี้',
     otherPOs: 'ใบสั่งซื้ออื่น (ไม่ผูกสัญญา)',
@@ -402,6 +416,16 @@ export const portalNav = {
     accTabBilling: 'ภาพรวม',
     docPrintLocaleHint: 'เลือกภาษาในการพิมพ์',
     accColAction: 'ดำเนินการ',
+    ciStatusAwaitingPayment: 'ยืนยันแล้ว — รอชำระ',
+    ciStatusPayReported: 'แจ้งชำระแล้ว — รอ OPEC',
+    ciStatusOpecDone: 'ปิดเอกสาร (ออกใบกำกับ/ใบเสร็จ — ดูแท็บกำกับฯ)',
+    commBtnConfirmPay: 'ยืนยันการชำระเงิน',
+    commPayDialogTitle: 'แนบเอกสารยืนยันการจ่าย',
+    commPayDialogDesc: 'รูปภาพหรือ PDF (PDF สูงสุด ~10 MB; รูปอาจถูกบีบอัตโนมัติ)',
+    commPaySave: 'บันทึกและแจ้ง OPEC',
+    commPayViewProof: 'เปิดดูหลักฐาน',
+    commPayWaitingOpec: 'บัญชี OPEC กำลังตรวจ — เมื่ออนุมัติแล้ว ใบกำกับ/ใบเสร็จจะแสดงที่แท็บใบกำกับภาษี',
+    commPayReupload: 'เปลี่ยนไฟล์',
     accInvoiceHubLead:
       'ใบเรียกเก็บและรายการใบกำกับภาษีอยู่ตารางนี้ — กดแถวเพื่อดูหรือพิมพ์ สถานะในตาราง แท็บถัดไปเป็นรายการรับชำระ',
     accDraftLead: 'รายการใบแจ้งหนี้ — ตรวจชั่วโมงและจำนวนคนให้ตรงกับ timesheet ก่อนยืนยัน',

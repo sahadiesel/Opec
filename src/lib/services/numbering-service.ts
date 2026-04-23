@@ -44,6 +44,16 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   ar: { label: 'AR Reference', prefix: 'AR-', padding: 5, dept: 'accounting', resetPolicy: 'yearly', collectionName: 'accounts_receivable', fieldName: 'documentNo' },
   ap: { label: 'AP Reference', prefix: 'AP-', padding: 5, dept: 'accounting', resetPolicy: 'yearly', collectionName: 'accounts_payable', fieldName: 'documentNo' },
   cashbook_entry: { label: 'Cashbook Entry', prefix: 'CB-', padding: 6, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'cashbook_entries', fieldName: 'entryNo' },
+  /** รับ/จ่ายหน้างาน — ไม่ลงสมุด cashbook หลัก (ยอดกองเงินสดย่อยเท่านั้น) */
+  petty_cash_entry: {
+    label: 'Petty Cash entry (on-site)',
+    prefix: 'PCE-',
+    padding: 6,
+    dept: 'operations',
+    resetPolicy: 'monthly',
+    collectionName: 'petty_cash_entries',
+    fieldName: 'entryNo',
+  },
   bank_account: { label: 'Bank Account', prefix: 'BANK-', padding: 3, dept: 'accounting', resetPolicy: 'none', collectionName: 'bank_accounts', fieldName: 'accountCode' },
   petty_cash_account: {
     label: 'Petty Cash Account',
