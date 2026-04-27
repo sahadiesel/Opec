@@ -52,7 +52,7 @@ export const printDocStrings = {
     unitPrice: 'ราคา/หน่วย',
     amount: 'รวมเงิน',
     customerInfo: 'ข้อมูลลูกค้า',
-    customerBuyer: 'ข้อมูลลูกค้า (ผู้ซื้อ)',
+    customerBuyer: 'ข้อมูลลูกค้า',
     vendorInfo: 'ข้อมูลคู่ค้า (ผู้ขาย)',
     timesheetPeriod: 'ช่วง timesheet',
     billingPeriod: 'ช่วงเรียกเก็บ',

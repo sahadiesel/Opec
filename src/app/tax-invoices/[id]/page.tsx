@@ -32,6 +32,7 @@ import {
   BillingNote,
   BillingNoteLine,
   TaxInvoiceTimesheetAttachment,
+  CommercialInvoice,
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
@@ -95,6 +96,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     [firestore, invoice?.customerId]
   );
   const { data: customer } = useDoc<Customer>(customerRef as any);
+
+  const sourceCommercialRef = useMemoFirebase(
+    () =>
+      firestore && invoice?.sourceCommercialInvoiceId
+        ? doc(firestore, 'commercial_invoices', invoice.sourceCommercialInvoiceId)
+        : null,
+    [firestore, invoice?.sourceCommercialInvoiceId]
+  );
+  const { data: sourceCommercial } = useDoc<CommercialInvoice>(sourceCommercialRef as any);
 
   const billingNoteRef = useMemoFirebase(
     () => (firestore && invoice ? doc(firestore, 'billing_notes', invoice.billingNoteId) : null),
@@ -310,15 +320,6 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  const effectivePrintLocale =
-    invoice && invoice.status === 'ISSUED' && invoice.printDocumentLocale
-      ? invoice.printDocumentLocale
-      : printLocale;
-
-  const printLocaleReadOnly = Boolean(
-    invoice?.status === 'ISSUED' && invoice?.printDocumentLocale,
-  );
-
   const handlePrintTaxInvoice = () => {
     if (!invoice) return;
     const body = buildTaxInvoicePrintHtml({
@@ -327,14 +328,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       billingNote: billingNote ?? undefined,
       billingLines: billingLines ?? [],
       customer: customer ?? undefined,
+      sourceCommercialInvoice: sourceCommercial ?? null,
       printedAtMs: Date.now(),
-      locale: effectivePrintLocale,
+      locale: printLocale,
     });
     if (
       !openStandardPrintWindow({
         windowTitle: invoice.taxInvoiceNo,
         bodyInnerHtml: body,
-        htmlLang: effectivePrintLocale,
+        htmlLang: printLocale,
       })
     ) {
       toast({
@@ -427,9 +429,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           </div>
           <div className="flex flex-wrap items-center gap-2 justify-end">
             <DocumentPrintLocaleToggle
-              printLocale={effectivePrintLocale}
+              printLocale={printLocale}
               setPrintLocale={setPrintLocale}
-              readOnly={printLocaleReadOnly}
               showLabel
             />
             <Button variant="outline" className="gap-2" type="button" onClick={() => handlePrintTaxInvoice()}>
@@ -562,6 +563,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 <Label className="text-[10px] uppercase text-muted-foreground font-bold">รายการ (ใบวางบิล)</Label>
                 <TaxInvoiceLinesTable
                   lines={billingLines}
+                  commercialLines={sourceCommercial?.lines}
                   numberLocale="th-TH"
                   currency={invoice.currency}
                   columnHeaders={{
@@ -577,11 +579,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
               <Separator />
 
-              {printLocaleReadOnly && (
+              {invoice.status === 'ISSUED' && (
                 <p className="text-xs text-muted-foreground">
-                  ฉบับออกจริง: บันทึกภาษาเอกสารสำหรับพิมพ์เป็น{' '}
-                  <span className="font-semibold">{effectivePrintLocale === 'en' ? 'อังกฤษ' : 'ไทย'}</span> แล้ว — ปุ่มด้าน
-                  บนล็อกไว้
+                  เอกสารออกฉบับจริงแล้ว — รายการ ราคา ที่อยู่ ล็อกแล้ว — เลือกพิมพ์เป็นภาษาไทยหรืออังกฤษที่มุมขวาบนก่อนพิมพ์
                 </p>
               )}
 

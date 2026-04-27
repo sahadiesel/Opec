@@ -260,6 +260,26 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     margin-top: 6px;
     font-style: italic;
   }
+  /** ใบกำกับภาษี — จำนวนเงินเป็นคำ: กว้างเต็มแนว ไม่ตัดสองบรรทัด */
+  .sd-totals-wrap.sd-totals-wrap--tax-words { display: block; }
+  .sd-totals-wrap.sd-totals-wrap--tax-words .sd-totals { width: 280px; max-width: 100%; margin-left: auto; }
+  .sd-amount-words.sd-amount-words--tax-full {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    text-align: right;
+    margin-top: 5px;
+    font-size: 8.5pt;
+    line-height: 1.35;
+    color: #525252;
+    font-style: italic;
+    white-space: nowrap;
+  }
+  @media print {
+    .sd-amount-words.sd-amount-words--tax-full {
+      font-size: 8pt;
+    }
+  }
   .sd-section-title {
     margin: 20px 0 8px 0;
     font-size: 10.5pt;
@@ -541,6 +561,8 @@ export function buildStandardTotalsBlockHtml(params: {
   rows: StandardTotalsRow[];
   /** จาก amountToThaiBahtText แล้ว */
   amountInWords?: string;
+  /** ยอดเป็นคำ: กว้างเต็ม ไม่ขึ้นบรรทัด (ใช้ฉบับใบกำกับ) */
+  amountInWordsLayout?: 'default' | 'taxFullLine';
 }): string {
   const body = params.rows
     .map((r) => {
@@ -555,6 +577,15 @@ export function buildStandardTotalsBlockHtml(params: {
     })
     .join('');
   const w = params.amountInWords?.trim();
+  if (w && params.amountInWordsLayout === 'taxFullLine') {
+    const words = `<p class="sd-amount-words sd-amount-words--tax-full">${escapeHtmlDoc(w)}</p>`;
+    return `<div class="sd-totals-wrap sd-totals-wrap--tax-words">
+    <div class="sd-totals">
+      ${body}
+    </div>
+    ${words}
+  </div>`;
+  }
   const words = w ? `<p class="sd-amount-words">${escapeHtmlDoc(w)}</p>` : '';
   return `<div class="sd-totals-wrap">
     <div class="sd-totals">
@@ -682,16 +713,24 @@ function commercialInvoiceDocTitles(): { th: string; en: string } {
   return { th: 'ใบแจ้งหนี้', en: 'Invoice' };
 }
 
+/** ที่อยู่ใน Firestore บางเจ้ารวมหลายบรรทัด/บริษัท — ฉบับพิมพ์สาธารณะ: เอาเป็นหนึ่งบรรทัด ไม่รั่วจาก billing ก่อน registered (เคยทำฉบับ TH กับ EN สลับลำดะต่างกันจนไม่ตรง Invoice) */
+function normalizePrintPartyAddress(s: string): string {
+  return s
+    .replace(/\r\n?/g, '\n')
+    .split(/\n+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
 function customerPartyDetailLines(
   c: Customer | null | undefined,
   locale: PrintDocumentLocale,
 ): string[] {
   if (!c) return [];
   const lines: string[] = [];
-  const addr =
-    locale === 'en'
-      ? (c.registeredAddress || c.billingAddress || '').trim()
-      : (c.billingAddress || c.registeredAddress || '').trim();
+  const raw = (c.registeredAddress || c.billingAddress || '').trim();
+  const addr = normalizePrintPartyAddress(raw);
   if (addr) lines.push(addr);
   if (c.taxId?.trim()) lines.push(`${printT(locale, 'taxId')} ${c.taxId.trim()}`);
   if (c.phone?.trim()) lines.push(`${printT(locale, 'tel')} ${c.phone.trim()}`);
@@ -944,46 +983,23 @@ export function buildCommercialInvoicePrintHtml(params: {
   });
 }
 
-/** ใบกำกับภาษี — รายการจากใบวางบิล */
-export function buildTaxInvoicePrintHtml(params: {
-  company: CompanyProfilePrint | null | undefined;
-  invoice: TaxInvoice;
-  billingNote: BillingNote | null | undefined;
-  billingLines: BillingNoteLine[] | null | undefined;
-  customer: Customer | null | undefined;
-  customerPartyNameOverride?: string;
-  printedAtMs?: number;
-  locale?: PrintDocumentLocale;
-}): string {
-  const { company, invoice, billingNote, billingLines, customer, customerPartyNameOverride, printedAtMs } = params;
-  const L = params.locale ?? 'th';
+/**
+ * รายการตารางแบบใบเรียกเก็บ (ลูกค้า approve) — ใช้ซ้ำกับฉบับใบกำกับเพื่อให้ข้อความ/ลำดับตรงกัน
+ */
+function buildCommercialLinesTableRowsForPrint(
+  lines: CommercialInvoiceLine[] | null | undefined,
+  L: PrintDocumentLocale,
+): string {
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
-  const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
-  /** ชื่อบริษัทใน Firestore ก่อน — ค่อย override (เช่น ไม่มี customer record) หลีกเลี่ยงชื่อ user portal ทับลูกค้า */
-  const partyName = customer?.name?.trim() || customerPartyNameOverride?.trim() || '—';
-  const rangeFn = L === 'en' ? formatStoredDateRangeGregorian : formatStoredDateRangeThaiBE;
-  const partyLines = [
-    ...customerPartyDetailLines(customer, L),
-    ...(billingNote?.billingNoteNo
-      ? [`${printT(L, 'refBillingNote')}: ${billingNote.billingNoteNo}`]
-      : []),
-    ...(billingNote
-      ? [
-          `${printT(L, 'billingPeriod')}: ${rangeFn(
-            billingNote.billingPeriodStart,
-            billingNote.billingPeriodEnd,
-          )}`,
-        ]
-      : []),
-  ];
-  const sortedLines = sortBillingNoteLinesForDisplay(billingLines);
-  const lineRows = sortedLines
+  return (lines ?? [])
     .map((line, idx) => {
       const sub = line.workerName ? ` (${line.workerName})` : '';
-      const desc = escapeHtmlDoc((line.description || '—') + sub);
+      const rawDesc = (line.description || '—') + sub;
+      const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
+      const desc = escapeHtmlDoc(descText);
       const qty = Number(line.quantity).toLocaleString(loc);
       const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
-      const amt = Number(line.amount).toLocaleString(loc, { minimumFractionDigits: 2 });
+      const amt = Number(line.amount ?? line.quantity * line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
       return `<tr>
         <td class="sd-num">${idx + 1}</td>
         <td>${desc}</td>
@@ -993,6 +1009,54 @@ export function buildTaxInvoicePrintHtml(params: {
       </tr>`;
     })
     .join('');
+}
+
+/** ใบกำกับภาษี — รายการจากใบวางบิล / หรือสอดคล้องใบเรียกเก็บเดิม (ลูกค้า approve) */
+export function buildTaxInvoicePrintHtml(params: {
+  company: CompanyProfilePrint | null | undefined;
+  invoice: TaxInvoice;
+  billingNote: BillingNote | null | undefined;
+  billingLines: BillingNoteLine[] | null | undefined;
+  customer: Customer | null | undefined;
+  customerPartyNameOverride?: string;
+  /** ใบเรียกเก็บต้นทาง — ถ้าระบุและตรง sourceCommercialInvoiceId ฉบับพิมพ์ใช้ชื่อ/ที่อยู่+รายการเดียวกับที่ลูกค้า approve */
+  sourceCommercialInvoice?: CommercialInvoice | null;
+  printedAtMs?: number;
+  locale?: PrintDocumentLocale;
+}): string {
+  const { company, invoice, billingNote, billingLines, customer, customerPartyNameOverride, printedAtMs } = params;
+  const L = params.locale ?? 'th';
+  const loc = L === 'en' ? 'en-GB' : 'th-TH';
+  const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
+  /** ชื่อบริษัทใน Firestore ก่อน — ค่อย override (เช่น ไม่มี customer record) หลีกเลี่ยงชื่อ user portal ทับลูกค้า */
+  const partyName = customer?.name?.trim() || customerPartyNameOverride?.trim() || '—';
+  const com = params.sourceCommercialInvoice;
+  const useCommercialMirror =
+    !!invoice.sourceCommercialInvoiceId &&
+    !!com &&
+    com.id === invoice.sourceCommercialInvoiceId &&
+    (com.lines?.length ?? 0) > 0;
+  const partyLines = customerPartyDetailLines(customer, L);
+  const lineRows = useCommercialMirror
+    ? buildCommercialLinesTableRowsForPrint(com.lines, L)
+    : (() => {
+        const sortedLines = sortBillingNoteLinesForDisplay(billingLines);
+        return sortedLines
+          .map((line, idx) => {
+            const desc = escapeHtmlDoc(line.description || '—');
+            const qty = Number(line.quantity).toLocaleString(loc);
+            const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
+            const amt = Number(line.amount).toLocaleString(loc, { minimumFractionDigits: 2 });
+            return `<tr>
+        <td class="sd-num">${idx + 1}</td>
+        <td>${desc}</td>
+        <td class="sd-right">${qty}</td>
+        <td class="sd-right">${up}</td>
+        <td class="sd-right">${amt}</td>
+      </tr>`;
+          })
+          .join('');
+      })();
 
   const vatPct = billingNote ? Number(billingNote.vatPercent) || 0 : 7;
   const vatRowLabel =
@@ -1054,33 +1118,15 @@ export function buildTaxInvoicePrintHtml(params: {
   const totalsHtml = buildStandardTotalsBlockHtml({
     rows: totalRows,
     amountInWords: totalWords,
+    amountInWordsLayout: 'taxFullLine',
   });
   const mainHtml = `${partyHtml}
   ${tableHtml}
   ${totalsHtml}`;
-  const showApproval =
-    invoice.status === 'ISSUED' ||
-    (invoice.billingCustomerApprovedAt != null && invoice.billingCustomerApprovedByName);
-  const approvalTime =
-    invoice.billingCustomerApprovedAt != null
-      ? L === 'en'
-        ? formatDateTimeGregorian(invoice.billingCustomerApprovedAt)
-        : formatDateTimeThaiBE(invoice.billingCustomerApprovedAt)
-      : '';
   const footerHtml = buildStandardSignFooterHtml({
     left: { roleLine: printT(L, 'signPreparedAccounting'), name: '—' },
     right: { roleLine: printT(L, 'signCustomerAuth'), name: '—' },
-    belowHtml: showApproval
-      ? `<p class="sd-approval-notice">${escapeHtmlDoc(printT(L, 'approvedElectronically'))}${
-          invoice.billingCustomerApprovedAt
-            ? ` — ${escapeHtmlDoc(printT(L, 'billingApproved'))} ${escapeHtmlDoc(approvalTime)}${
-                invoice.billingCustomerApprovedByName
-                  ? ` (${escapeHtmlDoc(invoice.billingCustomerApprovedByName)})`
-                  : ''
-              }`
-            : ''
-        }</p>`
-      : '',
+    belowHtml: '',
   });
   return assembleStandardPrintPageHtml({
     printedAtMs,

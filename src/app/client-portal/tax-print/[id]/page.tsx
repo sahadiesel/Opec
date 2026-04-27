@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { ArrowLeft, Loader2, Printer, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import type { BillingNote, BillingNoteLine, Customer, TaxInvoice, User } from '@/lib/types';
+import type { BillingNote, BillingNoteLine, CommercialInvoice, Customer, TaxInvoice, User } from '@/lib/types';
 import { recordTaxInvoicePaymentNotification } from '@/lib/services/money-receipt-service';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
@@ -54,6 +54,15 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
   );
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
+  const sourceCommercialRef = useMemoFirebase(
+    () =>
+      ready && invoice?.sourceCommercialInvoiceId
+        ? doc(firestore!, 'commercial_invoices', invoice.sourceCommercialInvoiceId)
+        : null,
+    [firestore, invoice?.sourceCommercialInvoiceId, ready],
+  );
+  const { data: sourceCommercial } = useDoc<CommercialInvoice>(sourceCommercialRef as any);
+
   const companyProfileRef = useMemoFirebase(
     () => (ready ? doc(firestore!, 'system', 'company_profile') : null),
     [firestore, ready],
@@ -69,10 +78,6 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
   }>(companyProfileRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
-  const effectivePrintLocale = invoice
-    ? invoice.printDocumentLocale ?? printLocale
-    : printLocale;
-  const printLocaleReadOnly = Boolean(invoice?.printDocumentLocale);
   const [notifyLoading, setNotifyLoading] = useState(false);
 
   const canReportPayment =
@@ -107,13 +112,14 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
 
   const handlePrint = useCallback(() => {
     if (!invoice) return;
-    const L = invoice.printDocumentLocale ?? printLocale;
+    const L = printLocale;
     const body = buildTaxInvoicePrintHtml({
       company: companyProfile ?? undefined,
       invoice,
       billingNote: billingNote ?? undefined,
       billingLines: lines ?? [],
       customer: customer ?? undefined,
+      sourceCommercialInvoice: sourceCommercial ?? null,
       printedAtMs: Date.now(),
       locale: L,
     });
@@ -130,7 +136,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         description: en ? 'Allow popups for this site.' : 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
       });
     }
-  }, [invoice, billingNote, lines, customer, companyProfile, printLocale, toast, en]);
+  }, [invoice, billingNote, lines, customer, companyProfile, printLocale, sourceCommercial, toast, en]);
 
   if (isUserLoading || userLoading || !currentUser) {
     return (
@@ -188,9 +194,8 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DocumentPrintLocaleToggle
-            printLocale={effectivePrintLocale}
+            printLocale={printLocale}
             setPrintLocale={setPrintLocale}
-            readOnly={printLocaleReadOnly}
             showLabel
             hint={en ? 'Document print language — use the button' : 'ภาษาเอกสารฉบับพิมพ์ — กดปุ่มเลือก'}
           />
@@ -215,15 +220,9 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
 
       <Alert className="border-sky-200/80 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20">
         <AlertDescription className="text-sm text-sky-950/90 dark:text-sky-100/90">
-          {printLocaleReadOnly
-            ? en
-              ? `This invoice was saved for printing in ${
-                  effectivePrintLocale === 'en' ? 'English' : 'Thai'
-                } when it was issued — matches internal accounting.`
-              : `บันทึกภาษาเอกสารตอนออกฉบับจริง: ภาษา${effectivePrintLocale === 'en' ? 'อังกฤษ' : 'ไทย'} — สอดคล้องกับฝ่ายบัญชี`
-            : en
-              ? 'Select print language with the button above. Until an older invoice is re-saved, preview follows this device setting.'
-              : 'เลือกพิมพ์เอกสารเป็นภาษา ไทย หรือ อังกฤษ ด้วยปุ่ม — ฉบับออกก่อนมีฟีลด์นี้ ใช้การตั้งค่าเครื่องนี้'}
+          {en
+            ? 'Choose Thai or English for the printed layout with the button above. Line items and amounts are fixed on the official invoice; only the print language is selectable here.'
+            : 'รายการและยอดเงินคงตามเอกสารฉบับจริง — เลือกภาษาไทย/อังกฤษสำหรับฉบับพิมพ์ด้วยปุ่มด้านบน'}
         </AlertDescription>
       </Alert>
 
@@ -231,6 +230,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         <p className="text-sm font-medium">{en ? 'Line items' : 'รายการ'}</p>
         <TaxInvoiceLinesTable
           lines={lines}
+          commercialLines={sourceCommercial?.lines}
           numberLocale={en ? 'en-GB' : 'th-TH'}
           currency={invoice.currency}
           columnHeaders={
