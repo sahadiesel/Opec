@@ -19,6 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import { buildTaxInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 
 export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: string }> }) {
@@ -68,6 +69,10 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
   }>(companyProfileRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const effectivePrintLocale = invoice
+    ? invoice.printDocumentLocale ?? printLocale
+    : printLocale;
+  const printLocaleReadOnly = Boolean(invoice?.printDocumentLocale);
   const [notifyLoading, setNotifyLoading] = useState(false);
 
   const canReportPayment =
@@ -102,6 +107,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
 
   const handlePrint = useCallback(() => {
     if (!invoice) return;
+    const L = invoice.printDocumentLocale ?? printLocale;
     const body = buildTaxInvoicePrintHtml({
       company: companyProfile ?? undefined,
       invoice,
@@ -109,13 +115,13 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
       billingLines: lines ?? [],
       customer: customer ?? undefined,
       printedAtMs: Date.now(),
-      locale: printLocale,
+      locale: L,
     });
     if (
       !openStandardPrintWindow({
         windowTitle: invoice.taxInvoiceNo,
         bodyInnerHtml: body,
-        htmlLang: printLocale,
+        htmlLang: L,
       })
     ) {
       toast({
@@ -181,7 +187,13 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+          <DocumentPrintLocaleToggle
+            printLocale={effectivePrintLocale}
+            setPrintLocale={setPrintLocale}
+            readOnly={printLocaleReadOnly}
+            showLabel
+            hint={en ? 'Document print language — use the button' : 'ภาษาเอกสารฉบับพิมพ์ — กดปุ่มเลือก'}
+          />
           {canReportPayment && (
             <Button
               type="button"
@@ -199,6 +211,35 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
             {en ? 'Print' : 'พิมพ์'}
           </Button>
         </div>
+      </div>
+
+      <Alert className="border-sky-200/80 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20">
+        <AlertDescription className="text-sm text-sky-950/90 dark:text-sky-100/90">
+          {printLocaleReadOnly
+            ? en
+              ? `This invoice was saved for printing in ${
+                  effectivePrintLocale === 'en' ? 'English' : 'Thai'
+                } when it was issued — matches internal accounting.`
+              : `บันทึกภาษาเอกสารตอนออกฉบับจริง: ภาษา${effectivePrintLocale === 'en' ? 'อังกฤษ' : 'ไทย'} — สอดคล้องกับฝ่ายบัญชี`
+            : en
+              ? 'Select print language with the button above. Until an older invoice is re-saved, preview follows this device setting.'
+              : 'เลือกพิมพ์เอกสารเป็นภาษา ไทย หรือ อังกฤษ ด้วยปุ่ม — ฉบับออกก่อนมีฟีลด์นี้ ใช้การตั้งค่าเครื่องนี้'}
+        </AlertDescription>
+      </Alert>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium">{en ? 'Line items' : 'รายการ'}</p>
+        <TaxInvoiceLinesTable
+          lines={lines}
+          numberLocale={en ? 'en-GB' : 'th-TH'}
+          currency={invoice.currency}
+          columnHeaders={
+            en
+              ? { no: 'No', description: 'Description', qty: 'Qty', unitPrice: 'Unit', amount: 'Amount' }
+              : { no: 'ลำดับ', description: 'รายการ', qty: 'จำนวน', unitPrice: 'ราคา/หน่วย', amount: 'จำนวนเงิน' }
+          }
+          emptyLabel={en ? 'No line items' : 'ไม่มีรายการ'}
+        />
       </div>
 
       {invoice.paymentNotifiedAt && !invoice.linkedReceiptId && (

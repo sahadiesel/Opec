@@ -28,6 +28,8 @@ import { Separator } from '@/components/ui/separator';
 import { buildTaxInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function ClientDraftInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -79,6 +81,7 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
   }>(companyProfileRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const effectivePrintLocale = invoice?.printDocumentLocale ?? printLocale;
 
   const isApprover = currentUser?.portalRole === 'approver';
 
@@ -92,13 +95,13 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
       customer: undefined,
       customerPartyNameOverride: currentUser?.displayName || currentUser?.email || '—',
       printedAtMs: Date.now(),
-      locale: printLocale,
+      locale: effectivePrintLocale,
     });
     if (
       !openStandardPrintWindow({
         windowTitle: invoice.taxInvoiceNo,
         bodyInnerHtml: body,
-        htmlLang: printLocale,
+        htmlLang: effectivePrintLocale,
       })
     ) {
       toast({
@@ -176,9 +179,18 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
 
   if (invoice.status !== 'DRAFT') {
     return (
-      <p className="text-sm text-muted-foreground">
-        {locale === 'en' ? 'This document is not a draft.' : 'เอกสารนี้ไม่ใช่ร่าง'}
-      </p>
+      <div className="mx-auto w-full max-w-md space-y-3 py-6 text-sm text-muted-foreground">
+        <p>
+          {locale === 'en'
+            ? 'This document has been issued. Use the official view (same layout as the printed file).'
+            : 'ออกฉบับจริง (ISSUED) แล้ว — ดูฉบับเดียวกับเอกสารพิมพ์ได้ที่หน้าใบกำกับภาษี'}
+        </p>
+        <Button size="sm" asChild>
+          <Link href={`/client-portal/tax-print/${id}`}>
+            {locale === 'en' ? 'Open tax invoice' : 'ไปหน้าใบกำกับภาษี'}
+          </Link>
+        </Button>
+      </div>
     );
   }
 
@@ -204,12 +216,54 @@ export default function ClientDraftInvoiceDetailPage({ params }: { params: Promi
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} />
+          <DocumentPrintLocaleToggle
+            printLocale={effectivePrintLocale}
+            setPrintLocale={setPrintLocale}
+            readOnly={Boolean(invoice.printDocumentLocale)}
+            hint={
+              locale === 'en'
+                ? 'Document print language (TH / ENG) — use the button'
+                : 'ภาษาเอกสารฉบับพิมพ์ (ไทย/อังกฤษ) — กดปุ่มเลือก'
+            }
+          />
           <Button variant="outline" size="sm" type="button" onClick={() => handlePrintTaxDraft()}>
             <Printer className="h-4 w-4 mr-2" />
-            Print
+            {locale === 'en' ? 'Print' : 'พิมพ์'}
           </Button>
         </div>
+      </div>
+
+      <Alert className="border-sky-200/80 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20">
+        <AlertDescription className="text-sm text-sky-950/90 dark:text-sky-100/90">
+          {locale === 'en' ? (
+            <>
+              Selected print language: <strong className="font-semibold">{effectivePrintLocale === 'en' ? 'English' : 'Thai'}</strong> (use
+              the toggle above). The on-screen list matches the printed layout. After the official tax invoice is issued, that language is
+              saved for everyone.
+            </>
+          ) : (
+            <>
+              เลือกพิมพ์เอกสารเป็น<strong className="font-semibold">
+                ภาษา{effectivePrintLocale === 'en' ? 'อังกฤษ' : 'ไทย'}
+              </strong> — กดปุ่มเลือก — รายการด้านล่างสอดคล้องกับตัวพิมพ์ หลังฝ่ายบัญชีออกฉบับจริง ระบบบันทึกภาษาไว้ใช้ร่วมกัน
+            </>
+          )}
+        </AlertDescription>
+      </Alert>
+
+      <div className="space-y-2">
+        <p className="text-sm font-medium">{locale === 'en' ? 'Line items' : 'รายการ (ใบวางบิล)'}</p>
+        <TaxInvoiceLinesTable
+          lines={lines}
+          numberLocale={locale === 'en' ? 'en-GB' : 'th-TH'}
+          currency={invoice.currency}
+          columnHeaders={
+            locale === 'en'
+              ? { no: 'No', description: 'Description', qty: 'Qty', unitPrice: 'Unit', amount: 'Amount' }
+              : { no: 'ลำดับ', description: 'รายการ', qty: 'จำนวน', unitPrice: 'ราคา/หน่วย', amount: 'จำนวนเงิน' }
+          }
+          emptyLabel={locale === 'en' ? 'No line items' : 'ไม่มีรายการ'}
+        />
       </div>
 
       <Card>

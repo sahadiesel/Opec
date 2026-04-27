@@ -6,6 +6,8 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 type Props = {
   printLocale: PrintDocumentLocale;
   setPrintLocale: (l: PrintDocumentLocale) => void;
+  /** When the document’s print language is fixed (e.g. after ISSUED), the button is non-interactive */
+  readOnly?: boolean;
   /** e.g. portal `t('docPrintLocaleHint')` — bilingual label for print language */
   hint?: string;
   /** @deprecated use `hint` */
@@ -17,6 +19,7 @@ type Props = {
 export function DocumentPrintLocaleToggle({
   printLocale,
   setPrintLocale,
+  readOnly,
   hint,
   showLabel,
   className,
@@ -30,13 +33,29 @@ export function DocumentPrintLocaleToggle({
         variant={printLocale === 'en' ? 'secondary' : 'outline'}
         size="sm"
         className="h-8 min-w-[3.25rem] px-2.5"
-        onClick={() => setPrintLocale(printLocale === 'th' ? 'en' : 'th')}
-        title={printLocale === 'th' ? 'เปลี่ยนเป็นภาษาอังกฤษ' : 'Switch to Thai'}
+        disabled={readOnly}
+        onClick={() => {
+          if (readOnly) return;
+          setPrintLocale(printLocale === 'th' ? 'en' : 'th');
+        }}
+        title={
+          readOnly
+            ? printLocale === 'th'
+              ? 'บันทึกภาษาเอกสารแล้ว: ไทย'
+              : 'Print language is fixed: English'
+            : printLocale === 'th'
+              ? 'เปลี่ยนเป็นภาษาอังกฤษ'
+              : 'Switch to Thai'
+        }
         aria-pressed={printLocale === 'en'}
         aria-label={
-          printLocale === 'th'
-            ? 'ภาษาเอกสาร: ไทย — กดเพื่อเปลี่ยนเป็นอังกฤษ'
-            : 'Document language: ENG — click for Thai'
+          readOnly
+            ? printLocale === 'th'
+              ? 'ภาษาเอกสารที่บันทึก: ไทย'
+              : 'Document print language (locked): English'
+            : printLocale === 'th'
+              ? 'ภาษาเอกสาร: ไทย — กดเพื่อเปลี่ยนเป็นอังกฤษ'
+              : 'Document language: ENG — click for Thai'
         }
       >
         {printLocale === 'th' ? 'ไทย' : 'ENG'}

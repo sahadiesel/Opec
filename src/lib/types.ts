@@ -2122,6 +2122,8 @@ export interface TaxInvoice {
   totalAmount: number;
   currency: string;
   status: TaxInvoiceStatus;
+  /** ภาษาเอกสารฉบับพิมพ์ ณ เวลาออกฉบับจริง (ISSUED) — ล็อกเพื่อให้พิมพ์ตรงกับลูกค้า/หน้าจอ (ไม่พึ่ง localStorage ฝ่ายเดียว) */
+  printDocumentLocale?: 'th' | 'en';
   notes?: string;
   /** แนบรูปสลิป/เอกสารขณะสถานะ DRAFT */
   timesheetPaperAttachments?: TaxInvoiceTimesheetAttachment[];

@@ -152,6 +152,14 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     text-align: right;
     line-height: 1.2;
   }
+  .sd-doc-subtitle {
+    margin: 4px 0 0 0;
+    font-size: 11pt;
+    font-weight: 700;
+    color: #404040;
+    text-align: right;
+    line-height: 1.3;
+  }
   .sd-doc-title-en {
     display: block;
     margin-top: 4px;
@@ -427,10 +435,14 @@ export function buildStandardCompanyColumnHtml(
 export function buildStandardTitleColumnHtml(params: {
   documentTitleTh: string;
   documentTitleEn?: string;
+  /** แสดงใต้ h1 (เช่น ต้นฉบับ / Original) */
+  subtitleUnderTitle?: string;
   metaRows: StandardDocMetaRow[];
   locale?: PrintDocumentLocale;
 }): string {
   const locale = params.locale ?? 'th';
+  const sub = params.subtitleUnderTitle?.trim();
+  const subHtml = sub ? `<p class="sd-doc-subtitle">${escapeHtmlDoc(sub)}</p>` : '';
   const rowHtml = params.metaRows
     .map((r) => {
       if ('line' in r) {
@@ -444,12 +456,14 @@ export function buildStandardTitleColumnHtml(params: {
     const main = (params.documentTitleEn?.trim() || params.documentTitleTh).trim();
     return `<div class="sd-title-col">
       <h1 class="sd-doc-title">${escapeHtmlDoc(main)}</h1>
+      ${subHtml}
       ${rows}
     </div>`;
   }
   /** ไทย: หัวเอกสารไทยเท่านั้น — ไม่แสดงคู่ EN บนหน้าเดียวกัน */
   return `<div class="sd-title-col">
       <h1 class="sd-doc-title">${escapeHtmlDoc(params.documentTitleTh)}</h1>
+      ${subHtml}
       ${rows}
     </div>`;
 }
@@ -459,6 +473,7 @@ export function buildStandardDocumentHeaderHtml(params: {
   company: CompanyProfilePrint | null | undefined;
   documentTitleTh: string;
   documentTitleEn?: string;
+  subtitleUnderTitle?: string;
   metaRows: StandardDocMetaRow[];
   locale?: PrintDocumentLocale;
 }): string {
@@ -468,6 +483,7 @@ export function buildStandardDocumentHeaderHtml(params: {
     ${buildStandardTitleColumnHtml({
       documentTitleTh: params.documentTitleTh,
       documentTitleEn: params.documentTitleEn,
+      subtitleUnderTitle: params.subtitleUnderTitle,
       metaRows: params.metaRows,
       locale,
     })}
@@ -990,9 +1006,11 @@ export function buildTaxInvoicePrintHtml(params: {
     company,
     documentTitleTh: 'ใบกำกับภาษี',
     documentTitleEn: 'Tax Invoice',
+    subtitleUnderTitle: printT(L, 'docOriginal'),
     metaRows: [
       { line: `${printT(L, 'dateIssued')} ${issueStr}` },
       { line: `${printT(L, 'docNo')}: ${invoice.taxInvoiceNo}` },
+      { line: printT(L, 'docIssuedAsSet') },
     ],
     locale: L,
   });
@@ -1020,18 +1038,9 @@ export function buildTaxInvoicePrintHtml(params: {
     rows: totalRows,
     amountInWords: totalWords,
   });
-  const notesBlock = invoice.notes?.trim()
-    ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'notes'))}:</strong> ${escapeHtmlDoc(invoice.notes.trim())}</p>`
-    : '';
-  const whtNote =
-    (invoice.withholdingTaxAmount ?? 0) > 0.005
-      ? ''
-      : `<p class="sd-wht"><strong>${escapeHtmlDoc(printT(L, 'wht'))}:</strong> ${escapeHtmlDoc(printT(L, 'whtNoneThisDoc'))}</p>`;
   const mainHtml = `${partyHtml}
   ${tableHtml}
-  ${totalsHtml}
-  ${whtNote}
-  ${notesBlock}`;
+  ${totalsHtml}`;
   const showApproval =
     invoice.status === 'ISSUED' ||
     (invoice.billingCustomerApprovedAt != null && invoice.billingCustomerApprovedByName);

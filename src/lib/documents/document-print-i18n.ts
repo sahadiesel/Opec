@@ -33,6 +33,10 @@ export const printDocStrings = {
     /** หัว meta พิมพ์ — วันที่ออก (ไทยเท่านั้น) */
     dateIssued: 'วันที่ออก :',
     docNo: 'เลขที่เอกสาร',
+    /** ใบกำกับภาษี — ใต้หัวเอกสาร */
+    docOriginal: 'ต้นฉบับ',
+    /** ใบกำกับภาษี — ใต้เลขที่เอกสาร */
+    docIssuedAsSet: 'เอกสารออกเป็นชุด',
     validUntil: 'ใช้ได้ถึง',
     currency: 'สกุลเงิน',
     subtotal: 'รวมเป็นเงิน',
@@ -104,6 +108,8 @@ export const printDocStrings = {
     docDate: 'Document date',
     dateIssued: 'Date issued :',
     docNo: 'Document no.',
+    docOriginal: 'Original',
+    docIssuedAsSet: 'Document issued as a set',
     validUntil: 'Valid until',
     currency: 'Currency',
     subtotal: 'Subtotal',

@@ -66,6 +66,7 @@ import {
 } from '@/lib/services/money-receipt-service';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
 
 export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -181,6 +182,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       await updateDoc(invRef, {
         status: 'ISSUED' as TaxInvoiceStatus,
         arEntryId,
+        printDocumentLocale: printLocale,
         updatedAt: Date.now(),
       });
 
@@ -308,6 +310,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
+  const effectivePrintLocale =
+    invoice && invoice.status === 'ISSUED' && invoice.printDocumentLocale
+      ? invoice.printDocumentLocale
+      : printLocale;
+
+  const printLocaleReadOnly = Boolean(
+    invoice?.status === 'ISSUED' && invoice?.printDocumentLocale,
+  );
+
   const handlePrintTaxInvoice = () => {
     if (!invoice) return;
     const body = buildTaxInvoicePrintHtml({
@@ -317,13 +328,13 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       billingLines: billingLines ?? [],
       customer: customer ?? undefined,
       printedAtMs: Date.now(),
-      locale: printLocale,
+      locale: effectivePrintLocale,
     });
     if (
       !openStandardPrintWindow({
         windowTitle: invoice.taxInvoiceNo,
         bodyInnerHtml: body,
-        htmlLang: printLocale,
+        htmlLang: effectivePrintLocale,
       })
     ) {
       toast({
@@ -415,7 +426,12 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 justify-end">
-            <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+            <DocumentPrintLocaleToggle
+              printLocale={effectivePrintLocale}
+              setPrintLocale={setPrintLocale}
+              readOnly={printLocaleReadOnly}
+              showLabel
+            />
             <Button variant="outline" className="gap-2" type="button" onClick={() => handlePrintTaxInvoice()}>
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร
             </Button>
@@ -541,6 +557,33 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               </div>
 
               <Separator />
+
+              <div className="space-y-2">
+                <Label className="text-[10px] uppercase text-muted-foreground font-bold">รายการ (ใบวางบิล)</Label>
+                <TaxInvoiceLinesTable
+                  lines={billingLines}
+                  numberLocale="th-TH"
+                  currency={invoice.currency}
+                  columnHeaders={{
+                    no: 'ลำดับ',
+                    description: 'รายการ',
+                    qty: 'จำนวน',
+                    unitPrice: 'ราคา/หน่วย',
+                    amount: 'จำนวนเงิน',
+                  }}
+                  emptyLabel="ไม่มีรายการในบรรทัด"
+                />
+              </div>
+
+              <Separator />
+
+              {printLocaleReadOnly && (
+                <p className="text-xs text-muted-foreground">
+                  ฉบับออกจริง: บันทึกภาษาเอกสารสำหรับพิมพ์เป็น{' '}
+                  <span className="font-semibold">{effectivePrintLocale === 'en' ? 'อังกฤษ' : 'ไทย'}</span> แล้ว — ปุ่มด้าน
+                  บนล็อกไว้
+                </p>
+              )}
 
               <div className="space-y-4">
                 <div className="flex justify-between items-center text-sm">
