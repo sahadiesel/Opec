@@ -15,7 +15,7 @@ import {
   FileSignature,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, where, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, orderBy } from 'firebase/firestore';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import type { CommercialInvoice, Quotation } from '@/lib/types';
 import { QUOTATION_PORTAL_VISIBLE_STATUSES } from '@/lib/types';
@@ -49,18 +49,7 @@ export default function ClientDashboardPage() {
   const posQuery = useMemoFirebase(() => queryService?.getScopedPOsQuery(currentUser), [queryService, currentUser]);
   const { data: pos } = useCollection(posQuery as any);
 
-  const recentInvoicesQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser?.customerId) return null;
-    return query(
-      collection(firestore, 'tax_invoices'),
-      where('customerId', '==', currentUser.customerId),
-      orderBy('issueDate', 'desc'),
-      limit(40)
-    );
-  }, [firestore, currentUser?.customerId]);
-  const { data: recentInvoices } = useCollection(recentInvoicesQuery as any);
-
-  /** Same scope as Billing & documents — commercial rows (e.g. DFI-…) use PENDING_CUSTOMER, not tax_invoices DRAFT */
+  /** Same scope as Billing & documents — commercial rows (e.g. DFI-…) use PENDING_CUSTOMER */
   const commercialInvoicesQuery = useMemoFirebase(() => {
     if (!firestore || !currentUser?.customerId) return null;
     return query(
@@ -84,15 +73,11 @@ export default function ClientDashboardPage() {
   const { data: customerQuotations } = useCollection<Quotation>(quotationsQuery as any);
 
   const pendingInvoiceCount = useMemo(() => {
-    const taxPending = (recentInvoices ?? []).filter(
-      (d: { status?: string; billingCustomerApprovedAt?: number }) =>
-        d.status === 'DRAFT' && !d.billingCustomerApprovedAt
-    ).length;
     const commercialPending = (commercialInvoices ?? []).filter(
-      (c: CommercialInvoice) => c.status === 'PENDING_CUSTOMER'
+      (c: CommercialInvoice) => c.status === 'PENDING_CUSTOMER',
     ).length;
-    return taxPending + commercialPending;
-  }, [recentInvoices, commercialInvoices]);
+    return commercialPending;
+  }, [commercialInvoices]);
 
   const pendingQuotationCount = useMemo(
     () =>

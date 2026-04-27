@@ -76,6 +76,22 @@ export function escapeHtmlDoc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** ลำดับรายการใบวางบิล: เอา displayOrder (เดียวกับลำดับใบเรียกเก็บ) ก่อน แล้วค่อย createdAt + id */
+export function sortBillingNoteLinesForDisplay(
+  lines: BillingNoteLine[] | null | undefined,
+): BillingNoteLine[] {
+  return [...(lines || [])].sort((a, b) => {
+    const ao = a.displayOrder;
+    const bo = b.displayOrder;
+    if (ao != null && bo != null) return ao - bo;
+    if (ao != null) return -1;
+    if (bo != null) return 1;
+    const t = (a.createdAt ?? 0) - (b.createdAt ?? 0);
+    if (t !== 0) return t;
+    return a.id.localeCompare(b.id);
+  });
+}
+
 /** แยกที่อยู่ยาวให้ “ส่วนหลัง” ลงบรรทัดสอง (จุลภาค / คำว่า Province / รหัส TH + 5 หลัก) */
 function splitAddressLineForPrint(address: string): { line1: string; line2: string } {
   const t = address.trim();
@@ -943,7 +959,8 @@ export function buildTaxInvoicePrintHtml(params: {
   const L = params.locale ?? 'th';
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
   const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
-  const partyName = customerPartyNameOverride?.trim() || customer?.name?.trim() || '—';
+  /** ชื่อบริษัทใน Firestore ก่อน — ค่อย override (เช่น ไม่มี customer record) หลีกเลี่ยงชื่อ user portal ทับลูกค้า */
+  const partyName = customer?.name?.trim() || customerPartyNameOverride?.trim() || '—';
   const rangeFn = L === 'en' ? formatStoredDateRangeGregorian : formatStoredDateRangeThaiBE;
   const partyLines = [
     ...customerPartyDetailLines(customer, L),
@@ -959,7 +976,7 @@ export function buildTaxInvoicePrintHtml(params: {
         ]
       : []),
   ];
-  const sortedLines = [...(billingLines || [])].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  const sortedLines = sortBillingNoteLinesForDisplay(billingLines);
   const lineRows = sortedLines
     .map((line, idx) => {
       const sub = line.workerName ? ` (${line.workerName})` : '';
@@ -1071,6 +1088,7 @@ export function buildTaxInvoicePrintHtml(params: {
     mainHtml,
     footerHtml,
     locale: L,
+    pageVariant: 'commercial',
   });
 }
 

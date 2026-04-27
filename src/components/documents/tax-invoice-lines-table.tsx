@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import type { BillingNoteLine } from '@/lib/types';
+import { sortBillingNoteLinesForDisplay } from '@/lib/documents/standard-document-print';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export function TaxInvoiceLinesTable({
@@ -23,10 +24,7 @@ export function TaxInvoiceLinesTable({
   emptyLabel: string;
   currency: string;
 }) {
-  const sorted = useMemo(
-    () => [...(lines || [])].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)),
-    [lines],
-  );
+  const sorted = useMemo(() => sortBillingNoteLinesForDisplay(lines), [lines]);
 
   return (
     <div className="overflow-x-auto rounded-md border">

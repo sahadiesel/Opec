@@ -36,11 +36,13 @@ function commercialLineToBillingLine(
   bnId: string,
   line: CommercialInvoiceLine,
   now: number,
+  displayOrder: number,
 ): BillingNoteLine {
   const hasTs = !!(line.timesheetIds && line.timesheetIds.length > 0);
   return {
     id: newLineId(),
     billingNoteId: bnId,
+    displayOrder,
     description: line.description || '—',
     referenceType: hasTs ? 'TIMESHEET' : 'SERVICE',
     ...(line.timesheetIds?.[0] ? { referenceId: line.timesheetIds[0] } : {}),
@@ -113,7 +115,7 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     updatedBy: actor.displayName || actor.email || actor.id,
   };
 
-  const lines = (com.lines ?? []).map((l) => commercialLineToBillingLine(bnRef.id, l, now));
+  const lines = (com.lines ?? []).map((l, idx) => commercialLineToBillingLine(bnRef.id, l, now, idx));
 
   const billingSource: TaxInvoice['billingCustomerApprovalSource'] =
     com.customerApprovalSource === 'CLIENT_PORTAL' ? 'client_portal' : 'internal_representative';

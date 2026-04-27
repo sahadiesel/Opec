@@ -21,13 +21,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 type MainTab = 'invoices' | 'tax' | 'receipts';
 
 function TaxInvoiceStatusBadge({ inv, t, en }: { inv: TaxInvoice; t: (k: PortalDictKey) => string; en: boolean }) {
-  if (inv.status === 'DRAFT') {
-    return inv.billingCustomerApprovedAt ? (
-      <Badge className="bg-green-600">{t('accTaxDraftBadgeConfirmed')}</Badge>
-    ) : (
-      <Badge variant="outline">{t('accTaxDraftBadgePending')}</Badge>
-    );
-  }
   if (inv.status === 'ISSUED') {
     if (inv.linkedReceiptId) {
       return <Badge className="bg-slate-700">{t('accTaxIssuedBadgeReceipt')}</Badge>;
@@ -52,40 +45,19 @@ function TaxInvoiceRowActions({
   t: (k: PortalDictKey) => string;
   isApprover: boolean;
 }) {
-  const href = inv.status === 'DRAFT' ? `/client-portal/draft-invoices/${inv.id}` : `/client-portal/tax-print/${inv.id}`;
+  const href = `/client-portal/tax-print/${inv.id}`;
   const canReportPayment =
     inv.status === 'ISSUED' && !inv.paymentNotifiedAt && !inv.linkedReceiptId && isApprover;
 
   return (
     <TableCell className="min-w-[10.5rem] text-right align-middle" onClick={(e) => e.stopPropagation()}>
       <div className="flex flex-wrap items-center justify-end gap-1.5">
-        {inv.status === 'DRAFT' && !inv.billingCustomerApprovedAt && isApprover && (
-          <Button size="sm" asChild>
-            <Link href={href}>{t('accTaxActReview')}</Link>
-          </Button>
-        )}
-        {inv.status === 'DRAFT' && !inv.billingCustomerApprovedAt && !isApprover && (
-          <Button size="sm" variant="secondary" asChild>
-            <Link href={href} className="inline-flex items-center gap-1">
-              {t('open')}
-              <ChevronRight className="h-3.5 w-3.5 opacity-80" />
-            </Link>
-          </Button>
-        )}
-        {inv.status === 'DRAFT' && inv.billingCustomerApprovedAt && (
-          <Button size="sm" variant="outline" asChild>
-            <Link href={href} className="inline-flex items-center gap-1">
-              {t('open')}
-              <ChevronRight className="h-3.5 w-3.5 opacity-80" />
-            </Link>
-          </Button>
-        )}
         {canReportPayment && (
           <Button size="sm" variant="default" asChild>
             <Link href={href}>{t('accTaxActPayAttach')}</Link>
           </Button>
         )}
-        {inv.status === 'ISSUED' && !canReportPayment && (
+        {!canReportPayment && inv.status === 'ISSUED' && (
           <Button size="sm" variant="outline" asChild>
             <Link href={href} className="inline-flex items-center gap-1">
               {t('open')}
@@ -157,8 +129,9 @@ export function AccountingContent() {
   const commercialForPortal = commercialInvoices ?? [];
 
   const taxList = useMemo(() => {
-    const list = (invoices ?? []).filter((i) => i.status !== 'CANCELLED');
-    return [...list].sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+    return [...(invoices ?? [])]
+      .filter((i) => i.status === 'ISSUED')
+      .sort((a, b) => b.issueDate.localeCompare(a.issueDate));
   }, [invoices]);
 
   const receiptQ = useMemoFirebase(() => {
@@ -178,16 +151,9 @@ export function AccountingContent() {
     [router],
   );
 
-  const openTax = useCallback(
-    (inv: TaxInvoice) => {
-      if (inv.status === 'DRAFT') {
-        router.push(`/client-portal/draft-invoices/${inv.id}`);
-        return;
-      }
-      router.push(`/client-portal/tax-print/${inv.id}`);
-    },
-    [router],
-  );
+  const openTax = useCallback((inv: TaxInvoice) => {
+    if (inv.status === 'ISSUED') router.push(`/client-portal/tax-print/${inv.id}`);
+  }, [router]);
 
   if (userLoading) {
     return <p className="text-sm text-muted-foreground">…</p>;

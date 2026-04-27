@@ -1325,6 +1325,8 @@ export interface BillingNoteLine {
   quantity: number;
   unitPrice: number;
   amount: number;
+  /** ลำดับแสดง — อนุรักษ์จากลำดับรายการใบเรียกเก็บ (เดียวกับ Invoice) เพื่อสอดคล้องฉบับพิมพ์ */
+  displayOrder?: number;
   createdAt: number;
   updatedAt: number;
 }
