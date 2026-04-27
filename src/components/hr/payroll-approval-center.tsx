@@ -16,6 +16,7 @@ import {
   isHRStaff,
   isMatrixControlledRole,
 } from '@/lib/permissions';
+import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import type {
   OfficePayrollLine,
   OfficePayrollRun,
@@ -104,7 +105,14 @@ function CheckRow({ c }: { c: ValidationCheck }) {
   );
 }
 
-export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) {
+export function PayrollApprovalCenterD6({
+  currentUser,
+  initialWorkerBatchId,
+}: {
+  currentUser: User;
+  /** จาก /hr/payroll-approval?batch= ให้โฟกัส batch นั้น (เช่น ลิงก์จาก dashboard) */
+  initialWorkerBatchId?: string;
+}) {
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
   const { toast } = useToast();
@@ -162,7 +170,12 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
 
   const workerBatches = useMemo(() => {
     const list = (allBatches || []).filter((b) => WORKER_D6_STATUSES.has(b.status));
-    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const rank = (s: string) => (s === 'HR_REVIEWED' ? 0 : s === 'GENERATED' ? 1 : 2);
+    list.sort((a, b) => {
+      const d = rank(a.status) - rank(b.status);
+      if (d !== 0) return d;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
     return list.slice(0, 60);
   }, [allBatches]);
 
@@ -232,6 +245,14 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
     else if (tab === 'office' && selectedRunId) void loadOfficeLines(selectedRunId);
   }, [tab, selectedBatchId, selectedRunId, loadWorkerLines, loadOfficeLines]);
 
+  useEffect(() => {
+    if (!initialWorkerBatchId || !workerBatches.length) return;
+    if (workerBatches.some((b) => b.id === initialWorkerBatchId)) {
+      setTab('worker');
+      setSelectedBatchId(initialWorkerBatchId);
+    }
+  }, [initialWorkerBatchId, workerBatches]);
+
   const workerChecks: ValidationCheck[] = useMemo(() => {
     if (!selectedBatch || !workerLines) return [];
     return validateWorkerPayrollBatch(selectedBatch, workerLines);
@@ -245,13 +266,39 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
   const workerBlocking = hasBlockingRed(workerChecks);
   const officeBlocking = hasBlockingRed(officeChecks);
 
-  const handleWorkerApprove = async () => {
+  const handleOfficerSubmitForPayout = async () => {
+    if (!firestore || !selectedBatch || !canWorkerEditBatch) return;
+    if (!isSystemAdmin(currentUser) && !isPayrollOfficer(currentUser)) return;
+    setBusy(true);
+    try {
+      const svc = new PayrollService(firestore);
+      await svc.submitOfficerBatchForPayoutApproval(selectedBatch.id, currentUser);
+      toast({
+        title: 'ส่งขออนุมัติทำจ่ายแล้ว',
+        description: 'งวดรอการอนุมัติที่คิวของผู้จัดการ/ศูนย์อนุมัติ (HR_REVIEWED)',
+      });
+      setWorkerLines(null);
+      await loadWorkerLines(selectedBatch.id);
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'ส่งคำขอไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleManagerApprovePayout = async () => {
     if (!firestore || !selectedBatch || workerBlocking || !canApproveWorkerFlow) return;
     setBusy(true);
     try {
       const svc = new PayrollService(firestore);
-      await svc.approveBatch(selectedBatch.id, currentUser);
-      toast({ title: 'อนุมัติงวดลูกจ้างแล้ว', description: `Batch ${selectedBatch.id} → HR_APPROVED` });
+      const beforeHandoff = canHandoffWorkerPayrollToAccounting(currentUser);
+      await svc.managerApprovePayoutAndNotifyAccounting(selectedBatch.id, currentUser);
+      toast({
+        title: beforeHandoff ? 'อนุมัติและส่งบัญชีแล้ว' : 'อนุมัติแล้ว (รอส่งบัญชี)',
+        description: beforeHandoff
+          ? `Batch ${selectedBatch.id} → FINANCE_PREPARED (ฝ่ายบัญชีทำจ่ายต่อไป)`
+          : `Batch ${selectedBatch.id} → HR_APPROVED ให้ฝ่ายที่มีสิทธิ์กด "ส่งต่อบัญชี"`,
+      });
       setWorkerLines(null);
       await loadWorkerLines(selectedBatch.id);
     } catch (e) {
@@ -350,7 +397,9 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
           <h1 className="text-3xl font-bold tracking-tight text-primary">ศูนย์อนุมัติ Payroll (D6)</h1>
         </div>
         <p className="text-muted-foreground text-lg">
-          สรุปงวด · ตรวจก่อนอนุมัติ · อนุมัติ / ส่งกลับ / ส่งต่อบัญชี — งวดที่อนุมัติแล้วแก้ตรงไม่ได้ ต้องใช้ขั้นตอน correction
+          Flow ลูกจ้าง: ฝ่ายเงินเดือนกดส่งขออนุมัติ (GENERATED → รอ) จากนั้นผู้จัดการ/HR
+          อนุมัติยอดและส่งบัญชีทำจ่าย (HR_REVIEWED → FINANCE_PREPARED) — งวดที่อนุมัติแล้วแก้ตรงไม่ได้ ต้องใช้ขั้นตอน
+          correction
         </p>
       </div>
 
@@ -377,15 +426,18 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
           ) : (
             <>
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">งวดลูกจ้างที่เกี่ยวข้อง</CardTitle>
-                  <CardDescription>เลือกแถวเพื่อแสดง A–D ด้านล่าง</CardDescription>
-                </CardHeader>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">งวดลูกจ้างที่เกี่ยวข้อง</CardTitle>
+                    <CardDescription>
+                      งวดเดือน/รอบแสดงในคอลัมน์ &quot;งวด&quot; — HR_REVIEWED = รอคิวผู้จัดการ/ศูนย์อนุมัติ
+                    </CardDescription>
+                  </CardHeader>
                 <CardContent className="p-0">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Batch</TableHead>
+                        <TableHead>งวด (period)</TableHead>
                         <TableHead>สถานะ</TableHead>
                         <TableHead className="text-right">คน</TableHead>
                         <TableHead className="text-right">สุทธิ</TableHead>
@@ -394,7 +446,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                     <TableBody>
                       {workerBatches.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={4} className="text-center text-muted-foreground py-10">
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
                             ไม่มีงวดในรายการ D6 (รวมงวดย้อนหลังสำหรับสลิป)
                           </TableCell>
                         </TableRow>
@@ -409,6 +461,9 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                             }}
                           >
                             <TableCell className="font-mono text-xs">{b.id}</TableCell>
+                            <TableCell className="max-w-[200px] truncate text-sm font-medium">
+                              {periodById.get(b.payrollPeriodId)?.label || b.payrollPeriodId}
+                            </TableCell>
                             <TableCell>
                               <Badge variant="outline">{b.status}</Badge>
                             </TableCell>
@@ -501,16 +556,22 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                       <CardTitle className="text-base">C. การกระทำของผู้จัดการ</CardTitle>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      {(isSystemAdmin(currentUser) || isPayrollOfficer(currentUser)) && canWorkerEditBatch && (
+                        <Button
+                          variant="default"
+                          disabled={busy || selectedBatch.status !== 'GENERATED' || workerBlocking}
+                          onClick={() => void handleOfficerSubmitForPayout()}
+                        >
+                          ส่งขออนุมัติทำจ่าย (ฝ่ายเงินเดือน)
+                        </Button>
+                      )}
                       <Button
                         disabled={
-                          busy ||
-                          !canApproveWorkerFlow ||
-                          workerBlocking ||
-                          !['GENERATED', 'HR_REVIEWED'].includes(selectedBatch.status)
+                          busy || !canApproveWorkerFlow || workerBlocking || selectedBatch.status !== 'HR_REVIEWED'
                         }
-                        onClick={() => void handleWorkerApprove()}
+                        onClick={() => void handleManagerApprovePayout()}
                       >
-                        อนุมัติ (HR)
+                        อนุมัติยอดเงิน{canHandoffWorkerPayrollToAccounting(currentUser) ? ' (ส่งบัญชีทำจ่าย)' : ''}
                       </Button>
                       <Button
                         variant="secondary"
@@ -528,7 +589,7 @@ export function PayrollApprovalCenterD6({ currentUser }: { currentUser: User }) 
                         }
                         onClick={() => void handleWorkerHandoff()}
                       >
-                        ส่งต่อบัญชี (FINANCE_PREPARED)
+                        ส่งต่อบัญชี (กรณีอนุมัติแยก — FINANCE_PREPARED)
                       </Button>
                     </CardContent>
                   </Card>

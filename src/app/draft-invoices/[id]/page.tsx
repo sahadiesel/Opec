@@ -37,7 +37,7 @@ import { useCollection, useFirestore, useDoc, useMemoFirebase, useUser } from '@
 import { useAppUser } from '@/hooks/use-app-user';
 import { canCreate, canEdit, canView, isSystemAdmin } from '@/lib/permissions';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
-import { collection, doc, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, query, where } from 'firebase/firestore';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
@@ -160,13 +160,16 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const bankListQ = useMemoFirebase(() => {
     if (!firestore || !isAccountingActor) return null;
-    return query(
-      collection(firestore, 'bank_accounts'),
-      where('status', '==', 'ACTIVE'),
-      orderBy('accountName', 'asc'),
-    );
+    /** ไม่ใส่ orderBy ใน query — หลีกเลี่ยง composite index; เรียงชื่อฝั่ง client */
+    return query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'));
   }, [firestore, isAccountingActor]);
-  const { data: bankList } = useCollection<BankAccount>(bankListQ as any);
+  const { data: bankListRaw } = useCollection<BankAccount>(bankListQ as any);
+  const bankList = useMemo(() => {
+    const list = bankListRaw ?? [];
+    return [...list].sort((a, b) =>
+      (a.accountName || '').localeCompare(b.accountName || '', 'th', { sensitivity: 'base' }),
+    );
+  }, [bankListRaw]);
 
   useEffect(() => {
     if (!invoice) return;

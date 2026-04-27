@@ -138,10 +138,11 @@ export default function TaxInvoicesPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <FileBadge className="h-8 w-8" /> ใบกำกับภาษี / ใบเสร็จรับเงิน
+            <FileBadge className="h-8 w-8" /> ใบกำกับภาษี
           </h1>
           <p className="text-muted-foreground text-lg">
-            ออกจากใบแจ้งหนี้ (รายการเรียกเก็บ) ที่ลูกค้า/ผู้จัดการอนุมัติแล้ว — พิมพ์ฉบับเดียว (ไม่แยกใบกำกับกับใบเสร็จ ไม่ใช่ e-Tax) หลังรับเงินตามยอดที่อนุมัติ จึงกด ISSUED เพื่อบันทึกลูกหนี้ (AR)
+            ออกจากใบแจ้งหนี้ที่อนุมัติแล้ว หรือสร้างฉบับอิสระ (ไม่ใช่ e-Tax) — เมื่อ ISSUED บันทึกลูกหนี้; หลังแจ้งชำระและยืนยันรับเงิน
+            ระบบออก ใบเสร็จรับเงิน แยก (เมนู ใบเสร็จ)
           </p>
         </div>
 

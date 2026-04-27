@@ -175,11 +175,43 @@
       ]
     },
     {
+      "collectionGroup": "cashbook_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bankAccountId", "order": "ASCENDING" },
+        { "fieldPath": "entryDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cashbook_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bankAccountId", "order": "ASCENDING" },
+        { "fieldPath": "entryDate", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "petty_cash_entries",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "bankAccountId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "petty_cash_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bankAccountId", "order": "ASCENDING" },
+        { "fieldPath": "entryDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "petty_cash_entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bankAccountId", "order": "ASCENDING" },
+        { "fieldPath": "entryDate", "order": "ASCENDING" }
       ]
     },
     {

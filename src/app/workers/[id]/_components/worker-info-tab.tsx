@@ -7,10 +7,12 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { CreditCard, User, Phone, History, AlertTriangle } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { CreditCard, User, Phone, History, AlertTriangle, Wallet } from 'lucide-react';
 import type { Worker, Position } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
+import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -18,13 +20,70 @@ interface WorkerInfoTabProps {
   editedWorker: Partial<Worker>;
   setEditedWorker: (v: Partial<Worker>) => void;
   allPositions: Position[] | null;
+  currentPosition: Position | null;
+  canViewLaborCost: boolean;
+  canEditLaborCost: boolean;
 }
 
-export function WorkerInfoTab({ worker, isEditing, editedWorker, setEditedWorker, allPositions }: WorkerInfoTabProps) {
+function numIn(v: number | undefined) {
+  if (v == null || Number.isNaN(Number(v))) return '';
+  return String(v);
+}
+
+function parseThaiMoneyInput(raw: string): number | undefined {
+  const t = raw.trim();
+  if (t === '') return undefined;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return n;
+}
+
+export function WorkerInfoTab({
+  worker,
+  isEditing,
+  editedWorker,
+  setEditedWorker,
+  allPositions,
+  currentPosition,
+  canViewLaborCost,
+  canEditLaborCost,
+}: WorkerInfoTabProps) {
   const positionsSorted = useMemo(
     () => sortPositionsByDisplayName(allPositions ?? []),
     [allPositions]
   );
+
+  const wEff = isEditing ? ({ ...worker, ...editedWorker } as Worker) : worker;
+  const onshoreEff = canViewLaborCost
+    ? resolveWorkerLaborBaseRate(
+        {
+          laborCostUsePositionDefault: wEff.laborCostUsePositionDefault,
+          laborCostCustomOnshore: wEff.laborCostCustomOnshore,
+          laborCostCustomOffshore: wEff.laborCostCustomOffshore,
+        },
+        currentPosition,
+        'onshore',
+      )
+    : null;
+  const offshoreEff = canViewLaborCost
+    ? resolveWorkerLaborBaseRate(
+        {
+          laborCostUsePositionDefault: wEff.laborCostUsePositionDefault,
+          laborCostCustomOnshore: wEff.laborCostCustomOnshore,
+          laborCostCustomOffshore: wEff.laborCostCustomOffshore,
+        },
+        currentPosition,
+        'offshore',
+      )
+    : null;
+  const usePosDefault = (isEditing ? editedWorker.laborCostUsePositionDefault : worker.laborCostUsePositionDefault) !== false;
+  const laborReadOnly = !isEditing || !canEditLaborCost;
+  const customOnDisplay = isEditing
+    ? (editedWorker.laborCostCustomOnshore !== undefined ? editedWorker.laborCostCustomOnshore : worker.laborCostCustomOnshore)
+    : worker.laborCostCustomOnshore;
+  const customOffDisplay = isEditing
+    ? (editedWorker.laborCostCustomOffshore !== undefined ? editedWorker.laborCostCustomOffshore : worker.laborCostCustomOffshore)
+    : worker.laborCostCustomOffshore;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -135,6 +194,82 @@ export function WorkerInfoTab({ worker, isEditing, editedWorker, setEditedWorker
       </div>
 
       <div className="space-y-6">
+        {canViewLaborCost && (
+          <Card className="shadow-sm border-amber-200/60 bg-amber-50/20">
+            <CardHeader className="bg-amber-100/40 border-b border-amber-100">
+              <CardTitle className="text-lg flex items-center gap-2 text-amber-900">
+                <Wallet className="h-5 w-5" /> ต้นทุนค่าแรง (OPEC ฝั่งจ่าย)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <Label className="font-bold">ยึด default ของตำแหน่งหลัก</Label>
+                  <p className="text-xs text-muted-foreground">
+                    ปิด = กำหนดฐาน onshore / offshore เอง (override รายคน ทุกงาน/สัญญา)
+                  </p>
+                </div>
+                <Switch
+                  disabled={laborReadOnly}
+                  checked={usePosDefault}
+                  onCheckedChange={(v) => {
+                    setEditedWorker({ ...editedWorker, laborCostUsePositionDefault: v ? true : false });
+                  }}
+                />
+              </div>
+              {usePosDefault && !currentPosition && (
+                <p className="text-sm rounded-md border border-amber-200 bg-amber-100/50 p-3 text-amber-900">
+                  ยังไม่มีตำแหน่งหลัก (หรือรอโหลด) — กรุณาเลือกตำแหน่งในฟอร์มด้านบนเพื่อใช้ฐาน default
+                </p>
+              )}
+              {usePosDefault && currentPosition && (
+                <p className="text-sm rounded-md border border-amber-200/60 bg-amber-50/50 p-3 text-amber-900">
+                  ฐานจากตำแหน่ง <strong>{currentPosition.positionName || currentPosition.positionNameTh}</strong>: ออนชอร์{' '}
+                  {currentPosition.defaultLaborCostOnshore != null ? `฿${currentPosition.defaultLaborCostOnshore}` : '—'} ออฟชอร์{' '}
+                  {currentPosition.defaultLaborCostOffshore != null ? `฿${currentPosition.defaultLaborCostOffshore}` : '—'}
+                </p>
+              )}
+              {!usePosDefault && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label className="font-bold">ฐานออนชอร์ (ฝั่ง OPEC) — บาท/วัน</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      className="font-mono"
+                      disabled={laborReadOnly}
+                      value={numIn(customOnDisplay)}
+                      onChange={(e) =>
+                        setEditedWorker({ ...editedWorker, laborCostCustomOnshore: parseThaiMoneyInput(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ฐานออฟชอร์ (ฝั่ง OPEC) — บาท/วัน</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      className="font-mono"
+                      disabled={laborReadOnly}
+                      value={numIn(customOffDisplay)}
+                      onChange={(e) =>
+                        setEditedWorker({ ...editedWorker, laborCostCustomOffshore: parseThaiMoneyInput(e.target.value) })
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="text-xs text-muted-foreground space-y-1 border-t pt-3">
+                <p>
+                  ฐานที่ resolve สำหรับโหมด: ออนชอร์{' '}
+                  {onshoreEff?.rate != null ? `฿${onshoreEff.rate} (${onshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'} · ออฟชอร์{' '}
+                  {offshoreEff?.rate != null ? `฿${offshoreEff.rate} (${offshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="shadow-sm border-blue-100 bg-blue-50/20">
           <CardHeader className="bg-blue-100/50 border-b border-blue-100">
             <CardTitle className="text-lg flex items-center gap-2 text-blue-800">

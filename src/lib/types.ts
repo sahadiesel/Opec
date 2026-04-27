@@ -670,11 +670,16 @@ export interface MainContract {
   supersededByContractId?: string;
   lastSubmittedAt?: number;
   lastSubmittedBy?: string;
-  /** Commercial terms started by sales (sell-side); cost baseline is filled by HR Manager / Admin only in UI */
+  /** ฝ่ายที่เริ่มเงื่อนไขเชิงพาณิชย์ (ราคา/ฝั่งขาย) — ต้นทุนแรง OPEC อยู่ที่ /positions */
   commercialTermsOwner?: 'sales' | 'operations';
-  /** Denormalized: position_rates where sellRate > 0 but costBaseline <= 0 */
+  /**
+   * @deprecated ถูก sync ฝั่งสัญญา (เฟส 4–6) — ไม่ใช้ block อนุมัติแล้ว; ดูฐานต้นทุนได้ที่ /positions
+   * รัน `migrate:phase6` เพื่อลบ field เหล่านี้จาก Firestore
+   */
   costingStatus?: string;
+  /** @deprecated เหมือน costingStatus */
   costingMissingPositionsCount?: number;
+  /** @deprecated เหมือน costingStatus */
   costingUpdatedAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -684,7 +689,8 @@ export interface PositionRate {
   id: string;
   positionId: string;
   sellRate: number;
-  costBaseline: number;
+  /** @deprecated ฝั่งสัญญาไม่เขียน field นี้แล้ว; อาจยังอ่านได้ถ้าเอกสารยังไม่รัน migrate เฟส 5 */
+  costBaseline?: number;
   billingUnit: 'daily' | 'monthly' | 'hourly';
   active: boolean;
   overtimeRule: string;
@@ -1022,6 +1028,21 @@ export type WaveMonthTimesheetReviewStatus =
   | 'approved'
   | 'rejected';
 
+/**
+ * เอกสาร timesheet รวมรายเดือน (หนึ่งฉบับต่อเดือน) — เลขที่ `timesheetNo` จาก `number_sequences` key `monthly_timesheet` (Prefix TS-)
+ * ใช้เป็นเลขอ้างอิงส่งอนุมัติ/ลูกค้า/วางบิล แทนการอ้างรหัส Wave (WV-) ในขบวนการนี้
+ * คอลเลกชัน `monthly_timesheet_documents` id = yyyy-MM
+ */
+export interface MonthlyTimesheetDocument {
+  id: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  timesheetNo: string;
+  createdAt: number;
+  updatedAt: number;
+  createdByUserId?: string;
+}
+
 export interface WaveMonthTimesheetReview {
   id: string;
   waveId: string;
@@ -1049,6 +1070,36 @@ export interface WaveMonthTimesheetReview {
   reviewNote?: string;
   /** รูปถ่าย timesheet ที่แนบตอนส่งผู้จัดการ (คัดลอกจาก bundle ตอนกดส่ง) */
   timesheetPhotoAttachments?: WaveMonthTimesheetPhotoAttachment[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * เอกสาร timesheet รอบเดือนหลัก ต่อ PO (รวมทุก wave ใน PO นั้น / เดือนนั้น) — ใช้อ้างอิง payroll / แนบ PDF / ใบแจ้งหนี้
+ * เอกสาร id = `poId_yyyy-MM` (collection `po_month_timesheet_reviews`)
+ * รายวันใน `daily_timesheets` ยังมี waveId ตาม field — แต่การ "ปิดงวด" ทางเอกสารอ้าง PO+เดือน
+ */
+export interface PoMonthTimesheetReview {
+  id: string;
+  poId: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  status: WaveMonthTimesheetReviewStatus;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  submittedAt: number;
+  submittedByUserId: string;
+  submittedByName?: string;
+  entryLockedAt?: number;
+  entryLockedByUserId?: string;
+  entryLockedByName?: string;
+  reviewedAt?: number;
+  reviewedByUserId?: string;
+  reviewedByName?: string;
+  reviewNote?: string;
+  timesheetPhotoAttachments?: WaveMonthTimesheetPhotoAttachment[];
+  /** wave ที่กินเวลาใน PO+เดือนนี้ (สรุปจากฝั่ง client ตอนสร้างคิว) */
+  relatedWaveIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -1309,8 +1360,10 @@ export interface CommercialInvoice {
   contractId?: string;
   poId: string;
   waveId: string;
-  /** อ้าง wave_month_timesheet_reviews — กันสร้างซ้ำเมื่ออนุมัติรอบเดือน */
+  /** อ้าง wave_month_timesheet_reviews — กันสร้างซ้ำเมื่ออนุมัติรอบเดือน (ต่อ wave) */
   sourceWaveMonthReviewId?: string;
+  /** อ้าง po_month_timesheet_reviews — งวดอนุมัติราย PO+เดือน (รวมทุก wave) */
+  sourcePoMonthReviewId?: string;
   /** ฝั่ง OPEC ส่งให้ลูกค้าเห็นใน portal (DRAFT → PENDING_CUSTOMER) */
   sentToCustomerAt?: number;
   sentToCustomerByUid?: string;
@@ -1533,6 +1586,9 @@ export interface PayrollBatch {
   totalDeductions: number;
   netAmount: number;
   notes?: string;
+  /** ฝ่ายเงินเดือนกดส่งขออนุมัติทำจ่าย → รอ operations / HR อนุมัติ */
+  officerPayoutRequestBy?: string;
+  officerPayoutRequestAt?: number;
   hrApprovedBy?: string;
   hrApprovedAt?: number;
   financePreparedBy?: string;
@@ -1551,15 +1607,26 @@ export interface PayrollBatch {
   updatedAt: number;
 }
 
+/** รูปแบบคำนวณ ภงด.1 หัก ณ ที่จ่าย สำหรับ worker line */
+export type WorkerPitCalculationMode = 'manual_baht' | 'auto_timesheet' | 'auto_salary_base';
+
 /** ปรับยอดรายคนใน batch (เงินพิเศษ / หักเพิ่ม / ภาษี ณ ที่จ่าย) — คำนวณ net ใหม่ตาม HR settings */
 export interface HrPayrollLineAdjustments {
   allowanceItems: Array<{ label: string; amount: number }>;
   deductionItems: Array<{ label: string; amount: number }>;
-  /** null = คำนวณ ภงด. รายเดือนตาม policy ใน HR settings จากยอดรวมหลังเบี้ยเลี้ยง */
+  /**
+   * รูปแบบ ภงด. — ถ้าไม่ระบุ (ข้อมูลเก่า) อนุมานจาก pitWithholdingOverride / pitWithholdingOverrideMaxMarginalRatePercent
+   */
+  workerPitMode?: WorkerPitCalculationMode | null;
+  /**
+   * ฐานเงินได้รายเดือน (บาท) เมื่อ workerPitMode = auto_salary_base — นำไปคำนวณ ภงด. ตาม th_pit_monthly_annualized ใน HR
+   */
+  pitAutoSalaryBaseBaht?: number | null;
+  /** null = คำนวณ ภงด. รายเดือนตาม policy ใน HR settings จากยอดรวมหลังเบี้ยเลี้ยง หรือ (เมื่อ auto_salary_base) ไม่ใช้ */
   pitWithholdingOverride: number | null;
   /**
-   * กำหนด ภงด. โดยเลือกอัตรา marginal สูงสุด (0–35) — ระบบคำนวณยอดบาทจากตารางขั้นบันไดใน HR
-   * ถ้ามีค่านี้จะใช้แทน pitWithholdingOverride (ยอดบาทตรง ๆ)
+   * เมื่อ workerPitMode = auto_timesheet — คำนวณจากอัตรา marginal สูงสุด (0–35) หรือ null = ใช้เต็มตาราง
+   * (รายการเก่าบางรายอาจมีค่าโดยไม่มี workerPitMode ให้อนุมานเป็น auto_timesheet + จำกัด marginal)
    */
   pitWithholdingOverrideMaxMarginalRatePercent?: number | null;
   notes?: string;
@@ -2071,9 +2138,39 @@ export interface TaxInvoice {
   billingApprovalEvents?: DocumentApprovalEvent[];
   createdAt: number;
   updatedAt: number;
+  /** ขั้น 1: ลูกค้าหรือบัญชีแจ้งว่าได้ชำระเงินแล้ว (รอบัญชีตรวจและออกใบเสร็จ) */
+  paymentNotifiedAt?: number;
+  paymentNotifiedByUid?: string;
+  paymentNotifiedByName?: string;
+  paymentNotifySource?: 'client_portal' | 'accounting_ui';
+  paymentNotificationNote?: string;
+  /** ขั้น 2: บัญชียืนยันรับเงินแล้ว — ระบบออกเอกสาร ใบเสร็จรับเงิน แยก */
+  paymentReceivedConfirmedAt?: number;
+  paymentReceivedConfirmedByUid?: string;
+  paymentReceivedConfirmedByName?: string;
+  /** อ้างอิง `receipts/{id}` หลังออกเอกสาร */
+  linkedReceiptId?: string;
 }
 
 export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
+
+/** ใบเสร็จรับเงิน (ลูกค้า) — ออกหลังยืนยันรับเงินตามใบกำกับภาษี (แยกจากเอกสารกำกับ) */
+export interface MoneyReceipt {
+  id: string;
+  receiptNo: string;
+  taxInvoiceId: string;
+  taxInvoiceNo: string;
+  customerId: string;
+  amount: number;
+  currency: string;
+  /** วันที่ออกเอกสาร (YYYY-MM-DD) */
+  receiptDate: string;
+  status: 'ISSUED';
+  createdAt: number;
+  updatedAt: number;
+  createdByUid?: string;
+  createdByName?: string;
+}
 
 /** Simple Customer Issue / Dispute Request */
 export type IssueCategory =

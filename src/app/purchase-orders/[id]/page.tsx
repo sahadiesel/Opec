@@ -78,6 +78,7 @@ import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
 import { sortPositionRatesByDisplayName, sortPositionsByDisplayName } from '@/lib/position-display';
+import { defaultLaborDailyFromPosition } from '@/lib/payroll/timesheet-labor-base-cost';
 import {
   aggregateActiveLineTotals,
   assignmentCountsTowardQuota,
@@ -467,8 +468,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         toast({ variant: "destructive", title: "ไม่พบราคาในสัญญา", description: "ตำแหน่งนี้ยังไม่มีในสัญญาหลัก กรุณาเพิ่มในสัญญาก่อน" });
         return;
       }
+      const pos = allPositions?.find((p) => p.id === newLine.positionId);
       sellRateSnapshot = Number(rate.sellRate) || 0;
-      costBaselineSnapshot = Number(rate.costBaseline) || 0;
+      /** ฐาน OPEC: การันตีที่ตำแหน่ง (ไม่อ่าง cost บนสัญญา) — ใช้ fallback ชุดเดียว per line */
+      costBaselineSnapshot = defaultLaborDailyFromPosition(pos) || 0;
       billingUnitSnapshot = rate.billingUnit || 'daily';
       overtimeRuleSnapshot = rate.overtimeRule || '1.5x of Hourly Rate';
       if (rate.sellOtRules) sellOtRulesSnapshot = { ...rate.sellOtRules };
@@ -1106,8 +1109,8 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       <DialogTitle>เพิ่มรายการจองกำลังคน</DialogTitle>
                       <DialogDescription>
                         {isContractBasedPO
-                          ? 'เลือกตำแหน่งจากสัญญาหลักและระบุจำนวน (ราคาดึงจากสัญญา)'
-                          : 'เลือกตำแหน่งและระบุจำนวน — ราคาขาย/ต้นทุนระบุตามที่ตกลงจากใบเสนอราคา'}
+                          ? 'เลือกตำแหน่งจากสัญญาหลักและระบุจำนวน (ราคาขายดึงจากสัญญา; ฐานต้นทุน OPEC อ้างจากตำแหน่ง /positions ตอนสร้างบรรทัด)'
+                          : 'เลือกตำแหน่งและระบุจำนวน — ราคาขาย/ฐานสแนปกรณีใบเสนอราคา: กรอกตามที่ตกลง (ฐานต้นทุนจริงยึด /positions + ทะเบียนคนงาน)'}
                       </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">

@@ -7,6 +7,10 @@ import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 export type CompanyDocumentProfileNames = {
   companyNameTh?: string;
   companyNameEn?: string;
+  /** URL รูปโลโก้สำหรับหัวเอกสาร (System > Document Header) */
+  documentHeaderLogoUrl?: string;
+  /** URL รูปตรายาง (ถ้ามี) */
+  documentHeaderStampUrl?: string;
 };
 
 /**

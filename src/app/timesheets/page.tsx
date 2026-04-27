@@ -10,14 +10,21 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { LayoutGrid, ChevronRight, Info, Waves, FileText, MapPin, Users } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, where } from 'firebase/firestore';
-import type { Assignment, PurchaseOrder, User, Wave } from '@/lib/types';
+import { collection, collectionGroup, query, where } from 'firebase/firestore';
+import type { Assignment, POLine, PurchaseOrder, User, Wave } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
-import { assignmentReadyForWaveTimesheet, waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
+import { assignmentReadyForWaveTimesheet } from '@/lib/constants/timesheet-ui';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
+import { aggregateActiveLineTotals, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
+import {
+  formatPoMonthTimesheetDocLabel,
+  formatThaiYearMonthLabel,
+  wavesForPoInYearMonth,
+  yearMonthsForPoWaves,
+} from '@/lib/ops/timesheet-hub-po-month';
+import { isAssignmentActiveOnWaveRoster, pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 
 export default function TimesheetHubPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -67,7 +74,13 @@ export default function TimesheetHubPage() {
     return m;
   }, [allMobs]);
 
-  const loading = userLoading || poLoading || wavesLoading || mobLoading;
+  const poLinesQuery = useMemoFirebase(
+    () => (firestore && canViewTimesheets ? collectionGroup(firestore, 'po_lines') : null),
+    [firestore, canViewTimesheets],
+  );
+  const { data: allPOLines, isLoading: polinesLoading } = useCollection<POLine>(poLinesQuery as any);
+
+  const loading = userLoading || poLoading || wavesLoading || mobLoading || polinesLoading;
 
   if (userLoading || !currentUser) return null;
   if (!canViewTimesheets) {
@@ -86,16 +99,28 @@ export default function TimesheetHubPage() {
             <PayrollScopeTag scope="worker" showHint={false} />
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-primary flex items-center gap-2">
               <LayoutGrid className="h-8 w-8" />
-              ศูนย์ลงเวลา (ภาพรวม PO / Wave)
+              ศูนย์ลงเวลา (PO / งวด timesheet รายเดือน)
             </h1>
             <p className="text-muted-foreground mt-1 max-w-3xl">
-              เลือก PO / Wave แล้วกด <strong>เปิด Wave Board</strong> เพื่อคีย์รายวัน — คอลัมน์ <strong>รอบเดือน</strong> ช่วยดูว่าเป็นรอบเดือนไหน (ยังไม่ปิดรอบ / ยังลงข้อมูลไม่ครบ)
-              จนกว่า Wave จะปิดหลังอนุมัติ — รายการจะไม่แสดงเมื่อสถานะ Wave เป็น CLOSED
+              แต่ละแถว = <strong>งวด timesheet รายเดือน</strong> ต่อ PO (หลาย wave รวมในงวดเดียวกันได้) — กด{' '}
+              <strong>เปิดกระดานลงเวลา</strong> เพื่อลงรายวัน; มอบหมาย/แผนซ้ายใช้ตัวเลขเดียวกับคิว PO (โควต้า vs มอบหมาย) จนกว่า
+              wave ทั้ง PO จะปิด
+            </p>
+            <p className="text-sm text-muted-foreground mt-2 max-w-3xl border-l-2 border-amber-400/80 pl-3">
+              <strong>สถานะเวฟ PLANNING กับการลงเวลา:</strong> ระบบอนุญาตลงเวลาได้เมื่อรายมอบหมายไม่อยู่ DRAFT (พร้อมลงเวลา) แม้ badge ยังแสดง
+              PLANNING โดยไม่อาจตั้ง ACTIVE โดยอัตโนมัติ ถ้าต้องการ badge สอดคล้อง ให้ไป{' '}
+              <Link className="font-medium text-primary underline" href="/waves">หน้า Waves</Link> → เปิด Wave นั้น
+              แล้วกด <strong>ตั้งสถานะเวฟเป็น ACTIVE</strong> (หรือ <strong>ยืนยันมอบหมายเพื่อลงเวลา</strong> เมื่อยังมี DRAFT ค้าง)
             </p>
           </div>
-          <Button variant="outline" asChild className="shrink-0">
-            <Link href="/timesheets/wave-month">สรุปลงเวลารายเดือน (Wave) →</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <Button asChild>
+              <Link href="/timesheets/po-month">เอกสาร timesheet ราย PO+เดือน (หลัก)</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href="/timesheets/wave-month">สรุปรายเดือน (ราย wave) →</Link>
+            </Button>
+          </div>
         </div>
 
         <PageGuidance
@@ -143,11 +168,8 @@ export default function TimesheetHubPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Wave</TableHead>
-                          <TableHead
-                            className="whitespace-nowrap"
-                            title="รอบเดือนจากช่วงวันที่ Wave (start–end)"
-                          >
+                          <TableHead title="รหัสอ้างอิงงวด — PO + ปฏิทิน (หลาย wave ในงวดเดียว)">เลขที่ / งวด</TableHead>
+                          <TableHead className="whitespace-nowrap" title="รอบเดือนของ timesheet รายเดือน">
                             รอบเดือน
                           </TableHead>
                           <TableHead>สถานที่</TableHead>
@@ -169,61 +191,84 @@ export default function TimesheetHubPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {waves.map((w) => {
-                          const mobs = mobsByWave.get(w.id) ?? [];
-                          const ready = mobs.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
-                          const notOnBoard = mobs.filter((m) => !assignmentReadyForWaveTimesheet(m)).length;
-                          const planned = totalPlannedWorkersOnWave(w) || w.plannedWorkers || 0;
-                          return (
-                            <TableRow key={w.id}>
-                              <TableCell className="font-mono font-semibold">
-                                <span className="flex items-center gap-1">
-                                  <Waves className="h-3.5 w-3.5 text-primary" />
-                                  {w.waveCode}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
-                                {waveRoundMonthLabel(w)}
-                              </TableCell>
-                              <TableCell>
-                                <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                                  <MapPin className="h-3 w-3 shrink-0" />
-                                  {w.siteLocation || '—'}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <Badge variant="outline">{w.status}</Badge>
-                              </TableCell>
-                              <TableCell className="text-center">
-                                <span className="inline-flex items-center justify-center gap-1">
-                                  <Users className="h-3.5 w-3.5" />
-                                  {w.assignedWorkers ?? mobs.length}
-                                  <span className="text-muted-foreground">/</span>
-                                  {planned}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-center font-semibold text-green-700">{ready}</TableCell>
-                              <TableCell className="text-center text-amber-800">{notOnBoard}</TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex flex-col items-end gap-1 sm:flex-row sm:justify-end">
-                                  <Button size="sm" className="gap-1" asChild>
-                                    <Link href={`/timesheets/wave-board?poId=${encodeURIComponent(po.id)}&waveId=${encodeURIComponent(w.id)}`}>
-                                      เปิด Wave Board
-                                      <ChevronRight className="h-4 w-4" />
-                                    </Link>
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="gap-1" asChild>
-                                    <Link
-                                      href={`/timesheets/wave-month?poId=${encodeURIComponent(po.id)}&waveId=${encodeURIComponent(w.id)}&month=${encodeURIComponent((w.startDate || '').slice(0, 7) || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`)}`}
-                                    >
-                                      สรุปเดือน
-                                    </Link>
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
+                        {(() => {
+                          const lines = (allPOLines ?? []).filter((l) => l.poId === po.id);
+                          const fulfillment = buildPoFulfillmentByLine(lines, allMobs ?? [], allWaves ?? [], po.id);
+                          const { assigned: poAssigned, required: poPlanned } = aggregateActiveLineTotals(fulfillment);
+                          const yms = yearMonthsForPoWaves(waves);
+                          return yms.map((ym) => {
+                            const wInM = wavesForPoInYearMonth(waves, ym);
+                            if (wInM.length === 0) return null;
+                            const flat: Assignment[] = [];
+                            for (const wv of wInM) {
+                              const raw = mobsByWave.get(wv.id) ?? [];
+                              const active = pickRosterLinePerWorker(raw);
+                              for (const a of active) {
+                                if (isAssignmentActiveOnWaveRoster(a)) flat.push(a);
+                              }
+                            }
+                            const ready = flat.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
+                            const notOnBoard = flat.filter((m) => !assignmentReadyForWaveTimesheet(m)).length;
+                            const sites = [...new Set(wInM.map((w) => w.siteLocation).filter(Boolean))];
+                            const statusSet = [...new Set(wInM.map((w) => w.status))];
+                            return (
+                              <TableRow key={`${po.id}-${ym}`}>
+                                <TableCell className="font-mono text-sm">
+                                  <span className="flex items-center gap-1 font-semibold">
+                                    <Waves className="h-3.5 w-3.5 text-primary" />
+                                    {formatPoMonthTimesheetDocLabel(po, ym)}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground block">
+                                    {wInM.length} wave · {wInM.map((w) => w.waveCode).join(', ')}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
+                                  {formatThaiYearMonthLabel(ym, 'th-TH')}
+                                </TableCell>
+                                <TableCell>
+                                  <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+                                    <MapPin className="h-3 w-3 shrink-0" />
+                                    {sites.length > 0 ? (sites.length > 1 ? sites.join(' · ') : (sites[0] as string)) : '—'}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center text-xs max-w-[140px]">
+                                  {statusSet.map((st) => (
+                                    <Badge key={st} variant="outline" className="m-0.5">
+                                      {st}
+                                    </Badge>
+                                  ))}
+                                </TableCell>
+                                <TableCell className="text-center" title="มอบหมาย / แผน — ยึดฝั่ง PO (เท่าคิว PO Active)">
+                                  <span className="inline-flex items-center justify-center gap-1">
+                                    <Users className="h-3.5 w-3.5" />
+                                    {poAssigned}
+                                    <span className="text-muted-foreground">/</span>
+                                    {poPlanned}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center font-semibold text-green-700">{ready}</TableCell>
+                                <TableCell className="text-center text-amber-800">{notOnBoard}</TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex flex-col items-end gap-1 sm:flex-row sm:justify-end">
+                                    <Button size="sm" className="gap-1" asChild>
+                                      <Link
+                                        href={`/timesheets/wave-board?poId=${encodeURIComponent(po.id)}&month=${encodeURIComponent(ym)}`}
+                                      >
+                                        เปิดกระดานลงเวลา
+                                        <ChevronRight className="h-4 w-4" />
+                                      </Link>
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="gap-1" asChild>
+                                      <Link href={`/timesheets/wave-month?month=${encodeURIComponent(ym)}`}>
+                                        สรุปเดือน
+                                      </Link>
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          });
+                        })()}
                       </TableBody>
                     </Table>
                   </CardContent>

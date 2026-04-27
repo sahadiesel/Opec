@@ -20,6 +20,7 @@ import {
   Save,
   Loader2,
   Plus,
+  Printer,
   Trash2,
 } from 'lucide-react';
 import {
@@ -37,6 +38,7 @@ import { useRouter } from 'next/navigation';
 import { useFirestore } from '@/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { loadPayrollPoliciesFromFirestore } from '@/lib/payroll/d8/policy-loader';
+import { socialSecurityFromPolicy } from '@/lib/payroll/d8/deductions-from-policy';
 import { resolvePayrollPoliciesForDate } from '@/lib/payroll/d8/policies';
 import {
   HR_STATUTORY_POLICY_SSO_ID,
@@ -46,7 +48,11 @@ import type { PayrollPolicyRecord } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canEditHrStatutoryPayrollSettings } from '@/lib/permission-core';
-import { DEFAULT_ANNUAL_PERSONAL_ALLOWANCE } from '@/lib/payroll/employee-payroll-deductions';
+import {
+  DEFAULT_ANNUAL_PERSONAL_ALLOWANCE,
+  monthlyEmployeePITWithholding,
+  projectedAnnualGrossFromMonthly,
+} from '@/lib/payroll/employee-payroll-deductions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,8 +63,104 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
+import { escapeHtmlDoc, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 const NO_PERM = 'คุณไม่มีสิทธ์ในการทำรายการ';
+
+const fmtBahtTh = (n: number, minFrac = 0, maxFrac = 2) =>
+  n.toLocaleString('th-TH', { minimumFractionDigits: minFrac, maximumFractionDigits: maxFrac });
+
+type PitRefRow = { rangeLabel: string; rateLabel: string; formulaNote: string };
+
+function buildPitSettingsDemoPrintHtml(p: {
+  generatedAt: string;
+  ssoRate: number;
+  ssoCeiling: number;
+  annualAllowance: number;
+  demoMonthlyGross: number;
+  calc: {
+    monthlySSO: number;
+    monthlyPitBase: number;
+    annualGrossFromWage: number;
+    annualPitGross: number;
+    netAnnual: number;
+    annualTax: number;
+    monthlyPit: number;
+  };
+  pitRows: PitRefRow[];
+}): string {
+  const c = p.calc;
+  const bandRows = p.pitRows
+    .map(
+      (r) =>
+        `<tr><td>${escapeHtmlDoc(r.rangeLabel)}</td><td style="text-align:center;white-space:nowrap">${escapeHtmlDoc(r.rateLabel)}</td></tr>`,
+    )
+    .join('');
+
+  return `<div class="sd-page pit-print-wrap">
+<style>
+  .pit-print-wrap{ font-size:8.5pt; line-height:1.2; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .pit-print-wrap .p-hd{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding-bottom:4px; border-bottom:2px solid #0d9488; margin-bottom:4px; }
+  .pit-print-wrap .p-cname{ font-weight:800; font-size:12pt; margin:0; color:#171717; }
+  .pit-print-wrap .p-sub{ font-size:8pt; color:#404040; margin:2px 0 0 0; line-height:1.2; }
+  .pit-print-wrap .p-ttl{ margin:0; font-size:12pt; font-weight:800; color:#0d9488; text-align:right; line-height:1.2; }
+  .pit-print-wrap .p-when{ font-size:8pt; color:#525252; margin:0 0 4px 0; }
+  .pit-print-wrap .p-h2{ font-size:9.5pt; font-weight:700; margin:5px 0 2px 0; color:#0d9488; line-height:1.2; }
+  .pit-print-wrap table.p-tbl{ width:100%; border-collapse:collapse; margin:2px 0 4px 0; }
+  .pit-print-wrap .p-tbl th,.pit-print-wrap .p-tbl td{ border:1px solid #d4d4d8; padding:1px 4px; vertical-align:top; }
+  .pit-print-wrap .p-tbl thead th{ background:#f4f4f5; font-weight:700; font-size:8pt; padding:2px 4px; }
+  .pit-print-wrap .p-tbl tbody th{ text-align:left; font-weight:600; font-size:8pt; background:#fafafa; width:52%; }
+  .pit-print-wrap .p-tbl .p-td-num{ text-align:right; font-variant-numeric:tabular-nums; font-size:8pt; }
+  .pit-print-wrap .p-res{ page-break-inside:avoid; break-inside:avoid; margin:5px 0; padding:5px 8px; border:1px solid #d4d4d8; border-radius:3px; background:#f0fdfa; }
+  .pit-print-wrap .p-res-lb{ display:block; font-size:8.5pt; font-weight:700; color:#0f766e; margin-bottom:2px; }
+  .pit-print-wrap .p-res-amt{ font-size:15pt; font-weight:800; font-variant-numeric:tabular-nums; color:#0d9488; }
+  .pit-print-wrap .p-foot{ font-size:7.5pt; color:#525252; margin:4px 0 0 0; line-height:1.2; }
+  @page{ size:A4; margin:6mm; }
+  /* บีบขอบหน้า ลดจาก sd default เพื่อให้พอดี 1 หน้า */
+  body{ padding:4mm 7mm 8mm 7mm !important; }
+</style>
+  <div class="p-hd">
+    <div>
+      <p class="p-cname">OPEC</p>
+      <p class="p-sub">ตัวอย่างการคำนวณ — หน้า HR ตั้งค่า (ไม่ใช่เอกสารราชการ)</p>
+    </div>
+    <div style="min-width:0;max-width:45%;text-align:right">
+      <h1 class="p-ttl">ภาษี ภงด.1 รายเดือน (ตัวอย่าง)</h1>
+    </div>
+  </div>
+  <p class="p-when">ออกเมื่อ ${escapeHtmlDoc(p.generatedAt)}</p>
+  <h2 class="p-h2">นโยบายที่อ้างอิง (ค่าในหน้านี้)</h2>
+  <table class="p-tbl">
+    <tbody>
+      <tr><th>อัตราประกันสังคม (ลูกจ้าง)</th><td class="p-td-num">${escapeHtmlDoc(String(p.ssoRate))} %</td></tr>
+      <tr><th>เพดานค่าจ้าง ปสง. ต่อเดือน</th><td class="p-td-num">${fmtBahtTh(p.ssoCeiling, 0, 0)} บาท</td></tr>
+      <tr><th>ลดหย่อนรายปี (ส่วนตัว)</th><td class="p-td-num">${fmtBahtTh(p.annualAllowance)} บาท</td></tr>
+    </tbody>
+  </table>
+  <h2 class="p-h2">ตารางขั้นบันไดภาษี (ช่วง / อัตรา)</h2>
+  <table class="p-tbl">
+    <thead><tr><th>ช่วงเงินได้สุทธิ (บาท)</th><th>อัตรา</th></tr></thead>
+    <tbody>${bandRows}</tbody>
+  </table>
+  <h2 class="p-h2">กรณีตัวอย่าง</h2>
+  <table class="p-tbl">
+    <tbody>
+      <tr><th>ฐานเงินได้รายเดือน (ก่อน ปสง.)</th><td class="p-td-num">${fmtBahtTh(p.demoMonthlyGross)} บาท</td></tr>
+      <tr><th>ประกันสังคม ต่อเดือน</th><td class="p-td-num">${fmtBahtTh(c.monthlySSO)} บาท</td></tr>
+      <tr><th>ฐาน ภงด.1 ต่อเดือน (หลังหัก ปสง.)</th><td class="p-td-num">${fmtBahtTh(c.monthlyPitBase)} บาท</td></tr>
+      <tr><th>รายได้รวม/ปี (เดือน × 12, ก่อน ปสง.)</th><td class="p-td-num">${fmtBahtTh(c.annualGrossFromWage)} บาท</td></tr>
+      <tr><th>ฐานภาษีรวม/ปี (ฐาน ภงด./เดือน × 12)</th><td class="p-td-num">${fmtBahtTh(c.annualPitGross)} บาท</td></tr>
+      <tr><th>เงินได้สุทธิรายปี (หลังลดหย่อน)</th><td class="p-td-num">${fmtBahtTh(c.netAnnual)} บาท</td></tr>
+      <tr><th>ภาษีรายปี (ขั้นบันได)</th><td class="p-td-num">${fmtBahtTh(c.annualTax)} บาท</td></tr>
+    </tbody>
+  </table>
+  <div class="p-res">
+    <span class="p-res-lb">ภาษีหัก ณ ที่จ่าย ภงด.1 ต่อเดือน (นำส่ง)</span>
+    <span class="p-res-amt">${fmtBahtTh(c.monthlyPit, 2, 2)} บาท</span>
+  </div>
+  <p class="p-foot">หมายเหตุ: รัน payroll ออฟฟิศ (D8) อาจคำนวณ ภงด.1 จากฐานก่อนหักประกันสังคม — กล่องทดสอบนี้ใช้ “ฐานรายเดือนหลังหัก ปสง. ก่อน × 12” ตามสูตรบนหน้านี้</p>
+</div>`;
+}
 
 export default function HrSettingsPage() {
   const router = useRouter();
@@ -75,6 +177,8 @@ export default function HrSettingsPage() {
   const [ssoCeiling, setSsoCeiling] = useState(15_000);
   const [annualAllowance, setAnnualAllowance] = useState(DEFAULT_ANNUAL_PERSONAL_ALLOWANCE);
   const [pitBands, setPitBands] = useState<PitProgressiveBand[]>(() => cloneDefaultPitBands());
+  /** ฐานรายได้รายเดือนสำหรับกล่องทดสอบ ภงด.1 (ไม่บันทึกแยก — สะท้อนสูตร payroll) */
+  const [demoMonthlyGross, setDemoMonthlyGross] = useState(50_000);
 
   const canViewPage = currentUser && isHRStaff(currentUser);
   const canEdit = canEditHrStatutoryPayrollSettings(currentUser);
@@ -119,12 +223,62 @@ export default function HrSettingsPage() {
 
   const pitRows = useMemo(() => pitBandsToReferenceRows(pitBands), [pitBands]);
 
-  const demoPitAnnual = useMemo(() => {
-    const net = 850_000;
-    return pitBands.length
-      ? calculateAnnualPITFromProgressiveBands(net, pitBands)
-      : calculateThaiAnnualPIT(net);
-  }, [pitBands]);
+  const pitDemoCalc = useMemo(() => {
+    const m = Math.max(0, Number(demoMonthlyGross) || 0);
+    const allow = Math.max(0, Number(annualAllowance) || 0);
+    const ssoPolicy: PayrollPolicyRecord = {
+      id: HR_STATUTORY_POLICY_SSO_ID,
+      kind: 'sso',
+      name: 'hr-settings-preview',
+      effectiveFrom: '2000-01-01',
+      effectiveTo: null,
+      status: 'active',
+      appliesTo: 'all',
+      config: { employeeRatePercent: ssoRate, monthlyCeilingBaht: ssoCeiling },
+    };
+    const monthlySSO = socialSecurityFromPolicy(m, ssoPolicy);
+    /** ฐานรายเดือนก่อน × 12 สำหรับ ภงด.1 (หลังลบ ปสง. ฝ่ายลูกจ้าง) */
+    const monthlyPitBase = Math.max(0, m - monthlySSO);
+    const annualGrossFromWage = projectedAnnualGrossFromMonthly(m);
+    const annualPitGross = projectedAnnualGrossFromMonthly(monthlyPitBase);
+    const netAnnual = Math.max(0, annualPitGross - allow);
+    const annualTax = pitBands.length
+      ? calculateAnnualPITFromProgressiveBands(netAnnual, pitBands)
+      : calculateThaiAnnualPIT(netAnnual);
+    const monthlyPit = monthlyEmployeePITWithholding({
+      monthlyTaxableGross: monthlyPitBase,
+      annualDeductions: allow,
+      pitProgressiveBands: pitBands,
+    });
+    return {
+      monthlySSO,
+      monthlyPitBase,
+      annualGrossFromWage,
+      annualPitGross,
+      netAnnual,
+      annualTax,
+      monthlyPit,
+    };
+  }, [demoMonthlyGross, annualAllowance, pitBands, ssoRate, ssoCeiling]);
+
+  const handlePrintPitDemo = useCallback(() => {
+    const body = buildPitSettingsDemoPrintHtml({
+      generatedAt: new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }),
+      ssoRate,
+      ssoCeiling,
+      annualAllowance,
+      demoMonthlyGross: Math.max(0, Number(demoMonthlyGross) || 0),
+      calc: pitDemoCalc,
+      pitRows: pitRows as PitRefRow[],
+    });
+    if (!openStandardPrintWindow({ windowTitle: 'ตัวอย่าง ภงด.1 รายเดือน', bodyInnerHtml: body, htmlLang: 'th' })) {
+      toast({
+        variant: 'destructive',
+        title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+        description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+      });
+    }
+  }, [ssoRate, ssoCeiling, annualAllowance, demoMonthlyGross, pitDemoCalc, pitRows, toast]);
 
   const handleSave = async () => {
     if (!canEdit) {
@@ -401,26 +555,109 @@ export default function HrSettingsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Scale className="h-5 w-5 text-primary" /> ทดสอบสูตรภาษี (ตัวอย่าง)
-              </CardTitle>
-              <CardDescription>เงินได้สุทธิรายปี 850,000 บาท (หลังลดหย่อนแล้ว) — ภาษีรายปีโดยประมาณ</CardDescription>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                <div className="min-w-0">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Scale className="h-5 w-5 text-primary shrink-0" /> ทดสอบสูตรภาษี (ตัวอย่าง)
+                  </CardTitle>
+                  <CardDescription className="mt-1.5">
+                    หักประกันสังคม (อัตรา/เพดานตามกล่อง ปสง. ฝั่งนี้) จากฐานรายเดือนก่อน แล้ว (ฐาน ภงด. ต่อเดือน × 12) −
+                    ลดหย่อนรายปี → ขั้นบันได → หาร 12 เป็น ภงด.1 ต่อเดือน
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 shrink-0 self-end sm:self-start"
+                  onClick={handlePrintPitDemo}
+                  disabled={loading}
+                >
+                  <Printer className="h-4 w-4" />
+                  พิมพ์เอกสาร
+                </Button>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-3xl font-black text-primary tabular-nums">
-                {demoPitAnnual.toLocaleString(undefined, { maximumFractionDigits: 0 })} บาท
+            <CardContent className="space-y-4">
+              <div className="grid gap-2 sm:grid-cols-2 sm:gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">ฐานเงินได้รายเดือน (บาท) — สำหรับประมาณการ ภงด.1</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={100}
+                    disabled={loading}
+                    value={demoMonthlyGross}
+                    onChange={(e) => setDemoMonthlyGross(Number(e.target.value))}
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    ลดหย่อนรายปี (บาท) — ค่าเดียวกับช่องบันทึกนโยบาย (เดือน × 12 − ลดหย่อน)
+                  </Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1000}
+                    disabled={!canEdit || loading}
+                    value={annualAllowance}
+                    onChange={(e) => setAnnualAllowance(Number(e.target.value))}
+                    className="font-mono"
+                  />
+                </div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                <p>
+                  รายได้รวม/ปี (เดือน × 12, ก่อน ปสง.):{' '}
+                  <span className="font-mono text-foreground">
+                    {pitDemoCalc.annualGrossFromWage.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                  </span>
+                </p>
+                <p>
+                  ประกันสังคม ต่อเดือน:{' '}
+                  <span className="font-mono text-foreground">
+                    {pitDemoCalc.monthlySSO.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                  </span>
+                </p>
+                <p>
+                  ฐาน ภงด.1 ต่อเดือน (รายได้ − ปสง.):{' '}
+                  <span className="font-mono text-foreground">
+                    {pitDemoCalc.monthlyPitBase.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                  </span>
+                </p>
+                <p>
+                  ฐานภาษีรวม/ปี (ฐาน ภงด./เดือน × 12):{' '}
+                  <span className="font-mono text-foreground">
+                    {pitDemoCalc.annualPitGross.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                  </span>
+                </p>
+                <p>
+                  เงินได้สุทธิรายปี (หลังลดหย่อน):{' '}
+                  <span className="font-mono text-foreground">
+                    {pitDemoCalc.netAnnual.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                  </span>
+                </p>
+                <p>
+                  ภาษีรายปี (รวมจากขั้นบันได):{' '}
+                  <span className="font-mono text-foreground">
+                    {pitDemoCalc.annualTax.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                  </span>
+                </p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                หมายเหตุ: รัน payroll ออฟฟิศ (D8) ยังคำนวณ ภงด.1 จากยอดเงินเดือน <strong>รวมก่อนหัก</strong> ประกันสังคม
+                กล่องนี้เทียบ “ฐานหลังหัก ปสง. รายเดือน” ก่อน × 12
               </p>
-              <div className="grid gap-2">
-                <Label className="text-xs text-muted-foreground">ลดหย่อนรายปี (บาท) — ใช้ในสูตรเดือน × 12 − ลดหย่อน</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  disabled={!canEdit || loading}
-                  value={annualAllowance}
-                  onChange={(e) => setAnnualAllowance(Number(e.target.value))}
-                  className="font-mono max-w-[240px]"
-                />
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">ภาษีหัก ณ ที่จ่าย ภงด.1 ต่อเดือน (นำส่ง)</p>
+                <p className="text-3xl font-black text-primary tabular-nums">
+                  {pitDemoCalc.monthlyPit.toLocaleString('th-TH', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  บาท
+                </p>
               </div>
             </CardContent>
           </Card>

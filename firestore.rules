@@ -246,6 +246,24 @@ service cloud.firestore {
       ]);
     }
 
+    function portalTaxInvoicePaymentNotifyKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'paymentNotifiedAt',
+        'paymentNotifiedByUid',
+        'paymentNotifiedByName',
+        'paymentNotifySource',
+        'paymentNotificationNote',
+        'updatedAt'
+      ]);
+    }
+
+    function portalTaxInvoicePaymentNotifyAllowed() {
+      return resource.data.status == 'ISSUED'
+        && !('paymentNotifiedAt' in resource.data)
+        && !('paymentReceivedConfirmedAt' in resource.data)
+        && !('linkedReceiptId' in resource.data);
+    }
+
     /** ลูกค้า (Approver) ยืนยันใบแจ้งหนี้เรียกเก็บ — commercial_invoices */
     function portalCommercialInvoiceConfirmKeysOnly() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -481,6 +499,12 @@ service cloud.firestore {
           && resource.data.status == 'DRAFT'
           && request.resource.data.status == 'DRAFT'
           && portalTaxInvoiceBillingApprovalKeysOnly()
+        )
+        || (
+          portalIsApprover()
+          && portalOwnsResourceCustomerId()
+          && portalTaxInvoicePaymentNotifyAllowed()
+          && portalTaxInvoicePaymentNotifyKeysOnly()
         );
       allow delete: if isAccountingOrAdmin();
     }
@@ -490,6 +514,12 @@ service cloud.firestore {
             && exists(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId))
             && get(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId)).data.customerId == userData().customerId);
       allow write: if isAccountingOrAdmin();
+    }
+
+    /** ใบเสร็จรับเงิน (ลูกค้า) — อ้างอิงใบกำกับภาษี; read ให้สอดคล้อง tax_invoices (พนักงานภายในดูได้) */
+    match /receipts/{id} {
+      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
+      allow create, update, delete: if isAccountingOrAdmin();
     }
 
     match /ap_bills/{id} {
@@ -749,6 +779,10 @@ service cloud.firestore {
     match /wave_month_timesheet_photo_bundles/{id} {
       allow read: if isInternalStaffDoc() || portalWaveMonthTimesheetPhotoBundleReadable();
       allow write: if isInternalStaffDoc();
+    }
+
+    match /monthly_timesheet_documents/{id} {
+      allow read, write: if isInternalUser();
     }
 
     match /daily_timesheets/{id} {

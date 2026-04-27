@@ -38,6 +38,7 @@ import { doc, collection, query, where, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { Wave, User, Customer, Assignment, Worker, Position, WaveStatus, DeploymentStatus } from '@/lib/types';
 import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
+import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -135,6 +136,7 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
   const [isEditing, setIsEditing] = useState(false);
   const [editedWave, setEditedWave] = useState<Partial<Wave>>({});
   const [isConfirming, setIsConfirming] = useState(false);
+  const [isSettingActive, setIsSettingActive] = useState(false);
 
   const draftCount = useMemo(
     () => (waveAssignments ?? []).filter((a) => a.deploymentStatus === 'DRAFT').length,
@@ -167,10 +169,14 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
     void run().catch((e) => console.error('wave mobilization workerName backfill', e));
   }, [firestore, waveAssignments, allWorkers]);
 
+  const rosterForDisplay = useMemo(
+    () => pickRosterLinePerWorker(waveAssignments ?? []),
+    [waveAssignments],
+  );
+
   const timesheetReadyCount = useMemo(
-    () =>
-      (waveAssignments ?? []).filter((a) => WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus)).length,
-    [waveAssignments]
+    () => rosterForDisplay.filter((a) => WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus)).length,
+    [rosterForDisplay],
   );
 
   const handleSaveInfo = () => {
@@ -228,6 +234,34 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
     }
   };
 
+  /** กรณีไม่มี DRAFT ค้าง (มอบหมายยืนแล้ว) แต่สถานะเวฟยัง PLANNING — ยังลงเวลาได้ แต่ badge จะสอดคล้องเมื่อตั้ง ACTIVE */
+  const handleSetWaveActiveOnly = async () => {
+    if (!firestore || !wave || !waveRef || !canEditWaves) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์หรือข้อมูลไม่ครบ' });
+      return;
+    }
+    if (wave.status !== 'PLANNING' && wave.status !== 'RECRUITING') {
+      toast({ title: 'ไม่ต้องอัปเดต', description: `สถานะเวฟปัจจุบัน: ${wave.status}` });
+      return;
+    }
+    setIsSettingActive(true);
+    try {
+      await updateDocumentNonBlocking(waveRef, {
+        status: 'ACTIVE' as WaveStatus,
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'ตั้งสถานะเวฟเป็น ACTIVE แล้ว',
+        description: 'รายชื่อมอบหมายไม่ใช่ DRAFT อยู่แล้ว — ใช้ปุ่มนี้ให้สอดคล้องกับขั้นตอน (ยืนยันมอบหมายเดิมใช้เมื่อยังมี DRAFT ค้าง)',
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'บันทึกไม่สำเร็จ';
+      toast({ variant: 'destructive', title: 'ไม่สำเร็จ', description: msg });
+    } finally {
+      setIsSettingActive(false);
+    }
+  };
+
   if (isUserLoading || userLoading || !currentUser) return null;
   if (!canViewWaves) {
     return (
@@ -244,7 +278,8 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  const waveBoardHref = `/timesheets/wave-board?poId=${encodeURIComponent(wave.poId)}&waveId=${encodeURIComponent(wave.id)}`;
+  const waveBoardMonth = (wave.startDate || '').slice(0, 7) || new Date().toISOString().slice(0, 7);
+  const waveBoardHref = `/timesheets/wave-board?poId=${encodeURIComponent(wave.poId)}&month=${encodeURIComponent(waveBoardMonth)}`;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -334,7 +369,7 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
           <StatCard
             title="พร้อมลงเวลา (Timesheet roster)"
             value={timesheetReadyCount}
-            sub={`จาก ${waveAssignments?.length ?? 0} มอบหมาย`}
+            sub={`จาก ${rosterForDisplay.length} ราย (หลังตัด demob/ซ้ำคนงาน)`}
             icon={Clock}
             colorClass="border-l-violet-600"
           />
@@ -364,6 +399,30 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
               >
                 {isConfirming ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                 ยืนยันมอบหมายเพื่อลงเวลา ({draftCount} คน)
+              </Button>
+            </CardFooter>
+          </Card>
+        )}
+
+        {canEditWaves && draftCount === 0 && (wave.status === 'PLANNING' || wave.status === 'RECRUITING') && (
+          <Card className="border-slate-200 bg-slate-50/60">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">สถานะเวฟยัง {wave.status}</CardTitle>
+              <CardDescription>
+                รายมอบหมายทุกคนไม่อยู่ DRAFT แล้ว — ระบบจึง <strong>ลงเวลาได้</strong> บน Wave Board
+                แม้เวฟยังแสดง PLANNING (กรณีเดิมไม่กด &quot;ยืนยันมอบหมาย&quot; หรือ import มาเป็นสถานะ ready แล้ว)
+                กดปุ่มด้านล่างเพื่อ <strong>ตั้งเป็น ACTIVE</strong> ให้ตรงขั้นตอน; หรือแก้สถานะเวฟในแท็บ &quot;ข้อมูลเวฟ&quot;
+                → แก้ไขข้อมูลเวฟ
+              </CardDescription>
+            </CardHeader>
+            <CardFooter>
+              <Button
+                variant="secondary"
+                disabled={isSettingActive}
+                onClick={() => void handleSetWaveActiveOnly()}
+              >
+                {isSettingActive ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                ตั้งสถานะเวฟเป็น ACTIVE
               </Button>
             </CardFooter>
           </Card>
@@ -481,7 +540,9 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
                   <CardDescription>รายชื่อคนงานที่มอบหมายในรอบนี้ — ตำแหน่งแสดงชื่อภาษาอังกฤษ/ไทยจาก Master Data</CardDescription>
                 </div>
                 <Button asChild>
-                  <Link href="/assignments">
+                  <Link
+                    href={`/assignments?poId=${encodeURIComponent(wave.poId)}&waveId=${encodeURIComponent(wave.id)}&openDialog=1`}
+                  >
                     <Plus className="h-4 w-4 mr-2" /> มอบหมายคนเพิ่ม
                   </Link>
                 </Button>
@@ -498,7 +559,7 @@ export default function WaveDetailPage({ params }: { params: Promise<{ id: strin
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {waveAssignments?.map((asgn) => {
+                    {rosterForDisplay.map((asgn) => {
                       const worker = allWorkers?.find((w) => w.id === asgn.workerId);
                       return (
                         <TableRow key={asgn.id}>

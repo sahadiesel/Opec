@@ -235,6 +235,7 @@ export default function HrPayrollWorkbenchPage() {
           complete: number;
           pending: number;
         }[],
+        poMonthRows: [] as { poId: string; yearMonth: string; label: string; workers: number; href: string }[],
       };
     }
     const pStart = focusPeriod.startDate;
@@ -294,7 +295,7 @@ export default function HrPayrollWorkbenchPage() {
       if (everyWaveReady && waveSet.size > 0) completeAll += 1;
     }
 
-    const waves = [...byWave.entries()]
+    const waveRows = [...byWave.entries()]
       .map(([waveId, b]) => {
         const w = waveMap.get(waveId);
         const label = w ? `${w.waveCode} · ${w.projectName || ''}`.trim() : waveId.slice(0, 8);
@@ -306,6 +307,31 @@ export default function HrPayrollWorkbenchPage() {
       })
       .sort((a, b) => a.label.localeCompare(b.label, 'th'));
 
+    const poMonthRows: { poId: string; yearMonth: string; label: string; workers: number; href: string }[] = [];
+    const monthKey = (d: string) => d.slice(0, 7);
+    const poMonthWorkerSets = new Map<string, Set<string>>();
+    for (const t of tsList) {
+      const poId = t.purchaseOrderId;
+      if (!poId) continue;
+      const ym = monthKey(t.date);
+      const k = `${poId}|${ym}`;
+      if (!poMonthWorkerSets.has(k)) poMonthWorkerSets.set(k, new Set());
+      poMonthWorkerSets.get(k)!.add(t.workerId);
+    }
+    for (const [k, wset] of poMonthWorkerSets) {
+      const [poId, yearMonth] = k.split('|');
+      const wv0 = (waves || []).find((w) => w.poId === poId);
+      const name = wv0?.projectName || poId.slice(0, 8);
+      poMonthRows.push({
+        poId,
+        yearMonth,
+        label: `${name} · ${yearMonth}`,
+        workers: wset.size,
+        href: `/timesheets/po-month?month=${encodeURIComponent(yearMonth)}&highlightPo=${encodeURIComponent(poId)}`,
+      });
+    }
+    poMonthRows.sort((a, b) => (a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : a.label.localeCompare(b.label, 'th')));
+
     return {
       periodLabel:
         focusPeriod.label ||
@@ -314,9 +340,10 @@ export default function HrPayrollWorkbenchPage() {
       withTs: withTsAll,
       complete: completeAll,
       incomplete: totalWorkerCount - completeAll,
-      waves,
+      waves: waveRows,
+      poMonthRows,
     };
-  }, [focusPeriod, periodTimesheets, assignments, waveMap]);
+  }, [focusPeriod, periodTimesheets, assignments, waveMap, waves]);
 
   const pendingItems = useMemo(() => {
     const items: { id: string; label: string; href: string; kind: string }[] = [];
@@ -588,7 +615,34 @@ export default function HrPayrollWorkbenchPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <p className="text-xs font-semibold text-muted-foreground">แยกตาม Wave</p>
+                <p className="text-xs font-semibold text-primary">เอกสาร / อ้างอิง: PO + งวด (timesheet รายเดือน)</p>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  ใบจ่าย payroll / ใบกำกับ แนะนำอ้างอิงงวด <strong>PO+เดือน</strong> ที่ manager อนุมัติแล้ว ไม่ใช่ราย wave เท่านั้น
+                </p>
+                <div className="max-h-32 space-y-1.5 overflow-y-auto rounded-md border border-primary/15 bg-primary/5 p-2 text-sm">
+                  {workerStats.poMonthRows.length === 0 ? (
+                    <p className="text-muted-foreground text-xs py-2 text-center">ยังไม่มี timesheet ในรอบ — หรือรอ sync</p>
+                  ) : (
+                    workerStats.poMonthRows.map((r) => (
+                      <div key={r.href} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1 last:border-0">
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium" title={r.label}>
+                          {r.label}
+                        </span>
+                        <Badge variant="secondary" className="shrink-0 tabular-nums text-[10px]">
+                          {r.workers} คนในงวด
+                        </Badge>
+                        <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" asChild>
+                          <Link href={r.href}>
+                            งวด PO
+                          </Link>
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground">แยกตาม Wave (ราย field)</p>
                 <div className="max-h-44 space-y-1.5 overflow-y-auto rounded-md border bg-muted/10 p-2 text-sm">
                   {workerStats.waves.length === 0 ? (
                     <p className="text-muted-foreground text-xs py-2 text-center">ไม่มีข้อมูลเวฟในรอบนี้</p>
@@ -612,9 +666,14 @@ export default function HrPayrollWorkbenchPage() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="default" asChild>
+                  <Link href="/timesheets/po-month">
+                    <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> งวด timesheet ราย PO+เดือน
+                  </Link>
+                </Button>
                 <Button size="sm" variant="outline" asChild>
                   <Link href="/timesheets">
-                    <Grid3X3 className="mr-1.5 h-3.5 w-3.5" /> ลงเวลา (PO / Wave)
+                    <Grid3X3 className="mr-1.5 h-3.5 w-3.5" /> ศูนย์เวลา (PO)
                   </Link>
                 </Button>
                 <Button size="sm" variant="outline" asChild>

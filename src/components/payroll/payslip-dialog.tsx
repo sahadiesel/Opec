@@ -37,12 +37,42 @@ export function PayslipDialog({
         body { font-family: "Sarabun", system-ui, sans-serif; margin: 16px; color: #111827; background: #fff; }
         @media print { body { margin: 0; } }
       </style>
-      </head><body>${node.innerHTML}</body></html>`
+      </head><body>${node.innerHTML}</body></html>`,
     );
     w.document.close();
-    w.focus();
-    w.print();
-    w.close();
+
+    const runPrint = () => {
+      w.focus();
+      w.print();
+      w.close();
+    };
+
+    const whenImagesReady = (doc: Document) => {
+      const imgs = Array.from(doc.getElementsByTagName('img'));
+      return Promise.all(
+        imgs.map(
+          (img) =>
+            new Promise<void>((resolve) => {
+              if (img.complete) {
+                resolve();
+                return;
+              }
+              img.addEventListener('load', () => resolve(), { once: true });
+              img.addEventListener('error', () => resolve(), { once: true });
+            }),
+        ),
+      );
+    };
+
+    void (async () => {
+      if (w.document.readyState === 'loading') {
+        await new Promise<void>((r) => w.addEventListener('load', () => r(), { once: true }));
+      }
+      await whenImagesReady(w.document);
+      requestAnimationFrame(() => {
+        runPrint();
+      });
+    })();
   };
 
   return (

@@ -11,6 +11,7 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import {
   CommercialInvoice,
   Customer,
+  PoMonthTimesheetReview,
   PurchaseOrder,
   Wave,
   WaveMonthTimesheetReview,
@@ -48,10 +49,13 @@ import {
   createCommercialDraftInvoice,
   createCommercialDraftFromQuotationPoLines,
   ensureCommercialDraftInvoiceAfterMonthApproval,
+  ensureCommercialDraftInvoiceAfterPoMonthApproval,
   filterWaveMonthReviewsMissingCommercialDraft,
+  filterPoMonthReviewsMissingCommercialDraft,
   voidCommercialInvoice,
   deleteCommercialInvoice,
   QUOTATION_PO_WAVE_PLACEHOLDER,
+  PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import Link from 'next/link';
@@ -133,6 +137,15 @@ export default function DraftInvoicesPage() {
   );
   const { data: approvedReviews } = useCollection<WaveMonthTimesheetReview>(approvedReviewsQuery as any);
 
+  const approvedPoMonthQuery = useMemoFirebase(
+    () =>
+      firestore && isAuthorized
+        ? query(collection(firestore, 'po_month_timesheet_reviews'), where('status', '==', 'approved'))
+        : null,
+    [firestore, isAuthorized]
+  );
+  const { data: approvedPoMonthReviews } = useCollection<PoMonthTimesheetReview>(approvedPoMonthQuery as any);
+
   const wavesLookupQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'waves') : null),
     [firestore, isAuthorized]
@@ -148,6 +161,11 @@ export default function DraftInvoicesPage() {
   const missingReviews = useMemo(
     () => filterWaveMonthReviewsMissingCommercialDraft(approvedReviews ?? [], invoices ?? []),
     [approvedReviews, invoices]
+  );
+
+  const missingPoMonthReviews = useMemo(
+    () => filterPoMonthReviewsMissingCommercialDraft(approvedPoMonthReviews ?? [], invoices ?? []),
+    [approvedPoMonthReviews, invoices]
   );
 
   const poById = useMemo(() => {
@@ -244,6 +262,14 @@ export default function DraftInvoicesPage() {
     return list;
   }, [missingReviews]);
 
+  const sortedMissingPoMonth = useMemo(() => {
+    const list = [...missingPoMonthReviews];
+    list.sort((a, b) => (a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : 0));
+    return list;
+  }, [missingPoMonthReviews]);
+
+  const totalMissingInvoiceCount = sortedMissingReviews.length + sortedMissingPoMonth.length;
+
   const handleEnsureFromReview = async (review: WaveMonthTimesheetReview) => {
     if (!firestore || !currentUser || !canCreateDoc) return;
     setSyncRowId(review.id);
@@ -267,8 +293,31 @@ export default function DraftInvoicesPage() {
     }
   };
 
+  const handleEnsureFromPoMonthReview = async (review: PoMonthTimesheetReview) => {
+    if (!firestore || !currentUser || !canCreateDoc) return;
+    setSyncRowId(review.id);
+    try {
+      const res = await ensureCommercialDraftInvoiceAfterPoMonthApproval(firestore, review, currentUser);
+      if (res.ok === true) {
+        toast({
+          title: 'สร้างใบแจ้งหนี้แล้ว',
+          description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
+        });
+        router.push(`/draft-invoices/${res.id}`);
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'ยังสร้างใบไม่ได้',
+          description: res.reason,
+        });
+      }
+    } finally {
+      setSyncRowId(null);
+    }
+  };
+
   const handleEnsureAllMissing = async () => {
-    if (!firestore || !currentUser || !canCreateDoc || sortedMissingReviews.length === 0) return;
+    if (!firestore || !currentUser || !canCreateDoc || totalMissingInvoiceCount === 0) return;
     setSyncingBulk(true);
     let ok = 0;
     const errors: string[] = [];
@@ -276,7 +325,12 @@ export default function DraftInvoicesPage() {
       for (const r of sortedMissingReviews) {
         const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, r, currentUser);
         if (res.ok === true) ok++;
-        else errors.push(`${r.yearMonth}: ${res.reason}`);
+        else errors.push(`wave ${r.yearMonth}: ${res.reason}`);
+      }
+      for (const r of sortedMissingPoMonth) {
+        const res = await ensureCommercialDraftInvoiceAfterPoMonthApproval(firestore, r, currentUser);
+        if (res.ok === true) ok++;
+        else errors.push(`PO+เดือน ${r.yearMonth}: ${res.reason}`);
       }
       toast({
         title: 'สร้างจากงวดที่อนุมัติแล้ว',
@@ -487,13 +541,13 @@ export default function DraftInvoicesPage() {
           </AlertDescription>
         </Alert>
 
-        {sortedMissingReviews.length > 0 && (
+        {totalMissingInvoiceCount > 0 && (
           <Card className="border-primary/30 bg-primary/5">
             <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <CardTitle className="text-base text-primary">งวด timesheet อนุมัติแล้ว — ยังไม่มีใบแจ้งหนี้</CardTitle>
                 <CardDescription>
-                  หลังผู้จัดการอนุมัติรอบเดือน ระบบควรสร้างใบอัตโนมัติ — ถ้ายังไม่มี ให้กดสร้างจากรายการด้านล่างเพื่อนำไปตรวจสอบ พิมพ์ และส่งลูกค้า
+                  อ้างอิงงวด <strong>PO+เดือน</strong> (รวมทุก wave) หรืองวด <strong>ต่อ wave</strong> ตามที่อนุมัติ — กดสร้างใบเพื่อนำไปตรวจยอด / พิมพ์ / ส่งลูกค้า
                 </CardDescription>
               </div>
               {canCreateDoc && (
@@ -504,61 +558,120 @@ export default function DraftInvoicesPage() {
                   onClick={() => void handleEnsureAllMissing()}
                 >
                   {syncingBulk ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  สร้างใบที่ขาดทั้งหมด ({sortedMissingReviews.length})
+                  สร้างใบที่ขาดทั้งหมด ({totalMissingInvoiceCount})
                 </Button>
               )}
             </CardHeader>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="pl-6">เดือน (งวด)</TableHead>
-                    <TableHead>PO</TableHead>
-                    <TableHead>Wave</TableHead>
-                    <TableHead className="text-right pr-6">การทำงาน</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedMissingReviews.map((r) => {
-                    const po = poById.get(r.poId);
-                    const wv = waveById.get(r.waveId);
-                    return (
-                      <TableRow key={r.id}>
-                        <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
-                        <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
-                        <TableCell className="text-sm font-mono">{wv?.waveCode ?? r.waveId.slice(0, 10)}</TableCell>
-                        <TableCell className="text-right pr-6">
-                          <div className="flex flex-wrap justify-end gap-2">
-                            <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
-                              <Link
-                                href={`/timesheets/wave-month?month=${encodeURIComponent(r.yearMonth)}&highlightWave=${encodeURIComponent(r.waveId)}`}
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                                ดูสรุปรายเดือน
-                              </Link>
-                            </Button>
-                            {canCreateDoc && (
-                              <Button
-                                size="sm"
-                                className="h-8 gap-1"
-                                disabled={syncRowId === r.id || syncingBulk}
-                                onClick={() => void handleEnsureFromReview(r)}
-                              >
-                                {syncRowId === r.id ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <Plus className="h-3.5 w-3.5" />
-                                )}
-                                สร้างใบแจ้งหนี้
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
+            <CardContent className="p-0 space-y-6">
+              {sortedMissingPoMonth.length > 0 ? (
+                <div>
+                  <p className="text-sm font-semibold text-primary px-6 py-2 bg-primary/5 border-b">งวด timesheet ราย PO+เดือน (แนะนำ — รวมทุก wave)</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="pl-6">เดือน (งวด)</TableHead>
+                        <TableHead>PO</TableHead>
+                        <TableHead>ขอบเขต</TableHead>
+                        <TableHead className="text-right pr-6">การทำงาน</TableHead>
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedMissingPoMonth.map((r) => {
+                        const po = poById.get(r.poId);
+                        return (
+                          <TableRow key={r.id}>
+                            <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
+                            <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">PO+เดือน (รวม wave)</TableCell>
+                            <TableCell className="text-right pr-6">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                                  <Link
+                                    href={`/timesheets/po-month?month=${encodeURIComponent(r.yearMonth)}&highlightPo=${encodeURIComponent(r.poId)}`}
+                                  >
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                    เอกสารรอบ PO
+                                  </Link>
+                                </Button>
+                                {canCreateDoc && (
+                                  <Button
+                                    size="sm"
+                                    className="h-8 gap-1"
+                                    disabled={syncRowId === r.id || syncingBulk}
+                                    onClick={() => void handleEnsureFromPoMonthReview(r)}
+                                  >
+                                    {syncRowId === r.id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Plus className="h-3.5 w-3.5" />
+                                    )}
+                                    สร้างใบแจ้งหนี้
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : null}
+              {sortedMissingReviews.length > 0 ? (
+                <div>
+                  <p className="text-sm font-semibold text-muted-foreground px-6 py-2 bg-muted/20 border-b">งวด timesheet ต่อ Wave (ราย wave)</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="pl-6">เดือน (งวด)</TableHead>
+                        <TableHead>PO</TableHead>
+                        <TableHead>Wave</TableHead>
+                        <TableHead className="text-right pr-6">การทำงาน</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedMissingReviews.map((r) => {
+                        const po = poById.get(r.poId);
+                        const wv = waveById.get(r.waveId);
+                        return (
+                          <TableRow key={r.id}>
+                            <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
+                            <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
+                            <TableCell className="text-sm font-mono">{wv?.waveCode ?? r.waveId.slice(0, 10)}</TableCell>
+                            <TableCell className="text-right pr-6">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                                  <Link
+                                    href={`/timesheets/wave-month?month=${encodeURIComponent(r.yearMonth)}&highlightWave=${encodeURIComponent(r.waveId)}`}
+                                  >
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                    ดูสรุปรายเดือน
+                                  </Link>
+                                </Button>
+                                {canCreateDoc && (
+                                  <Button
+                                    size="sm"
+                                    className="h-8 gap-1"
+                                    disabled={syncRowId === r.id || syncingBulk}
+                                    onClick={() => void handleEnsureFromReview(r)}
+                                  >
+                                    {syncRowId === r.id ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Plus className="h-3.5 w-3.5" />
+                                    )}
+                                    สร้างใบแจ้งหนี้
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         )}
@@ -577,7 +690,7 @@ export default function DraftInvoicesPage() {
                 <TableRow>
                   <TableHead className="pl-6">เลขที่</TableHead>
                   <TableHead>ลูกค้า</TableHead>
-                  <TableHead>Wave</TableHead>
+                  <TableHead>Wave / งวด</TableHead>
                   <TableHead className="text-right">ยอดรวม</TableHead>
                   <TableHead>สถานะ</TableHead>
                   <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -598,7 +711,9 @@ export default function DraftInvoicesPage() {
                       <TableCell className="text-xs font-mono">
                         {inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
                           ? 'ใบเสนอราคา (ไม่มี Wave)'
-                          : inv.waveCode || `${inv.waveId.slice(0, 8)}…`}
+                          : inv.waveId === PO_MONTH_WAVE_PLACEHOLDER
+                            ? inv.waveCode || 'PO+งวด (รวม wave)'
+                            : inv.waveCode || `${inv.waveId.slice(0, 8)}…`}
                       </TableCell>
                       <TableCell className="text-right">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}

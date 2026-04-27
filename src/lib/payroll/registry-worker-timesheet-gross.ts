@@ -1,0 +1,140 @@
+/**
+ * คำนวณ gross รายใบ timesheet ฝั่ง worker payroll — ยึดฐานจากตำแหน่ง/ลูกจ้าง (ทะเบียน) เท่านั้น
+ * ไม่อาศัย labor_cost_contract_terms หรือ rate_conditions แบบ LABOR_COST_CONTRACT
+ */
+import type { DailyTimesheet, MainContract, Position, Worker } from '@/lib/types';
+import { computeWorkDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
+import { resolveBaseCostForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
+
+type GlobalCostMultiplierPolicy = {
+  otAfterShift?: number;
+  holiday?: number;
+  publicHoliday?: number;
+  sunday?: number;
+  sundayOt?: number;
+  standby?: number;
+  mobilization?: number;
+  demobilization?: number;
+  travel?: number;
+};
+
+/** ตัวคูณเมื่อสัญญาไม่กำหนด rateMultiplierPolicy.cost — ยังคำนวณจากฐานทะเบียนได้ */
+export const DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY: GlobalCostMultiplierPolicy = {
+  otAfterShift: 1.5,
+  holiday: 1.5,
+  publicHoliday: 1,
+  sunday: 1.5,
+  sundayOt: 2,
+  standby: 0.5,
+  mobilization: 1,
+  demobilization: 1,
+  travel: 1,
+};
+
+function resolveContractCostPolicy(
+  contractId: string | undefined,
+  contractMap: Map<string, MainContract>,
+): GlobalCostMultiplierPolicy | undefined {
+  if (!contractId) return undefined;
+  const contract = contractMap.get(contractId);
+  if (!contract) return undefined;
+  if ((contract.contractType || 'master') === 'supplemental') {
+    const sourceId = contract.inheritTermsFromContractId || contract.parentContractId;
+    if (sourceId && contractMap.has(sourceId)) {
+      return contractMap.get(sourceId)?.rateMultiplierPolicy?.cost;
+    }
+  }
+  return contract.rateMultiplierPolicy?.cost;
+}
+
+function resolvePolicyFallbackCost(
+  ts: DailyTimesheet,
+  baseCost: number,
+  policy: GlobalCostMultiplierPolicy | undefined,
+): number {
+  if (!baseCost) return 0;
+  const p = policy ?? DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY;
+  switch (ts.eventType) {
+    case 'standby_day':
+      return baseCost * Number(p.standby ?? 0.5) * Number(ts.standbyUnits ?? 1);
+    case 'mobilization_day':
+      return baseCost * Number(p.mobilization ?? 1) * Number(ts.mobUnits ?? 1);
+    case 'demobilization_day':
+      return baseCost * Number(p.demobilization ?? 1) * Number(ts.demobUnits ?? 1);
+    case 'travel_day':
+      return baseCost * Number(p.travel ?? 1) * Number(ts.travelUnits ?? 1);
+    case 'public_holiday_worked':
+      return baseCost * Number(p.publicHoliday ?? 1);
+    case 'off_day_worked':
+      return baseCost * Number(p.holiday ?? 1);
+    default:
+      return 0;
+  }
+}
+
+export interface RegistryWorkerTimesheetGrossResult {
+  gross: number;
+  usedPackageLaborCost: boolean;
+  usedPolicyFallback: boolean;
+  fromPositionModel: boolean;
+}
+
+/**
+ * ฐานค่าแรง: ลูกจ้าง + ตำแหน่ง (และ override รายคน) → work_day ใช้แพ็กต้นทุน + OT ตามสัญญา/PO
+ * เหตุอื่น: ตัวคูณจากสัญญาหลักถ้ามี ไม่งั้น DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY
+ */
+export function computeRegistryWorkerTimesheetGross(
+  ts: DailyTimesheet,
+  input: {
+    worker: Worker | undefined;
+    position: Position | null | undefined;
+    poLine: Record<string, unknown>;
+    contractMap: Map<string, MainContract>;
+  },
+): RegistryWorkerTimesheetGrossResult {
+  const { baseCost, fromPositionModel } = resolveBaseCostForPayrollTimesheet({
+    worker: input.worker,
+    position: input.position ?? undefined,
+    poLine: input.poLine,
+    timesheet: ts,
+  });
+  const mainContract = ts.contractId ? input.contractMap.get(ts.contractId) : undefined;
+  const contractPolicy = resolveContractCostPolicy(ts.contractId, input.contractMap);
+  const policy = contractPolicy ?? DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY;
+
+  const useWorkDayPackage = ts.eventType === 'work_day' && baseCost > 0;
+  if (useWorkDayPackage) {
+    const poLine = input.poLine;
+    const statedHours = poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
+    const costOt = poLine.costOtRulesSnapshot as { afterShift?: number } | undefined;
+    const otMult =
+      Number(costOt?.afterShift) ||
+      Number(policy.otAfterShift) ||
+      1.5;
+    const pkg = computeWorkDayCostFromPackage({
+      timesheet: ts,
+      costPackagePerDay: baseCost,
+      statedHours,
+      otAfterShiftMultiplier: otMult,
+      mainContract,
+    });
+    return {
+      gross: pkg.amount,
+      usedPackageLaborCost: true,
+      usedPolicyFallback: false,
+      fromPositionModel,
+    };
+  }
+
+  const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, policy);
+  if (fallbackCost > 0) {
+    return {
+      gross: fallbackCost,
+      usedPackageLaborCost: false,
+      usedPolicyFallback: true,
+      fromPositionModel,
+    };
+  }
+
+  return { gross: 0, usedPackageLaborCost: false, usedPolicyFallback: false, fromPositionModel };
+}

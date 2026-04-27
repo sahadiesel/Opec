@@ -1,34 +1,70 @@
 'use client';
 
-import { useState, use, useEffect } from 'react';
+import { useState, use, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { 
-  ArrowLeft, 
-  Save, 
-  Loader2, 
-  Building2,
-  CreditCard,
-  Briefcase,
-  History,
-  ShieldCheck,
+import {
+  ArrowLeft,
+  Save,
+  Loader2,
   Building,
   Coins,
-  Wallet
+  ArrowDownLeft,
+  ArrowUpRight,
+  List,
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
-import { BankAccount, BankAccountType, BankAccountStatus, User } from '@/lib/types';
+import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
+import { doc, collection, setDoc, updateDoc, query, where, orderBy } from 'firebase/firestore';
+import {
+  BankAccount,
+  BankAccountType,
+  BankAccountStatus,
+  User,
+  CashbookEntry,
+  PettyCashEntry,
+} from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+
+function endOfMonthYmd(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) return `${ym}-31`;
+  const last = new Date(y, m, 0);
+  const d = String(last.getDate()).padStart(2, '0');
+  return `${y}-${String(m).padStart(2, '0')}-${d}`;
+}
+
+function compareMovement(
+  a: { entryDate: string; entryNo: string },
+  b: { entryDate: string; entryNo: string },
+): number {
+  const d = a.entryDate.localeCompare(b.entryDate);
+  if (d !== 0) return d;
+  return a.entryNo.localeCompare(b.entryNo, undefined, { numeric: true });
+}
+
+function cashbookEntryTypeLabel(t: CashbookEntry['entryType']): string {
+  const map: Record<string, string> = {
+    CUSTOMER_RECEIPT: 'รับจากลูกหนี้',
+    SUPPLIER_PAYMENT: 'จ่ายเจ้าหนี้',
+    PAYROLL: 'เงินเดือน',
+    TAX: 'ภาษี',
+    TRANSFER: 'โอนระหว่างบัญชี',
+    PETTY_CASH: 'เงินสดย่อย',
+    OTHER: 'อื่นๆ',
+  };
+  return map[t] ?? t;
+}
 
 export default function BankAccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -82,11 +118,159 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
     }));
   }, [isNew, searchParams]);
 
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  const monthStart = useMemo(() => `${selectedMonth}-01`, [selectedMonth]);
+  const monthEnd = useMemo(() => endOfMonthYmd(selectedMonth), [selectedMonth]);
+
+  const resolvedAccountType = accData?.accountType ?? formData.accountType;
+  const isPettyAccount = resolvedAccountType === 'PETTY_CASH';
+
+  const cashbookForAccountQ = useMemoFirebase(() => {
+    if (!firestore || isNew) return null;
+    return query(
+      collection(firestore, 'cashbook_entries'),
+      where('bankAccountId', '==', id),
+      where('entryDate', '>=', monthStart),
+      where('entryDate', '<=', monthEnd),
+      orderBy('entryDate', 'desc'),
+    );
+  }, [firestore, isNew, id, monthStart, monthEnd]);
+
+  const { data: cashbookRows, isLoading: cashbookLoad } = useCollection<CashbookEntry>(cashbookForAccountQ as any);
+
+  const pettyForAccountQ = useMemoFirebase(() => {
+    if (!firestore || isNew || !isPettyAccount) return null;
+    return query(
+      collection(firestore, 'petty_cash_entries'),
+      where('bankAccountId', '==', id),
+      where('entryDate', '>=', monthStart),
+      where('entryDate', '<=', monthEnd),
+      orderBy('entryDate', 'desc'),
+    );
+  }, [firestore, isNew, id, isPettyAccount, monthStart, monthEnd]);
+
+  const { data: pettyRows, isLoading: pettyLoad } = useCollection<PettyCashEntry>(pettyForAccountQ as any);
+
+  const preMonthCbQ = useMemoFirebase(() => {
+    if (!firestore || isNew) return null;
+    return query(
+      collection(firestore, 'cashbook_entries'),
+      where('bankAccountId', '==', id),
+      where('entryDate', '<', monthStart),
+      orderBy('entryDate', 'asc'),
+    );
+  }, [firestore, isNew, id, monthStart]);
+
+  const preMonthPtQ = useMemoFirebase(() => {
+    if (!firestore || isNew || !isPettyAccount) return null;
+    return query(
+      collection(firestore, 'petty_cash_entries'),
+      where('bankAccountId', '==', id),
+      where('entryDate', '<', monthStart),
+      orderBy('entryDate', 'asc'),
+    );
+  }, [firestore, isNew, id, isPettyAccount, monthStart]);
+
+  const { data: preCbRows, isLoading: preCbLoad } = useCollection<CashbookEntry>(preMonthCbQ as any);
+  const { data: prePtRows, isLoading: prePtLoad } = useCollection<PettyCashEntry>(preMonthPtQ as any);
+
+  const preMonthNet = useMemo(() => {
+    let n = 0;
+    for (const e of preCbRows ?? []) {
+      n += (e.direction === 'IN' ? 1 : -1) * e.amount;
+    }
+    if (isPettyAccount) {
+      for (const e of prePtRows ?? []) {
+        n += (e.direction === 'IN' ? 1 : -1) * e.amount;
+      }
+    }
+    return n;
+  }, [preCbRows, prePtRows, isPettyAccount]);
+
+  const balanceAtStartOfSelectedMonth = useMemo(
+    () => Number(accData?.openingBalance ?? formData.openingBalance ?? 0) + preMonthNet,
+    [accData?.openingBalance, formData.openingBalance, preMonthNet],
+  );
+
+  const movementRows = useMemo(() => {
+    const list: Array<{
+      key: string;
+      entryDate: string;
+      entryNo: string;
+      description: string;
+      direction: 'IN' | 'OUT';
+      amount: number;
+      source: 'cashbook' | 'petty';
+      entryType: string;
+      paymentMethod?: string;
+    }> = [];
+    for (const e of cashbookRows ?? []) {
+      list.push({
+        key: `cb-${e.id}`,
+        entryDate: e.entryDate,
+        entryNo: e.entryNo,
+        description: e.description,
+        direction: e.direction,
+        amount: e.amount,
+        source: 'cashbook',
+        entryType: cashbookEntryTypeLabel(e.entryType),
+        paymentMethod: e.paymentMethod,
+      });
+    }
+    if (isPettyAccount) {
+      for (const e of pettyRows ?? []) {
+        list.push({
+          key: `pt-${e.id}`,
+          entryDate: e.entryDate,
+          entryNo: e.entryNo,
+          description: e.description,
+          direction: e.direction,
+          amount: e.amount,
+          source: 'petty',
+          entryType: 'รายการ Petty หน้างาน',
+          paymentMethod: e.paymentMethod,
+        });
+      }
+    }
+    return list;
+  }, [cashbookRows, pettyRows, isPettyAccount]);
+
+  const movementRowsChronological = useMemo(
+    () => [...movementRows].sort(compareMovement),
+    [movementRows],
+  );
+
+  const movementRowsWithBalance = useMemo(() => {
+    let bal = balanceAtStartOfSelectedMonth;
+    return movementRowsChronological.map((row) => {
+      const effect = row.direction === 'IN' ? row.amount : -row.amount;
+      bal += effect;
+      return { ...row, balanceAfter: bal };
+    });
+  }, [movementRowsChronological, balanceAtStartOfSelectedMonth]);
+
+  const monthTotals = useMemo(() => {
+    let totalIn = 0;
+    let totalOut = 0;
+    for (const r of movementRows) {
+      if (r.direction === 'IN') totalIn += r.amount;
+      else totalOut += r.amount;
+    }
+    return { totalIn, totalOut, net: totalIn - totalOut };
+  }, [movementRows]);
+
+  const movementBlockLoading =
+    cashbookLoad || (isPettyAccount && pettyLoad) || preCbLoad || (isPettyAccount && prePtLoad);
+
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
     const isPetty = formData.accountType === 'PETTY_CASH';
     if (!formData.accountName?.trim()) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อบัญชี" });
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: isPetty ? "กรุณาระบุชื่อกอง Petty" : "กรุณาระบุชื่อบัญชี" });
       return;
     }
     if (!isPetty && !formData.accountNumber?.trim()) {
@@ -110,7 +294,10 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
           createdAt: now,
           updatedAt: now
         });
-        toast({ title: "เพิ่มบัญชีธนาคารสำเร็จ", description: `รหัสบัญชี: ${finalCode}` });
+        toast({
+          title: isPetty ? "เพิ่มกอง Petty สำเร็จ" : "เพิ่มบัญชีธนาคารสำเร็จ",
+          description: `รหัส: ${finalCode}`,
+        });
         router.push('/bank-accounts');
       } else {
         await updateDoc(accRef!, {
@@ -133,7 +320,7 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.back()}>
@@ -141,9 +328,19 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
             </Button>
             <div>
               <h1 className="text-2xl font-bold tracking-tight">
-                {isNew ? 'เพิ่มบัญชีธนาคารใหม่ (Add Bank Account)' : `แก้ไขข้อมูลบัญชี: ${formData.accountName}`}
+                {isNew
+                  ? resolvedAccountType === 'PETTY_CASH'
+                    ? 'เพิ่มกองเงินสดย่อย (Petty Cash)'
+                    : 'เพิ่มบัญชีธนาคาร'
+                  : isPettyAccount
+                    ? `แก้ไขกอง Petty: ${formData.accountName}`
+                    : `แก้ไขข้อมูลบัญชี: ${formData.accountName}`}
               </h1>
-              <p className="text-sm text-muted-foreground">บันทึกข้อมูลทางการเงินเพื่อใช้ในระบบจ่ายเงินและรับชำระ</p>
+              <p className="text-sm text-muted-foreground">
+                {isPettyAccount
+                  ? 'กองนี้ไม่ใช่บัญชีรับฝากที่ธนาคาร — เงินโอนจากบัญชีกลางไปมือจ่ายหน้างาน; รายการโอนเข้าเห็นได้จาก Cashbook รายการจ่าย Petty จากฝ่ายปฏิบัติการ'
+                  : 'บันทึกบัญชีธนาคารเพื่อใช้รับ-จ่าย โอน ในระบบ'}
+              </p>
             </div>
           </div>
           <Button className="gap-2 px-8 font-bold shadow-lg bg-primary" onClick={handleSave} disabled={isSubmitting}>
@@ -152,15 +349,24 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           <Card className="md:col-span-2">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <Building className="h-5 w-5 text-primary" /> ข้อมูลบัญชีธนาคาร (Account Information)
+                <Building className="h-5 w-5 text-primary" />
+                {isPettyAccount ? 'รายละเอียดกองเงินสดย่อย (Petty)' : 'ข้อมูลบัญชีธนาคาร'}
               </CardTitle>
+              {isPettyAccount && (
+                <CardDescription>
+                  เงินรับ-จ่ายจริงหน้างานลงที่เมนู «เบิกจ่าย Petty» — โอนเงินเข้ากองนี้จากบัญชีบริษัทผ่าน{' '}
+                  <Link className="font-medium text-primary underline" href="/cashbook">
+                    Cashbook
+                  </Link>
+                </CardDescription>
+              )}
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label className="font-bold">รหัสบัญชี (Account Code)</Label>
                   <Input 
@@ -173,21 +379,35 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
                   {isNew && <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>}
                 </div>
                 <div className="space-y-2">
-                  <Label>ธนาคาร (Bank Name)</Label>
-                  <Input value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} placeholder="เช่น ธนาคารกรุงเทพ" />
+                  <Label>{isPettyAccount ? 'รูปแบบ' : 'ธนาคาร (Bank Name)'}</Label>
+                  <Input
+                    value={isPettyAccount ? 'Petty — เงินสดย่อยหน้างาน' : (formData.bankName ?? '')}
+                    onChange={!isPettyAccount ? (e) => setFormData({ ...formData, bankName: e.target.value }) : undefined}
+                    disabled={isPettyAccount}
+                    className={isPettyAccount ? 'bg-muted' : ''}
+                    placeholder="เช่น ธนาคารกรุงเทพ"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>ชื่อบัญชี (Account Name) *</Label>
+                  <Label>
+                    {isPettyAccount ? 'ชื่อกอง / ผู้รับเงินสด (แสดงในระบบ) *' : 'ชื่อบัญชี (Account Name) *'}
+                  </Label>
                   <Input value={formData.accountName} onChange={e => setFormData({...formData, accountName: e.target.value})} />
                 </div>
                 <div className="space-y-2">
-                  <Label>เลขที่บัญชี (Account Number) *</Label>
-                  <Input value={formData.accountNumber} onChange={e => setFormData({...formData, accountNumber: e.target.value})} placeholder="000-0-00000-0" />
+                  <Label>{isPettyAccount ? 'อ้างอิง/หมายเหตุ (ไม่บังคับ)' : 'เลขที่บัญชี *'}</Label>
+                  <Input
+                    value={formData.accountNumber}
+                    onChange={e => setFormData({ ...formData, accountNumber: e.target.value })}
+                    placeholder={isPettyAccount ? 'เช่น รหัสอ้างอิง' : '000-0-00000-0'}
+                  />
                 </div>
+                {!isPettyAccount && (
                 <div className="space-y-2">
                   <Label>สาขา (Branch Name)</Label>
                   <Input value={formData.branchName} onChange={e => setFormData({...formData, branchName: e.target.value})} />
                 </div>
+                )}
                 <div className="space-y-2">
                   <Label>ประเภทบัญชี</Label>
                   <Select onValueChange={(v: BankAccountType) => setFormData({...formData, accountType: v})} value={formData.accountType}>
@@ -255,7 +475,9 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
                   />
                 </div>
                 <div className="p-3 bg-white rounded border text-xs text-muted-foreground italic">
-                  * ยอดเงินปัจจุบันจะถูกอัปเดตอัตโนมัติเมื่อมีการทำรายการผ่านระบบ Cashbook
+                  {isPettyAccount
+                    ? '* ยอดอัปเดตเมื่อโอนเข้า-ออกผ่าน Cashbook และรายการ Petty หน้างาน (ไม่ใช่เลขบัญชีธนาคารโดยตรง)'
+                    : '* ยอดเงินปัจจุบันจะถูกอัปเดตอัตโนมัติเมื่อมีการทำรายการผ่านระบบ Cashbook'}
                 </div>
               </CardContent>
             </Card>
@@ -277,6 +499,150 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
             </Card>
           </div>
         </div>
+
+        {!isNew && (
+          <Card>
+            <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <List className="h-5 w-5 text-primary" />
+                  รายการเคลื่อนไหวของบัญชี
+                </CardTitle>
+                <CardDescription>
+                  {isPettyAccount
+                    ? 'รายรับ/รายจ่ายจาก Cashbook (โอนเข้า-ออกกอง) รวม Petty หน้างาน — ยอดคงเหลือสะสมต่อแถวตามวันที่'
+                    : 'รายรับ/รายจ่ายผ่าน Cashbook — ใช้เทียบกับ statement ได้'}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">กรองตามเดือน</Label>
+                  <Input
+                    type="month"
+                    className="w-[min(100%,14rem)] font-mono"
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                  />
+                </div>
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link href="/cashbook">Cashbook</Link>
+                </Button>
+                {isPettyAccount && (
+                  <Button type="button" variant="outline" size="sm" asChild>
+                    <Link href="/operations/petty-cash">Petty หน้างาน</Link>
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {movementBlockLoading ? (
+                <div className="flex justify-center py-10">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : (
+                <>
+                  <div className="mb-4 flex flex-col gap-2 rounded-lg border border-primary/15 bg-primary/5 px-4 py-3 text-sm md:flex-row md:flex-wrap md:items-center md:gap-4">
+                    <span>
+                      <span className="text-muted-foreground">ยอดก่อนเดือนนี้ (ยกมา + รายการก่อน):</span>{' '}
+                      <span className="font-mono font-bold text-primary">
+                        ฿{' '}
+                        {balanceAtStartOfSelectedMonth.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </span>
+                    <span className="text-muted-foreground/60">|</span>
+                    <span>
+                      <span className="text-muted-foreground">รวมรับ:</span>{' '}
+                      <span className="font-bold text-emerald-800">
+                        ฿ {monthTotals.totalIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </span>
+                    <span>
+                      <span className="text-muted-foreground">รวมจ่าย:</span>{' '}
+                      <span className="font-bold text-red-800">
+                        ฿ {monthTotals.totalOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </span>
+                    <span>
+                      <span className="text-muted-foreground">สุทธิรายรับ-รายจ่ายเดือนนี้:</span>{' '}
+                      <span className="font-black text-primary">
+                        ฿ {monthTotals.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </span>
+                  </div>
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    รายการเรียงตามเวลา (เก่า → ใหม่) — ยอดคงเหลือ = ยอดหลังรายการนั้น
+                  </p>
+                  <div className="overflow-x-auto rounded-md border">
+                    <Table className="min-w-[920px]">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[6.5rem]">วันที่</TableHead>
+                          <TableHead className="w-[6.5rem]">เลขที่</TableHead>
+                          <TableHead className="min-w-[12rem]">รายละเอียด / ประเภท</TableHead>
+                          <TableHead className="w-[5.5rem] text-right">รายรับ (เข้า)</TableHead>
+                          <TableHead className="w-[5.5rem] text-right">รายจ่าย (ออก)</TableHead>
+                          <TableHead className="w-[6.5rem] text-right">ยอดคงเหลือ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {movementRowsWithBalance.map((row) => {
+                          const inAm = row.direction === 'IN' ? row.amount : 0;
+                          const outAm = row.direction === 'OUT' ? row.amount : 0;
+                          return (
+                            <TableRow key={row.key}>
+                              <TableCell className="whitespace-nowrap text-sm">
+                                {formatStoredDateThaiBE(row.entryDate)}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs font-medium">{row.entryNo}</TableCell>
+                              <TableCell>
+                                <div className="text-sm font-medium">{row.description}</div>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                  <Badge variant="secondary" className="text-[10px]">
+                                    {row.source === 'petty' ? 'Petty' : 'Cashbook'}
+                                  </Badge>
+                                  <span className="text-[11px] text-muted-foreground">{row.entryType}</span>
+                                  {row.paymentMethod && (
+                                    <span className="text-[11px] text-muted-foreground">· {row.paymentMethod}</span>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right text-sm font-medium text-emerald-800">
+                                {inAm > 0
+                                  ? `฿ ${inAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : '—'}
+                                {row.direction === 'IN' && <ArrowDownLeft className="ml-1 inline h-3.5 w-3.5 opacity-60" />}
+                              </TableCell>
+                              <TableCell className="text-right text-sm font-medium text-red-800">
+                                {outAm > 0
+                                  ? `฿ ${outAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : '—'}
+                                {row.direction === 'OUT' && <ArrowUpRight className="ml-1 inline h-3.5 w-3.5 opacity-60" />}
+                              </TableCell>
+                              <TableCell className="text-right text-sm font-bold text-primary">
+                                ฿{' '}
+                                {row.balanceAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        {movementRowsWithBalance.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                              ไม่มีรายการในช่วง {formatStoredDateThaiBE(monthStart)} – {formatStoredDateThaiBE(monthEnd)} — ลองเปลี่ยนเดือน
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </AppShell>
   );

@@ -6,9 +6,15 @@ const PAYSLIP_STYLES = `
 .payslip-root { font-family: "Sarabun", "Segoe UI", system-ui, sans-serif; color: #111827; font-size: 13px; line-height: 1.45; max-width: 640px; margin: 0 auto; background: #fff; }
 .payslip-root * { box-sizing: border-box; }
 .payslip-head { border-bottom: 3px solid #0f766e; padding-bottom: 14px; margin-bottom: 18px; }
+.payslip-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.payslip-header-solo { display: block; }
+.payslip-header-solo .payslip-header-brand { width: 100%; padding-left: 0; }
+.payslip-logo-box { flex: 0 0 auto; width: 1in; height: 1in; border: none; background: transparent; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.payslip-logo-box img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.payslip-header-brand { flex: 1; min-width: 0; text-align: right; padding-left: 8px; }
 .payslip-brand-th { font-size: 20px; font-weight: 800; color: #0f766e; letter-spacing: -0.02em; }
-.payslip-brand-en { font-size: 12px; color: #64748b; margin-top: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
-.payslip-title { font-size: 18px; font-weight: 800; margin: 12px 0 4px; color: #111; }
+.payslip-brand-en { font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.payslip-title { font-size: 18px; font-weight: 800; margin: 10px 0 4px; color: #111; }
 .payslip-sub { font-size: 11px; color: #64748b; margin: 0; }
 .payslip-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin-bottom: 18px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
 .payslip-meta dt { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin: 0 0 2px; }
@@ -45,10 +51,19 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
       <style dangerouslySetInnerHTML={{ __html: PAYSLIP_STYLES }} />
 
       <header className="payslip-head">
-        <div className="payslip-brand-th">{model.companyNameTh}</div>
-        <div className="payslip-brand-en">{model.companyNameEn}</div>
-        <h1 className="payslip-title">สลิปเงินเดือน / Payslip</h1>
-        <p className="payslip-sub">{model.payrollTypeLabel}</p>
+        <div className={model.companyLogoUrl ? 'payslip-header-row' : 'payslip-header-solo'}>
+          {model.companyLogoUrl ? (
+            <div className="payslip-logo-box" aria-label="Company logo">
+              <img src={model.companyLogoUrl} alt="" />
+            </div>
+          ) : null}
+          <div className="payslip-header-brand">
+            <div className="payslip-brand-th">{model.companyNameTh}</div>
+            <div className="payslip-brand-en">{model.companyNameEn}</div>
+            <h1 className="payslip-title">สลิปเงินเดือน / Payslip</h1>
+            <p className="payslip-sub">{model.payrollTypeLabel}</p>
+          </div>
+        </div>
       </header>
 
       <dl className="payslip-meta">

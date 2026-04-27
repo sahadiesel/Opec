@@ -42,7 +42,7 @@ export default function OfficePayrollPrintAllPage({ params }: { params: Promise<
   const models = useMemo(() => {
     if (!run || !lines?.length) return [];
     return lines.map((line) => buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined));
-  }, [run, lines, companyProfile?.companyNameTh, companyProfile?.companyNameEn]);
+  }, [run, lines, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl]);
 
   if (loadingRun || !currentUser) {
     return (

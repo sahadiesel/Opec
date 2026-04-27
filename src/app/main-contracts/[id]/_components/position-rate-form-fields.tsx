@@ -29,7 +29,7 @@ export function PositionRateFormFields({
   onAddPositionIdChange,
   allPositions,
   canEditSellSide,
-  canEditCostSide,
+  canEditCostSide: _canEditCostSide,
   canViewCostFields,
   isSupplementalContract,
   positionMode,
@@ -46,6 +46,11 @@ export function PositionRateFormFields({
     <div className="grid gap-5 py-2">
       <p className="text-xs text-muted-foreground rounded-md border bg-muted/30 p-3">
         วันหยุดและวันพิเศษกำหนดที่แท็บ &quot;ข้อมูลสัญญาหลัก&quot; (ใช้ร่วมทุกตำแหน่ง) — รายการนี้เฉพาะราคา/OT ต่อตำแหน่ง
+        {canViewCostFields && (
+          <span className="block mt-1 text-amber-800">
+            ฐานต้นทุนค่าแรง OPEC จ่าย: กำหนดที่เมนู <strong>ตำแหน่งงาน (Positions)</strong> ไม่อยู่ในสัญญา
+          </span>
+        )}
       </p>
 
       <div className="grid gap-2">
@@ -83,17 +88,6 @@ export function PositionRateFormFields({
             onChange={(e) => setNewRate({ ...newRate, sellRate: parseFloat(e.target.value) })}
           />
         </div>
-        {canViewCostFields && (
-          <div className="grid gap-2">
-            <Label>ต้นทุนอ้างอิง (Cost Baseline)</Label>
-            <Input
-              type="number"
-              disabled={!canEditCostSide || isSupplementalContract}
-              value={newRate.costBaseline}
-              onChange={(e) => setNewRate({ ...newRate, costBaseline: parseFloat(e.target.value) })}
-            />
-          </div>
-        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -289,7 +289,10 @@ export default function PayrollBatchesPage() {
                     {preflight.zeroGrossWorkers.length > 5 && (
                       <p className="italic">...และอีก {preflight.zeroGrossWorkers.length - 5} คน</p>
                     )}
-                    <p className="font-bold mt-2">กรุณาให้ HR Manager ตั้งค่า Labor Cost Term + Rate Conditions ให้ครบก่อน หรือกดยืนยันเพื่อสร้าง Batch (คนงานเหล่านี้จะได้ค่าจ้าง 0)</p>
+                    <p className="font-bold mt-2">
+                      ตรวจทะเบียน: ฐานค่าแรงจากตำแหน่ง + กำหนดรายคนลูกจ้างที่ /positions และ /workers หรือกดยืนยันสร้าง Batch
+                      (คนที่ฐานยังเป็น 0 จะได้ค่าจ้าง 0) — ไม่อ้าง Labor Cost Term
+                    </p>
                   </AlertDescription>
                 </Alert>
               )}
@@ -299,7 +302,7 @@ export default function PayrollBatchesPage() {
                   <CheckCircle2 className="h-5 w-5 text-green-600" />
                   <AlertTitle className="font-bold">ตรวจสอบผ่าน</AlertTitle>
                   <AlertDescription className="text-xs">
-                    พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — ทุกคนมี Rate Condition ครบ
+                    พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — ฐานค่าแรงจากทะเบียน (ลูกจ้าง/ตำแหน่ง) ครอบคลุม
                   </AlertDescription>
                 </Alert>
               )}

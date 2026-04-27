@@ -178,11 +178,17 @@ export const SYSTEM_MODULES = [
   { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การซื้อสินค้า/บริการ (Purchases)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
+  { group: 'บัญชี (Accounting)', key: 'accounting_dashboard', label: 'แดชบอร์ดบัญชี (Accounting overview)' },
   { group: 'บัญชี (Accounting)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
   {
     group: 'บัญชี (Accounting)',
     key: 'tax_invoices',
-    label: 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ฉบับเดียว — Tax invoice / receipt)',
+    label: 'ใบกำกับภาษี (Tax invoice)',
+  },
+  {
+    group: 'บัญชี (Accounting)',
+    key: 'receipts',
+    label: 'ใบเสร็จรับเงิน (ลูกค้า) — หลังยืนยันรับเงิน (Money receipt)',
   },
   { group: 'บัญชี (Accounting)', key: 'ap_bills', label: 'รับวางบิลเจ้าหนี้ (AP Bills)' },
   { group: 'บัญชี (Accounting)', key: 'accounts_receivable', label: 'ลูกหนี้การค้า (AR)' },
@@ -473,8 +479,10 @@ function buildPermissionMap(keys: readonly ModuleKey[], perm: ModulePermission):
 
 const ALL_MODULE_KEYS = SYSTEM_MODULES.map((m) => m.key as ModuleKey);
 const ACCOUNTING_KEYS_LIST: ModuleKey[] = [
+  'accounting_dashboard',
   'billing_notes',
   'tax_invoices',
+  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',
@@ -509,8 +517,10 @@ const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
 const OPS_PILLAR_UI_KEYS: ModuleKey[] = ['waves', 'assignments', 'mobilization', 'draft_invoices'];
 const STORE_PILLAR_UI_KEYS: ModuleKey[] = ['vendors', 'purchases', 'store_inventory'];
 const ACCOUNTING_PILLAR_UI_KEYS: ModuleKey[] = [
+  'accounting_dashboard',
   'billing_notes',
   'tax_invoices',
+  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',

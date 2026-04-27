@@ -111,7 +111,8 @@ export default function OperationsDashboardPage() {
     if (!firestore || !isOperationsAuthorized || viewerOnly || !showManagerApprovalQueue) return null;
     return query(
       collection(firestore, 'payroll_batches'),
-      where('status', 'in', ['GENERATED', 'HR_REVIEWED']),
+      /** ฝ่ายเงินเดือนส่งมาแล้ว (GENERATED คือฝ่ายเงินเดือนยังตรวจ) — คิว manager เฉพาะ HR_REVIEWED */
+      where('status', '==', 'HR_REVIEWED'),
       limit(30)
     );
   }, [firestore, isOperationsAuthorized, viewerOnly, showManagerApprovalQueue]);
@@ -166,10 +167,10 @@ export default function OperationsDashboardPage() {
       batches.slice(0, 10).forEach((b) => {
         tasks.push({
           id: `worker-payroll-${b.id}`,
-          type: 'อนุมัติจ่ายคนงาน',
-          label: `Batch · ${b.totalWorkers ?? 0} คน · สุทธิ ฿${Number(b.netAmount || 0).toLocaleString('th-TH')}`,
-          status: b.status,
-          link: `/payroll/batches/${b.id}`,
+          type: 'อนุมัติยอดเงินคนงาน',
+          label: `งวด (period) ${b.payrollPeriodId} · ${b.totalWorkers ?? 0} คน · สุทธิ ฿${Number(b.netAmount || 0).toLocaleString('th-TH')}`,
+          status: 'รออนุมัติ',
+          link: `/hr/payroll-approval?batch=${b.id}`,
           priority: 'high',
           icon: Coins,
         });

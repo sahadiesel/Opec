@@ -10,6 +10,7 @@ import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { assignmentReadyForWaveTimesheet } from '@/lib/constants/timesheet-ui';
+import { isAssignmentActiveOnWaveRoster } from '@/lib/ops/assignment-roster';
 import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
 import {
   formatCustomerPoNumberForPortal,
@@ -328,7 +329,9 @@ export default function ClientPortalTimesheetHubPage() {
                     <TableBody>
                       {rows.map(({ wave: w, yearMonth }) => {
                         const mobs = mobsByWave.get(w.id) ?? [];
-                        const ready = mobs.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
+                        const activeMobs = mobs.filter((m) => isAssignmentActiveOnWaveRoster(m));
+                        const assignedActive = activeMobs.length;
+                        const ready = activeMobs.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
                         const planned = totalPlannedWorkersOnWave(w) || w.plannedWorkers || 0;
                         const detailHref = `/client-portal/timesheets/wave/${encodeURIComponent(w.id)}?month=${encodeURIComponent(yearMonth)}`;
                         const commRow = commercialByWaveMonth.get(`${w.id}_${yearMonth}`);
@@ -359,7 +362,7 @@ export default function ClientPortalTimesheetHubPage() {
                             <TableCell className="text-center">
                               <span className="inline-flex items-center justify-center gap-1">
                                 <Users className="h-3.5 w-3.5" />
-                                {w.assignedWorkers ?? mobs.length}
+                                {assignedActive}
                                 <span className="text-muted-foreground">/</span>
                                 {planned}
                               </span>

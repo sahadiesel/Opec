@@ -23,16 +23,14 @@ import {
   DailyTimesheet, 
   User, 
   WorkerPaymentProfile,
-  RateCondition,
-  LaborCostContractTerm,
   MainContract,
-  PurchaseOrder,
   PayrollLineD8Snapshot,
   PayrollBatchStatus,
+  LaborCostResolutionSnapshot,
+  WorkerPitCalculationMode,
 } from '@/lib/types';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
-import { calculateDailyLaborCost, resolveApplicableCostRateCondition } from './labor-cost-calculator';
 import {
   assertPayrollPermission,
   canApprovePayroll,
@@ -48,9 +46,16 @@ import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
 } from '@/lib/payroll/d8';
-import { pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
-import { computeWorkDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
-import { resolvePayrollLaborCostContractTerm } from '@/lib/services/contract-resolver';
+import { pitFromPolicy, pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
+import {
+  buildLaborCostResolutionSnapshot,
+  resolveWorkerLaborBaseRate,
+} from '@/lib/payroll/labor-cost-model';
+import {
+  loadWorkersAndPositionsForPayroll,
+  timesheetToLaborWorkMode,
+} from '@/lib/payroll/timesheet-labor-base-cost';
+import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 
 export interface PayrollPreflightZeroWorker {
   workerId: string;
@@ -66,43 +71,6 @@ export interface PayrollPreflightResult {
   hasWarnings: boolean;
 }
 
-type GlobalCostMultiplierPolicy = {
-  otAfterShift?: number;
-  holiday?: number;
-  publicHoliday?: number;
-  sunday?: number;
-  sundayOt?: number;
-  standby?: number;
-  mobilization?: number;
-  demobilization?: number;
-  travel?: number;
-};
-
-function resolvePolicyFallbackCost(
-  ts: DailyTimesheet,
-  baseCost: number,
-  policy?: GlobalCostMultiplierPolicy
-): number {
-  if (!baseCost || !policy) return 0;
-
-  switch (ts.eventType) {
-    case 'standby_day':
-      return baseCost * Number(policy.standby ?? 0.5) * Number(ts.standbyUnits ?? 1);
-    case 'mobilization_day':
-      return baseCost * Number(policy.mobilization ?? 1) * Number(ts.mobUnits ?? 1);
-    case 'demobilization_day':
-      return baseCost * Number(policy.demobilization ?? 1) * Number(ts.demobUnits ?? 1);
-    case 'travel_day':
-      return baseCost * Number(policy.travel ?? 1) * Number(ts.travelUnits ?? 1);
-    case 'public_holiday_worked':
-      return baseCost * Number(policy.publicHoliday ?? 1);
-    case 'off_day_worked':
-      return baseCost * Number(policy.holiday ?? 1);
-    default:
-      return 0;
-  }
-}
-
 function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
   return (
     status === 'FINANCE_PREPARED' ||
@@ -110,21 +78,6 @@ function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
     status === 'PAID' ||
     status === 'LOCKED'
   );
-}
-
-function resolveContractCostPolicy(
-  contractId: string,
-  contractMap: Map<string, MainContract>
-): GlobalCostMultiplierPolicy | undefined {
-  const contract = contractMap.get(contractId);
-  if (!contract) return undefined;
-  if ((contract.contractType || 'master') === 'supplemental') {
-    const sourceId = contract.inheritTermsFromContractId || contract.parentContractId;
-    if (sourceId && contractMap.has(sourceId)) {
-      return contractMap.get(sourceId)?.rateMultiplierPolicy?.cost;
-    }
-  }
-  return contract.rateMultiplierPolicy?.cost;
 }
 
 /**
@@ -171,23 +124,7 @@ export class PayrollService {
       timesheets = timesheets.filter((ts) => ts.workMode.toLowerCase() === filters.workModeScope);
     }
 
-    const [condSnap, termsSnap] = await Promise.all([
-      getDocs(collection(this.db, 'rate_conditions')),
-      getDocs(collection(this.db, 'labor_cost_contract_terms')),
-    ]);
-    const allConditions = condSnap.docs.map((d) => ({ ...d.data(), id: d.id } as RateCondition));
-    const allCostTerms = termsSnap.docs.map((d) => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
-
     const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
-    const poById = new Map<string, PurchaseOrder>();
-    await Promise.all(
-      poIds.map(async (poId) => {
-        const snap = await getDoc(doc(this.db, 'purchase_orders', poId));
-        if (snap.exists()) {
-          poById.set(poId, { id: snap.id, ...(snap.data() as object) } as PurchaseOrder);
-        }
-      }),
-    );
 
     const contractMap = new Map<string, MainContract>();
     const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
@@ -227,6 +164,11 @@ export class PayrollService {
       }),
     );
 
+    const { workerById: preflightWorkerById, posById: preflightPosById } = await loadWorkersAndPositionsForPayroll(
+      this.db,
+      timesheets,
+    );
+
     const workerTsMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach((ts) => {
       if (!workerTsMap[ts.workerId]) workerTsMap[ts.workerId] = [];
@@ -241,48 +183,22 @@ export class PayrollService {
       const missingReasons = new Set<string>();
 
       for (const ts of workerTs) {
-        const term = resolvePayrollLaborCostContractTerm(ts, allCostTerms, contractMap, poById);
-
-        if (!term) {
-          missingReasons.add(
-            'ไม่มีขอบเขตต้นทุน (เอกสาร labor term หรือสัญญาหลักจาก PO) สำหรับรายการนี้',
-          );
-          continue;
-        }
-
         const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
-        const baseCost = Number(poLine?.costBaselineSnapshot ?? 0);
-        const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
-
-        const useWorkDayPackage = ts.eventType === 'work_day' && baseCost > 0;
-        if (useWorkDayPackage) {
+        const wk = preflightWorkerById.get(ts.workerId);
+        const pos = wk?.currentPositionId ? preflightPosById.get(wk.currentPositionId) : undefined;
+        const r = computeRegistryWorkerTimesheetGross(ts, {
+          worker: wk,
+          position: pos,
+          poLine,
+          contractMap,
+        });
+        if (r.gross > 0) {
           hasAnyRate = true;
-          continue;
+        } else {
+          missingReasons.add(
+            `${ts.date} ${ts.eventType}: ฐานค่าแรงหรือตัวคูณได้ 0 (ตรวจตำแหน่ง/กำหนดรายคนลูกจ้าง และสัญญา)`,
+          );
         }
-
-        const condition = resolveApplicableCostRateCondition(allConditions, ts, term);
-        if (condition) {
-          if (
-            condition.calculationMethod === 'FIXED' ||
-            condition.calculationMethod === 'FLAT' ||
-            condition.baseRate
-          ) {
-            hasAnyRate = true;
-          } else {
-            missingReasons.add(`${ts.eventType}: baseRate = 0 (method: ${condition.calculationMethod})`);
-          }
-          continue;
-        }
-
-        const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, fallbackPolicy);
-        if (fallbackCost > 0) {
-          hasAnyRate = true;
-          continue;
-        }
-
-        missingReasons.add(
-          `ไม่มี Rate Condition สำหรับ ${ts.eventType} และตัวคูณตามสัญญาได้ 0 (ตรวจ PO line / สัญญา)`,
-        );
       }
 
       if (!hasAnyRate) {
@@ -339,13 +255,6 @@ export class PayrollService {
       throw new Error('No timesheets ready for payroll found for this period');
     }
 
-    // Load master rules for calculation
-    const [rateConditionsSnap, costTermsSnap] = await Promise.all([
-      getDocs(collection(this.db, 'rate_conditions')),
-      getDocs(collection(this.db, 'labor_cost_contract_terms')),
-    ]);
-    const allConditions = rateConditionsSnap.docs.map(d => ({ ...d.data(), id: d.id } as RateCondition));
-    const allCostTerms = costTermsSnap.docs.map(d => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
     const contractMap = new Map<string, MainContract>();
     const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
     await Promise.all(
@@ -372,21 +281,16 @@ export class PayrollService {
       })
     );
 
-    const poLineById = new Map<string, any>();
+    const poLineById = new Map<string, unknown>();
     const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
-    const poById = new Map<string, PurchaseOrder>();
     await Promise.all(
       poIds.map(async (poId) => {
-        const [linesSnap, poSnap] = await Promise.all([
-          getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines')),
-          getDoc(doc(this.db, 'purchase_orders', poId)),
-        ]);
+        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
         linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data()));
-        if (poSnap.exists()) {
-          poById.set(poId, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
-        }
       }),
     );
+
+    const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, timesheets);
 
     // Aggregate by Worker
     const workerMap: Record<string, DailyTimesheet[]> = {};
@@ -423,101 +327,56 @@ export class PayrollService {
       const eventBreakdown: Record<string, number> = {};
       const earningsBreakdown: Record<string, number> = {};
       let workerGross = 0;
-      const laborTermIds = new Set<string>();
-      const conditionIds = new Set<string>();
+      const laborTermIds: string[] = [];
+      const conditionIds: string[] = [];
       let usedContractFallback = false;
       let usedPackageLaborCost = false;
+      let anyOpecPositionLaborBase = false;
 
       for (const ts of workerTs) {
-        const contract = resolvePayrollLaborCostContractTerm(
-          ts,
-          allCostTerms,
+        const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+        const wk = workerById.get(ts.workerId);
+        const pos = wk?.currentPositionId ? posById.get(wk.currentPositionId) : undefined;
+        const r = computeRegistryWorkerTimesheetGross(ts, {
+          worker: wk,
+          position: pos,
+          poLine,
           contractMap,
-          poById,
-        );
-
-        if (contract) {
-          laborTermIds.add(contract.id);
-          const poLine = poLineById.get(ts.poLineId) || {};
-          const baseCost = Number(poLine?.costBaselineSnapshot || 0);
-          const fallbackPolicy = resolveContractCostPolicy(ts.contractId, contractMap);
-          const mainContract = contractMap.get(ts.contractId);
-
-          /** work_day ใช้สูตรแพ็กต้นทุน (PO + สัญญา) เป็นหลัก — ไม่แข่งกับ rate_condition */
-          const useWorkDayPackage =
-            ts.eventType === 'work_day' && baseCost > 0;
-
-          if (useWorkDayPackage) {
-            const statedHours =
-              poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
-            const otMult =
-              Number(poLine.costOtRulesSnapshot?.afterShift) ||
-              Number(fallbackPolicy?.otAfterShift) ||
-              1.5;
-            const pkg = computeWorkDayCostFromPackage({
-              timesheet: ts,
-              costPackagePerDay: baseCost,
-              statedHours,
-              otAfterShiftMultiplier: otMult,
-              mainContract,
-            });
-            usedPackageLaborCost = true;
-            workerGross += pkg.amount;
-            eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-            earningsBreakdown.work_day_package =
-              (earningsBreakdown.work_day_package || 0) + pkg.amount;
-          } else {
-            const condition = resolveApplicableCostRateCondition(
-              allConditions,
-              ts,
-              contract,
-            );
-            if (condition) {
-              conditionIds.add(condition.id);
-              const cost = calculateDailyLaborCost(ts, condition, 0);
-              workerGross += cost;
-              eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-              earningsBreakdown[ts.eventType] =
-                (earningsBreakdown[ts.eventType] || 0) + cost;
-            } else {
-              usedContractFallback = true;
-              const fallbackCost = resolvePolicyFallbackCost(
-                ts,
-                baseCost,
-                fallbackPolicy,
-              );
-              if (fallbackCost > 0) {
-                workerGross += fallbackCost;
-                eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-                earningsBreakdown[`${ts.eventType}_policy`] =
-                  (earningsBreakdown[`${ts.eventType}_policy`] || 0) +
-                  fallbackCost;
-              }
-            }
-          }
+        });
+        if (r.fromPositionModel) {
+          anyOpecPositionLaborBase = true;
+        }
+        if (r.gross <= 0) continue;
+        if (r.usedPackageLaborCost) {
+          usedPackageLaborCost = true;
+        } else if (r.usedPolicyFallback) {
+          usedContractFallback = true;
+        }
+        workerGross += r.gross;
+        eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
+        if (r.usedPackageLaborCost) {
+          earningsBreakdown.work_day_package = (earningsBreakdown.work_day_package || 0) + r.gross;
+        } else {
+          earningsBreakdown[`${ts.eventType}_policy`] =
+            (earningsBreakdown[`${ts.eventType}_policy`] || 0) + r.gross;
         }
       }
 
-      const rateParts: string[] = [];
+      const rateParts: string[] = [
+        'registry: ฐานค่าแรงจากทะเบียน (ตำแหน่ง/กำหนดรายคน) — ไม่อาศัย labor cost term',
+      ];
+      if (anyOpecPositionLaborBase) {
+        rateParts.push('OPEC: position+worker หรือ PO line snapshot');
+      }
       if (usedPackageLaborCost) {
         rateParts.push(
-          'work_day: package_labor (8h+overflow×OT; ot15/20/30 tiers; holiday / Sun+SunOT)',
+          'work_day: package (8h+OT; ตัวคูณจากสัญญา/PO)',
         );
       }
-      if (conditionIds.size > 0) {
-        rateParts.push(`rate_conditions: ${[...conditionIds].join(', ')}`);
+      if (usedContractFallback) {
+        rateParts.push('event: ตัวคูณตามสัญญา หรือค่าเริ่มต้น (standby/travel/ฯลฯ)');
       }
-      if (rateParts.length === 0 && usedContractFallback) {
-        rateParts.push(
-          `policy_fallback (terms: ${[...laborTermIds].join(', ') || '—'})`,
-        );
-      }
-      const rateSummary =
-        rateParts.length > 0
-          ? rateParts.join(' | ')
-          : laborTermIds.size > 0
-            ? `labor_terms_only: ${[...laborTermIds].join(', ')}`
-            : 'no_applicable_labor_term';
+      const rateSummary = rateParts.join(' | ');
 
       const resolvedPolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'worker');
       const d8Line = computeWorkerPayrollLineD8({
@@ -536,6 +395,30 @@ export class PayrollService {
       batchDeductions += lineDedTotal;
       batchNet += d8Line.netAmount;
 
+      const wkLine = workerById.get(workerId);
+      const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
+      const firstWm = timesheetToLaborWorkMode(workerTs[0]);
+      const snapRes = wkLine
+        ? resolveWorkerLaborBaseRate(
+            {
+              laborCostUsePositionDefault: wkLine.laborCostUsePositionDefault,
+              laborCostCustomOnshore: wkLine.laborCostCustomOnshore,
+              laborCostCustomOffshore: wkLine.laborCostCustomOffshore,
+            },
+            posLine ?? undefined,
+            firstWm,
+          )
+        : { rate: null as number | null, source: 'position_default' as const };
+      let laborCostResolutionSnapshot: LaborCostResolutionSnapshot | undefined;
+      if (wkLine?.currentPositionId && snapRes.rate != null && snapRes.rate > 0) {
+        laborCostResolutionSnapshot = buildLaborCostResolutionSnapshot({
+          positionId: wkLine.currentPositionId,
+          workMode: firstWm,
+          rate: snapRes.rate,
+          source: snapRes.source,
+        });
+      }
+
       const line: PayrollBatchLine = {
         id: `${batchId}_${workerId}`,
         payrollBatchId: batchId,
@@ -552,7 +435,8 @@ export class PayrollService {
         grossAmount: workerGross,
         netAmount: d8Line.netAmount,
         d8Snapshot: d8Line.snapshot,
-        exportStatus: 'pending'
+        laborCostResolutionSnapshot,
+        exportStatus: 'pending',
       };
 
       lines.push(line);
@@ -709,6 +593,80 @@ export class PayrollService {
     return this.generatePayrollBatch(periodId, user, { workModeScope: scope });
   }
 
+  /**
+   * ฝ่ายเงินเดือน: ตรวจงวดแล้ว — ส่งคิวให้ผู้จัดการปฏิบัติการ/HR อนุมัติยอดทำจ่าย (GENERATED → HR_REVIEWED)
+   */
+  async submitOfficerBatchForPayoutApproval(id: string, user: User) {
+    if (!isSystemAdmin(user) && !isPayrollOfficer(user)) {
+      throw new Error('เฉพาะฝ่ายเงินเดือน (Payroll officer) หรือ system admin เท่านั้น');
+    }
+    assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const st = (snap.data() as PayrollBatch).status;
+    if (st !== 'GENERATED') {
+      throw new Error('ส่งขออนุมัติทำจ่ายได้เฉพาะงวดสถานะ GENERATED (กำลังตรวจ)');
+    }
+    await updateDoc(docRef, {
+      status: 'HR_REVIEWED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('HR_REVIEWED'),
+      officerPayoutRequestBy: user.displayName,
+      officerPayoutRequestAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(this.db, user, {
+      actionType: 'SUBMIT',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      payrollBatchId: id,
+      sourceModule: 'hr',
+      afterSummary: 'Payroll officer requested payout approval (status HR_REVIEWED, ops queue)',
+    });
+  }
+
+  /**
+   * ผู้จัดการ/HR: อนุมัติยอด + ส่งงานต่อบัญชีจัดจ่าย (HR_REVIEWED → FINANCE_PREPARED) หรือ
+   * กรณีไม่มีสิทธิ์ handoff: HR_REVIEWED → HR_APPROVED เท่านั้น
+   */
+  async managerApprovePayoutAndNotifyAccounting(id: string, user: User) {
+    if (!canApprovePayroll(user)) {
+      throw new Error('Permission denied: approve payroll');
+    }
+    assertPayrollPermission(user, 'payroll_worker', 'approve');
+    const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const st = (snap.data() as PayrollBatch).status;
+    if (st !== 'HR_REVIEWED') {
+      throw new Error('อนุมัติยอดทำจ่ายได้เฉพาะงวดที่ฝ่ายเงินเดือนส่งขออนุมัติแล้ว (รอ — HR_REVIEWED)');
+    }
+    if (canHandoffWorkerPayrollToAccounting(user)) {
+      await updateDoc(docRef, {
+        status: 'FINANCE_PREPARED',
+        d8LifecycleStatus: batchStatusToD8Lifecycle('FINANCE_PREPARED'),
+        hrApprovedBy: user.displayName,
+        hrApprovedAt: Date.now(),
+        financePreparedBy: user.displayName,
+        financePreparedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await writeAuditLog(this.db, user, {
+        actionType: 'APPROVE',
+        entityType: 'PayrollBatch',
+        entityId: id,
+        payrollBatchId: id,
+        sourceModule: 'hr',
+        afterSummary: 'Manager approved worker payout; handed off to finance (FINANCE_PREPARED)',
+      });
+      return;
+    }
+    await this.approveBatch(id, user);
+  }
+
+  /**
+   * Legacy/split: อนุมัติรายรอบเป็นครั้งเดียว → HR_APPROVED (ไม่รวมส่งบัญชี)
+   */
   async approveBatch(id: string, user: User) {
     if (!canApprovePayroll(user)) {
       throw new Error('Permission denied: approve payroll');
@@ -718,8 +676,8 @@ export class PayrollService {
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Payroll batch not found');
     const st = (snap.data() as PayrollBatch).status;
-    if (st !== 'GENERATED' && st !== 'HR_REVIEWED') {
-      throw new Error('อนุมัติได้เฉพาะงวดสถานะ GENERATED / HR_REVIEWED');
+    if (st !== 'HR_REVIEWED') {
+      throw new Error('อนุมัติได้เฉพาะงวดสถานะ HR_REVIEWED (หลังฝ่ายเงินเดือนส่งขออนุมัติ)');
     }
     await updateDoc(docRef, {
       status: 'HR_APPROVED',
@@ -752,6 +710,8 @@ export class PayrollService {
     await updateDoc(docRef, {
       status: 'GENERATED',
       d8LifecycleStatus: batchStatusToD8Lifecycle('GENERATED'),
+      officerPayoutRequestBy: deleteField(),
+      officerPayoutRequestAt: deleteField(),
       hrApprovedBy: deleteField(),
       hrApprovedAt: deleteField(),
       updatedAt: Date.now(),
@@ -889,9 +849,15 @@ export class PayrollService {
     input: {
       allowanceItems: Array<{ label: string; amount: number }>;
       deductionItems: Array<{ label: string; amount: number }>;
-      /** legacy: ระบุยอดหักเป็นบาท — ใช้เมื่อไม่มี pitWithholdingOverrideMaxMarginalRatePercent */
+      /**
+       * รูปแบบ ภงด.1 — ถ้าไม่ส่ง จะอนุมาจาก pitWithholdingOverride / maxMarginal (API เก่า)
+       */
+      workerPitMode?: WorkerPitCalculationMode | null;
+      /** คู่กับ auto_salary_base: ฐานรายเดือน (บาท) สำหรับสูตรภาษี */
+      pitAutoSalaryBaseBaht?: number | null;
+      /** manual_baht: ยอดหักเป็นบาท */
       pitWithholdingOverride: number | null;
-      /** เลือกอัตรา marginal สูงสุด 0–35 — คำนวณยอดหักจากขั้นบันไดใน HR */
+      /** auto_timesheet: จำกัด marginal; null/undefined = เต็มตาราง (เท่า 35%) */
       pitWithholdingOverrideMaxMarginalRatePercent?: number | null;
       notes?: string;
     },
@@ -916,9 +882,20 @@ export class PayrollService {
     }
 
     const periodSnap = await getDoc(doc(this.db, 'payroll_periods', batch.payrollPeriodId));
-    if (!periodSnap.exists()) throw new Error('ไม่พบรอบบัญชี');
-    const period = periodSnap.data() as PayrollPeriod;
-    const asOf = period.endDate;
+    const periodFromLineEnd =
+      typeof line.periodEndDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(line.periodEndDate)
+        ? line.periodEndDate
+        : null;
+    if (!periodSnap.exists()) {
+      if (!periodFromLineEnd) {
+        throw new Error(
+          `ไม่พบรอบบัญชี (id: ${String(batch.payrollPeriodId || '')}) และไม่มี periodEndDate บนบรรทัด — กรุณาแก้ batch หรือสร้างรอบบัญชีใน collection payroll_periods`,
+        );
+      }
+    }
+    const asOf: string = periodSnap.exists()
+      ? String((periodSnap.data() as PayrollPeriod).endDate || periodFromLineEnd)
+      : (periodFromLineEnd as string);
 
     const policies = await loadPayrollPoliciesFromFirestore(this.db);
     const resolved = resolvePayrollPoliciesForDate(asOf, policies, 'worker');
@@ -944,13 +921,26 @@ export class PayrollService {
       },
     });
 
-    const deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
+    const pitOv = input.pitWithholdingOverride;
     const mr = input.pitWithholdingOverrideMaxMarginalRatePercent;
-    if (mr != null && Number.isFinite(mr)) {
-      const clamped = Math.max(0, Math.min(35, mr));
-      deductions.pit_withholding = pitFromPolicyWithMarginalCeiling(effectiveGross, resolved.tax, clamped);
-    } else if (input.pitWithholdingOverride != null && Number.isFinite(input.pitWithholdingOverride)) {
-      deductions.pit_withholding = Math.max(0, input.pitWithholdingOverride);
+    const mode: WorkerPitCalculationMode =
+      input.workerPitMode ??
+      (mr != null && Number.isFinite(mr) ? 'auto_timesheet' : (pitOv != null && Number.isFinite(pitOv) ? 'manual_baht' : 'auto_timesheet'));
+
+    const deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
+    if (mode === 'manual_baht') {
+      const p = Math.max(0, Number(pitOv) || 0);
+      deductions.pit_withholding = p;
+    } else if (mode === 'auto_salary_base') {
+      const base = Math.max(0, Number(input.pitAutoSalaryBaseBaht) || 0);
+      deductions.pit_withholding = pitFromPolicy(base, resolved.tax);
+    } else {
+      if (mr != null && Number.isFinite(mr)) {
+        const clamped = Math.max(0, Math.min(35, Number(mr)));
+        deductions.pit_withholding = pitFromPolicyWithMarginalCeiling(effectiveGross, resolved.tax, clamped);
+      } else {
+        deductions.pit_withholding = pitFromPolicy(effectiveGross, resolved.tax);
+      }
     }
     input.deductionItems.forEach((d, idx) => {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
@@ -971,12 +961,17 @@ export class PayrollService {
     };
 
     const trimmedNotes = input.notes?.trim();
-    const useMr = mr != null && Number.isFinite(mr);
+    const storeMr =
+      mode === 'auto_timesheet' && mr != null && Number.isFinite(mr) && Math.max(0, Math.min(35, Number(mr))) < 35
+        ? Math.max(0, Math.min(35, Number(mr)))
+        : null;
     const hrLineAdjustments = {
       allowanceItems: input.allowanceItems,
       deductionItems: input.deductionItems,
-      pitWithholdingOverride: useMr ? null : input.pitWithholdingOverride ?? null,
-      pitWithholdingOverrideMaxMarginalRatePercent: useMr ? Math.max(0, Math.min(35, mr)) : null,
+      workerPitMode: mode,
+      pitAutoSalaryBaseBaht: mode === 'auto_salary_base' ? Math.max(0, Number(input.pitAutoSalaryBaseBaht) || 0) : null,
+      pitWithholdingOverride: mode === 'manual_baht' ? (Number.isFinite(Number(pitOv)) ? Math.max(0, Number(pitOv)) : null) : null,
+      pitWithholdingOverrideMaxMarginalRatePercent: storeMr,
       notes: trimmedNotes ? trimmedNotes : null,
       updatedAt: Date.now(),
       updatedBy: user.displayName || user.email || user.id,

@@ -48,6 +48,8 @@ export const PayrollBatchSchema = z.object({
   totalDeductions: z.number().min(0),
   netAmount: z.number().min(0),
   notes: z.string().optional().nullable(),
+  officerPayoutRequestBy: z.string().optional().nullable(),
+  officerPayoutRequestAt: z.number().optional().nullable(),
   hrApprovedBy: z.string().optional().nullable(),
   hrApprovedAt: z.number().optional().nullable(),
   financePreparedBy: z.string().optional().nullable(),
@@ -79,12 +81,27 @@ export const PayrollBatchLineSchema = z.object({
   grossAmount: z.number(),
   netAmount: z.number(),
   d8Snapshot: z.record(z.any()).optional().nullable(),
+  laborCostResolutionSnapshot: z
+    .object({
+      source: z.enum(['position_default', 'worker_custom']),
+      positionId: z.string().min(1),
+      workMode: z.enum(['onshore', 'offshore']),
+      effectiveBaseRate: z.number().min(0),
+      resolvedAt: z.number(),
+    })
+    .optional()
+    .nullable(),
   exportStatus: z.enum(['pending', 'exported', 'failed']),
   remarks: z.string().optional().nullable(),
   hrLineAdjustments: z
     .object({
       allowanceItems: z.array(z.object({ label: z.string(), amount: z.number() })).default([]),
       deductionItems: z.array(z.object({ label: z.string(), amount: z.number() })).default([]),
+      workerPitMode: z
+        .enum(['manual_baht', 'auto_timesheet', 'auto_salary_base'] as const)
+        .optional()
+        .nullable(),
+      pitAutoSalaryBaseBaht: z.number().min(0).nullable().optional(),
       pitWithholdingOverride: z.number().nullable().optional(),
       pitWithholdingOverrideMaxMarginalRatePercent: z.number().min(0).max(35).nullable().optional(),
       notes: z.string().optional().nullable(),

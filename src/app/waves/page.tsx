@@ -66,8 +66,10 @@ import {
   deriveSiteLocationFromAllocations,
   normalizeWaveAllocations,
   sumPlannedForPoLineAcrossWaves,
+  totalPlannedWorkersOnWave,
 } from '@/lib/ops/wave-allocation';
 import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
+import { isAssignmentActiveOnWaveRoster, pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 
 /** จำนวนคนที่ยังวางแผนในเวฟได้เพิ่มสำหรับ PO line นี้ (หรือแก้ไขเวฟเดิมเมื่อส่ง excludeWaveId) */
 function remainingQuotaForPoLine(
@@ -623,6 +625,25 @@ function WavesPageContent() {
     return labels.join(' · ');
   };
 
+  /** มอบหมาย = นับจาก mobilization หลังตัดคน demob/ซ้ำ — แผน = รวม lineAllocations (ไม่ใช่ฟิลด์เด่น wave.assignedWorkers/plannedWorkers) */
+  const planAsgnByWaveId = useMemo(() => {
+    const m = new Map<string, { assigned: number; planned: number }>();
+    if (!allMobilizations || !waves?.length) return m;
+    const byWave = new Map<string, Assignment[]>();
+    for (const a of allMobilizations) {
+      const list = byWave.get(a.waveId) ?? [];
+      list.push(a);
+      byWave.set(a.waveId, list);
+    }
+    for (const w of waves) {
+      const raw = byWave.get(w.id) ?? [];
+      const roster = pickRosterLinePerWorker(raw);
+      const assigned = roster.filter((a) => isAssignmentActiveOnWaveRoster(a)).length;
+      m.set(w.id, { assigned, planned: totalPlannedWorkersOnWave(w) });
+    }
+    return m;
+  }, [allMobilizations, waves]);
+
   const displayedWaves = useMemo(() => {
     let list = waves || [];
     if (filterPoId) list = list.filter((w) => w.poId === filterPoId);
@@ -1024,7 +1045,20 @@ function WavesPageContent() {
                         </TableCell>
                         <TableCell className="text-center">
                           <div className="flex items-center justify-center gap-2">
-                            <Badge variant="outline" className="font-bold">{wave.assignedWorkers} / {wave.plannedWorkers}</Badge>
+                            <Badge
+                              variant="outline"
+                              className="font-bold"
+                              title="มอบหมาย = นับราย active จาก mobilization (ไม่นับ demob/ซ้ำ); แผน = รวม lineAllocations ในเวฟ"
+                            >
+                              {(() => {
+                                const p = planAsgnByWaveId.get(wave.id);
+                                const asgn = p?.assigned ?? 0;
+                                const plan =
+                                  p?.planned ??
+                                  (totalPlannedWorkersOnWave(wave) || (wave.plannedWorkers ?? 0));
+                                return `${asgn} / ${plan}`;
+                              })()}
+                            </Badge>
                           </div>
                         </TableCell>
                         <TableCell>{getStatusBadge(wave.status)}</TableCell>

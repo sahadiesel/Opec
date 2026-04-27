@@ -1,5 +1,6 @@
 'use client';
 
+import './install-extension-error-guard';
 import '@/firebase/install-dev-firestore-log-filter';
 import type { ReactNode } from 'react';
 import { Toaster } from '@/components/ui/toaster';

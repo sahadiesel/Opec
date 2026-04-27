@@ -7,6 +7,7 @@ import {
   isActiveForApp,
   isInternalTypeUser,
 } from '@/lib/simple-tier-model';
+import { isSystemAdmin } from '@/lib/permission-core';
 import type {
   LaborCostResolutionSnapshot,
   LaborCostSourceKind,
@@ -38,6 +39,7 @@ export function canViewWorkerLaborCostFromUser(
   user: Partial<User> | null | undefined,
 ): boolean {
   if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
+  if (isSystemAdmin(user as User)) return true;
   return isLaborCostStaffByRole(getEffectiveSimpleRole(user));
 }
 

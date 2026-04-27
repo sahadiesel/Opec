@@ -46,6 +46,7 @@ import { Button } from '@/components/ui/button';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
+import { cashbookPnlFromEntries } from '@/lib/cashbook-pnl-stats';
 
 export default function CashbookPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -58,7 +59,7 @@ export default function CashbookPage() {
 
   const entriesQuery = useMemoFirebase(() => {
     if (!firestore || !canViewPage) return null;
-    return query(collection(firestore, 'cashbook_entries'), orderBy('entryDate', 'desc'), limit(100));
+    return query(collection(firestore, 'cashbook_entries'), orderBy('entryDate', 'desc'), limit(2000));
   }, [firestore, canViewPage]);
 
   const { data: entries, isLoading } = useCollection<CashbookEntry>(entriesQuery as any);
@@ -78,12 +79,10 @@ export default function CashbookPage() {
     entryType: 'OTHER'
   });
 
-  const stats = useMemo(() => {
-    if (!entries) return { totalIn: 0, totalOut: 0, balance: 0 };
-    const totalIn = entries.filter(e => e.direction === 'IN').reduce((sum, e) => sum + Number(e.amount), 0);
-    const totalOut = entries.filter(e => e.direction === 'OUT').reduce((sum, e) => sum + Number(e.amount), 0);
-    return { totalIn, totalOut, balance: totalIn - totalOut };
-  }, [entries]);
+  const stats = useMemo(
+    () => (entries ? cashbookPnlFromEntries(entries, bankAccounts) : { pnlIn: 0, pnlOut: 0, net: 0 }),
+    [entries, bankAccounts],
+  );
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -118,6 +117,16 @@ export default function CashbookPage() {
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
+  if (!canViewPage) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-xl mx-auto py-20 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าใช้งานหน้ารายรับรายจ่าย (ฝ่ายบัญชี)
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -126,40 +135,42 @@ export default function CashbookPage() {
             <BookOpen className="h-8 w-8" /> รายรับรายจ่าย (Cashbook)
           </h1>
           <p className="text-muted-foreground text-lg">
-            บันทึกและติดตามความเคลื่อนไหวของเงินสดและเงินฝากธนาคารทั้งหมดในระบบ
+            รายละเอียดรายรายการด้านล่างคือความเคลื่อนไหวตามบัญชี — การ์ดสรุป 3 ใบด้านล่างคือ
+            รายรับ–รายจ่าย ตามรายงาน: ไม่นับ โอน ธ-ธ, ไม่นับ รับโอนเข้า Petty เป็นขาย
+            (นับ โอน ธ-ฝ → Petty ฝั่ง ธ-ฝ เป็นรายจ่าย, นับ โอน คืน Petty → ธ-ฝ ฝั่ง ธ-ฝ เป็นรายรับ)
           </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="border-l-8 border-l-green-600">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">ยอดเงินรับเข้า (Total Inflow)</CardTitle>
+              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">รายรับ (รับเก็บ / นับ งบ)</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-green-700">฿ {stats.totalIn.toLocaleString()}</div>
+              <div className="text-3xl font-black text-green-700">฿ {stats.pnlIn.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-1">
-                <TrendingUp className="h-3 w-3 text-green-600" /> จากรายได้และการรับชำระ
+                <TrendingUp className="h-3 w-3 text-green-600" /> รวม: รับลูกค้า, รับเงินคืนจาก Petty — ยกเว้นโอน ธ-ธ, รับ Petty
               </div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-red-600">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">ยอดเงินจ่ายออก (Total Outflow)</CardTitle>
+              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">รายจ่าย (จ่ายจริง / นับ งบ)</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-red-600">฿ {stats.totalOut.toLocaleString()}</div>
+              <div className="text-3xl font-black text-red-600">฿ {stats.pnlOut.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-1">
-                <TrendingDown className="h-3 w-3 text-red-600" /> จากค่าจ้างและการจัดซื้อ
+                <TrendingDown className="h-3 w-3 text-red-600" /> รวม: คู่ค้า, เงินเดือน, ภาษี, อื่น ๆ, โอนไป Petty
               </div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-primary bg-primary/5">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">กระแสเงินสดสุทธิ (Net Position)</CardTitle>
+              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">รายรับ - รายจ่าย (งบ) สุทธิ</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-primary">฿ {stats.balance.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Cash Movement Summary</p>
+              <div className="text-3xl font-black text-primary">฿ {stats.net.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              <p className="text-[10px] text-muted-foreground mt-1">จาก 2,000 รายการล่าสุด ตามวันที่ (ไม่รวมโอนภายใน ธ-ธ เป็นขาย-ซื้อ)</p>
             </CardContent>
           </Card>
         </div>

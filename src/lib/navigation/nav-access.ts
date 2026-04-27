@@ -54,6 +54,13 @@ export function canViewHrPayrollFlowSubsection(
   return isHrManager(user) || isOperationManager(user) || isPayrollOfficer(user);
 }
 
+/** หมวด «อนุมัติ (Approval)» ใน HR sidebar — เฉพาะผู้จัดการปฏิบัติการ / HR (+ แอดมิน) */
+export function canViewHrApprovalSubsection(user: User, admin: boolean): boolean {
+  if (admin) return true;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  return isHrManager(user) || isOperationManager(user);
+}
+
 /** เมนูเตรียมจ่าย / อนุมัติ payroll — ไม่แสดงให้ hr_officer */
 function hrOfficerExcludedFromHrNavItem(user: User, item: HrNavItem): boolean {
   if (!isPrimaryHrOfficer(user)) return false;
@@ -106,6 +113,8 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounting/withholding-tax', 'withholding_tax_items'],
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
+  ['/receipts', 'receipts'],
+  ['/accounting/dashboard', 'accounting_dashboard'],
   ['/bank-accounts', 'bank_accounts'],
   ['/billing-client', 'customers'],
   ['/customers', 'customers'],
@@ -156,6 +165,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   const accountingPrefixes = [
     '/billing-notes',
     '/tax-invoices',
+    '/receipts',
     '/ap-bills',
     '/accounts-receivable',
     '/accounts-payable',
@@ -163,6 +173,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     '/bank-accounts',
     '/accounting/executive-payroll',
     '/accounting/withholding-tax',
+    '/accounting/dashboard',
   ];
   if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {
     return accounting;

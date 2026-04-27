@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { canAccess, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
 import { PayrollApprovalCenterD6 } from '@/components/hr/payroll-approval-center';
@@ -10,6 +11,8 @@ import { useAppUser } from '@/hooks/use-app-user';
  * HR-D6: ศูนย์อนุมัติ Payroll — Worker / Office แยกแท็บ, ต่อ batch/run มี Summary, Validation, Actions, Audit preview
  */
 export default function HrPayrollApprovalPage() {
+  const searchParams = useSearchParams();
+  const initialBatchId = searchParams.get('batch') || undefined;
   const { currentUser, isLoading: userLoading } = useAppUser();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
   const canViewApprovalPage = useMatrixGuards
@@ -43,7 +46,7 @@ export default function HrPayrollApprovalPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div id="pending" className="scroll-mt-24">
-        <PayrollApprovalCenterD6 currentUser={currentUser} />
+        <PayrollApprovalCenterD6 currentUser={currentUser} initialWorkerBatchId={initialBatchId} />
       </div>
     </AppShell>
   );

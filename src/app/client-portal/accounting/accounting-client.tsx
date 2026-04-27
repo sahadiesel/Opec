@@ -1,51 +1,101 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Printer, ChevronRight, FileBarChart } from 'lucide-react';
-import type { TaxInvoice, CommercialInvoice, AccountsReceivable } from '@/lib/types';
+import { ChevronRight, FileBarChart, Receipt } from 'lucide-react';
+import type { TaxInvoice, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy } from 'firebase/firestore';
 import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
+import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-type MainTab = 'invoices' | 'paid';
+type MainTab = 'invoices' | 'tax' | 'receipts';
 
-/** แถวชำระแล้ว — จากลูกหนี้การค้า (ไม่ใช้ collection ใบเสร็จรับเงินแยก) */
-type PaidEvidenceRow = {
-  arId: string;
-  referenceDate: string;
-  documentNo: string;
-  amount: number;
-  statusLabel: string;
-  primaryTaxInvoiceId?: string;
-};
-
-type HubRow = { kind: 'commercial'; inv: CommercialInvoice } | { kind: 'tax'; inv: TaxInvoice };
-
-function TaxInvoiceStatusBadge({ inv, en }: { inv: TaxInvoice; en: boolean }) {
+function TaxInvoiceStatusBadge({ inv, t, en }: { inv: TaxInvoice; t: (k: PortalDictKey) => string; en: boolean }) {
   if (inv.status === 'DRAFT') {
     return inv.billingCustomerApprovedAt ? (
-      <Badge className="bg-green-600">{en ? 'Confirmed' : 'ยืนยันแล้ว'}</Badge>
+      <Badge className="bg-green-600">{t('accTaxDraftBadgeConfirmed')}</Badge>
     ) : (
-      <Badge variant="outline">{en ? 'Pending review' : 'รอตรวจ'}</Badge>
+      <Badge variant="outline">{t('accTaxDraftBadgePending')}</Badge>
     );
   }
   if (inv.status === 'ISSUED') {
-    return <Badge variant="secondary">{en ? 'Issued' : 'ออกแล้ว'}</Badge>;
+    if (inv.linkedReceiptId) {
+      return <Badge className="bg-slate-700">{t('accTaxIssuedBadgeReceipt')}</Badge>;
+    }
+    if (inv.paymentNotifiedAt) {
+      return <Badge className="bg-amber-700">{t('ciStatusPayReported')}</Badge>;
+    }
+    return <Badge className="bg-emerald-800">{t('accTaxIssuedBadgeAwait')}</Badge>;
   }
   if (inv.status === 'CANCELLED') {
     return <Badge variant="destructive">{en ? 'Cancelled' : 'ยกเลิก'}</Badge>;
   }
   return <Badge variant="outline">{inv.status}</Badge>;
+}
+
+function TaxInvoiceRowActions({
+  inv,
+  t,
+  isApprover,
+}: {
+  inv: TaxInvoice;
+  t: (k: PortalDictKey) => string;
+  isApprover: boolean;
+}) {
+  const href = inv.status === 'DRAFT' ? `/client-portal/draft-invoices/${inv.id}` : `/client-portal/tax-print/${inv.id}`;
+  const canReportPayment =
+    inv.status === 'ISSUED' && !inv.paymentNotifiedAt && !inv.linkedReceiptId && isApprover;
+
+  return (
+    <TableCell className="min-w-[10.5rem] text-right align-middle" onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        {inv.status === 'DRAFT' && !inv.billingCustomerApprovedAt && isApprover && (
+          <Button size="sm" asChild>
+            <Link href={href}>{t('accTaxActReview')}</Link>
+          </Button>
+        )}
+        {inv.status === 'DRAFT' && !inv.billingCustomerApprovedAt && !isApprover && (
+          <Button size="sm" variant="secondary" asChild>
+            <Link href={href} className="inline-flex items-center gap-1">
+              {t('open')}
+              <ChevronRight className="h-3.5 w-3.5 opacity-80" />
+            </Link>
+          </Button>
+        )}
+        {inv.status === 'DRAFT' && inv.billingCustomerApprovedAt && (
+          <Button size="sm" variant="outline" asChild>
+            <Link href={href} className="inline-flex items-center gap-1">
+              {t('open')}
+              <ChevronRight className="h-3.5 w-3.5 opacity-80" />
+            </Link>
+          </Button>
+        )}
+        {canReportPayment && (
+          <Button size="sm" variant="default" asChild>
+            <Link href={href}>{t('accTaxActPayAttach')}</Link>
+          </Button>
+        )}
+        {inv.status === 'ISSUED' && !canReportPayment && (
+          <Button size="sm" variant="outline" asChild>
+            <Link href={href} className="inline-flex items-center gap-1">
+              {t('open')}
+              <ChevronRight className="h-3.5 w-3.5 opacity-80" />
+            </Link>
+          </Button>
+        )}
+      </div>
+    </TableCell>
+  );
 }
 
 export function AccountingContent() {
@@ -56,13 +106,19 @@ export function AccountingContent() {
   const searchParams = useSearchParams();
 
   const rawTab = searchParams.get('tab');
-  const mainTab: MainTab = rawTab === 'paid' ? 'paid' : 'invoices';
+  const mainTab: MainTab =
+    rawTab === 'tax' ? 'tax' : rawTab === 'receipts' || rawTab === 'paid' ? 'receipts' : 'invoices';
 
   useEffect(() => {
     const tab = searchParams.get('tab');
     if (tab === 'drafts' || tab === 'billing') {
       const p = new URLSearchParams(searchParams.toString());
       p.set('tab', 'invoices');
+      router.replace(`/client-portal/accounting?${p.toString()}`, { scroll: false });
+    }
+    if (tab === 'paid') {
+      const p = new URLSearchParams(searchParams.toString());
+      p.set('tab', 'receipts');
       router.replace(`/client-portal/accounting?${p.toString()}`, { scroll: false });
     }
   }, [searchParams, router]);
@@ -87,12 +143,6 @@ export function AccountingContent() {
 
   const { data: invoices, isLoading: invLoad } = useCollection<TaxInvoice>(invQ as any);
 
-  const arQ = useMemoFirebase(() => {
-    if (!firestore || !currentUser?.customerId) return null;
-    return query(collection(firestore, 'accounts_receivable'), where('customerId', '==', currentUser.customerId));
-  }, [firestore, currentUser?.customerId]);
-  const { data: arItems, isLoading: arLoad } = useCollection<AccountsReceivable>(arQ as any);
-
   const commercialQ = useMemoFirebase(() => {
     if (!firestore || !currentUser?.customerId) return null;
     return query(
@@ -106,50 +156,35 @@ export function AccountingContent() {
 
   const commercialForPortal = commercialInvoices ?? [];
 
-  const invoiceHubRows = useMemo(() => {
-    const rows: HubRow[] = [];
-    for (const inv of commercialForPortal) {
-      rows.push({ kind: 'commercial', inv });
-    }
-    for (const inv of invoices ?? []) {
-      if (inv.status === 'CANCELLED') continue;
-      rows.push({ kind: 'tax', inv });
-    }
-    rows.sort((a, b) => {
-      const da = a.kind === 'commercial' ? a.inv.issueDate : a.inv.issueDate;
-      const db = b.kind === 'commercial' ? b.inv.issueDate : b.inv.issueDate;
-      return db.localeCompare(da);
-    });
-    return rows;
-  }, [commercialForPortal, invoices]);
+  const taxList = useMemo(() => {
+    const list = (invoices ?? []).filter((i) => i.status !== 'CANCELLED');
+    return [...list].sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+  }, [invoices]);
 
-  const paidRows = useMemo((): PaidEvidenceRow[] => {
-    const list = (arItems ?? []).filter(
-      (a) => a.status === 'PAID' || (a.outstandingAmount <= 0 && a.creditAmount > 0),
+  const receiptQ = useMemoFirebase(() => {
+    if (!firestore || !currentUser?.customerId) return null;
+    return query(
+      collection(firestore, 'receipts'),
+      where('customerId', '==', currentUser.customerId),
+      orderBy('receiptDate', 'desc'),
     );
-    const rows: PaidEvidenceRow[] = list.map((a) => ({
-      arId: a.id,
-      referenceDate: a.issueDate,
-      documentNo: a.referenceNo || a.documentNo,
-      amount: a.debitAmount,
-      statusLabel: a.status,
-      primaryTaxInvoiceId: a.referenceType === 'TAX_INVOICE' ? a.referenceId : undefined,
-    }));
-    rows.sort((x, y) => y.referenceDate.localeCompare(x.referenceDate));
-    return rows;
-  }, [arItems]);
+  }, [firestore, currentUser?.customerId]);
+  const { data: moneyReceipts, isLoading: receiptLoad } = useCollection<MoneyReceipt>(receiptQ as any);
 
-  const openHubRow = useCallback(
-    (row: HubRow) => {
-      if (row.kind === 'commercial') {
-        router.push(`/client-portal/commercial-invoices/${row.inv.id}`);
+  const openCommercial = useCallback(
+    (inv: CommercialInvoice) => {
+      router.push(`/client-portal/commercial-invoices/${inv.id}`);
+    },
+    [router],
+  );
+
+  const openTax = useCallback(
+    (inv: TaxInvoice) => {
+      if (inv.status === 'DRAFT') {
+        router.push(`/client-portal/draft-invoices/${inv.id}`);
         return;
       }
-      if (row.inv.status === 'DRAFT') {
-        router.push(`/client-portal/draft-invoices/${row.inv.id}`);
-        return;
-      }
-      router.push(`/client-portal/tax-print/${row.inv.id}`);
+      router.push(`/client-portal/tax-print/${inv.id}`);
     },
     [router],
   );
@@ -163,6 +198,7 @@ export function AccountingContent() {
   }
 
   const en = locale === 'en';
+  const isApprover = currentUser.portalRole === 'approver';
 
   return (
     <div className="space-y-6">
@@ -178,12 +214,15 @@ export function AccountingContent() {
       </div>
 
       <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)} className="w-full">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1">
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1">
           <TabsTrigger value="invoices" className="text-xs sm:text-sm">
             {t('accTabInvoices')}
           </TabsTrigger>
-          <TabsTrigger value="paid" className="text-xs sm:text-sm">
-            {t('accTabPaidDoc')}
+          <TabsTrigger value="tax" className="text-xs sm:text-sm">
+            {t('accTabTaxInvoices')}
+          </TabsTrigger>
+          <TabsTrigger value="receipts" className="text-xs sm:text-sm">
+            {t('accTabMoneyReceipts')}
           </TabsTrigger>
         </TabsList>
 
@@ -192,10 +231,10 @@ export function AccountingContent() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">{t('accTabInvoices')}</CardTitle>
-              <CardDescription>{en ? 'Open a row for detail or print.' : 'กดแถวเพื่อดูรายละเอียดหรือพิมพ์'}</CardDescription>
+              <CardDescription>{t('accCommercialOnlyLead')}</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
-              {invLoad || commercialLoad ? (
+              {commercialLoad ? (
                 <p className="p-6 text-sm">…</p>
               ) : (
                 <Table>
@@ -205,77 +244,48 @@ export function AccountingContent() {
                       <TableHead>{en ? 'Date' : 'วันที่'}</TableHead>
                       <TableHead className="text-right">{en ? 'Amount' : 'ยอด'}</TableHead>
                       <TableHead>{en ? 'Status' : 'สถานะ'}</TableHead>
-                      <TableHead className="text-right w-14">{t('accColAction')}</TableHead>
+                      <TableHead className="w-14 text-right">{t('accColAction')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {invoiceHubRows.map((row) => {
-                      if (row.kind === 'commercial') {
-                        const inv = row.inv;
-                        return (
-                          <TableRow
-                            key={`c-${inv.id}`}
-                            className="cursor-pointer"
-                            onClick={() => openHubRow(row)}
-                          >
-                            <TableCell className="font-mono font-semibold">{inv.invoiceNo}</TableCell>
-                            <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
-                            <TableCell className="text-right text-sm">
-                              {inv.currency} {inv.totalAmount.toLocaleString()}
-                            </TableCell>
-                            <TableCell>
-                              {inv.status === 'PENDING_CUSTOMER' ? (
-                                <Badge variant="outline">{en ? 'Pending review' : 'รอตรวจ'}</Badge>
-                              ) : inv.status === 'VOID' ? (
-                                <Badge variant="secondary">{en ? 'Void' : 'ยกเลิก'}</Badge>
-                              ) : inv.opecPaymentVerifiedAt ? (
-                                <Badge className="bg-slate-700">{t('ciStatusOpecDone')}</Badge>
-                              ) : inv.customerPaymentReportedAt ? (
-                                <Badge className="bg-amber-700">{t('ciStatusPayReported')}</Badge>
-                              ) : (
-                                <Badge className="bg-emerald-800">{t('ciStatusAwaitingPayment')}</Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                              <Button variant="ghost" size="icon" asChild>
-                                <Link href={`/client-portal/commercial-invoices/${inv.id}`}>
-                                  <ChevronRight className="h-4 w-4" />
-                                </Link>
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      }
-                      const inv = row.inv;
-                      const href =
-                        inv.status === 'DRAFT'
-                          ? `/client-portal/draft-invoices/${inv.id}`
-                          : `/client-portal/tax-print/${inv.id}`;
-                      return (
-                        <TableRow
-                          key={`t-${inv.id}`}
-                          className="cursor-pointer"
-                          onClick={() => openHubRow(row)}
-                        >
-                          <TableCell className="font-mono text-sm font-medium">{inv.taxInvoiceNo}</TableCell>
-                          <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
-                          <TableCell className="text-right text-sm">
-                            {inv.currency} {inv.totalAmount.toLocaleString()}
-                          </TableCell>
-                          <TableCell>
-                            <TaxInvoiceStatusBadge inv={inv} en={en} />
-                          </TableCell>
-                          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon" asChild>
-                              <Link href={href}>
-                                <ChevronRight className="h-4 w-4" />
-                              </Link>
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {invoiceHubRows.length === 0 && (
+                    {commercialForPortal.map((inv) => (
+                      <TableRow
+                        key={inv.id}
+                        className="cursor-pointer"
+                        onClick={() => openCommercial(inv)}
+                      >
+                        <TableCell className="font-mono font-semibold">{inv.invoiceNo}</TableCell>
+                        <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
+                        <TableCell className="text-right text-sm">
+                          {inv.currency} {inv.totalAmount.toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          {inv.status === 'PENDING_CUSTOMER' ? (
+                            inv.customerRevisionRequestedAt ? (
+                              <Badge className="bg-orange-700">{en ? 'Revision requested' : 'ร้องขอแก้ไข'}</Badge>
+                            ) : (
+                              <Badge variant="outline">{en ? 'Pending review' : 'รอตรวจ'}</Badge>
+                            )
+                          ) : inv.status === 'VOID' ? (
+                            <Badge variant="secondary">{en ? 'Void' : 'ยกเลิก'}</Badge>
+                          ) : inv.opecPaymentVerifiedAt ? (
+                            <Badge className="bg-slate-700">{t('ciStatusOpecDone')}</Badge>
+                          ) : inv.customerPaymentReportedAt ? (
+                            <Badge className="bg-amber-700">{t('ciStatusPayReported')}</Badge>
+                          ) : (
+                            <Badge className="bg-emerald-800">{t('ciStatusAwaitingPayment')}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          <Button variant="ghost" size="icon" asChild>
+                            <Link href={`/client-portal/commercial-invoices/${inv.id}`}>
+                              <ChevronRight className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {commercialForPortal.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                           {t('noData')}
@@ -289,48 +299,103 @@ export function AccountingContent() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="paid" className="mt-4 space-y-4">
-          <p className="text-sm text-muted-foreground">{t('accPaidDocLead')}</p>
-          <p className="text-xs text-muted-foreground">{t('printHint')}</p>
+        <TabsContent value="tax" className="mt-4 space-y-4">
+          <p className="text-sm text-muted-foreground">{t('accTaxTabLead')}</p>
           <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t('accTabTaxInvoices')}</CardTitle>
+              <CardDescription>{t('accTaxAfterIssued')}</CardDescription>
+            </CardHeader>
             <CardContent className="p-0">
-              {arLoad ? (
+              {invLoad ? (
                 <p className="p-6 text-sm">…</p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>{t('accPaidColDocNo')}</TableHead>
-                      <TableHead>{t('accPaidColPaidOn')}</TableHead>
-                      <TableHead>{en ? 'Method' : 'ช่องทาง'}</TableHead>
-                      <TableHead className="text-right">{t('accPaidColAmount')}</TableHead>
-                      <TableHead className="text-right">{t('accPaidColPrint')}</TableHead>
+                      <TableHead>{en ? 'No.' : 'เลขที่'}</TableHead>
+                      <TableHead>{en ? 'Date' : 'วันที่'}</TableHead>
+                      <TableHead className="text-right">{en ? 'Amount' : 'ยอด'}</TableHead>
+                      <TableHead>{en ? 'Status' : 'สถานะ'}</TableHead>
+                      <TableHead className="min-w-[11rem] text-right align-middle">{t('accColAction')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paidRows.map((row) => (
-                      <TableRow key={row.arId}>
-                        <TableCell className="font-mono text-sm font-medium">{row.documentNo}</TableCell>
-                        <TableCell className="text-sm">{formatStoredDateThaiBE(row.referenceDate)}</TableCell>
-                        <TableCell className="text-xs uppercase text-muted-foreground">{row.statusLabel}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">
-                          ฿ {row.amount.toLocaleString()}
+                    {taxList.map((inv) => {
+                      return (
+                        <TableRow key={inv.id} className="cursor-pointer" onClick={() => openTax(inv)}>
+                          <TableCell className="font-mono text-sm font-medium">{inv.taxInvoiceNo}</TableCell>
+                          <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
+                          <TableCell className="text-right text-sm">
+                            {inv.currency} {inv.totalAmount.toLocaleString()}
+                          </TableCell>
+                          <TableCell>
+                            <TaxInvoiceStatusBadge inv={inv} t={t} en={en} />
+                          </TableCell>
+                          <TaxInvoiceRowActions inv={inv} t={t} isApprover={isApprover} />
+                        </TableRow>
+                      );
+                    })}
+                    {taxList.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                          {t('noData')}
                         </TableCell>
-                        <TableCell className="text-right">
-                          {row.primaryTaxInvoiceId ? (
-                            <Button variant="outline" size="sm" asChild>
-                              <Link href={`/client-portal/tax-print/${row.primaryTaxInvoiceId}`}>
-                                <Printer className="mr-1 h-3.5 w-3.5" />
-                                {t('accPaidPrintBtn')}
-                              </Link>
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="receipts" className="mt-4 space-y-4">
+          <p className="text-sm text-muted-foreground">{t('accMoneyReceiptsLead')}</p>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Receipt className="h-4 w-4" />
+                {t('accTabMoneyReceipts')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {receiptLoad ? (
+                <p className="p-6 text-sm">…</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('receiptNoCol')}</TableHead>
+                      <TableHead>{t('receiptRefTax')}</TableHead>
+                      <TableHead>{t('receiptDateCol')}</TableHead>
+                      <TableHead className="text-right">{en ? 'Amount' : 'ยอด'}</TableHead>
+                      <TableHead className="w-14 text-right">{t('accColAction')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(moneyReceipts ?? []).map((r) => (
+                      <TableRow
+                        key={r.id}
+                        className="cursor-pointer"
+                        onClick={() => router.push(`/client-portal/receipt-print/${r.id}`)}
+                      >
+                        <TableCell className="font-mono text-sm font-medium">{r.receiptNo}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{r.taxInvoiceNo}</TableCell>
+                        <TableCell className="text-sm">{formatStoredDateThaiBE(r.receiptDate)}</TableCell>
+                        <TableCell className="text-right text-sm">
+                          {r.currency} {r.amount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          <Button variant="ghost" size="icon" asChild>
+                            <Link href={`/client-portal/receipt-print/${r.id}`}>
+                              <ChevronRight className="h-4 w-4" />
+                            </Link>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
-                    {paidRows.length === 0 && (
+                    {(moneyReceipts?.length ?? 0) === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                           {t('noData')}

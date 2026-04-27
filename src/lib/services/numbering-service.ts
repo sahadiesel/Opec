@@ -31,6 +31,16 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   cost_term: { label: 'Cost Term', prefix: 'CST-', padding: 4, dept: 'sales', resetPolicy: 'yearly', collectionName: 'labor_cost_contract_terms', fieldName: 'id' },
   billing_note: { label: 'Billing Note', prefix: 'BN-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'billing_notes', fieldName: 'billingNoteNo' },
   tax_invoice: { label: 'Tax Invoice', prefix: 'INV-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'tax_invoices', fieldName: 'taxInvoiceNo' },
+  /** ใบเสร็จรับเงิน (ลูกหนี้) — แยกจากใบกำกับภาษี */
+  money_receipt: {
+    label: 'Money receipt (customer)',
+    prefix: 'MR-',
+    padding: 5,
+    dept: 'accounting',
+    resetPolicy: 'monthly',
+    collectionName: 'receipts',
+    fieldName: 'receiptNo',
+  },
   commercial_invoice: {
     label: 'Draft commercial invoice',
     prefix: 'DFI-',
@@ -87,6 +97,20 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'payroll_runs', fieldName: 'payrollRunNo' },
   office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'office_payroll_runs', fieldName: 'payrollRunNo' },
   executive_payroll_run: { label: 'Executive Payroll', prefix: 'EPR-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'executive_payroll_runs', fieldName: 'payrollRunNo' },
+  /**
+   * เลขที่เอกสาร Timesheet ฉบับรวมรายเดือน (หนึ่งฉบับ/เดือน) — ใช้ส่งอนุมัติ / ลูกค้า / อ้างในใบวางบิลและ payroll
+   * แทนการอ้างอิง “เลข Wave (WV-)” เป็นหลักใน flow เดิม; sequence key = `monthly_timesheet` คงเดิม
+   * คอลเลกชัน `monthly_timesheet_documents` ฟิลด์ `timesheetNo` — รายการนี้จะแสดงที่หน้า Admin > เลขที่เอกสาร
+   */
+  monthly_timesheet: {
+    label: 'Timesheet (TS-) — เอกสารลงเวลา (รอบเดือน)',
+    prefix: 'TS-',
+    padding: 4,
+    dept: 'hr',
+    resetPolicy: 'monthly',
+    collectionName: 'monthly_timesheet_documents',
+    fieldName: 'timesheetNo',
+  },
 };
 
 /**

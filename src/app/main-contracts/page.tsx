@@ -134,9 +134,6 @@ export default function MainContractsPage() {
         status: 'pending',
         contractNumber: finalNo, // Use official sequential number
         commercialTermsOwner: isSalesCreator ? 'sales' : 'operations',
-        // No position sell lines yet → no HR "missing cost" alert until sell rates exist
-        costingStatus: 'COMPLETE',
-        costingMissingPositionsCount: 0,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });

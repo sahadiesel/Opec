@@ -12,7 +12,6 @@ import {
   Activity,
   FileText,
   Settings,
-  Briefcase,
   ListChecks,
   Database,
   PackageSearch,
@@ -38,15 +37,14 @@ export interface HrNavSubsection {
    * (ไม่ใช่แค่สิทธิ์โมดูลทั่วไป — ให้สอดคล้องกับการจ่ายค่าจ้างเป็นหลัก)
    */
   audiencePayrollLeadsOnly?: boolean;
+  /**
+   * true = หมวดอนุมัติ (Manager) — เฉพาะ hr_manager / operations_manager (+ admin)
+   * ไม่แสดงให้ payroll_officer / officer ทั่วไป
+   */
+  audienceOpsHrManagersOnly?: boolean;
 }
 
 export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
-  {
-    title: 'ภาพรวม',
-    description: 'Dashboard — จุดเริ่มงาน HR',
-    icon: Briefcase,
-    items: [{ key: 'hr_hub', title: 'แดชบอร์ด HR (ภาพรวม)', href: '/hr/dashboard', icon: Briefcase }],
-  },
   {
     title: 'การจ่ายค่าจ้าง (Payroll)',
     description: 'hr_manager · operations_manager · payroll_officer',
@@ -69,6 +67,7 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
     title: 'อนุมัติ (Approval)',
     description: 'Manager — ศูนย์อนุมัติแยกตามประเภท',
     icon: ShieldCheck,
+    audienceOpsHrManagersOnly: true,
     items: [
       {
         key: 'hr_hub',

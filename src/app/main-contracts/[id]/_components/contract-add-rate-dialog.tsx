@@ -72,8 +72,7 @@ export function ContractAddRateDialog({
             disabled={
               !newRate.positionId ||
               (!canEditSellSide && !canEditCostSide) ||
-              (canEditSellSide && !newRate.sellRate) ||
-              (canEditCostSide && !newRate.costBaseline)
+              (canEditSellSide && !newRate.sellRate)
             }
           >
             บันทึกอัตราราคา

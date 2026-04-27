@@ -60,6 +60,10 @@ import {
   validateTimesheetImageFile,
 } from '@/lib/storage/tax-invoice-attachments';
 import { buildTaxInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  recordTaxInvoicePaymentNotification,
+  confirmPaymentAndIssueMoneyReceipt,
+} from '@/lib/services/money-receipt-service';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 
@@ -79,6 +83,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [billingApproveOpen, setBillingApproveOpen] = useState(false);
   const [billingApproveNote, setBillingApproveNote] = useState('');
   const [billingApproving, setBillingApproving] = useState(false);
+  const [payNotifyLoading, setPayNotifyLoading] = useState(false);
+  const [payConfirmLoading, setPayConfirmLoading] = useState(false);
 
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
@@ -328,6 +334,59 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
+  const handleNotifyPaymentAccounting = async () => {
+    if (!firestore || !invoice || !currentUser) return;
+    if (invoice.status !== 'ISSUED' || invoice.linkedReceiptId) return;
+    if (invoice.paymentNotifiedAt) {
+      toast({ title: 'แจ้งชำระไปแล้ว' });
+      return;
+    }
+    setPayNotifyLoading(true);
+    try {
+      await recordTaxInvoicePaymentNotification(firestore, invoice, currentUser as User, { source: 'accounting_ui' });
+      toast({
+        title: 'บันทึกแจ้งชำระแล้ว (ขั้นตอน 1)',
+        description: 'ฝ่ายบัญชีสามารถกด «ยืนยันรับเงิน» เพื่อออกใบเสร็จรับเงิน',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'บันทึกไม่ได้',
+      });
+    } finally {
+      setPayNotifyLoading(false);
+    }
+  };
+
+  const handleConfirmPaymentIssueReceipt = async () => {
+    if (!firestore || !invoice || !currentUser) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    setPayConfirmLoading(true);
+    try {
+      const { receiptId, receiptNo } = await confirmPaymentAndIssueMoneyReceipt(
+        firestore,
+        invoice,
+        currentUser as User,
+      );
+      toast({ title: 'ออกใบเสร็จรับเงินแล้ว', description: receiptNo });
+      router.push(`/receipts/${receiptId}`);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ออกเอกสารไม่ได้',
+      });
+    } finally {
+      setPayConfirmLoading(false);
+    }
+  };
+
   if (isInvLoading || appUserLoading || !invoice || !currentUser) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -347,9 +406,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">
-                ใบกำกับภาษี / ใบเสร็จรับเงิน
-              </h1>
+              <h1 className="text-2xl font-bold tracking-tight">ใบกำกับภาษี</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{invoice.taxInvoiceNo}</span>
                 <Separator orientation="vertical" className="h-3" />
@@ -374,14 +431,78 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             <AlertTitle>สร้างจากใบเรียกเก็บ (Commercial billing)</AlertTitle>
             <AlertDescription className="text-sm space-y-2">
               <p>
-                เอกสารนี้สร้างอัตโนมัติหลังยืนยันใบเรียกเก็บ — พิมพ์เป็น{' '}
-                <strong>ใบกำกับภาษี / ใบเสร็จรับเงิน</strong> ฉบับเดียว (ไม่ใช่ e-Tax)
+                เอกสารนี้สร้างอัตโนมัติหลังยืนยันใบเรียกเก็บ — พิมพ์เป็น <strong>ใบกำกับภาษี</strong> (แยกจากใบเสร็จรับเงิน
+                หลังยืนยันรับเงิน)
               </p>
               <Button variant="outline" size="sm" className="gap-2" asChild>
                 <Link href={`/draft-invoices/${invoice.sourceCommercialInvoiceId}`}>
                   <ExternalLink className="h-4 w-4" />
                   เปิดใบเรียกเก็บต้นทาง
                 </Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {invoice.status === 'ISSUED' && !invoice.linkedReceiptId && (
+          <Card className="border-amber-200 bg-amber-50/50">
+            <CardHeader>
+              <CardTitle className="text-base">รับเงิน &amp; ใบเสร็จ (2 ขั้น)</CardTitle>
+              <CardDescription>
+                ขั้น 1 แจ้งชำระ (ลูกค้าใน Client Portal หรือบัญชีกดฝั่งนี้) &rarr; ขั้น 2 ยืนยันรับเงิน &rarr; ระบบออก
+                ใบเสร็จรับเงิน
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              {invoice.paymentNotifiedAt && (
+                <p className="text-muted-foreground">
+                  แจ้งชำระแล้ว{' '}
+                  {formatDateTimeThaiBE(invoice.paymentNotifiedAt)}
+                  {invoice.paymentNotifiedByName ? ` — ${invoice.paymentNotifiedByName}` : ''}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {isAccountingActor && !invoice.paymentNotifiedAt && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void handleNotifyPaymentAccounting()}
+                    disabled={payNotifyLoading}
+                  >
+                    {payNotifyLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                    1. แจ้งชำระเงิน (ฝ่ายบัญชี)
+                  </Button>
+                )}
+                {isAccountingActor && invoice.paymentNotifiedAt && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void handleConfirmPaymentIssueReceipt()}
+                    disabled={payConfirmLoading}
+                  >
+                    {payConfirmLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                    2. ยืนยันรับเงิน &amp; ออกใบเสร็จ
+                  </Button>
+                )}
+                {!isAccountingActor && !invoice.paymentNotifiedAt && (
+                  <p className="text-muted-foreground">
+                    ลูกค้าแจ้งชำระผ่าน Client Portal หรือให้บัญชีกด &quot;แจ้งชำระเงิน&quot;
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {invoice.status === 'ISSUED' && invoice.linkedReceiptId && (
+          <Alert>
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>ออกใบเสร็จรับเงินแล้ว</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center gap-2 text-sm">
+              เปิดเอกสาร
+              <Button variant="link" className="h-auto p-0" asChild>
+                <Link href={`/receipts/${invoice.linkedReceiptId}`}>ใบเสร็จรับเงิน</Link>
               </Button>
             </AlertDescription>
           </Alert>

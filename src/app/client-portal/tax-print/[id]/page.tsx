@@ -1,15 +1,15 @@
 'use client';
 
 /**
- * พิมพ์ใบกำกับภาษี / ใบเสร็จรับเงิน (ฉบับเดียว) สำหรับลูกค้าใน Portal
- * — ใช้เมื่อสถานะ ISSUED หรือต้องการพิมพ์ซ้ำ (ลิงก์จาก Accounting hub)
+ * Client portal: พิมพ์ใบกำกับภาษี — ใบเสร็จรับเงินเป็นเอกสารต่างหลัง (แท็บ ใบเสร็จ)
  */
-import { use, useCallback } from 'react';
+import { use, useCallback, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, Printer, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import type { BillingNote, BillingNoteLine, Customer, TaxInvoice } from '@/lib/types';
+import type { BillingNote, BillingNoteLine, Customer, TaxInvoice, User } from '@/lib/types';
+import { recordTaxInvoicePaymentNotification } from '@/lib/services/money-receipt-service';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { isClient } from '@/lib/permissions';
@@ -68,6 +68,37 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
   }>(companyProfileRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const [notifyLoading, setNotifyLoading] = useState(false);
+
+  const canReportPayment =
+    !!invoice &&
+    invoice.status === 'ISSUED' &&
+    !invoice.paymentNotifiedAt &&
+    !invoice.linkedReceiptId &&
+    currentUser?.portalRole === 'approver';
+
+  const handleReportPayment = useCallback(async () => {
+    if (!firestore || !invoice || !currentUser) return;
+    setNotifyLoading(true);
+    try {
+      await recordTaxInvoicePaymentNotification(firestore, invoice, currentUser as User, {
+        source: 'client_portal',
+      });
+      toast({
+        title: en ? 'Payment reported' : 'แจ้งชำระเงินแล้ว',
+        description: en ? 'Accounting will verify and issue the receipt when funds are confirmed.' : 'ฝ่ายบัญชีจะตรวจและออกใบเสร็จเมื่อยืนยันรับเงิน',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: en ? 'Could not save' : 'บันทึกไม่ได้',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setNotifyLoading(false);
+    }
+  }, [firestore, invoice, currentUser, toast, en]);
 
   const handlePrint = useCallback(() => {
     if (!invoice) return;
@@ -122,7 +153,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
   return (
     <div className="mx-auto w-full max-w-2xl space-y-6">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/client-portal/accounting?tab=invoices">
+        <Link href="/client-portal/accounting?tab=tax">
           <ArrowLeft className="mr-2 h-4 w-4" />
           {en ? 'Accounting' : 'บัญชี / เอกสาร'}
         </Link>
@@ -133,16 +164,14 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         <AlertTitle>{en ? 'Print copy' : 'สำเนาสำหรับพิมพ์'}</AlertTitle>
         <AlertDescription className="text-sm">
           {en
-            ? 'This is a single printable document (tax invoice / receipt combined). Not e-Tax — print like other OPEC documents.'
-            : 'เอกสารฉบับเดียว (ใบกำกับภาษี / ใบเสร็จรับเงิน) — ไม่ใช่ e-Tax พิมพ์ตามปกติเหมือนเอกสารอื่นของ OPEC'}
+            ? 'Printable tax invoice. The money receipt is a separate document (Receipts tab) after OPEC confirms payment.'
+            : 'เอกสารนี้เป็นใบกำกับภาษี — ใบเสร็จรับเงินออกแยกหลังฝ่ายบัญชียืนยันรับเงิน (ดูแท็บ ใบเสร็จ) — ไม่ใช่ e-Tax'}
         </AlertDescription>
       </Alert>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-primary">
-            {en ? 'Tax invoice / receipt' : 'ใบกำกับภาษี / ใบเสร็จรับเงิน'}
-          </h1>
+          <h1 className="text-2xl font-bold text-primary">{en ? 'Tax invoice' : 'ใบกำกับภาษี'}</h1>
           <p className="font-mono text-lg font-semibold">{invoice.taxInvoiceNo}</p>
           <p className="text-sm text-muted-foreground">{formatStoredDateThaiBE(invoice.issueDate)}</p>
           {invoice.status === 'CANCELLED' && (
@@ -153,12 +182,43 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+          {canReportPayment && (
+            <Button
+              type="button"
+              variant="secondary"
+              className="gap-2"
+              disabled={notifyLoading}
+              onClick={() => void handleReportPayment()}
+            >
+              {notifyLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {en ? '1. Report payment' : '1. แจ้งชำระเงิน'}
+            </Button>
+          )}
           <Button type="button" className="gap-2" onClick={() => handlePrint()}>
             <Printer className="h-4 w-4" />
             {en ? 'Print' : 'พิมพ์'}
           </Button>
         </div>
       </div>
+
+      {invoice.paymentNotifiedAt && !invoice.linkedReceiptId && (
+        <p className="text-sm text-amber-800">
+          {en
+            ? 'Payment reported — waiting for OPEC to confirm and issue the money receipt.'
+            : 'แจ้งชำระแล้ว — รอฝ่ายบัญชียืนยันรับเงินเพื่อออกใบเสร็จ (แท็บ ใบเสร็จ)'}
+        </p>
+      )}
+
+      {invoice.linkedReceiptId && (
+        <p className="text-sm text-muted-foreground">
+          {en ? 'Money receipt: ' : 'ใบเสร็จรับเงิน: '}
+          <Button variant="link" className="h-auto p-0" asChild>
+            <Link href={`/client-portal/receipt-print/${invoice.linkedReceiptId}`}>
+              {en ? 'Open receipt' : 'เปิดใบเสร็จ'}
+            </Link>
+          </Button>
+        </p>
+      )}
 
       <div className="rounded-lg border bg-muted/30 p-4 text-sm">
         <div className="flex justify-between">

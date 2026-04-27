@@ -14,6 +14,9 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "migrate:phase1": "npx --yes tsx scripts/phase1-labor-cost-migration.ts",
+    "migrate:phase5": "npx --yes tsx scripts/phase5-strip-position-rate-cost-baseline.ts",
+    "migrate:phase6": "npx --yes tsx scripts/phase6-strip-main-contract-costing-denorm.ts",
     "deploy:app": "firebase deploy --only apphosting:opecbackend --force",
     "deploy:rules": "firebase deploy --only firestore:rules",
     "deploy:firestore": "firebase deploy --only firestore:rules",
@@ -67,9 +70,11 @@
     "@types/node": "^20",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
+    "firebase-admin": "^12.0.0",
     "genkit-cli": "^1.28.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.20.0",
     "typescript": "^5"
   }
 }

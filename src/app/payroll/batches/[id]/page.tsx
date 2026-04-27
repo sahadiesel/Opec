@@ -36,14 +36,30 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateTimeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
-import { canAccess, canConfirmWorkerPayrollPaid, canGeneratePayslips, canView, isMatrixControlledRole } from '@/lib/permissions';
+import {
+  canAccess,
+  canConfirmWorkerPayrollPaid,
+  canGeneratePayslips,
+  canHandoffWorkerPayrollToAccounting,
+  canView,
+  isMatrixControlledRole,
+} from '@/lib/permissions';
+import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { useAppUser } from '@/hooks/use-app-user';
+import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { buildWorkerPayrollBankVerificationCsv } from '@/lib/payroll/worker-payroll-bank-csv';
 import { useToast } from '@/hooks/use-toast';
+import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+}
+
+/** กันข้อมูล Firestore ไม่ครบ → .toLocaleString บน undefined ทำให้ React ล่มทั้งหน้า */
+function safeNum(n: unknown): number {
+  const x = Number(n);
+  return Number.isFinite(x) ? x : 0;
 }
 
 export default function PayrollBatchDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -51,12 +67,16 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const router = useRouter();
   const { toast } = useToast();
   const { currentUser, isLoading: userLoading } = useAppUser();
+  const { payroll: payrollPerm } = usePermissions(currentUser);
   const firestore = useFirestore();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
   const [workersById, setWorkersById] = useState<Map<string, Pick<Worker, 'contactPhone' | 'thaiNationalId'>>>(
     () => new Map()
   );
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [payoutActionBusy, setPayoutActionBusy] = useState(false);
+  const canEditBatch = payrollPerm('payroll_worker', 'edit_batch');
+  const canApproveWorker = payrollPerm('payroll_worker', 'approve');
   const canViewBatch = useMemo(() => {
     if (useMatrixGuards) {
       return (
@@ -118,6 +138,43 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
     URL.revokeObjectURL(url);
     toast({ title: 'ดาวน์โหลด CSV', description: 'ไฟล์ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)' });
   }, [batch, lines, workersById, toast]);
+
+  const handleOfficerSubmitForPayout = useCallback(async () => {
+    if (!firestore || !batch || !currentUser) return;
+    setPayoutActionBusy(true);
+    try {
+      const svc = new PayrollService(firestore);
+      await svc.submitOfficerBatchForPayoutApproval(batch.id, currentUser as User);
+      toast({
+        title: 'ส่งขออนุมัติทำจ่ายแล้ว',
+        description: 'งวดรออนุมัติที่ /hr/payroll-approval (HR_REVIEWED)',
+      });
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'ส่งคำขอไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPayoutActionBusy(false);
+    }
+  }, [firestore, batch, currentUser, toast]);
+
+  const handleManagerApprovePayout = useCallback(async () => {
+    if (!firestore || !batch || !currentUser) return;
+    setPayoutActionBusy(true);
+    try {
+      const svc = new PayrollService(firestore);
+      const willHandoff = canHandoffWorkerPayrollToAccounting(currentUser);
+      await svc.managerApprovePayoutAndNotifyAccounting(batch.id, currentUser as User);
+      toast({
+        title: willHandoff ? 'อนุมัติและส่งบัญชีแล้ว' : 'อนุมัติแล้ว',
+        description: willHandoff
+          ? 'สถานะ → FINANCE_PREPARED (ฝ่ายบัญชีทำจ่ายต่อไป)'
+          : 'สถานะ → HR_APPROVED ให้คนที่มีสิทธิ์ส่งต่อบัญชี',
+      });
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'อนุมัติไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPayoutActionBusy(false);
+    }
+  }, [firestore, batch, currentUser, toast]);
 
   const handleConfirmPaid = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -200,7 +257,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Total Workers</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">{batch.totalWorkers} Persons</div>
+              <div className="text-2xl font-black text-primary">{safeNum(batch.totalWorkers)} Persons</div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-amber-500 shadow-sm">
@@ -208,7 +265,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Gross Amount</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">฿{batch.grossAmount.toLocaleString()}</div>
+              <div className="text-2xl font-black text-primary">฿{safeNum(batch.grossAmount).toLocaleString()}</div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-red-500 shadow-sm">
@@ -216,7 +273,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Total Deductions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">฿{batch.totalDeductions.toLocaleString()}</div>
+              <div className="text-2xl font-black text-primary">฿{safeNum(batch.totalDeductions).toLocaleString()}</div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-green-600 shadow-sm">
@@ -224,10 +281,64 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Net Payable</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">฿{batch.netAmount.toLocaleString()}</div>
+              <div className="text-2xl font-black text-primary">฿{safeNum(batch.netAmount).toLocaleString()}</div>
             </CardContent>
           </Card>
         </div>
+
+        {batch.status === 'GENERATED' && canEditBatch && (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser)) && (
+          <Card className="border-l-4 border-l-amber-500/80">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">ฝ่ายเงินเดือน</CardTitle>
+              <CardDescription>
+                ตรวจรายละเอียด/correction ครบแล้ว ให้กดส่งงวดนี้เข้าคิวอนุมัติ — งวดจะไปแสดงที่ /hr/payroll-approval รอ
+                ผู้จัดการปฏิบัติการ/HR
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="gap-2"
+                disabled={payoutActionBusy}
+                onClick={() => void handleOfficerSubmitForPayout()}
+              >
+                {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
+                ส่งขออนุมัติทำจ่าย
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/hr/payroll-approval?batch=${id}`}>ไปศูนย์อนุมัติ (D6)</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {batch.status === 'HR_REVIEWED' && canApproveWorker && (
+          <Card className="border-l-4 border-l-emerald-600/80">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">ผู้จัดการ/ศูนย์อนุมัติ</CardTitle>
+              <CardDescription>
+                งวด: {period?.label || batch.payrollPeriodId} — ตรวจยอดรวมแล้ว อนุมัติเพื่อแจ้งฝ่ายบัญชีจัดเตรียมจ่าย
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                className="gap-2"
+                disabled={payoutActionBusy}
+                onClick={() => void handleManagerApprovePayout()}
+              >
+                {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
+                อนุมัติยอดเงิน
+                {canHandoffWorkerPayrollToAccounting(currentUser) ? ' (ส่งบัญชีทำจ่าย)' : ''}
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/hr/payroll-approval?batch=${id}`}>รายละเอียด/แผง D6</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {(canBankCheckCsv || showAccountingConfirm || batch.financeCashbookEntryId) && (
           <Card className="border-l-4 border-l-primary/40">
@@ -295,9 +406,19 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map(line => {
+                    {lines?.map((line) => {
                       const periodLabel = period?.label || batch.payrollPeriodId;
-                      const slipModel = buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined);
+                      let slipModel: PayslipViewModel | null = null;
+                      try {
+                        slipModel = buildPayslipFromWorkerLine(
+                          line,
+                          batch,
+                          periodLabel,
+                          companyProfile ?? undefined,
+                        );
+                      } catch {
+                        slipModel = null;
+                      }
                       return (
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         <TableCell className="pl-6 align-top py-3 min-w-0 max-w-[300px]">
@@ -322,17 +443,21 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-3">
-                          ฿{line.grossAmount.toLocaleString()}
+                          ฿{safeNum(line.grossAmount).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right text-xs text-red-600 tabular-nums align-middle py-3">
                           ฿{lineDeductionsTotal(line).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right font-black text-primary tabular-nums align-middle py-3 text-sm">
-                          ฿{line.netAmount.toLocaleString()}
+                          ฿{safeNum(line.netAmount).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right align-middle py-3 pr-2">
-                          {canGenerateWorkerPayslips ? (
+                          {canGenerateWorkerPayslips && slipModel ? (
                             <PayslipDialog model={slipModel} />
+                          ) : canGenerateWorkerPayslips && !slipModel ? (
+                            <Badge variant="destructive" className="text-[9px] whitespace-nowrap" title="สร้างสลิปไม่สำเร็จ">
+                              สลิป error
+                            </Badge>
                           ) : (
                             <Badge variant="outline" className="text-[9px] whitespace-nowrap">
                               รอเตรียม/อนุมัติ

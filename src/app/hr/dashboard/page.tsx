@@ -30,20 +30,17 @@ import {
   Position,
   ExceptionRequest,
   DailyTimesheet,
-  MainContract,
-  LaborCostContractTerm,
-  RateCondition,
-  PurchaseOrder,
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, where, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, limit } from 'firebase/firestore';
+import { isFieldPositionMissingDefaultLabor } from '@/lib/payroll/timesheet-labor-base-cost';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { canSeeHrPillarUi } from '@/lib/permissions';
-import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
+import { getEffectiveAccessLevel, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
@@ -72,6 +69,7 @@ export default function HRDashboardPage() {
 
   const viewerOnly = useMemo(() => {
     if (!currentUser || isSystemAdmin(currentUser)) return false;
+    if (isPayrollOfficer(currentUser)) return false;
     const level = getEffectiveAccessLevel(currentUser);
     return level === 'officer' || level === 'viewer';
   }, [currentUser]);
@@ -114,33 +112,6 @@ export default function HRDashboardPage() {
   const positionsQuery = useMemoFirebase(() => (firestore && isHRAuthorized ? collection(firestore, 'positions') : null), [firestore, isHRAuthorized]);
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
-  const mainContractsQuery = useMemoFirebase(() => {
-    if (!firestore || !isHRAuthorized) return null;
-    return query(collection(firestore, 'main_contracts'), orderBy('updatedAt', 'desc'), limit(30));
-  }, [firestore, isHRAuthorized]);
-  const { data: mainContracts } = useCollection<MainContract>(mainContractsQuery as any);
-
-  const activePOsQuery = useMemoFirebase(() => {
-    if (!firestore || !isHRAuthorized) return null;
-    return query(collection(firestore, 'purchase_orders'), where('status', 'in', ['active', 'pending']));
-  }, [firestore, isHRAuthorized]);
-  const { data: activePOs } = useCollection<PurchaseOrder>(activePOsQuery as any);
-
-  const laborTermsQuery = useMemoFirebase(() => {
-    if (!firestore || !isHRAuthorized) return null;
-    return query(collection(firestore, 'labor_cost_contract_terms'), where('status', '==', 'ACTIVE'));
-  }, [firestore, isHRAuthorized]);
-  const { data: laborTerms } = useCollection<LaborCostContractTerm>(laborTermsQuery as any);
-
-  const costConditionsQuery = useMemoFirebase(() => {
-    if (!firestore || !isHRAuthorized) return null;
-    return query(
-      collection(firestore, 'rate_conditions'),
-      where('appliesTo', '==', 'COST'),
-      where('isActive', '==', true),
-    );
-  }, [firestore, isHRAuthorized]);
-  const { data: costConditions } = useCollection<RateCondition>(costConditionsQuery as any);
 
   // --- Computed HR Tasks ---
 
@@ -187,66 +158,9 @@ export default function HRDashboardPage() {
       });
     });
 
-    // 4. Contracts: sell rate defined on a position line but cost baseline still missing (payroll cannot run)
-    (mainContracts || [])
-      .filter((c: MainContract) => Number(c.costingMissingPositionsCount || 0) > 0)
-      .slice(0, 10)
-      .forEach((c: MainContract) => {
-        tasks.push({
-          id: `contract-${c.id}`,
-          type: 'Cost Setup',
-          label: `สัญญา ${c.contractNumber || c.id}: มีราคาขายแต่ยังไม่มีต้นทุนค่าแรง`,
-          sub: `${Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง — ให้ HR Manager / Admin ลงต้นทุนในสัญญา`,
-          status: 'INCOMPLETE',
-          link: `/main-contracts/${c.id}`,
-          priority: 'high',
-          icon: AlertTriangle,
-        });
-      });
+    // ต้นทุน/ค่าแรง: ฐานจากทะเบียน (ตำแหน่ง + กำหนดรายคน) — ดูสถิติ «ตำแหน่งยังไม่กำหนดฐาน» ด้านบน ไม่อ้าง Labor Cost Term
 
-    // 5. Active POs without Labor Cost Term
-    const poIdsWithTerm = new Set(
-      (laborTerms || []).map((t) => t.relatedPurchaseOrderId).filter(Boolean),
-    );
-    (activePOs || [])
-      .filter((po) => !poIdsWithTerm.has(po.id))
-      .slice(0, 10)
-      .forEach((po) => {
-        tasks.push({
-          id: `po-no-term-${po.id}`,
-          type: 'ค่าจ้างไม่ครบ',
-          label: `PO ${po.poCode || po.id} ยังไม่มี Labor Cost Term`,
-          sub: 'Payroll จะคำนวณค่าจ้าง = 0',
-          status: 'INCOMPLETE',
-          link: `/labor-cost-terms`,
-          priority: 'high',
-          icon: AlertTriangle,
-        });
-      });
-
-    // 6. Labor Cost Terms without work_day rate condition
-    const termIdsWithWorkDay = new Set(
-      (costConditions || [])
-        .filter((c) => c.eventType === 'work_day' && c.parentType === 'LABOR_COST_CONTRACT')
-        .map((c) => c.parentId),
-    );
-    (laborTerms || [])
-      .filter((t) => !termIdsWithWorkDay.has(t.id))
-      .slice(0, 10)
-      .forEach((t) => {
-        tasks.push({
-          id: `term-no-workday-${t.id}`,
-          type: 'ค่าจ้างไม่ครบ',
-          label: `Labor Term "${t.title}" ยังไม่มีเงื่อนไข work_day`,
-          sub: 'คนงานวันทำงานปกติจะได้ค่าจ้าง = 0',
-          status: 'INCOMPLETE',
-          link: `/labor-cost-terms/${t.id}`,
-          priority: 'high',
-          icon: AlertTriangle,
-        });
-      });
-
-    // 7. Workers requiring document/certificate completion
+    // 5. Workers requiring document/certificate completion
     (workers || [])
       .filter((w) => w.readinessStatus !== 'READY')
       .slice(0, 10)
@@ -281,7 +195,7 @@ export default function HRDashboardPage() {
       });
 
     return tasks;
-  }, [payrollRuns, pendingExceptions, correctionTs, mainContracts, workers, activePOs, laborTerms, costConditions]);
+  }, [payrollRuns, pendingExceptions, correctionTs, workers]);
 
   const stats = useMemo(() => {
     if (!workers) return { total: 0, ready: 0, missingCert: 0, medExpired: 0, docExpired: 0, expiringSoon: 0, blocked: 0 };
@@ -296,9 +210,10 @@ export default function HRDashboardPage() {
     };
   }, [workers]);
 
-  const contractsMissingCost = useMemo(() => {
-    return (mainContracts || []).filter((c: MainContract) => Number(c.costingMissingPositionsCount || 0) > 0);
-  }, [mainContracts]);
+  /** ตำแหน่งหน้างาน (ไม่รวม office) ที่ยังไม่มีฐานต้นทุน OPEC ใน /positions */
+  const positionsMissingDefaultLabor = useMemo(() => {
+    return (positions || []).filter((p) => isFieldPositionMissingDefaultLabor(p));
+  }, [positions]);
 
   if (isUserLoading || !currentUser) return null;
 
@@ -350,7 +265,8 @@ export default function HRDashboardPage() {
                   <Building2 className="h-5 w-5 text-indigo-600 shrink-0" /> เส้นทาง: พนักงานออฟฟิศ
                 </CardTitle>
                 <CardDescription>
-                  ฐานเงินเดือนรายเดือน — <strong>ไม่ใช้</strong> timesheet รายวัน — จ่ายผ่าน <strong>Office payroll run</strong>
+                  ฐานเงินเดือนรายเดือนอยู่ที่ <strong>ทะเบียนพนักงาน</strong> — <strong>ไม่ใช้</strong> timesheet รายวัน — จ่ายผ่าน{' '}
+                  <strong>Office payroll run</strong>
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2 pt-0">
@@ -369,7 +285,8 @@ export default function HRDashboardPage() {
                   <HardHat className="h-5 w-5 text-amber-600 shrink-0" /> เส้นทาง: ลูกจ้างหน้างาน
                 </CardTitle>
                 <CardDescription>
-                  <strong>Timesheet รายวัน</strong> ตาม wave → รอบ <strong>period</strong> → <strong>Payroll batch</strong>
+                  ค่าแรงคำนวณจาก <strong>ทะเบียนลูกจ้าง + ตำแหน่ง</strong> (หรือกำหนดรายคน) แล้วจึง{' '}
+                  <strong>Timesheet</strong> รายวันตาม wave → <strong>period</strong> → <strong>Payroll batch</strong>
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2 pt-0">
@@ -434,7 +351,13 @@ export default function HRDashboardPage() {
           <StatCard title="บล็อก Assign" value={stats.blocked} sub="Blocked By Policy" icon={ShieldAlert} colorClass="border-l-red-600" />
           <StatCard title="งานค้าง HR" value={pendingHRTasks.length} sub="Pending Tasks" icon={Clock} colorClass="border-l-purple-600" />
           <StatCard title="คำขอแก้ไข" value={(pendingExceptions?.length || 0) + (correctionTs?.length || 0)} sub="Correction Queue" icon={RotateCcw} colorClass="border-l-amber-500" />
-          <StatCard title="สัญญาต้นทุนไม่ครบ" value={contractsMissingCost.length} sub="Contract Cost Gaps" icon={AlertTriangle} colorClass="border-l-rose-600" />
+          <StatCard
+            title="ตำแหน่งยังไม่กำหนดฐาน"
+            value={positionsMissingDefaultLabor.length}
+            sub="OPEC ต้นทุน/วัน ที่ /positions"
+            icon={AlertTriangle}
+            colorClass="border-l-rose-600"
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -528,23 +451,33 @@ export default function HRDashboardPage() {
             <Card className="bg-rose-50 border-rose-100 shadow-none">
               <CardHeader className="pb-2">
                 <CardTitle className="text-xs font-bold uppercase text-rose-800 flex items-center gap-2">
-                  <AlertTriangle className="h-3 w-3" /> Contract Cost Readiness
+                  <AlertTriangle className="h-3 w-3" /> ฐานต้นทุนแรง (Positions)
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {contractsMissingCost.length === 0 ? (
-                  <p className="text-[10px] text-rose-700">ไม่มีสัญญาที่มีราคาขายแล้วแต่ยังขาดต้นทุน (ถ้ายังไม่ลงราคาขายในสัญญา จะไม่แจ้งเตือน)</p>
+                {positionsMissingDefaultLabor.length === 0 ? (
+                  <p className="text-[10px] text-rose-700">
+                    ทุกตำแหน่งหน้างาน active ระบุฐาน OPEC/วันครบแล้ว หรือยังไม่ต้องใช้ (ดูรายละเอียดที่{' '}
+                    <Link href="/positions" className="font-medium underline">
+                      ตำแหน่งงาน
+                    </Link>
+                    )
+                  </p>
                 ) : (
-                  contractsMissingCost.slice(0, 6).map((c: MainContract) =>
+                  positionsMissingDefaultLabor.slice(0, 6).map((p) =>
                     viewerOnly ? (
-                      <p key={c.id} className="text-[10px] text-rose-700">
-                        {c.contractNumber || c.id}: มีขายแต่ยังไม่มีต้นทุน {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                      <p key={p.id} className="text-[10px] text-rose-700">
+                        {p.positionCode || p.id}: ยังไม่มีฐานต้นทุน OPEC (onshore/offshore) — กำหนดที่รายละเอียดตำแหน่ง
                       </p>
                     ) : (
-                      <Link key={c.id} href={`/main-contracts/${c.id}`} className="block text-[10px] text-rose-700 hover:underline">
-                        {c.contractNumber || c.id}: มีขายแต่ยังไม่มีต้นทุน {Number(c.costingMissingPositionsCount || 0)} ตำแหน่ง
+                      <Link
+                        key={p.id}
+                        href={`/positions/${p.id}`}
+                        className="block text-[10px] text-rose-700 hover:underline"
+                      >
+                        {p.positionCode || p.id}: ยังไม่มีฐานต้นทุน OPEC (onshore/offshore) — กำหนดที่รายละเอียดตำแหน่ง
                       </Link>
-                    )
+                    ),
                   )
                 )}
               </CardContent>

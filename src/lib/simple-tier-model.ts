@@ -73,8 +73,10 @@ export const ADMIN_ONLY_MODULE_KEYS = new Set<string>([
 
 /** Modules only accounting + admin (matches accounting Firestore collections). */
 export const ACCOUNTING_ONLY_MODULE_KEYS = new Set<string>([
+  'accounting_dashboard',
   'billing_notes',
   'tax_invoices',
+  'receipts',
   'ap_bills',
   'accounts_receivable',
   'accounts_payable',

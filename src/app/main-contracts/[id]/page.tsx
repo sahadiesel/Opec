@@ -37,6 +37,13 @@ import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
+import { defaultLaborDailyFromPosition } from '@/lib/payroll/timesheet-labor-base-cost';
+
+function formatTempLaborRef(v: number | undefined): string {
+  const n = v == null ? NaN : Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return n.toLocaleString();
+}
 
 import { ContractPoTab } from './_components/contract-po-tab';
 import { ContractLogsTab } from './_components/contract-logs-tab';
@@ -70,7 +77,6 @@ function createInitialNewRateForm(): Partial<PositionRate> {
     billingUnit: 'daily',
     active: true,
     sellRate: 0,
-    costBaseline: 0,
     overtimeRuleKey: DEFAULT_OT_KEY,
     overtimeRule: `${DEFAULT_OT_LABEL.label} — ${DEFAULT_OT_LABEL.description}`,
     normalWorkHours: 8,
@@ -306,30 +312,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     return `${rootMasterNo}-${String(maxSeq + 1).padStart(2, '0')}`;
   };
 
-  const computedContractCosting = useMemo(() => {
-    const ratesWithSell = (rates || []).filter((r) => Number(r.sellRate || 0) > 0);
-    const missingCostCount = ratesWithSell.filter((r) => Number(r.costBaseline || 0) <= 0).length;
-    return {
-      costingStatus: missingCostCount === 0 ? 'COMPLETE' : 'INCOMPLETE',
-      costingMissingPositionsCount: missingCostCount,
-    };
-  }, [rates]);
-
-  useEffect(() => {
-    if (!canModify || !mcRef || !contract) return;
-    if (
-      contract.costingMissingPositionsCount === computedContractCosting.costingMissingPositionsCount &&
-      contract.costingStatus === computedContractCosting.costingStatus
-    ) {
-      return;
-    }
-    updateDocumentNonBlocking(mcRef, {
-      ...computedContractCosting,
-      costingUpdatedAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-  }, [computedContractCosting, contract, canModify, mcRef]);
-
   useEffect(() => {
     if (!contract) {
       setActiveHolidayDraft(null);
@@ -498,15 +480,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
 
   const handleApproveContract = async () => {
     if (!mcRef || !canApproveContract || !contract) return;
-    if (computedContractCosting.costingStatus !== 'COMPLETE' || computedContractCosting.costingMissingPositionsCount > 0) {
-      toast({
-        variant: 'destructive',
-        title: 'อนุมัติไม่ได้',
-        description:
-          'ยังมีตำแหน่งที่มีราคาขายแล้วแต่ไม่มีต้นทุน — กรุณากรอกต้นทุนให้ครบก่อนอนุมัติ',
-      });
-      return;
-    }
     updateDocumentNonBlocking(mcRef, {
       status: 'active',
       approvedAt: Date.now(),
@@ -579,7 +552,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       const revisionRef = await addDoc(collection(firestore, 'main_contracts'), pendingPayload);
       const sourceRates = overrideRates || rates || [];
       for (const rate of sourceRates) {
-        const { id: _drop, ...rateData } = rate as PositionRate;
+        const { id: _drop, costBaseline: _cb, ...rateData } = rate as PositionRate;
         await addDoc(collection(firestore, 'main_contracts', revisionRef.id, 'position_rates'), {
           ...rateData,
           active: true,
@@ -630,16 +603,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     const otKey = (newRate.overtimeRuleKey || DEFAULT_OT_KEY) as OvertimeRuleKey;
 
     const normalizedSellRate = canEditSellSide ? Number(newRate.sellRate) || 0 : 0;
-    const normalizedCostBaseline = canEditCostSide ? Number(newRate.costBaseline) || 0 : 0;
+    const { costBaseline: _dropCost, ...newRateFields } = newRate;
     const policySell = effectiveRatePolicy.sell || {};
     const policyCost = effectiveRatePolicy.cost || {};
     const otOpt = OVERTIME_RULE_OPTIONS.find((o) => o.key === otKey);
 
     addDocumentNonBlocking(ratesQuery, {
-      ...newRate,
+      ...newRateFields,
       positionId: newRate.positionId || '',
       sellRate: normalizedSellRate,
-      costBaseline: normalizedCostBaseline,
       billingUnit: newRate.billingUnit || 'daily',
       normalWorkHours: newRate.normalWorkHours || 8,
       overtimeRuleKey: otKey,
@@ -668,7 +640,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       afterSummary: JSON.stringify({
         positionId: newRate.positionId,
         sellRate: normalizedSellRate,
-        costBaseline: normalizedCostBaseline,
         normalWorkHours: newRate.normalWorkHours || 8,
       }),
     });
@@ -719,11 +690,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       addContractChangeLog({
         actionType: 'DELETE_POSITION_RATE',
         changedFields: ['position_rates'],
-        beforeSummary: existing ? JSON.stringify({
-          positionId: existing.positionId,
-          sellRate: existing.sellRate,
-          costBaseline: existing.costBaseline,
-        }) : 'unknown_rate',
+        beforeSummary: existing
+          ? JSON.stringify({
+              positionId: existing.positionId,
+              sellRate: existing.sellRate,
+            })
+          : 'unknown_rate',
         afterSummary: 'deleted',
       });
       toast({ title: "ลบข้อมูลสำเร็จ" });
@@ -938,14 +910,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               </Button>
             )}
             {isPendingContract && canApproveContract && (
-              <Button
-                className="gap-2 bg-green-600 hover:bg-green-700"
-                disabled={
-                  computedContractCosting.costingStatus !== 'COMPLETE' ||
-                  computedContractCosting.costingMissingPositionsCount > 0
-                }
-                onClick={handleApproveContract}
-              >
+              <Button className="gap-2 bg-green-600 hover:bg-green-700" onClick={handleApproveContract}>
                 อนุมัติสัญญา (Approve)
               </Button>
             )}
@@ -1240,27 +1205,26 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 <div>
                   <CardTitle>อัตราราคาตามตำแหน่ง (Position Rates Management)</CardTitle>
                   <CardDescription>
-                    ราคาขาย/ต้นทุนเป็นของแต่ละสัญญา (สัญญา A กับ B ตำแหน่งเดียวกันอาจต่างกัน) — ฐานจ่าย payroll ผูกกับ PO/สัญญาที่คนงานถูก assign
+                    ราคา<strong>ขาย</strong>ต่อตำแหน่งเป็นของสัญญา (A กับ B อาจต่าง) — ฐานต้นทุนค่าแรง OPEC จ่ายกำหนดที่{' '}
+                    <Link href="/positions" className="font-medium text-primary underline">
+                      ตำแหน่งงาน (Positions)
+                    </Link>{' '}
+                    ไม่อยู่ในสัญญา; สร้าง PO จะ snapshot ฐานจากตำแหน่ง
                     {masterActiveRatesLocked && (
                       <span className="block mt-1 text-amber-800 font-medium">
                         สัญญาหลัก Active: ล็อกจำนวนตำแหน่งและราคา — เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น (วันหยุด/กฎตัวคูณแก้ที่แท็บข้อมูลสัญญาหลัก)
                       </span>
                     )}
-                    {contract.commercialTermsOwner === 'sales' && canViewCostFields && (
-                      <span className="block mt-1 text-amber-700 font-medium">สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายได้ที่นี่ ต้นทุนค่าแรงให้ HR Manager / Operations Manager / Admin กรอก</span>
+                    {contract.commercialTermsOwner === 'sales' && (
+                      <span className="block mt-1 text-amber-700 font-medium">
+                        สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายต่อตำแหน่งได้ที่นี่ — ฐานต้นทุน OPEC: ฝ่าย operations/HR กำหนดที่ตำแหน่ง (ไม่อยู่ในสัญญา)
+                      </span>
                     )}
                   </CardDescription>
                   {(contract.contractType || 'master') === 'supplemental' && (
                     <div className="mt-2">
                       <Badge variant="outline">
                         สัญญาเพิ่มเติม (inherit วันหยุด/OT จากสัญญาแม่: {contract.inheritTermsFromContractId || contract.parentContractId})
-                      </Badge>
-                    </div>
-                  )}
-                  {Number(contract.costingMissingPositionsCount || 0) > 0 && (
-                    <div className="mt-2">
-                      <Badge variant="destructive">
-                        มีราคาขายแล้วแต่ยังไม่มีต้นทุน {Number(contract.costingMissingPositionsCount || 0)} ตำแหน่ง (จำเป็นต่อ payroll)
                       </Badge>
                     </div>
                   )}
@@ -1319,7 +1283,21 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     <TableRow>
                       <TableHead>ตำแหน่งงาน</TableHead>
                       <TableHead>ราคาขาย (Sell)</TableHead>
-                      {canViewCostFields && <TableHead>ต้นทุน (Cost)</TableHead>}
+                      {canViewCostFields && (
+                        <TableHead className="min-w-[9rem] bg-amber-50/80">
+                          <span className="flex flex-col gap-0.5">
+                            <span className="flex items-center gap-1.5">
+                              ต้นทุน (ชั่วคราว)
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-600/40 text-amber-900">
+                                อ้างอิง
+                              </Badge>
+                            </span>
+                            <span className="text-[10px] font-normal text-muted-foreground leading-tight">
+                              ฐาน Position + ราคาเดิมบนสัญญา (ถ้ามี) — ลบคอลัมน์นี้ได้เมื่อกรอกใน /positions ครบ
+                            </span>
+                          </span>
+                        </TableHead>
+                      )}
                       <TableHead>ชม.ปกติ</TableHead>
                       <TableHead>หน่วย</TableHead>
                       <TableHead>สถานะ</TableHead>
@@ -1329,15 +1307,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <TableBody>
                     {ratesSortedByPosition?.map(r => {
                       const pos = allPositions?.find(p => p.id === r.positionId);
-                      const sellMissingCost = Number(r.sellRate || 0) > 0 && Number(r.costBaseline || 0) <= 0;
                       return (
                         <TableRow key={r.id}>
                           <TableCell className="font-semibold text-primary">
                             <div className="flex flex-col gap-1">
                               <span>{(pos?.positionName || pos?.positionNameTh) || r.positionId}</span>
-                              {sellMissingCost && canViewCostFields && (
-                                <Badge variant="outline" className="w-fit text-[10px] border-amber-500 text-amber-800">รอต้นทุน</Badge>
-                              )}
                             </div>
                           </TableCell>
                           <TableCell className="text-green-600 font-bold">
@@ -1365,28 +1339,39 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                             )}
                           </TableCell>
                           {canViewCostFields && (
-                            <TableCell className="text-muted-foreground">
-                              {canMutatePositionRates && canEditCostSide && firestore ? (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-xs">{contract.currency}</span>
-                                  <Input
-                                    type="number"
-                                    className="h-8 w-24"
-                                    defaultValue={r.costBaseline}
-                                    key={`${r.id}-cost-${r.costBaseline}`}
-                                    disabled={isSupplementalContract}
-                                    onBlur={(e) => {
-                                      const v = Number(e.target.value) || 0;
-                                      if (v === Number(r.costBaseline)) return;
-                                      updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', r.id), {
-                                        costBaseline: v,
-                                        updatedAt: Date.now(),
-                                      });
-                                    }}
-                                  />
+                            <TableCell className="align-top bg-amber-50/40 text-xs">
+                              {pos && (
+                                <div className="space-y-1 text-[11px] text-amber-950">
+                                  <div>
+                                    <span className="text-muted-foreground">ON</span> {formatTempLaborRef(pos.defaultLaborCostOnshore)}
+                                  </div>
+                                  <div>
+                                    <span className="text-muted-foreground">OFF</span> {formatTempLaborRef(pos.defaultLaborCostOffshore)}
+                                  </div>
+                                  <div className="text-[10px] text-amber-800/90 border-t border-amber-200/60 pt-1">
+                                    ใช้ default รวม:{' '}
+                                    <span className="font-mono font-semibold">
+                                      {formatTempLaborRef(
+                                        defaultLaborDailyFromPosition(pos) || undefined,
+                                      )}
+                                    </span>
+                                    {contract.currency ? ` ${contract.currency}` : ''} / วัน
+                                  </div>
                                 </div>
-                              ) : (
-                                <>{contract.currency} {r.costBaseline.toLocaleString()}</>
+                              )}
+                              {!pos && <span className="text-muted-foreground">—</span>}
+                              {Number(r.costBaseline) > 0 && (
+                                <p className="text-[10px] text-muted-foreground mt-1.5">
+                                  ในเอกสาร rate (เดิม): <span className="font-mono">{Number(r.costBaseline).toLocaleString()}</span>
+                                </p>
+                              )}
+                              {pos && (
+                                <Link
+                                  href={`/positions/${r.positionId}`}
+                                  className="inline-block mt-1.5 text-[10px] text-primary font-medium hover:underline"
+                                >
+                                  แก้ฐานต้นทุน →
+                                </Link>
                               )}
                             </TableCell>
                           )}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { deleteField } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { PositionRate, Position, MainContract } from '@/lib/types';
@@ -30,7 +31,6 @@ function rateToFormState(rate: PositionRate): Partial<PositionRate> {
   return {
     positionId: rate.positionId,
     sellRate: rate.sellRate,
-    costBaseline: rate.costBaseline,
     billingUnit: rate.billingUnit,
     normalWorkHours: rate.normalWorkHours ?? 8,
     overtimeRuleKey: otKey,
@@ -74,12 +74,11 @@ export function ContractEditRateDialog({
     const policyCost = effectiveRatePolicy.cost || {};
 
     const normalizedSellRate = canEditSellSide ? Number(form.sellRate) || 0 : rate.sellRate;
-    const normalizedCostBaseline = canEditCostSide ? Number(form.costBaseline) || 0 : rate.costBaseline;
 
     onSave(rate.id, {
       positionId: rate.positionId,
       sellRate: normalizedSellRate,
-      costBaseline: normalizedCostBaseline,
+      costBaseline: deleteField(),
       billingUnit: form.billingUnit || rate.billingUnit,
       normalWorkHours: form.normalWorkHours || rate.normalWorkHours || 8,
       overtimeRuleKey: otKey,
@@ -108,8 +107,7 @@ export function ContractEditRateDialog({
   const saveDisabled =
     !rate ||
     (!canEditSellSide && !canEditCostSide) ||
-    (canEditSellSide && !form.sellRate) ||
-    (canEditCostSide && !form.costBaseline);
+    (canEditSellSide && !form.sellRate);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

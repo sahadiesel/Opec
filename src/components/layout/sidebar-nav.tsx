@@ -39,6 +39,7 @@ import {
   FlaskConical,
   ChevronRight,
   Percent,
+  Receipt,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -56,7 +57,7 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView, isClient, canAccess, isStoreOfficer, isPayrollOfficer } from '@/lib/permissions';
+import { ModuleKey, canView, isClient, canAccess, isStoreOfficer, isPayrollOfficer, getPrimaryLegacyRole } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { UI_LABELS } from '@/lib/constants/labels';
@@ -66,6 +67,7 @@ import {
   sidebarMatrixVisibilityForPath,
   canViewHrHubItem,
   canViewHrPayrollFlowSubsection,
+  canViewHrApprovalSubsection,
 } from '@/lib/navigation/nav-access';
 import { cn } from '@/lib/utils';
 
@@ -92,6 +94,14 @@ interface NavGroup {
 }
 
 /** แยกหมวดบัญชี: ระบบลูกหนี้ / ระบบเจ้าหนี้ / สมุดรายวัน — ไม่รวมเงินเดือน (อยู่ใน ACCOUNTING_PAYROLL_SUBSECTIONS) */
+/** ลิงก์เดี่ยวใต้หัวข้อ «บัญชี» — ภาพรวมก่อนระบบลูกหนี้ */
+const ACCOUNTING_DASHBOARD_ITEM: NavItem = {
+  key: 'accounting_dashboard',
+  title: 'แดชบอร์ดบัญชี',
+  href: '/accounting/dashboard',
+  icon: LayoutDashboard,
+};
+
 const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
   title: string;
   icon: ComponentType<{ className?: string }>;
@@ -102,12 +112,8 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     icon: FileBadge,
     items: [
       { key: 'draft_invoices', title: 'รายการใบแจ้งหนี้ ( Invoice )', href: '/draft-invoices', icon: FileText },
-      {
-        key: 'tax_invoices',
-        title: 'ใบกำกับภาษี / ใบเสร็จรับเงิน (ฉบับเดียว)',
-        href: '/tax-invoices',
-        icon: FileBadge,
-      },
+      { key: 'tax_invoices', title: 'ใบกำกับภาษี', href: '/tax-invoices', icon: FileBadge },
+      { key: 'receipts', title: 'ใบเสร็จรับเงิน (ลูกค้า)', href: '/receipts', icon: Receipt },
       { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
     ],
   },
@@ -157,6 +163,24 @@ function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
 
 /** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า» */
 const OPS_WAREHOUSE_SUB_PATHS = ['/store', '/store/vendor-bills', '/vendors', '/purchases'] as const;
+
+/** แดชบอร์ดเดียว: ฝ่าย HR กด «แดชบอร์ด» ที่ Overview ไป /hr/dashboard (ไม่ซ้ำกับลิงก์ใน HR) */
+function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavGroup[] {
+  if (isStoreOfficer(user)) return groups;
+  const rk = getPrimaryLegacyRole(user);
+  if (!rk || !['hr_officer', 'payroll_officer', 'hr_manager'].includes(rk)) return groups;
+  return groups.map((g) => {
+    if (g.label !== 'ภาพรวม (Overview)') return g;
+    return {
+      ...g,
+      items: g.items.map((it) =>
+        it.key === 'overview_dashboard' && (it.href === '/' || it.href === '')
+          ? { ...it, href: '/hr/dashboard' }
+          : it
+      ),
+    };
+  });
+}
 
 const navGroups: NavGroup[] = [
   {
@@ -250,9 +274,14 @@ const navGroups: NavGroup[] = [
 /** เมนูเฉพาะเจ้าหน้าที่คลัง: หน้าแรก = คลัง, ไม่มี HR/ขาย, เฉพาะคลัง–จัดซื้อ */
 function navGroupsForUser(user: User): NavGroup[] {
   if (isPayrollOfficer(user)) {
-    return navGroups.filter((g) => !g.label.startsWith('งานขายและสัญญา'));
+    return patchOverviewDashboardForHrPillar(
+      user,
+      navGroups.filter((g) => !g.label.startsWith('งานขายและสัญญา'))
+    );
   }
-  if (!isStoreOfficer(user)) return navGroups;
+  if (!isStoreOfficer(user)) {
+    return patchOverviewDashboardForHrPillar(user, navGroups);
+  }
   return navGroups
     .filter((g) => !g.hrStructured)
     .filter((g) => !g.label.startsWith('งานขายและสัญญา'))
@@ -349,7 +378,9 @@ export function SidebarNav({
               visibleItems: sub.items.filter(filterNav),
             })).filter((s) => s.visibleItems.length > 0);
 
-            if (documentSubs.length === 0 && payrollSubs.length === 0) return null;
+            if (documentSubs.length === 0 && payrollSubs.length === 0 && !filterNav(ACCOUNTING_DASHBOARD_ITEM)) {
+              return null;
+            }
 
             return (
               <SidebarGroup key={group.label} className="py-2">
@@ -358,6 +389,23 @@ export function SidebarNav({
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
+                    {filterNav(ACCOUNTING_DASHBOARD_ITEM) && (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={pathMatches(pathname, ACCOUNTING_DASHBOARD_ITEM.href)}
+                          tooltip="ภาพรวมลูกหนี้ เจ้าหนี้ รายรับ-จ่าย เงินเดือน และแจ้งชำระจากลูกค้า"
+                          className="transition-all duration-200"
+                        >
+                          <Link href={ACCOUNTING_DASHBOARD_ITEM.href}>
+                            <ACCOUNTING_DASHBOARD_ITEM.icon
+                              className={`h-4 w-4 ${pathMatches(pathname, ACCOUNTING_DASHBOARD_ITEM.href) ? 'text-primary' : 'text-muted-foreground'}`}
+                            />
+                            <span className={SIDEBAR_MAIN_ITEM_TEXT}>{ACCOUNTING_DASHBOARD_ITEM.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
                     {documentSubs.map((sub) => {
                       const isSubActive = sub.visibleItems.some((it) => pathMatches(pathname, it.href));
                       return (
@@ -440,6 +488,9 @@ export function SidebarNav({
             const subsections = HR_NAV_SUBSECTIONS.map((sub) => ({
               ...sub,
               visibleItems: sub.items.filter((item) => {
+                if (sub.audienceOpsHrManagersOnly && !canViewHrApprovalSubsection(user, admin)) {
+                  return false;
+                }
                 if (sub.audiencePayrollLeadsOnly && !canViewHrPayrollFlowSubsection(user, profile, admin)) {
                   return false;
                 }
@@ -529,6 +580,17 @@ export function SidebarNav({
 
           const visibleItems = group.items.filter((item) => {
             if (admin) return true;
+            const basePath = item.href.split('?')[0];
+            if (isPayrollOfficer(user) && OPS_WAREHOUSE_SUB_PATHS.some((p) => p === basePath)) {
+              return false;
+            }
+            if (
+              item.key === 'draft_invoices' &&
+              item.href.split('?')[0] === '/draft-invoices' &&
+              !canViewHrApprovalSubsection(user, admin)
+            ) {
+              return false;
+            }
             if (
               item.href === '/' &&
               item.key === 'overview_dashboard' &&

@@ -58,6 +58,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '@/lib/payroll/labor-cost-model';
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import { WorkerCertsTab } from './_components/worker-certs-tab';
 import { WorkerMedicalTab } from './_components/worker-medical-tab';
@@ -221,6 +222,17 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
 
   const { payroll } = usePermissions(currentUser);
   const canEditWorker = useMatrixGuards ? canAccess(currentUser, 'workers', 'edit') : payroll('worker', 'edit');
+  const canViewLaborCost = useMemo(() => canViewWorkerLaborCostFromUser(currentUser), [currentUser]);
+  const canEditLaborCost = useMemo(
+    () => canEditWorkerLaborCostFromUser(currentUser) && canEditWorker,
+    [currentUser, canEditWorker],
+  );
+
+  const currentPositionForLabor = useMemo(() => {
+    const pid = (isEditing ? editedWorker.currentPositionId : worker?.currentPositionId) || '';
+    if (!pid || !allPositions?.length) return null;
+    return allPositions.find((p) => p.id === pid) ?? null;
+  }, [isEditing, editedWorker.currentPositionId, worker?.currentPositionId, allPositions]);
 
   // --- Business logic: save master (unchanged) ---
   const handleSaveMaster = () => {
@@ -233,7 +245,13 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
       return;
     }
     if (!workerRef) return;
-    const payload = sanitizeFirestorePayload({ ...editedWorker, updatedAt: Date.now() });
+    const base: Partial<Worker> & { updatedAt: number } = { ...editedWorker, updatedAt: Date.now() };
+    if (!canViewLaborCost) {
+      delete base.laborCostUsePositionDefault;
+      delete base.laborCostCustomOnshore;
+      delete base.laborCostCustomOffshore;
+    }
+    const payload = sanitizeFirestorePayload(base);
     updateDoc(workerRef, payload)
       .then(() => {
         setIsEditing(false);
@@ -530,7 +548,16 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
           </TabsList>
 
           <TabsContent value="info" className="mt-6 space-y-6">
-            <WorkerInfoTab worker={worker} isEditing={isEditing} editedWorker={editedWorker} setEditedWorker={setEditedWorker} allPositions={allPositions} />
+            <WorkerInfoTab
+              worker={worker}
+              isEditing={isEditing}
+              editedWorker={editedWorker}
+              setEditedWorker={setEditedWorker}
+              allPositions={allPositions}
+              currentPosition={currentPositionForLabor}
+              canViewLaborCost={canViewLaborCost}
+              canEditLaborCost={canEditLaborCost}
+            />
           </TabsContent>
 
           <TabsContent value="certs" className="mt-6">

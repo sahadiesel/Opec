@@ -42,6 +42,11 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { SEQUENCE_REGISTRY } from '@/lib/services/numbering-service';
 import { writeAuditLog } from '@/lib/services/audit-service';
 
+/** ชื่อที่แสดง: ยึด registry ก่อน (อัปเดตรุ่นใหม่) หากไม่มีค่อยใช้ label ที่เก็บใน Firestore */
+function effectiveSequenceLabel(s: { sequenceKey: string; label: string }): string {
+  return SEQUENCE_REGISTRY[s.sequenceKey as keyof typeof SEQUENCE_REGISTRY]?.label ?? s.label;
+}
+
 export default function NumberingAdminPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
@@ -73,11 +78,14 @@ export default function NumberingAdminPage() {
 
   const filteredSequences = useMemo(() => {
     if (!sequences) return [];
-    return sequences.filter(s => 
-      s.label.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      s.sequenceKey.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.prefix.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    return sequences.filter((s) => {
+      const name = effectiveSequenceLabel(s);
+      return (
+        name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        s.sequenceKey.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        s.prefix.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    });
   }, [sequences, searchTerm]);
 
   // Identify missing sequences from registry
@@ -291,7 +299,7 @@ export default function NumberingAdminPage() {
                     <TableRow key={s.id} className="hover:bg-muted/20">
                       <TableCell className="pl-6 py-4">
                         <div className="flex flex-col">
-                          <span className="font-bold text-sm text-primary">{s.label}</span>
+                          <span className="font-bold text-sm text-primary">{effectiveSequenceLabel(s)}</span>
                           <span className="text-[10px] font-mono text-muted-foreground uppercase">{s.sequenceKey}</span>
                         </div>
                       </TableCell>
@@ -343,7 +351,8 @@ export default function NumberingAdminPage() {
           <DialogContent className="max-w-md border-t-8 border-t-primary">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <Settings2 className="h-5 w-5 text-primary" /> แก้ไขตัวนับ: {selectedSequence?.label}
+                <Settings2 className="h-5 w-5 text-primary" /> แก้ไขตัวนับ:{' '}
+                {selectedSequence ? effectiveSequenceLabel(selectedSequence) : ''}
               </DialogTitle>
               <DialogDescription>จัดการค่าพื้นฐานของตัวนับลำดับ (Maintenance Mode)</DialogDescription>
             </DialogHeader>

@@ -304,7 +304,7 @@ export default function AccountingDashboardPage() {
                 <ShortcutItem href="/draft-invoices" label="รายการใบแจ้งหนี้ ( Invoice )" sub="Draft invoices" icon={FileText} />
                 <ShortcutItem
                   href="/tax-invoices"
-                  label="ใบกำกับภาษี / ใบเสร็จรับเงิน"
+                  label="ใบกำกับภาษี"
                   sub="ฉบับเดียว — ไม่มีเมนูใบเสร็จแยก"
                   icon={FileBadge}
                 />

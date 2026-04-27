@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   ArrowLeft,
@@ -23,7 +24,14 @@ import {
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import type { DailyTimesheet, PayrollBatch, PayrollBatchLine, PayrollPeriod, User } from '@/lib/types';
+import type {
+  DailyTimesheet,
+  PayrollBatch,
+  PayrollBatchLine,
+  PayrollPeriod,
+  User,
+  WorkerPitCalculationMode,
+} from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canPayrollPermission, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -43,7 +51,7 @@ import {
   resolvePayrollPoliciesForDate,
   computeWorkerPayrollLineD8,
 } from '@/lib/payroll/d8';
-import { pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
+import { pitFromPolicy, pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
 import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand';
 import {
   Select,
@@ -187,9 +195,12 @@ export default function PayrollBatchWorkerLinePage({
   const [deductionRows, setDeductionRows] = useState<Array<{ label: string; amount: string }>>([
     { label: '', amount: '' },
   ]);
-  const [pitOverrideEnabled, setPitOverrideEnabled] = useState(false);
-  /** อัตรา marginal สูงสุดที่ใช้ในตารางขั้นบันได (0–35) — ไม่ใช่หัก % จากยอดเดือนแบบเหมา */
-  const [pitOverrideMarginalRate, setPitOverrideMarginalRate] = useState(35);
+  const [workerPitMode, setWorkerPitMode] = useState<WorkerPitCalculationMode>('auto_timesheet');
+  const [pitManualBaht, setPitManualBaht] = useState('');
+  const [pitAutoSalaryBase, setPitAutoSalaryBase] = useState('');
+  /** true = คำนวณด้วยเต็มตาราง (35%); false = ใช้เพดาน marginal ที่เลือก (รองรับข้อมูลเก่า) */
+  const [autoTimesheetUseFullTable, setAutoTimesheetUseFullTable] = useState(true);
+  const [autoTimesheetMarginalRate, setAutoTimesheetMarginalRate] = useState(35);
   const [adjNotes, setAdjNotes] = useState('');
 
   useEffect(() => {
@@ -208,17 +219,44 @@ export default function PayrollBatchWorkerLinePage({
       : [{ label: '', amount: '' }];
     setAllowanceRows(a);
     setDeductionRows(d);
+    const mode = line.hrLineAdjustments?.workerPitMode;
+    const base = line.hrLineAdjustments?.pitAutoSalaryBaseBaht;
     const mr = line.hrLineAdjustments?.pitWithholdingOverrideMaxMarginalRatePercent;
     const pitBaht = line.hrLineAdjustments?.pitWithholdingOverride;
-    if (mr != null && Number.isFinite(mr)) {
-      setPitOverrideEnabled(true);
-      setPitOverrideMarginalRate(snapToStandardMarginalRate(mr));
-    } else if (pitBaht != null && Number.isFinite(pitBaht)) {
-      setPitOverrideEnabled(true);
-      setPitOverrideMarginalRate(35);
+    if (mode === 'manual_baht') {
+      setWorkerPitMode('manual_baht');
+      setPitManualBaht(pitBaht != null && Number.isFinite(pitBaht) ? String(pitBaht) : '');
+    } else if (mode === 'auto_salary_base') {
+      setWorkerPitMode('auto_salary_base');
+      setPitAutoSalaryBase(base != null && Number.isFinite(base) ? String(base) : '');
+    } else if (mode === 'auto_timesheet') {
+      setWorkerPitMode('auto_timesheet');
+      if (mr != null && Number.isFinite(mr) && Math.max(0, Math.min(35, mr)) < 35) {
+        setAutoTimesheetUseFullTable(false);
+        setAutoTimesheetMarginalRate(snapToStandardMarginalRate(mr));
+      } else {
+        setAutoTimesheetUseFullTable(true);
+        setAutoTimesheetMarginalRate(35);
+      }
     } else {
-      setPitOverrideEnabled(false);
-      setPitOverrideMarginalRate(35);
+      if (mr != null && Number.isFinite(mr)) {
+        setWorkerPitMode('auto_timesheet');
+        const clamped = Math.max(0, Math.min(35, mr));
+        if (clamped < 35) {
+          setAutoTimesheetUseFullTable(false);
+          setAutoTimesheetMarginalRate(snapToStandardMarginalRate(mr));
+        } else {
+          setAutoTimesheetUseFullTable(true);
+          setAutoTimesheetMarginalRate(35);
+        }
+      } else if (pitBaht != null && Number.isFinite(pitBaht)) {
+        setWorkerPitMode('manual_baht');
+        setPitManualBaht(String(pitBaht));
+      } else {
+        setWorkerPitMode('auto_timesheet');
+        setAutoTimesheetUseFullTable(true);
+        setAutoTimesheetMarginalRate(35);
+      }
     }
     setAdjNotes(line.hrLineAdjustments?.notes || '');
   }, [line]);
@@ -359,26 +397,45 @@ export default function PayrollBatchWorkerLinePage({
             hr_allowances: allowancePreviewTotal,
           },
         });
-        if (!cancelled) {
-          if (pitOverrideEnabled) {
-            const p = pitFromPolicyWithMarginalCeiling(
+        {
+          let p = Number(d8Line.deductionsBreakdown.pit_withholding) || 0;
+          if (workerPitMode === 'manual_baht') {
+            p = Math.max(0, Number(pitManualBaht) || 0);
+          } else if (workerPitMode === 'auto_salary_base') {
+            p = pitFromPolicy(
+              Math.max(0, Number(pitAutoSalaryBase) || 0),
+              resolved.tax,
+            );
+          } else if (workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable) {
+            p = pitFromPolicyWithMarginalCeiling(
               eg,
               resolved.tax,
-              Math.max(0, Math.min(35, pitOverrideMarginalRate)),
+              Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
             );
-            setPreviewPitAuto(p);
           } else {
-            setPreviewPitAuto(Number(d8Line.deductionsBreakdown.pit_withholding) || 0);
+            p = pitFromPolicy(eg, resolved.tax);
           }
-          setPreviewTaxPolicyName(resolved.tax?.name ?? null);
+          if (!cancelled) {
+            setPreviewPitAuto(p);
+            setPreviewTaxPolicyName(resolved.tax?.name ?? null);
+          }
         }
         const deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
-        if (pitOverrideEnabled) {
+        if (workerPitMode === 'manual_baht') {
+          deductions.pit_withholding = Math.max(0, Number(pitManualBaht) || 0);
+        } else if (workerPitMode === 'auto_salary_base') {
+          deductions.pit_withholding = pitFromPolicy(
+            Math.max(0, Number(pitAutoSalaryBase) || 0),
+            resolved.tax,
+          );
+        } else if (workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable) {
           deductions.pit_withholding = pitFromPolicyWithMarginalCeiling(
             eg,
             resolved.tax,
-            Math.max(0, Math.min(35, pitOverrideMarginalRate)),
+            Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
           );
+        } else {
+          deductions.pit_withholding = pitFromPolicy(eg, resolved.tax);
         }
         deductionRows
           .filter((r) => r.label.trim() && Number(r.amount) > 0)
@@ -408,8 +465,11 @@ export default function PayrollBatchWorkerLinePage({
     dailyDisplay.total,
     allowancePreviewTotal,
     deductionRows,
-    pitOverrideEnabled,
-    pitOverrideMarginalRate,
+    workerPitMode,
+    pitManualBaht,
+    pitAutoSalaryBase,
+    autoTimesheetUseFullTable,
+    autoTimesheetMarginalRate,
   ]);
 
   const blockedEditStatuses = useMemo(
@@ -434,20 +494,29 @@ export default function PayrollBatchWorkerLinePage({
         .map((r) => ({ label: r.label.trim(), amount: Number(r.amount) }));
 
       const svc = new PayrollService(firestore);
+      const marg =
+        workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable
+          ? Math.max(0, Math.min(35, autoTimesheetMarginalRate))
+          : null;
       await svc.applyWorkerLineHrAdjustments(batchId, workerId, currentUser as User, {
         allowanceItems,
         deductionItems,
-        pitWithholdingOverride: null,
-        pitWithholdingOverrideMaxMarginalRatePercent: pitOverrideEnabled
-          ? Math.max(0, Math.min(35, pitOverrideMarginalRate))
-          : null,
+        workerPitMode,
+        pitWithholdingOverride:
+          workerPitMode === 'manual_baht' ? Math.max(0, Number(pitManualBaht) || 0) : null,
+        pitAutoSalaryBaseBaht:
+          workerPitMode === 'auto_salary_base' ? Math.max(0, Number(pitAutoSalaryBase) || 0) : null,
+        pitWithholdingOverrideMaxMarginalRatePercent: marg,
         notes: adjNotes.trim() ? adjNotes.trim() : undefined,
       });
       toast({
         title: 'บันทึกการปรับยอดแล้ว',
-        description: pitOverrideEnabled
-          ? 'ภงด. คำนวณจากอัตราขั้นสูงสุดที่เลือก × ตารางขั้นบันไดใน HR — ประกันสังคมตามเดิม'
-          : 'คำนวณหักภาษีและประกันตาม HR settings',
+        description:
+          workerPitMode === 'manual_baht'
+            ? 'ใช้ยอดหัก ภงด. ตามจำนวนที่กำหนด — ประกันสังคมตามเงินได้จริง'
+            : workerPitMode === 'auto_salary_base'
+              ? 'หัก ภงด. จากฐานเงินเดือนที่ระบุ ตาม policy ใน HR'
+              : 'หัก ภงด. ตามรายได้รวม (ตาราง+เบี้ยเลี้ยง) ของงวดนี้ ตาม HR settings',
       });
     } catch (e) {
       toast({
@@ -466,8 +535,11 @@ export default function PayrollBatchWorkerLinePage({
     workerId,
     allowanceRows,
     deductionRows,
-    pitOverrideEnabled,
-    pitOverrideMarginalRate,
+    workerPitMode,
+    pitManualBaht,
+    pitAutoSalaryBase,
+    autoTimesheetUseFullTable,
+    autoTimesheetMarginalRate,
     adjNotes,
     toast,
   ]);
@@ -838,78 +910,172 @@ export default function PayrollBatchWorkerLinePage({
 
             <Separator />
 
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="pit-ov"
-                  checked={pitOverrideEnabled}
-                  onCheckedChange={(v) => setPitOverrideEnabled(v === true)}
-                  disabled={!canSaveAdjustments}
-                />
-                <Label htmlFor="pit-ov" className="cursor-pointer leading-snug">
-                  กำหนด ภงด. เอง — เลือกอัตรา marginal สูงสุด (0%–35%) ระบบคำนวณยอดหักเป็นบาทจากตารางขั้นบันไดใน HR
-                </Label>
+            <div className="space-y-3">
+              <div>
+                <Label className="text-base font-bold">การหัก ภงด.1 (ภาษี ณ ที่จ่าย)</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  ประกันสังคมยังคำนวณจากรายได้จริง (ตาราง+เบี้ยเลี้ยง) ของรายนี้ — ช่องนี้กำหนดเฉพาะ ภงด. ฯ
+                </p>
               </div>
-              {pitOverrideEnabled && (
-                <div className="space-y-2 max-w-xl">
-                  <Label className="text-xs text-muted-foreground">
-                    อัตรา marginal สูงสุดที่ใช้ในตาราง (ไม่ใช่หัก % จากยอดเดือนแบบเหมา)
-                  </Label>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                    <Select
-                      value={String(pitOverrideMarginalRate)}
-                      onValueChange={(v) => setPitOverrideMarginalRate(Number(v))}
+              <RadioGroup
+                value={workerPitMode}
+                onValueChange={(v) => {
+                  if (!canSaveAdjustments) return;
+                  setWorkerPitMode(v as WorkerPitCalculationMode);
+                }}
+                className="space-y-2"
+                disabled={!canSaveAdjustments}
+              >
+                <div
+                  className={`rounded-md border p-3 space-y-2 ${!canSaveAdjustments ? 'opacity-70' : ''} ${workerPitMode === 'manual_baht' ? 'ring-1 ring-primary/30 bg-muted/20' : 'bg-card'}`}
+                >
+                  <div className="flex items-start gap-2">
+                    <RadioGroupItem
+                      value="manual_baht"
+                      id="pit-manual"
+                      className="mt-1"
                       disabled={!canSaveAdjustments}
-                    >
-                      <SelectTrigger className="w-full sm:w-[220px]">
-                        <SelectValue placeholder="เลือก %" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS.map((pct) => (
-                          <SelectItem key={pct} value={String(pct)}>
-                            {pct}%
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="text-sm font-mono tabular-nums text-foreground">
-                      {previewNetLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      ) : (
-                        <>ยอดหักโดยประมาณ: ฿{(previewPitAuto ?? pitFromLine).toLocaleString()} / เดือน</>
+                    />
+                    <div className="space-y-2 flex-1">
+                      <Label htmlFor="pit-manual" className="font-medium leading-snug cursor-pointer">
+                        1) กำหนดเอง (บาท)
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground">
+                        ระบุยอดหักเป็นบาท ไม่ใช้ % — นำยอดนี้ไปลง ภงด. ฯ โดยตรง
+                      </p>
+                      {workerPitMode === 'manual_baht' && (
+                        <div className="flex flex-wrap items-center gap-2 max-w-md">
+                          <Input
+                            type="number"
+                            min={0}
+                            className="w-40"
+                            value={pitManualBaht}
+                            onChange={(e) => setPitManualBaht(e.target.value)}
+                            disabled={!canSaveAdjustments}
+                            placeholder="เช่น 625"
+                          />
+                          <span className="text-sm text-muted-foreground">บาท / งวด</span>
+                        </div>
                       )}
                     </div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-snug">
-                    คำนวณแบบขั้นบันได: รายได้รายเดือน (ตาราง + เบี้ยเลี้ยง) × 12 → หักลดหย่อนรายปี → ภาษีตามช่วงที่อัตรา marginal ไม่เกินที่เลือก → หาร 12
-                    เลือก <span className="font-mono">35%</span> = ใช้ทุกขั้นเหมือนโหมดอัตโนมัติ
-                  </p>
                 </div>
-              )}
-              {!pitOverrideEnabled && (
-                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm space-y-1">
-                  <div className="flex justify-between gap-4 items-center">
-                    <span>ภาษี ณ ที่จ่าย (ภงด.) — คำนวณอัตโนมัติ</span>
-                    <span className="font-mono tabular-nums shrink-0">
-                      {previewNetLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin inline text-muted-foreground" />
-                      ) : (
-                        <>฿{(previewPitAuto ?? pitFromLine).toLocaleString()}</>
-                      )}
-                    </span>
+                <div
+                  className={`rounded-md border p-3 space-y-2 ${!canSaveAdjustments ? 'opacity-70' : ''} ${workerPitMode === 'auto_timesheet' ? 'ring-1 ring-primary/30 bg-muted/20' : 'bg-card'}`}
+                >
+                  <div className="flex items-start gap-2">
+                    <RadioGroupItem
+                      value="auto_timesheet"
+                      id="pit-auto-ts"
+                      className="mt-1"
+                      disabled={!canSaveAdjustments}
+                    />
+                    <div className="space-y-2 flex-1">
+                      <Label htmlFor="pit-auto-ts" className="font-medium leading-snug cursor-pointer">
+                        2) อัตโนมัติ — ตามรายได้/ลงเวลา &quot;งวดนี้&quot;
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground">
+                        ฐานคำนวณ ภงด. = ยอด &quot;Gross หลังเบี้ยเลี้ยง&quot; บนหน้านี้ (ตาราง + เบี้ยเลี้ยง) สอดคล้อง snapshot
+                        งวดเมื่อกดบันทึก
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-snug">
-                    ฐานคือยอดรายเดือน (รวมจากตาราง + เบี้ยเลี้ยง) → ประมาณการรายได้ ×12 → ลดหย่อนรายปี → ภาษีขั้นบันได → หาร 12 (
-                    <span className="font-mono">th_pit_monthly_annualized</span>) ตามนโยบาย{' '}
-                    {previewTaxPolicyName ? (
-                      <span className="text-foreground/90">«{previewTaxPolicyName}»</span>
-                    ) : (
-                      'ใน HR settings'
-                    )}
-                    — ยอดในงวดที่บันทึกแล้ว: ฿{pitFromLine.toLocaleString()}
-                  </p>
+                </div>
+                <div
+                  className={`rounded-md border p-3 space-y-2 ${!canSaveAdjustments ? 'opacity-70' : ''} ${workerPitMode === 'auto_salary_base' ? 'ring-1 ring-primary/30 bg-muted/20' : 'bg-card'}`}
+                >
+                  <div className="flex items-start gap-2">
+                    <RadioGroupItem
+                      value="auto_salary_base"
+                      id="pit-salary"
+                      className="mt-1"
+                      disabled={!canSaveAdjustments}
+                    />
+                    <div className="space-y-2 flex-1">
+                      <Label htmlFor="pit-salary" className="font-medium leading-snug cursor-pointer">
+                        3) อัตโนมัติ — ตามฐานเงินเดือนที่กำหนด (เช่น 45,000)
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground">
+                        ระบุ <strong>ฐานรายเดือนหนึ่งตัว</strong> นำไป x12, ลดหย่อน, ตารางขั้นบันได, หาร 12
+                        ตามนโยบาย ภาษีใน HR (ไม่อ้างยอดจากตาราง/เวลา)
+                      </p>
+                      {workerPitMode === 'auto_salary_base' && (
+                        <div className="flex flex-wrap items-center gap-2 max-w-md">
+                          <Input
+                            type="number"
+                            min={0}
+                            className="w-40"
+                            value={pitAutoSalaryBase}
+                            onChange={(e) => setPitAutoSalaryBase(e.target.value)}
+                            disabled={!canSaveAdjustments}
+                            placeholder="เช่น 45000"
+                          />
+                          <span className="text-sm text-muted-foreground">บาท/เดือน (ฐานคำนวณ ภงด. เท่านั้น)</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </RadioGroup>
+              {workerPitMode === 'auto_timesheet' && (
+                <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 space-y-2 max-w-xl">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="pit-legacy-marginal"
+                      checked={!autoTimesheetUseFullTable}
+                      onCheckedChange={(v) => setAutoTimesheetUseFullTable(v !== true)}
+                      disabled={!canSaveAdjustments}
+                    />
+                    <Label htmlFor="pit-legacy-marginal" className="text-xs text-muted-foreground font-normal">
+                      จำกัดเพดานอัตรา marginal สูงสุด (โหมดเวอร์ชันเก่า) — ปิด = คำนวณเต็มตาราง
+                    </Label>
+                  </div>
+                  {!autoTimesheetUseFullTable && (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 pl-0 sm:pl-6">
+                      <Label className="text-xs text-muted-foreground sm:w-48">
+                        อัตรา marginal สูงสุดในตาราง (0–35%)
+                      </Label>
+                      <Select
+                        value={String(autoTimesheetMarginalRate)}
+                        onValueChange={(v) => setAutoTimesheetMarginalRate(Number(v))}
+                        disabled={!canSaveAdjustments}
+                      >
+                        <SelectTrigger className="w-full sm:w-[200px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS.map((pct) => (
+                            <SelectItem key={pct} value={String(pct)}>
+                              {pct}%
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
               )}
+              <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm space-y-1">
+                <div className="flex justify-between gap-4 items-center">
+                  <span>ยอดหัก ภงด. โดยประมาณ (สำหรับ net ด้านบน)</span>
+                  <span className="font-mono tabular-nums shrink-0 text-foreground">
+                    {previewNetLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin inline text-muted-foreground" />
+                    ) : (
+                      <>฿{(previewPitAuto ?? pitFromLine).toLocaleString()}</>
+                    )}
+                  </span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  สูตร HR: th_pit_monthly_annualized ตามนโยบาย
+                  {previewTaxPolicyName ? (
+                    <span className="text-foreground/90"> «{previewTaxPolicyName}»</span>
+                  ) : (
+                    ' ใน HR settings'
+                  )}{' '}
+                  — ยอดที่บันทึกในงวดแล้ว: ฿{pitFromLine.toLocaleString()}
+                </p>
+              </div>
             </div>
 
             <div className="space-y-2">

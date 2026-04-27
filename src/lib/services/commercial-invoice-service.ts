@@ -19,6 +19,7 @@ import type {
   CommercialInvoiceLine,
   MainContract,
   POLine,
+  PoMonthTimesheetReview,
   PurchaseOrder,
   Quotation,
   QuotationLine,
@@ -26,6 +27,7 @@ import type {
   WaveMonthTimesheetReview,
 } from '@/lib/types';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
+import { resolvePoMonthPeriodBounds } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { generateBillingLines } from '@/lib/services/billing-line-generator';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
@@ -38,6 +40,9 @@ function roundMoney(n: number): number {
 
 /** PO จากใบเสนอราคา — ไม่มี Wave; ใช้เป็นค่า waveId เพื่อแยกจากงาน timesheet */
 export const QUOTATION_PO_WAVE_PLACEHOLDER = '__quotation_po__';
+
+/** งวดอนุมัติ timesheet รวมราย PO+เดือน (ไม่แยก wave) — ใบแจ้งหนี้รวม timesheet ทุก wave ใต้ PO ในช่วงงวด */
+export const PO_MONTH_WAVE_PLACEHOLDER = '__po_month__';
 
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -93,6 +98,22 @@ export async function findCommercialInvoiceByWaveMonthReview(
   return null;
 }
 
+export async function findCommercialInvoiceByPoMonthReview(
+  db: Firestore,
+  reviewId: string,
+): Promise<{ id: string; invoiceNo: string } | null> {
+  const q = query(collection(db, 'commercial_invoices'), where('sourcePoMonthReviewId', '==', reviewId));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  for (const d of snap.docs) {
+    const data = d.data() as CommercialInvoice;
+    if (data.status !== 'VOID') {
+      return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
+    }
+  }
+  return null;
+}
+
 /**
  * หลังผู้จัดการอนุมัติรอบเดือน — สร้างใบแจ้งหนี้อัตโนมัติ (ช่วงวันที่จาก review)
  */
@@ -118,6 +139,28 @@ export function filterWaveMonthReviewsMissingCommercialDraft(
   invoices: CommercialInvoice[],
 ): WaveMonthTimesheetReview[] {
   return reviews.filter((r) => !invoices.some((inv) => commercialInvoiceCoversMonthReview(inv, r)));
+}
+
+export function commercialInvoiceCoversPoMonthReview(
+  inv: CommercialInvoice,
+  review: PoMonthTimesheetReview,
+): boolean {
+  if (inv.status === 'VOID') return false;
+  if (inv.sourcePoMonthReviewId === review.id) return true;
+  const { start, end } = resolvePoMonthPeriodBounds(review);
+  return (
+    inv.poId === review.poId &&
+    inv.waveId === PO_MONTH_WAVE_PLACEHOLDER &&
+    inv.periodStart === start &&
+    inv.periodEnd === end
+  );
+}
+
+export function filterPoMonthReviewsMissingCommercialDraft(
+  reviews: PoMonthTimesheetReview[],
+  invoices: CommercialInvoice[],
+): PoMonthTimesheetReview[] {
+  return reviews.filter((r) => !invoices.some((inv) => commercialInvoiceCoversPoMonthReview(inv, r)));
 }
 
 async function findCommercialInvoiceByPoWaveAndPeriod(
@@ -369,6 +412,169 @@ export async function ensureCommercialDraftInvoiceAfterMonthApproval(
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, reason: msg };
   }
+}
+
+async function findCommercialInvoiceByPoMonthPeriodDup(
+  db: Firestore,
+  poId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<{ id: string; invoiceNo: string } | null> {
+  const q = query(
+    collection(db, 'commercial_invoices'),
+    where('poId', '==', poId),
+    where('waveId', '==', PO_MONTH_WAVE_PLACEHOLDER),
+  );
+  const snap = await getDocs(q);
+  for (const d of snap.docs) {
+    const x = d.data() as CommercialInvoice;
+    if (x.status === 'VOID') continue;
+    if (x.periodStart === periodStart && x.periodEnd === periodEnd) {
+      return { id: d.id, invoiceNo: String(x.invoiceNo || '') };
+    }
+  }
+  return null;
+}
+
+/**
+ * งวดอนุมัติ timesheet รวมราย PO+เดือน (รวมทุก wave) — ใบแจ้งหนี้ผูก sourcePoMonthReviewId
+ */
+export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
+  db: Firestore,
+  review: PoMonthTimesheetReview,
+  actor: User,
+): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
+  const existing = await findCommercialInvoiceByPoMonthReview(db, review.id);
+  if (existing?.id) {
+    return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
+  }
+  const { start, end } = resolvePoMonthPeriodBounds(review);
+  const periodDup = await findCommercialInvoiceByPoMonthPeriodDup(db, review.poId, start, end);
+  if (periodDup?.id) {
+    return {
+      ok: false,
+      reason: `มีใบในงวด PO+เดียวกันแล้ว (${periodDup.invoiceNo || periodDup.id}) — เปิดจากรายการด้านล่าง`,
+    };
+  }
+  const issueDate = timestampToHtmlDateValue(Date.now());
+  try {
+    const { id, invoiceNo } = await createCommercialDraftInvoiceForPoMonth(
+      db,
+      {
+        poId: review.poId,
+        periodStart: start,
+        periodEnd: end,
+        issueDate,
+        actor,
+        sourcePoMonthReviewId: review.id,
+      },
+    );
+    return { ok: true, id, invoiceNo };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: msg };
+  }
+}
+
+/**
+ * สร้างใบแจ้งหนี้จาก timesheet ทุก wave ใต้ PO ในช่วงงวด (กรองด้วย readyForBilling ใน generateBillingLines)
+ */
+export async function createCommercialDraftInvoiceForPoMonth(
+  db: Firestore,
+  params: {
+    poId: string;
+    periodStart: string;
+    periodEnd: string;
+    issueDate: string;
+    currency?: string;
+    actor: User;
+    notes?: string;
+    sourcePoMonthReviewId: string;
+  },
+): Promise<{ id: string; invoiceNo: string }> {
+  const { poId, periodStart, periodEnd, issueDate, actor, sourcePoMonthReviewId } = params;
+  const currency = params.currency || 'THB';
+  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined);
+  if (gen.lines.length === 0) {
+    throw new Error(
+      'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / สถานะ readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)',
+    );
+  }
+
+  const [poSnap] = await Promise.all([getDoc(doc(db, 'purchase_orders', poId))]);
+  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
+  const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+  const waveCodeLabel = 'PO+งวด (รวม wave)';
+
+  const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
+  const amountBeforeTax = roundMoney(gen.totalAmount);
+  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
+  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+
+  const lines: CommercialInvoiceLine[] = gen.lines.map((l) => ({
+    id: newLineId(),
+    description: l.description,
+    ...(l.workerId ? { workerId: l.workerId } : {}),
+    ...(l.workerName ? { workerName: l.workerName } : {}),
+    positionId: l.positionId,
+    eventType: l.eventType,
+    timesheetIds: l.timesheetIds,
+    quantity: l.quantity,
+    unitPrice: l.unitPrice,
+    amount: l.amount,
+    lineSource: 'timesheet' as const,
+  }));
+
+  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
+    actor: actor.displayName,
+    userId: actor.id,
+  });
+
+  const now = Date.now();
+  const payload: Omit<CommercialInvoice, 'id'> = {
+    invoiceNo,
+    status: 'DRAFT',
+    customerId: po.customerId,
+    contractId: po.contractId || undefined,
+    poId,
+    waveId: PO_MONTH_WAVE_PLACEHOLDER,
+    waveCode: waveCodeLabel,
+    periodStart,
+    periodEnd,
+    issueDate,
+    currency,
+    vatPercent,
+    amountBeforeTax,
+    vatAmount,
+    withholdingTaxAmount: 0,
+    totalAmount,
+    lines,
+    generationWarnings: gen.warnings,
+    timesheetCount: gen.timesheetCount,
+    notes: params.notes,
+    sourcePoMonthReviewId,
+    createdAt: now,
+    createdByUid: actor.id,
+    createdByName: actor.displayName,
+    updatedAt: now,
+  };
+
+  const ref = await addDoc(
+    collection(db, 'commercial_invoices'),
+    sanitizeFirestorePayload(payload as Record<string, unknown>),
+  );
+
+  await writeAuditLog(db, actor, {
+    actionType: 'CREATE_COMMERCIAL_INVOICE',
+    entityType: 'CommercialInvoice',
+    entityId: ref.id,
+    entityLabel: `${invoiceNo} (PO+งวด)`,
+    sourceModule: 'commercial_invoices',
+    linkedIds: [po.customerId, poId],
+    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก timesheet รวมราย PO+งวด`,
+  });
+
+  return { id: ref.id, invoiceNo };
 }
 
 export async function createCommercialDraftInvoice(

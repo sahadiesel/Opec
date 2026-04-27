@@ -10,10 +10,11 @@ import { formatDateThaiBE } from '@/lib/date-thai';
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
 
-/** ชื่อบริษัทจาก `system/company_profile` (หรือ undefined แล้วใช้ค่าเริ่มต้น) */
+/** ข้อมูลบริษัทจาก `system/company_profile` (หรือ undefined แล้วใช้ค่าเริ่มต้น) */
 export type PayslipCompanyProfileSource = {
   companyNameTh?: string;
   companyNameEn?: string;
+  documentHeaderLogoUrl?: string | null;
 } | null | undefined;
 
 function resolvePayslipCompanyNames(source: PayslipCompanyProfileSource): { companyNameTh: string; companyNameEn: string } {
@@ -28,6 +29,8 @@ export type PayslipLineItem = { label: string; amount: number };
 export type PayslipViewModel = {
   companyNameTh: string;
   companyNameEn: string;
+  /** โลโก้จาก company profile ถ้ามี */
+  companyLogoUrl?: string;
   employeeName: string;
   periodLabel: string;
   payrollTypeLabel: string;
@@ -204,6 +207,7 @@ export function buildPayslipFromWorkerLine(
   return {
     companyNameTh,
     companyNameEn,
+    companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.workerNameSnapshot,
     periodLabel: periodLabel || `${line.periodStartDate} → ${line.periodEndDate}`,
     payrollTypeLabel: 'ลูกจ้าง / Worker Payroll (Timesheet batch)',
@@ -280,6 +284,7 @@ export function buildPayslipFromOfficeLine(
   return {
     companyNameTh,
     companyNameEn,
+    companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.staffName,
     periodLabel: `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`,
     payrollTypeLabel: 'พนักงานออฟฟิศ / Office Payroll (รายเดือน)',

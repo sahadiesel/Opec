@@ -9,11 +9,11 @@
  * - ใบสั่งซื้อ (Purchase Order) — ใช้แล้ว: `buildPurchaseOrderPrintHtml`
  * - ใบเสนอราคา (Quotation)
  * - รายการใบแจ้งหนี้ / ใบแจ้งหนี้ (commercial billing / Invoice)
- * - ใบกำกับภาษี / ใบเสร็จ (Tax Invoice / Receipt)
+ * - ใบกำกับภาษี (Tax invoice) / ใบเสร็จรับเงิน (Money receipt) แยกเอกสาร
  * - ใบบันทึกเวลา (Timesheet) และเอกสารทางการค้าอื่นที่เพิ่มในอนาคต
  *
  * หลักการเลย์เอาต์:
- * - หัว: บริษัทซ้าย | ชื่อเอกสารไทย + ชื่ออังกฤษ (ถ้ามี) + meta ขวา (วันที่, เลขที่)
+ * - หัว: บริษัทซ้าย (~60% ความกว้าง, ชื่อบรรทัดเดียว, ที่อยู่เดียวตาม locale) | ชื่อเอกสาร + meta ขวา (~40%)
  * - กล่องคู่ค้า/ลูกค้า → ตารางรายการ → ยอดรวม + จำนวนเงินเป็นตัวอักษรไทย
  * - เนื้อหาเพิ่มเติมตามประเภทเอกสาร (เงื่อนไขชำระ ฯลฯ) ต่อท้ายแบบไหลธรรมชาติ ไม่ดันลายเซ็นไปชิดขอบล่างแบบ flex/min-height เต็มหน้า
  * - ฟุตเตอร์ลายเซ็น: `sd-sign-footer` มี break-inside: avoid
@@ -34,6 +34,7 @@ import type {
   Quotation,
   QuotationLine,
   TaxInvoice,
+  MoneyReceipt,
   Vendor,
 } from '@/lib/types';
 import {
@@ -64,8 +65,8 @@ export type CompanyProfilePrint = {
   addressLine2?: string;
 };
 
-/** แถว meta คอลัมน์ขวาใต้ชื่อเอกสาร (เช่น วันที่เอกสาร, เลขที่เอกสาร) */
-export type StandardDocMetaRow = { label: string; value: string };
+/** แถว meta คอลัมน์ขวา: คู่ label–value หรือบรรทัดเต็ม (จัดชิดขวา) */
+export type StandardDocMetaRow = { label: string; value: string } | { line: string };
 
 export function escapeHtmlDoc(s: string): string {
   return s
@@ -73,6 +74,32 @@ export function escapeHtmlDoc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** แยกที่อยู่ยาวให้ “ส่วนหลัง” ลงบรรทัดสอง (จุลภาค / คำว่า Province / รหัส TH + 5 หลัก) */
+function splitAddressLineForPrint(address: string): { line1: string; line2: string } {
+  const t = address.trim();
+  if (!t) return { line1: '', line2: '' };
+  const lastComma = t.lastIndexOf(',');
+  if (lastComma > 0) {
+    const a = t.slice(0, lastComma).trim();
+    const b = t.slice(lastComma + 1).trim();
+    if (a && b) return { line1: a, line2: b };
+  }
+  const prov = t.search(/\b[A-Za-z][a-zA-Z]*\s+Province\b/i);
+  if (prov > 0) {
+    return { line1: t.slice(0, prov).trim(), line2: t.slice(prov).trim() };
+  }
+  const thZip = t.match(/^(.*\s)(TH\s*\d{4,5})$/i);
+  if (thZip && thZip[1] && thZip[2]) {
+    return { line1: thZip[1].trim(), line2: thZip[2].trim() };
+  }
+  return { line1: t, line2: '' };
+}
+
+function formatIssueDateYmdForPrint(issueYmd: string | undefined, locale: PrintDocumentLocale): string {
+  if (!issueYmd?.trim()) return '—';
+  return locale === 'en' ? formatStoredDateGregorian(issueYmd) : formatStoredDateThaiBE(issueYmd);
 }
 
 /** สี teal หลัก — ให้สอดคล้องธีมเอกสารเรียบ (ใกล้เคียงตัวอย่างใบกำกับ) */
@@ -99,13 +126,24 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 16px;
+    gap: 12px;
     padding-bottom: 8px;
     border-bottom: 2px solid ${ACCENT};
     margin-bottom: 12px;
   }
-  .sd-company-name { font-weight: 800; font-size: 13pt; margin: 0 0 4px 0; }
+  .sd-company-col {
+    flex: 0 1 60%;
+    max-width: 60%;
+    min-width: 0;
+  }
+  .sd-company-name {
+    font-weight: 800;
+    font-size: 13pt;
+    margin: 0 0 4px 0;
+    white-space: nowrap;
+  }
   .sd-company-line { margin: 0; color: #404040; font-size: 9.5pt; }
+  .sd-company-addr { white-space: normal; overflow-wrap: break-word; word-wrap: break-word; }
   .sd-doc-title {
     margin: 0;
     font-size: 18pt;
@@ -122,10 +160,33 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     color: #525252;
     text-align: right;
   }
-  .sd-title-col { flex: 1; min-width: 0; text-align: right; }
-  .sd-title-col .sd-meta-row { margin-top: 4px; font-size: 10pt; text-align: right; white-space: nowrap; }
-  .sd-meta-row { margin-top: 4px; font-size: 10pt; text-align: right; }
-  .sd-meta-row strong { font-weight: 700; }
+  .sd-title-col { flex: 1; min-width: 0; max-width: 40%; text-align: right; }
+  .sd-meta-rows { margin-top: 8px; display: block; width: 100%; }
+  .sd-meta-row {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.2em 0.65em;
+    width: 100%;
+    font-size: 10pt;
+  }
+  .sd-meta-row + .sd-meta-row { margin-top: 3px; }
+  .sd-meta-lbl { flex: 0 0 auto; max-width: 52%; text-align: right; font-weight: 700; }
+  .sd-meta-val {
+    flex: 0 1 auto;
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd-meta-line {
+    width: 100%;
+    text-align: right;
+    font-size: 10pt;
+    line-height: 1.45;
+  }
+  .sd-meta-line + .sd-meta-line { margin-top: 4px; }
   .sd-party {
     border: 1px solid #d4d4d8;
     border-radius: 4px;
@@ -325,23 +386,38 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
 `;
 
-/** คอลัมน์ซ้าย: ชื่อและที่อยู่บริษัท — ไทยใช้ที่อยู่ไทย (addressLine2) อังกฤษใช้ที่อยู่อังกฤษ (addressLine1) ตาม Document Profile */
+/** คอลัมน์ซ้าย: ชื่อ (บรรทัดเดียว) + ที่อยู่ **ชุดเดียว** ตาม locale — ความกว้าง ~60% หน้า */
 export function buildStandardCompanyColumnHtml(
   company: CompanyProfilePrint | null | undefined,
   locale: PrintDocumentLocale = 'th',
 ): string {
   const nameTh = company?.companyNameTh?.trim();
   const nameEn = company?.companyNameEn?.trim();
-  const cn =
-    locale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
-  const addrEn = company?.addressLine1?.trim();
-  const addrTh = company?.addressLine2?.trim();
-  const primaryAddr = locale === 'en' ? addrEn || addrTh : addrTh || addrEn;
+  const cn = locale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
+  const addrEn = (company?.addressLine1 || '').trim();
+  const addrTh = (company?.addressLine2 || '').trim();
   const L = locale;
+  /** ที่อยู่เดียว: อังกฤษ = addressLine1, ไทย = addressLine2 (สลับรองรับกรณีกรอกข้างเดียว) */
+  const singleAddr = (L === 'en' ? addrEn || addrTh : addrTh || addrEn) || '';
+  const ph = (company?.phone || '').trim();
+  const phoneP = ph
+    ? `<p class="sd-company-line">${escapeHtmlDoc(printT(L, 'tel'))} ${escapeHtmlDoc(ph)}</p>`
+    : '';
+  let addrBlock = '';
+  if (singleAddr) {
+    const { line1, line2 } = splitAddressLineForPrint(singleAddr);
+    if (line2) {
+      addrBlock = `<p class="sd-company-line sd-company-addr">${escapeHtmlDoc(line1)}</p>
+      <p class="sd-company-line sd-company-addr">${escapeHtmlDoc(line2)}</p>`;
+    } else {
+      addrBlock = `<p class="sd-company-line sd-company-addr">${escapeHtmlDoc(line1)}</p>`;
+    }
+  }
+
   return `<div>
       <p class="sd-company-name">${escapeHtmlDoc(cn)}</p>
-      ${primaryAddr ? `<p class="sd-company-line">${escapeHtmlDoc(primaryAddr)}</p>` : ''}
-      ${company?.phone ? `<p class="sd-company-line">${escapeHtmlDoc(printT(L, 'tel'))} ${escapeHtmlDoc(company.phone)}</p>` : ''}
+      ${addrBlock}
+      ${phoneP}
       ${company?.email ? `<p class="sd-company-line">${escapeHtmlDoc(printT(L, 'email'))} ${escapeHtmlDoc(company.email)}</p>` : ''}
       ${company?.taxId ? `<p class="sd-company-line">${escapeHtmlDoc(printT(L, 'taxId'))} ${escapeHtmlDoc(company.taxId)}</p>` : ''}
     </div>`;
@@ -355,12 +431,15 @@ export function buildStandardTitleColumnHtml(params: {
   locale?: PrintDocumentLocale;
 }): string {
   const locale = params.locale ?? 'th';
-  const rows = params.metaRows
-    .map(
-      (r) =>
-        `<p class="sd-meta-row"><strong>${escapeHtmlDoc(r.label)}</strong> ${escapeHtmlDoc(r.value)}</p>`
-    )
+  const rowHtml = params.metaRows
+    .map((r) => {
+      if ('line' in r) {
+        return `<div class="sd-meta-line">${escapeHtmlDoc(r.line)}</div>`;
+      }
+      return `<div class="sd-meta-row"><span class="sd-meta-lbl">${escapeHtmlDoc(r.label)}</span><span class="sd-meta-val">${escapeHtmlDoc(r.value)}</span></div>`;
+    })
     .join('');
+  const rows = rowHtml ? `<div class="sd-meta-rows">${rowHtml}</div>` : '';
   if (locale === 'en') {
     const main = (params.documentTitleEn?.trim() || params.documentTitleTh).trim();
     return `<div class="sd-title-col">
@@ -368,11 +447,9 @@ export function buildStandardTitleColumnHtml(params: {
       ${rows}
     </div>`;
   }
-  const en = params.documentTitleEn?.trim()
-    ? `<span class="sd-doc-title-en">${escapeHtmlDoc(params.documentTitleEn.trim())}</span>`
-    : '';
+  /** ไทย: หัวเอกสารไทยเท่านั้น — ไม่แสดงคู่ EN บนหน้าเดียวกัน */
   return `<div class="sd-title-col">
-      <h1 class="sd-doc-title">${escapeHtmlDoc(params.documentTitleTh)}${en}</h1>
+      <h1 class="sd-doc-title">${escapeHtmlDoc(params.documentTitleTh)}</h1>
       ${rows}
     </div>`;
 }
@@ -387,7 +464,7 @@ export function buildStandardDocumentHeaderHtml(params: {
 }): string {
   const locale = params.locale ?? 'th';
   return `<header class="sd-header">
-    ${buildStandardCompanyColumnHtml(params.company, locale)}
+    <div class="sd-company-col">${buildStandardCompanyColumnHtml(params.company, locale)}</div>
     ${buildStandardTitleColumnHtml({
       documentTitleTh: params.documentTitleTh,
       documentTitleEn: params.documentTitleEn,
@@ -700,8 +777,7 @@ export function buildCommercialInvoicePrintHtml(params: {
   const locale = params.locale ?? 'th';
   const L = locale;
   const titles = commercialInvoiceDocTitles();
-  const docDate =
-    L === 'en' ? formatStoredDateGregorian(invoice.issueDate) : formatStoredDateThaiBE(invoice.issueDate);
+  const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
   const docRef = resolveCommercialPrintDocumentRef(
     invoice,
     purchaseOrder,
@@ -776,8 +852,8 @@ export function buildCommercialInvoicePrintHtml(params: {
     documentTitleTh: L === 'en' ? titles.en : titles.th,
     documentTitleEn: undefined,
     metaRows: [
-      { label: printT(L, 'docDate'), value: docDate },
-      { label: printT(L, 'docNo'), value: invoice.invoiceNo },
+      { line: `${printT(L, 'dateIssued')} ${issueStr}` },
+      { line: `${printT(L, 'docNo')}: ${invoice.invoiceNo}` },
     ],
     locale: L,
   });
@@ -850,8 +926,7 @@ export function buildTaxInvoicePrintHtml(params: {
   const { company, invoice, billingNote, billingLines, customer, customerPartyNameOverride, printedAtMs } = params;
   const L = params.locale ?? 'th';
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
-  const docDate =
-    L === 'en' ? formatStoredDateGregorian(invoice.issueDate) : formatStoredDateThaiBE(invoice.issueDate);
+  const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
   const partyName = customerPartyNameOverride?.trim() || customer?.name?.trim() || '—';
   const rangeFn = L === 'en' ? formatStoredDateRangeGregorian : formatStoredDateRangeThaiBE;
   const partyLines = [
@@ -913,11 +988,11 @@ export function buildTaxInvoicePrintHtml(params: {
   const totalWords = L === 'en' ? amountToEnglishBahtText(invoice.totalAmount) : amountToThaiBahtText(invoice.totalAmount);
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,
-    documentTitleTh: 'ใบกำกับภาษี / ใบเสร็จรับเงิน',
-    documentTitleEn: 'Tax Invoice / Receipt',
+    documentTitleTh: 'ใบกำกับภาษี',
+    documentTitleEn: 'Tax Invoice',
     metaRows: [
-      { label: printT(L, 'docDate'), value: docDate },
-      { label: printT(L, 'docNo'), value: invoice.taxInvoiceNo },
+      { line: `${printT(L, 'dateIssued')} ${issueStr}` },
+      { line: `${printT(L, 'docNo')}: ${invoice.taxInvoiceNo}` },
     ],
     locale: L,
   });
@@ -1011,8 +1086,7 @@ export function buildQuotationPrintHtml(params: {
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
   const q = quotation;
   const sorted = [...lines].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-  const issueStr =
-    L === 'en' ? formatStoredDateGregorian(q.issueDate) : formatYmdLocalThaiBE(q.issueDate);
+  const issueStr = formatIssueDateYmdForPrint(q.issueDate, L);
   const validStr =
     L === 'en' ? formatStoredDateGregorian(q.validUntilDate) : formatYmdLocalThaiBE(q.validUntilDate);
   const partyLines: string[] = [];
@@ -1068,10 +1142,10 @@ export function buildQuotationPrintHtml(params: {
     documentTitleTh: 'ใบเสนอราคา',
     documentTitleEn: 'Quotation',
     metaRows: [
-      { label: printT(L, 'docDate'), value: issueStr },
-      { label: printT(L, 'validUntil'), value: validStr },
-      { label: printT(L, 'docNo'), value: q.quotationNo },
-      { label: printT(L, 'currency'), value: q.currency || 'THB' },
+      { line: `${printT(L, 'dateIssued')} ${issueStr}` },
+      { line: `${printT(L, 'validUntil')}: ${validStr}` },
+      { line: `${printT(L, 'docNo')}: ${q.quotationNo}` },
+      { line: `${printT(L, 'currency')}: ${q.currency || 'THB'}` },
     ],
     locale: L,
   });
@@ -1152,7 +1226,7 @@ export function buildPurchaseOrderPrintHtml(params: {
   const { company, purchase, vendor, lines, milestones, printedAtMs } = params;
   const L = params.locale ?? 'th';
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
-  const docDate =
+  const poDateStr =
     L === 'en'
       ? formatStoredDateGregorian(`${purchase.purchaseDate}T12:00:00`)
       : formatDateThaiBE(`${purchase.purchaseDate}T12:00:00`);
@@ -1210,8 +1284,8 @@ export function buildPurchaseOrderPrintHtml(params: {
     documentTitleTh: 'ใบสั่งซื้อ',
     documentTitleEn: 'Purchase Order',
     metaRows: [
-      { label: printT(L, 'docDate'), value: docDate },
-      { label: printT(L, 'docNo'), value: purchase.purchaseNo },
+      { line: `${printT(L, 'docDate')}: ${poDateStr}` },
+      { line: `${printT(L, 'docNo')}: ${purchase.purchaseNo}` },
     ],
     locale: L,
   });
@@ -1277,6 +1351,65 @@ export function buildPurchaseOrderPrintHtml(params: {
     belowHtml: approvalNotice,
   });
 
+  return assembleStandardPrintPageHtml({
+    printedAtMs,
+    headerHtml,
+    mainHtml,
+    footerHtml,
+    locale: L,
+  });
+}
+
+export function buildMoneyReceiptPrintHtml(params: {
+  company: CompanyProfilePrint | null | undefined;
+  receipt: MoneyReceipt;
+  taxInvoice: Pick<TaxInvoice, 'taxInvoiceNo' | 'totalAmount' | 'currency' | 'issueDate'>;
+  customer: Customer | null | undefined;
+  printedAtMs?: number;
+  locale?: PrintDocumentLocale;
+}): string {
+  const { company, receipt, taxInvoice, customer, printedAtMs } = params;
+  const L = params.locale ?? 'th';
+  const loc = L === 'en' ? 'en-GB' : 'th-TH';
+  const issueStr = formatIssueDateYmdForPrint(receipt.receiptDate, L);
+  const partyName = customer?.name?.trim() || '—';
+  const refLines = [
+    `${L === 'en' ? 'Tax invoice no.' : 'อ้างอิงใบกำกับภาษี'}: ${taxInvoice.taxInvoiceNo}`,
+    `${L === 'en' ? 'Tax invoice date' : 'วันที่ออกใบกำกับ'}: ${formatIssueDateYmdForPrint(taxInvoice.issueDate, L)}`,
+  ];
+  const headerHtml = buildStandardDocumentHeaderHtml({
+    company,
+    documentTitleTh: 'ใบเสร็จรับเงิน',
+    documentTitleEn: 'Money Receipt',
+    metaRows: [
+      { line: `${printT(L, 'dateIssued')} ${issueStr}` },
+      { line: `${printT(L, 'docNo')}: ${receipt.receiptNo}` },
+    ],
+    locale: L,
+  });
+  const partyHtml = buildStandardPartyBoxHtml({
+    boxLabel: printT(L, 'customerBuyer'),
+    partyName,
+    detailLines: [...refLines, ...customerPartyDetailLines(customer, L)],
+  });
+  const amountWords = L === 'en' ? amountToEnglishBahtText(receipt.amount) : amountToThaiBahtText(receipt.amount);
+  const mainHtml = `${partyHtml}
+  <table class="sd-table"><tbody>
+    <tr><td class="sd-num">1</td><td><strong>${escapeHtmlDoc(
+      L === 'en' ? 'Payment received' : 'รับเงินค่าสินค้า/บริการ ตามใบกำกับภาษีอ้างอิง',
+    )}</strong></td>
+    <td class="sd-right">1</td>
+    <td class="sd-right">—</td>
+    <td class="sd-right">${receipt.amount.toLocaleString(loc, { minimumFractionDigits: 2 })}</td></tr>
+  </tbody></table>
+  <div class="sd-totals">
+    <p class="sd-grand"><strong>${escapeHtmlDoc(printT(L, 'grandTotal'))}:</strong> ${receipt.currency} ${receipt.amount.toLocaleString(loc, { minimumFractionDigits: 2 })}</p>
+    <p class="sd-words">${escapeHtmlDoc(amountWords)}</p>
+  </div>`;
+  const footerHtml = buildStandardSignFooterHtml({
+    left: { roleLine: L === 'en' ? 'Receiver (Accounting)' : 'ผู้รับเงิน (บัญชี)', name: receipt.createdByName || '—' },
+    right: { roleLine: printT(L, 'signCustomerAuth'), name: '—' },
+  });
   return assembleStandardPrintPageHtml({
     printedAtMs,
     headerHtml,

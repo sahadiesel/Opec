@@ -83,6 +83,7 @@ import {
   ensureOpenPayrollPeriodForWaveMonthReview,
   markTimesheetsReadyForPayrollAfterMonthApproval,
 } from '@/lib/timesheet/wave-month-payroll-bridge';
+import { ensureMonthlyTimesheetDocument } from '@/lib/timesheet/ensure-monthly-timesheet-document';
 
 function ymNow(): string {
   const d = new Date();
@@ -157,6 +158,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [uploadingPhotoWaveId, setUploadingPhotoWaveId] = useState<string | null>(null);
   const [syncingPayrollReviewId, setSyncingPayrollReviewId] = useState<string | null>(null);
   const payrollAutoHealRef = useRef<Set<string>>(new Set());
+  const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
+  const [monthlyDocLoading, setMonthlyDocLoading] = useState(false);
 
   const firebaseApp = useFirebaseApp();
 
@@ -300,6 +303,26 @@ export default function WaveMonthTimesheetSummaryPage() {
     }
     return m;
   }, [monthReviewRows]);
+
+  useEffect(() => {
+    if (!firestore || !currentUser || !monthYm || !canViewTs) return;
+    setMonthlyDocLoading(true);
+    let c = true;
+    void (async () => {
+      try {
+        const no = await ensureMonthlyTimesheetDocument(firestore, monthYm, currentUser);
+        if (c && no) setMonthlyTimesheetNo(no);
+      } catch (e) {
+        console.error('[wave-month] monthly timesheet doc', e);
+        if (c) setMonthlyTimesheetNo(null);
+      } finally {
+        if (c) setMonthlyDocLoading(false);
+      }
+    })();
+    return () => {
+      c = false;
+    };
+  }, [firestore, currentUser, monthYm, canViewTs]);
 
   /** หลังผู้จัดการอนุมัติ — ซิงค์ readyForPayroll ให้ timesheet ในช่วงงวด (กรณีครั้งแรกล้มเหลวหรือข้อมูลย้อนหลัง) */
   const handleSyncPayrollFlags = useCallback(
@@ -446,6 +469,35 @@ export default function WaveMonthTimesheetSummaryPage() {
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
+
+  const sheetsByWaveWorker = useMemo(() => {
+    const m = new Map<string, DailyTimesheet[]>();
+    for (const t of monthSheetsForOpenWaves) {
+      const k = `${t.waveId}|${t.workerId}`;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(t);
+    }
+    return m;
+  }, [monthSheetsForOpenWaves]);
+
+  const tableRows = useMemo(() => {
+    const out: { wave: Wave; po: PurchaseOrder | undefined; rw: { workerId: string; name: string } }[] = [];
+    for (const wave of sortedWaves) {
+      const po = poById.get(wave.poId);
+      const waveMobs = mobAssignments.filter((m) => m.waveId === wave.id);
+      const rosterWorkers = [...new Set(waveMobs.map((x) => x.workerId).filter(Boolean))]
+        .map((wid) => {
+          const w = allWorkers?.find((x) => x.id === wid);
+          const name = w ? `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.workerCode : wid;
+          return { workerId: wid, name };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      for (const rw of rosterWorkers) {
+        out.push({ wave, po, rw });
+      }
+    }
+    return out;
+  }, [sortedWaves, mobAssignments, allWorkers, poById]);
 
   const appendPhotoToBundle = useCallback(
     async (wave: Wave, poId: string, file: File) => {
@@ -825,10 +877,16 @@ export default function WaveMonthTimesheetSummaryPage() {
             </Button>
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2 lg:text-3xl">
               <CalendarRange className="h-7 w-7 lg:h-8 lg:w-8" />
-              สรุปลงเวลารายเดือน (ทั้งเวฟ)
+              เอกสาร timesheet รายเดือน
             </h1>
             <p className="text-muted-foreground mt-1 max-w-3xl text-sm lg:text-base">
-              ภาพรวมทุกคนในแต่ละ Wave ต่อเดือน — แสดงทุก PO / Wave ที่ยังไม่ปิด ตามเดือนที่เลือก (แถว = คนใน Wave จากการมอบหมาย)
+              เลขที่เอกสาร:{' '}
+              {monthlyDocLoading ? (
+                <span className="font-mono">…</span>
+              ) : (
+                <span className="font-mono text-foreground font-semibold">{monthlyTimesheetNo ?? '—'}</span>
+              )}{' '}
+              · ตารางรวมทุกคนทุก Wave ในเดือนที่เลือก — คอลัมน์ Wave บอกรอบงาน (ไม่อ้าง PO) · กดเซลล์เพื่อแก้รายวัน
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -839,12 +897,12 @@ export default function WaveMonthTimesheetSummaryPage() {
         </div>
 
         <PageGuidance
-          title="คีย์ด้านล่าง"
+          title="คีย์การใช้งาน"
           tips={[
-            'เลือกเดือน — แต่ละการ์ด = หนึ่ง Wave (PO ที่ยังไม่ปิด + Wave ที่ยังไม่ COMPLETED/CLOSED)',
-            'คลิกช่อง (ตัวเลขหรือจุดว่าง) เพื่อแก้ไข/เพิ่มรายการ — แก้วันที่ผิด ประเภทวัน (ป่วย/ส่งกลับ/Mob ฯลฯ) หรือชั่วโมง (เมื่อยังไม่ปิดงวด)',
-            'รหัสประเภทวัน: W=ทำงาน, SB=สแตนด์บาย, T=เดินทาง (ดู tooltip ที่หัวตาราง)',
-            'ปิดงวด: เลือกวันสุดท้ายของช่วง (ค่าเริ่มต้นสิ้นเดือน — กรณี Wave จบกลางเดือนให้ปรับวันสุดท้าย) → "ปิดงวดเดือน" ล็อกการแก้ไข หรือ "ปิดงวดและส่งตรวจสอบ" เข้าคิวผู้จัดการ — หลังอนุมัติระบบตั้งพร้อมจ่าย payroll ตามช่วง',
+            'เลือกเดือน — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; ส่วน "ดำเนินการต่อ Wave" ยังยึดราย Wave สำหรับปิดงวด/แนบ/ส่งตรวจ',
+            'ตารางรวม: แถว = คนใน Wave แต่ละรอบ (คนเดียวกันหลายรอบ = หลายแถว) — คลิกช่องรายวันเพื่อแก้/เพิ่ม (เมื่องวด wave นั้นยังไม่ล็อก)',
+            'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
+            'ปิดงวด/ส่งตรวจ/แนบรูป: ยังต้องทำทีละ Wave ในหัวข้อ "ดำเนินการต่อ Wave" ด้านบน (คนละสถานะราย Wave ตาม business เดิม)',
           ]}
         />
 
@@ -872,22 +930,19 @@ export default function WaveMonthTimesheetSummaryPage() {
             ไม่มี Wave ที่ยังไม่ปิดสำหรับ PO ที่เปิดอยู่ — หรือยังไม่มีข้อมูล Wave
           </p>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">ดำเนินการต่อ Wave (ล็อก / ส่งตรวจ / แนบ)</CardTitle>
+                <CardDescription>
+                  รายรอบงาน — ใช้เมื่อปิดงวด/ส่งอนุมัติ (สถานะล็อก/ส่งตรวจยังเก็บต่อ wave ในรีวิว)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-0">
             {sortedWaves.map((wave) => {
-              const po = poById.get(wave.poId);
               const waveMobs = mobAssignments.filter((m) => m.waveId === wave.id);
               const waveSheets = monthSheetsForOpenWaves.filter((t) => t.waveId === wave.id);
               const monthReview = reviewByWaveId.get(wave.id);
-
-              const byWorkerDate = new Map<string, DailyTimesheet>();
-              for (const t of waveSheets) {
-                byWorkerDate.set(`${t.workerId}|${t.date}`, t);
-              }
-
-              const rowTotals = new Map<string, number>();
-              for (const t of waveSheets) {
-                rowTotals.set(t.workerId, (rowTotals.get(t.workerId) ?? 0) + (t.normalHours ?? 0));
-              }
 
               const rosterWorkers = [...new Set(waveMobs.map((x) => x.workerId).filter(Boolean))]
                 .map((wid) => {
@@ -898,7 +953,6 @@ export default function WaveMonthTimesheetSummaryPage() {
                 .sort((a, b) => a.name.localeCompare(b.name, 'th'));
 
               const submitting = submittingWaveId === wave.id;
-              const editableGrid = canEditTs && !isWaveMonthReviewLocked(monthReview);
               const photoReadOnly =
                 monthReview?.status === 'pending_manager_review' || monthReview?.status === 'approved';
               const displayPhotos = photoReadOnly
@@ -906,22 +960,24 @@ export default function WaveMonthTimesheetSummaryPage() {
                 : bundleByWaveId.get(wave.id)?.attachments ?? [];
 
               return (
-                <Card key={wave.id} id={`wave-month-wave-${wave.id}`} className="overflow-hidden scroll-mt-4">
-                  <CardHeader className="border-b bg-muted/30 py-4 space-y-3">
+                <div
+                  key={wave.id}
+                  id={`wave-month-wave-${wave.id}`}
+                  className="overflow-hidden scroll-mt-4 rounded-lg border bg-card"
+                >
+                  <div className="border-b bg-muted/30 py-4 space-y-3 px-3 sm:px-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="space-y-1 min-w-0">
-                        <CardTitle className="text-base flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="font-mono">{po?.poCode ?? wave.poId}</span>
+                        <h3 className="text-base font-semibold flex flex-wrap items-center gap-x-2 gap-y-1">
                           <Waves className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="font-mono">{wave.waveCode}</span>
+                          <span className="font-mono">Wave {wave.waveCode}</span>
                           <Badge variant="secondary" className="text-[10px] font-normal">
                             {wave.status}
                           </Badge>
-                        </CardTitle>
-                        <CardDescription className="text-xs">
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
                           {waveRoundMonthLabel(wave)} · {wave.siteLocation || '—'}
-                        </CardDescription>
+                        </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
                         <Button variant="outline" size="sm" asChild>
@@ -1096,109 +1152,143 @@ export default function WaveMonthTimesheetSummaryPage() {
                     <p className="text-sm text-muted-foreground">
                       {monthYm} · {rosterWorkers.length} คน · {waveSheets.length} แถว timesheet ในเดือน
                     </p>
-                  </CardHeader>
-                  <CardContent className="p-0 overflow-x-auto">
-                    {rosterWorkers.length === 0 ? (
-                      <p className="text-center text-muted-foreground py-10 px-4">ยังไม่มีการมอบหมายใน Wave นี้</p>
-                    ) : (
-                      <>
-                        <Table className="min-w-max text-xs">
-                          <TableHeader>
-                            <TableRow className="bg-muted/50">
-                              <TableHead className="sticky left-0 z-20 min-w-[140px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
-                                พนักงาน
-                              </TableHead>
-                              {days.map((d) => (
-                                <TableHead key={d} className="px-1 text-center w-10 font-mono" title={d}>
-                                  {d.slice(8, 10)}
-                                </TableHead>
-                              ))}
-                              <TableHead className="text-center font-bold min-w-[56px]">รวมชม.</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {rosterWorkers.map((rw) => (
-                              <TableRow key={rw.workerId}>
-                                <TableCell className="sticky left-0 z-10 bg-background font-medium text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
-                                  {rw.name}
-                                </TableCell>
-                                {days.map((d) => {
-                                  const ts = byWorkerDate.get(`${rw.workerId}|${d}`);
-                                  const cell = timesheetCellSummary(ts);
-                                  return (
-                                    <TableCell key={d} className="px-0.5 text-center font-mono text-[10px]">
-                                      {ts ? (
-                                        <button
-                                          type="button"
-                                          title={
-                                            editableGrid
-                                              ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
-                                              : `${d} · ${ts.eventType} · ${ts.status}`
-                                          }
-                                          disabled={!editableGrid}
-                                          onClick={() =>
-                                            openCellEdit(wave, po, monthReview, rw, d, ts, waveMobs)
-                                          }
-                                          className={cn(
-                                            'inline-flex max-w-full justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                                            !editableGrid && 'cursor-not-allowed opacity-60',
-                                            editableGrid && 'cursor-pointer hover:opacity-90',
-                                          )}
-                                        >
-                                          <Badge
-                                            variant="outline"
-                                            className={`h-7 min-w-[2.5rem] px-1 font-mono text-[10px] leading-tight ${timesheetEventCellBadgeClasses(ts.eventType, ts.status)}`}
-                                          >
-                                            {cell || '—'}
-                                          </Badge>
-                                        </button>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          title={editableGrid ? `เพิ่มรายการ · ${d}` : undefined}
-                                          disabled={!editableGrid}
-                                          onClick={() =>
-                                            openCellEdit(wave, po, monthReview, rw, d, undefined, waveMobs)
-                                          }
-                                          className={cn(
-                                            'tabular-nums min-h-[28px] min-w-[28px] rounded text-muted-foreground/40',
-                                            editableGrid &&
-                                              'cursor-pointer text-muted-foreground/70 hover:bg-muted/60',
-                                            !editableGrid && 'cursor-default opacity-50',
-                                          )}
-                                        >
-                                          ·
-                                        </button>
-                                      )}
-                                    </TableCell>
-                                  );
-                                })}
-                                <TableCell className="text-center font-bold text-sm">
-                                  {rowTotals.get(rw.workerId) ?? 0}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                        <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
-                          <p>
-                            <strong>คีย์:</strong> ตัวเลข = ชม.ปกติ + รหัส (W/SB/T/…) —{' '}
-                            <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
-                            <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
-                            <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
-                            <strong className="text-orange-700">ส้ม</strong>=Mob/Demob ฯลฯ (ดู tooltip)
-                          </p>
-                          <p>
-                            <strong>ขอบสถานะ:</strong> วงแหวน <span className="text-amber-600">เหลืองทองหนา</span> = DRAFT —
-                            วงบางเทา = ส่งตรวจแล้ว / อื่นๆ
-                          </p>
-                        </div>
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               );
             })}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">สรุปลงเวลา — ทุกคนทุก Wave</CardTitle>
+                <CardDescription>
+                  เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
+                  · คอลัมน์แรก = รอบ (Wave) · ตามด้วยชื่อพนักงาน
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0 overflow-x-auto">
+                {tableRows.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-10 px-4">ยังไม่มีแถวในงวดนี้ (ไม่พบการมอบหมาย)</p>
+                ) : (
+                  <>
+                    <Table className="min-w-max text-xs">
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead className="sticky left-0 z-20 min-w-[100px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
+                            Wave
+                          </TableHead>
+                          <TableHead className="sticky z-20 min-w-[140px] left-[100px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
+                            พนักงาน
+                          </TableHead>
+                          {days.map((d) => (
+                            <TableHead key={d} className="px-1 text-center w-10 font-mono" title={d}>
+                              {d.slice(8, 10)}
+                            </TableHead>
+                          ))}
+                          <TableHead className="text-center font-bold min-w-[56px]">รวมชม.</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {tableRows.map((tr, rowIdx) => {
+                          const { wave, po, rw } = tr;
+                          const isFirstInWave = rowIdx === 0 || tableRows[rowIdx - 1]!.wave.id !== wave.id;
+                          const monthReview = reviewByWaveId.get(wave.id);
+                          const waveMobs = mobAssignments.filter((m) => m.waveId === wave.id);
+                          const rowSheets = sheetsByWaveWorker.get(`${wave.id}|${rw.workerId}`) ?? [];
+                          const byDate = new Map<string, DailyTimesheet>();
+                          for (const t of rowSheets) {
+                            byDate.set(t.date, t);
+                          }
+                          const rowTotal = rowSheets.reduce((s, t) => s + (t.normalHours ?? 0), 0);
+                          const editableGrid = canEditTs && !isWaveMonthReviewLocked(monthReview);
+                          return (
+                            <TableRow
+                              key={`${wave.id}-${rw.workerId}`}
+                              id={isFirstInWave ? `wave-month-data-${wave.id}` : undefined}
+                            >
+                              <TableCell
+                                className="sticky left-0 z-10 bg-background font-mono text-[10px] text-muted-foreground shadow-[2px_0_4px_rgba(0,0,0,0.06)]"
+                                title={wave.waveCode}
+                              >
+                                {wave.waveCode}
+                              </TableCell>
+                              <TableCell className="sticky z-10 left-[100px] bg-background font-medium text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
+                                {rw.name}
+                              </TableCell>
+                              {days.map((d) => {
+                                const ts = byDate.get(d);
+                                const cell = timesheetCellSummary(ts);
+                                return (
+                                  <TableCell key={d} className="px-0.5 text-center font-mono text-[10px]">
+                                    {ts ? (
+                                      <button
+                                        type="button"
+                                        title={
+                                          editableGrid
+                                            ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
+                                            : `${d} · ${ts.eventType} · ${ts.status}`
+                                        }
+                                        disabled={!editableGrid}
+                                        onClick={() =>
+                                          openCellEdit(wave, po, monthReview, rw, d, ts, waveMobs)
+                                        }
+                                        className={cn(
+                                          'inline-flex max-w-full justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                          !editableGrid && 'cursor-not-allowed opacity-60',
+                                          editableGrid && 'cursor-pointer hover:opacity-90',
+                                        )}
+                                      >
+                                        <Badge
+                                          variant="outline"
+                                          className={`h-7 min-w-[2.5rem] px-1 font-mono text-[10px] leading-tight ${timesheetEventCellBadgeClasses(ts.eventType, ts.status)}`}
+                                        >
+                                          {cell || '—'}
+                                        </Badge>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        title={editableGrid ? `เพิ่มรายการ · ${d}` : undefined}
+                                        disabled={!editableGrid}
+                                        onClick={() =>
+                                          openCellEdit(wave, po, monthReview, rw, d, undefined, waveMobs)
+                                        }
+                                        className={cn(
+                                          'tabular-nums min-h-[28px] min-w-[28px] rounded text-muted-foreground/40',
+                                          editableGrid &&
+                                            'cursor-pointer text-muted-foreground/70 hover:bg-muted/60',
+                                          !editableGrid && 'cursor-default opacity-50',
+                                        )}
+                                      >
+                                        ·
+                                      </button>
+                                    )}
+                                  </TableCell>
+                                );
+                              })}
+                              <TableCell className="text-center font-bold text-sm">{rowTotal}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                    <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
+                      <p>
+                        <strong>คีย์:</strong> ตัวเลข = ชม.ปกติ + รหัส (W/SB/T/…) —{' '}
+                        <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
+                        <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
+                        <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
+                        <strong className="text-orange-700">ส้ม</strong>=Mob/Demob ฯลฯ (ดู tooltip)
+                      </p>
+                      <p>
+                        <strong>ขอบสถานะ:</strong> วงแหวน <span className="text-amber-600">เหลืองทองหนา</span> = DRAFT —
+                        วงบางเทา = ส่งตรวจแล้ว / อื่นๆ
+                      </p>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>
@@ -1209,7 +1299,7 @@ export default function WaveMonthTimesheetSummaryPage() {
             <DialogTitle>แก้ไขลงเวลารายวัน</DialogTitle>
             <DialogDescription>
               {cellEdit
-                ? `${cellEdit.workerName} · ${cellEdit.po?.poCode ?? cellEdit.wave.poId} · ${cellEdit.wave.waveCode ?? ''}`
+                ? `${cellEdit.workerName} · Wave ${cellEdit.wave.waveCode ?? ''}`
                 : ''}
             </DialogDescription>
           </DialogHeader>

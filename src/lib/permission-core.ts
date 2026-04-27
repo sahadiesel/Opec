@@ -460,9 +460,10 @@ export function isOperationsPillarExecutive(user: User | null): boolean {
 }
 
 /**
- * แก้ต้นทุน (cost baseline) ใน position rates ของสัญญาหลัก — ตามนโยบาย: Admin, HR Manager, Operations Manager
+ * แก้ “ฝั่งต้นทุน/OT ต่อตำแหน่ง” บน position_rates ของสัญญา (ไม่รวมราคาขาย) — ตามนโยบาย: Admin, HR Manager, Operations Manager
+ * ค่าแรงฐาน OPEC กำหนดที่ /positions; ชื่อฟังก์ชันสะท้อน legacy ก่อนเฟส 5
  * รองรับผู้ใช้ที่แสดงเป็น manager ในกลุ่ม operations แต่เอกสารยังไม่มี assignedRoleKey = operations_manager
- * (ไม่ให้ทีมขายแก้ต้นทุน)
+ * (ไม่ให้ทีมขายแก้ฝั่งต้นทุน)
  */
 export function canEditMasterContractCostBaseline(user: User | null): boolean {
   if (!user) return false;

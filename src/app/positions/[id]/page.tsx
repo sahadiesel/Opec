@@ -38,7 +38,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, collection } from 'firebase/firestore';
+import { doc, collection, getCountFromServer, query, where } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
   Position,
@@ -62,6 +62,8 @@ import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { positionDetailHeadline, type PositionDoc } from '@/lib/position-display';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete } from '@/lib/permissions';
+import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '@/lib/payroll/labor-cost-model';
+import { LaborCostPositionSection } from '@/components/hr/labor-cost-position-section';
 
 export default function PositionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -71,6 +73,11 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const canViewPositions = useMemo(() => canView(currentUser, 'positions'), [currentUser]);
   const canEditPositions = useMemo(() => canEdit(currentUser, 'positions'), [currentUser]);
   const canDeletePositions = useMemo(() => canDelete(currentUser, 'positions'), [currentUser]);
+  const canViewLabor = useMemo(() => canViewWorkerLaborCostFromUser(currentUser), [currentUser]);
+  const canEditLabor = useMemo(
+    () => canEditWorkerLaborCostFromUser(currentUser) && canEditPositions,
+    [currentUser, canEditPositions],
+  );
 
   const posRef = useMemoFirebase(
     () => (firestore && canViewPositions ? doc(firestore, 'positions', id) : null),
@@ -142,6 +149,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const [isGenerating, setIsGenerating] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState('master');
+  const [laborSaveDialogOpen, setLaborSaveDialogOpen] = useState(false);
+  const [laborWorkerCount, setLaborWorkerCount] = useState<number | null>(null);
+  const [laborCountLoading, setLaborCountLoading] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -155,20 +165,76 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     [workerDocCatalog, newCert.templateId]
   );
 
-  const handleSaveMaster = () => {
+  const nMoney = (v: number | undefined) => (v == null || Number.isNaN(Number(v)) ? null : Number(v));
+
+  const nextLaborOn = useMemo(() => {
+    if (editedPos.defaultLaborCostOnshore !== undefined) return editedPos.defaultLaborCostOnshore;
+    return position?.defaultLaborCostOnshore;
+  }, [editedPos.defaultLaborCostOnshore, position?.defaultLaborCostOnshore]);
+
+  const nextLaborOff = useMemo(() => {
+    if (editedPos.defaultLaborCostOffshore !== undefined) return editedPos.defaultLaborCostOffshore;
+    return position?.defaultLaborCostOffshore;
+  }, [editedPos.defaultLaborCostOffshore, position?.defaultLaborCostOffshore]);
+
+  const displayLaborOn = isEditing ? nextLaborOn : position?.defaultLaborCostOnshore;
+  const displayLaborOff = isEditing ? nextLaborOff : position?.defaultLaborCostOffshore;
+
+  const laborDefaultsChanged = useMemo(() => {
+    if (!position) return false;
+    return (
+      nMoney(nextLaborOn) !== nMoney(position.defaultLaborCostOnshore) ||
+      nMoney(nextLaborOff) !== nMoney(position.defaultLaborCostOffshore)
+    );
+  }, [position, nextLaborOn, nextLaborOff]);
+
+  const commitPositionSave = useCallback(() => {
+    if (!posRef || !position) return;
+    const base: Record<string, unknown> = {
+      ...editedPos,
+      positionCode: position.positionCode,
+      updatedAt: Date.now(),
+    };
+    if (!canViewLabor) {
+      delete base.defaultLaborCostOnshore;
+      delete base.defaultLaborCostOffshore;
+    }
+    updateDocumentNonBlocking(posRef, base);
+    setIsEditing(false);
+    setLaborSaveDialogOpen(false);
+    setLaborWorkerCount(null);
+    toast({ title: 'บันทึกสำเร็จ', description: 'ข้อมูลหลักของตำแหน่งงานถูกอัปเดตแล้ว' });
+  }, [posRef, position, editedPos, canViewLabor, toast]);
+
+  const handleSaveMaster = useCallback(async () => {
     if (!canEditPositions) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขตำแหน่งงาน' });
       return;
     }
     if (!posRef || !position) return;
-    updateDocumentNonBlocking(posRef, {
-      ...editedPos,
-      positionCode: position.positionCode,
-      updatedAt: Date.now(),
-    });
-    setIsEditing(false);
-    toast({ title: "บันทึกสำเร็จ", description: "ข้อมูลหลักของตำแหน่งงานถูกอัปเดตแล้ว" });
-  };
+    if (canViewLabor && canEditLabor && laborDefaultsChanged) {
+      setLaborCountLoading(true);
+      setLaborSaveDialogOpen(true);
+      setLaborWorkerCount(null);
+      try {
+        if (!firestore) throw new Error('no firestore');
+        const cq = await getCountFromServer(
+          query(collection(firestore, 'workers'), where('currentPositionId', '==', id)),
+        );
+        setLaborWorkerCount(cq.data().count);
+      } catch {
+        setLaborWorkerCount(null);
+      } finally {
+        setLaborCountLoading(false);
+      }
+      return;
+    }
+    commitPositionSave();
+  }, [canEditPositions, posRef, position, canViewLabor, canEditLabor, laborDefaultsChanged, firestore, id, commitPositionSave, toast]);
+
+  const confirmLaborSave = useCallback(() => {
+    commitPositionSave();
+  }, [commitPositionSave]);
 
   const handleAddCert = () => {
     if (!canEditPositions) {
@@ -465,6 +531,14 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 </div>
               </CardContent>
             </Card>
+            <LaborCostPositionSection
+              displayOnshore={displayLaborOn}
+              displayOffshore={displayLaborOff}
+              isEditing={isEditing}
+              onPatch={(p) => setEditedPos((prev) => ({ ...prev, ...p }))}
+              canView={canViewLabor}
+              canEdit={canEditLabor}
+            />
           </TabsContent>
 
           <TabsContent value="certs" className="mt-6">
@@ -863,6 +937,45 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog
+          open={laborSaveDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setLaborSaveDialogOpen(false);
+              setLaborWorkerCount(null);
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>ยืนยันการแก้ต้นทุนมาตรฐาน</DialogTitle>
+              <DialogDescription asChild>
+                <div className="space-y-2 text-sm">
+                  <p>
+                    การแก้ฐาน onshore / offshore จะส่งผลกับคนงานที่ยึด default ตำแหน่ง (ไม่กระทบรายคนที่กำหนด override
+                    เอง)
+                  </p>
+                  {laborCountLoading ? (
+                    <p className="flex items-center gap-2 text-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" /> กำลังนับคนงาน…
+                    </p>
+                  ) : laborWorkerCount != null ? (
+                    <p className="font-medium text-foreground">ตอนนี้มี {laborWorkerCount} คนที่ตั้งตำแหน่งหลักเป็นตำแหน่งนี้</p>
+                  ) : null}
+                </div>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLaborSaveDialogOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button onClick={confirmLaborSave} disabled={laborCountLoading} className="bg-primary font-bold">
+                ยืนยันบันทึก
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

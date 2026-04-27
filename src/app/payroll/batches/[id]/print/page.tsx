@@ -41,7 +41,7 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
     return lines.map((line) => buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined));
-  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn]);
+  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl]);
 
   const handlePrintAll = () => window.print();
 

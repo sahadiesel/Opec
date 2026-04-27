@@ -1,18 +1,19 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { useFirebaseApp, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
+import { deleteField, doc, setDoc } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, ShieldAlert, Building2, Save } from 'lucide-react';
+import { uploadDocumentHeaderImage } from '@/lib/storage/company-document-assets';
+import { Loader2, ShieldAlert, Building2, Save, ImageIcon, Upload, X } from 'lucide-react';
 
 type CompanyDocumentProfile = {
   companyNameTh?: string;
@@ -25,16 +26,25 @@ type CompanyDocumentProfile = {
   website?: string;
   addressLine1?: string;
   addressLine2?: string;
+  /** รูปโลโก้ — แสดงบนเอกสาร ~1"×1"; `null` = ลบออก (ยังไม่บันทึก) */
+  documentHeaderLogoUrl?: string | null;
+  /** รูปตรายาง — แสดง ~2"×2" */
+  documentHeaderStampUrl?: string | null;
   updatedAt?: number;
   updatedBy?: string;
 };
 
 export default function DocumentProfileAdminPage() {
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
   const [draft, setDraft] = useState<CompanyDocumentProfile>({});
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingStamp, setUploadingStamp] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const stampInputRef = useRef<HTMLInputElement>(null);
 
   const profileRef = useMemoFirebase(
     () => (firestore ? doc(firestore, 'system', 'company_profile') : null),
@@ -47,6 +57,33 @@ export default function DocumentProfileAdminPage() {
   }, [profile]);
 
   const canManage = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
+
+  const handleHeaderImage =
+    (kind: 'logo' | 'stamp') => async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      if (kind === 'logo') setUploadingLogo(true);
+      else setUploadingStamp(true);
+      try {
+        const url = await uploadDocumentHeaderImage(firebaseApp, kind, file);
+        if (kind === 'logo') {
+          setDraft((d) => ({ ...d, documentHeaderLogoUrl: url }));
+        } else {
+          setDraft((d) => ({ ...d, documentHeaderStampUrl: url }));
+        }
+        toast({ title: 'อัปโหลดรูปแล้ว', description: 'กด "บันทึกค่าเอกสารกลาง" เพื่อยืนยัน URL ลงฐานข้อมูล' });
+      } catch (err: any) {
+        toast({
+          variant: 'destructive',
+          title: 'อัปโหลดไม่สำเร็จ',
+          description: err?.message || 'เกิดข้อผิดพลาด',
+        });
+      } finally {
+        if (kind === 'logo') setUploadingLogo(false);
+        else setUploadingStamp(false);
+      }
+    };
 
   const handleSave = async () => {
     if (!profileRef || !currentUser || !canManage) return;
@@ -64,16 +101,24 @@ export default function DocumentProfileAdminPage() {
           return;
         }
       }
-      await setDoc(
-        profileRef,
-        {
-          ...draft,
-          branchNo: normalizedBranchNo,
-          updatedAt: Date.now(),
-          updatedBy: currentUser.displayName,
-        },
-        { merge: true }
-      );
+      const { documentHeaderLogoUrl: logoUrl, documentHeaderStampUrl: stampUrl, ...restDraft } = draft;
+      const payload: Record<string, unknown> = {
+        ...restDraft,
+        branchNo: normalizedBranchNo,
+        updatedAt: Date.now(),
+        updatedBy: currentUser.displayName,
+      };
+      if (logoUrl === null) {
+        payload.documentHeaderLogoUrl = deleteField();
+      } else if (logoUrl) {
+        payload.documentHeaderLogoUrl = logoUrl;
+      }
+      if (stampUrl === null) {
+        payload.documentHeaderStampUrl = deleteField();
+      } else if (stampUrl) {
+        payload.documentHeaderStampUrl = stampUrl;
+      }
+      await setDoc(profileRef, payload as Record<string, unknown> & { updatedBy?: string; updatedAt?: number }, { merge: true });
       toast({ title: 'บันทึกสำเร็จ', description: 'อัปเดตหัวเอกสารกลางเรียบร้อยแล้ว' });
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: error?.message || 'เกิดข้อผิดพลาด' });
@@ -199,11 +244,124 @@ export default function DocumentProfileAdminPage() {
                 placeholder="ที่อยู่เป็นภาษาไทยสำหรับหัวเอกสาร"
               />
             </div>
-            <div className="flex justify-end">
-              <Button onClick={handleSave} disabled={isSaving} className="gap-2">
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                บันทึกค่าเอกสารกลาง
-              </Button>
+
+            <div className="space-y-2">
+              <Label>รูปบนเอกสาร (โลโก้ / ตรายาง)</Label>
+              <p className="text-sm text-muted-foreground">
+                อัปโหลดแล้วกดบันทึก — กล่องตัวอย่างสะท้อนขนาดมาตรฐานบน print (1&quot; = 1 นิ้ว)
+              </p>
+              <div className="flex flex-col lg:flex-row flex-wrap items-end justify-between gap-6 pt-1">
+                <div className="flex flex-col sm:flex-row flex-wrap gap-6">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    onChange={handleHeaderImage('logo')}
+                  />
+                  <div className="space-y-2">
+                    <span className="text-sm font-medium">โลโก้ (แสดง ~1&quot;×1&quot;)</span>
+                    <div
+                      className="border border-dashed border-muted-foreground/40 bg-muted/30 rounded-md flex items-center justify-center overflow-hidden"
+                      style={{ width: '1in', height: '1in' }}
+                    >
+                      {draft.documentHeaderLogoUrl ? (
+                        <img
+                          src={draft.documentHeaderLogoUrl}
+                          alt="โลโก้บริษัท"
+                          className="max-w-full max-h-full w-auto h-auto object-contain"
+                        />
+                      ) : (
+                        <ImageIcon className="h-8 w-8 text-muted-foreground/50" />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={!canManage || uploadingLogo}
+                        onClick={() => logoInputRef.current?.click()}
+                      >
+                        {uploadingLogo ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        แนบรูป
+                      </Button>
+                      {draft.documentHeaderLogoUrl ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1 text-destructive"
+                          onClick={() => setDraft((d) => ({ ...d, documentHeaderLogoUrl: null }))}
+                        >
+                          <X className="h-3.5 w-3.5" /> เอาออก
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <input
+                    ref={stampInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    onChange={handleHeaderImage('stamp')}
+                  />
+                  <div className="space-y-2">
+                    <span className="text-sm font-medium">ตรายาง (แสดง ~2&quot;×2&quot;)</span>
+                    <div
+                      className="border border-dashed border-muted-foreground/40 bg-muted/30 rounded-md flex items-center justify-center overflow-hidden"
+                      style={{ width: '2in', height: '2in' }}
+                    >
+                      {draft.documentHeaderStampUrl ? (
+                        <img
+                          src={draft.documentHeaderStampUrl}
+                          alt="ตรายาง"
+                          className="max-w-full max-h-full w-auto h-auto object-contain"
+                        />
+                      ) : (
+                        <ImageIcon className="h-10 w-10 text-muted-foreground/50" />
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={!canManage || uploadingStamp}
+                        onClick={() => stampInputRef.current?.click()}
+                      >
+                        {uploadingStamp ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        แนบรูป
+                      </Button>
+                      {draft.documentHeaderStampUrl ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1 text-destructive"
+                          onClick={() => setDraft((d) => ({ ...d, documentHeaderStampUrl: null }))}
+                        >
+                          <X className="h-3.5 w-3.5" /> เอาออก
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                <Button onClick={handleSave} disabled={isSaving} className="gap-2 shrink-0 w-full sm:w-auto">
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  บันทึกค่าเอกสารกลาง
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
