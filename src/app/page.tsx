@@ -178,15 +178,16 @@ export default function Home() {
           return;
         }
         toast({
-          title: 'รอการอนุมัติจากผู้ดูแลระบบ',
-          description: 'บัญชีของคุณยังไม่ได้รับการอนุมัติหรือกำหนดสิทธิ์ — โปรดรอแอดมินดำเนินการที่เมนูจัดการผู้ใช้',
+          title: 'Pending administrator approval',
+          description:
+            'Your account is not yet approved or assigned a role. An admin will process it in User management.',
         });
         handleLogout();
         return;
       }
       // Security Guard: Check inactivity
       if (!latestUserDoc.isActive || latestUserDoc.approvalStatus === 'SUSPENDED') {
-        toast({ variant: "destructive", title: "Access Blocked", description: "บัญชีของคุณถูกระงับการใช้งาน" });
+        toast({ variant: "destructive", title: "Access Blocked", description: "Your account has been suspended." });
         handleLogout();
         return;
       }
@@ -241,8 +242,9 @@ export default function Home() {
         // 1. Pending approval (internal)
         if (userData.userType !== 'customer_portal' && userData.approvalStatus === 'PENDING') {
           toast({
-            title: 'รอการอนุมัติ',
-            description: 'บัญชียังไม่ได้รับการอนุมัติหรือกำหนดสิทธิ์จากผู้ดูแลระบบ — ใช้งานได้หลังแอดมินอนุมัติแล้ว',
+            title: 'Pending approval',
+            description:
+              'Your account has not been approved or assigned a role by an administrator yet. You can use the app after an admin approves it.',
           });
           await signOut(auth);
           setIsLoggingIn(false);
@@ -250,7 +252,11 @@ export default function Home() {
         }
         // 2. Check Activity Status
         if (!userData.isActive || userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
-          toast({ variant: "destructive", title: "Access Restricted", description: "บัญชีของคุณถูกระงับการใช้งาน (Account Inactive)" });
+          toast({
+            variant: "destructive",
+            title: "Access Restricted",
+            description: "Your account is inactive or has been suspended.",
+          });
           await signOut(auth);
           setIsLoggingIn(false);
           return;
@@ -261,7 +267,7 @@ export default function Home() {
 
         setUser(userData);
         localStorage.setItem('opsflow_user', JSON.stringify(userData));
-        toast({ title: "เข้าสู่ระบบสำเร็จ" });
+        toast({ title: "Signed in successfully" });
 
         if (userData.userType === 'customer_portal') {
           router.replace('/client-portal/dashboard');
@@ -277,12 +283,13 @@ export default function Home() {
         await signOut(auth);
         toast({
           variant: 'destructive',
-          title: 'ไม่พบข้อมูลผู้ใช้ในระบบ',
-          description: 'บัญชีนี้ยังไม่มีโปรไฟล์ใน Firestore — ติดต่อผู้ดูแลระบบหรือลงทะเบียนผู้ใช้ใหม่',
+          title: 'User profile not found',
+          description:
+            'This account has no user profile in Firestore yet. Contact an administrator or register a new user.',
         });
       }
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Login Failed", description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
+      toast({ variant: "destructive", title: "Login failed", description: "Incorrect email or password." });
     } finally {
       loginInProgressRef.current = false;
       setIsLoggingIn(false);
@@ -293,21 +300,21 @@ export default function Home() {
     e.preventDefault();
     const addr = forgotEmail.trim();
     if (!addr) {
-      toast({ variant: 'destructive', title: 'กรอกอีเมล', description: 'ระบุอีเมลที่ใช้ลงทะเบียน' });
+      toast({ variant: 'destructive', title: 'Email required', description: 'Enter the email you used to register.' });
       return;
     }
     setIsSendingResetEmail(true);
     try {
       await sendPasswordResetEmail(auth, addr);
       toast({
-        title: 'ส่งลิงก์รีเซ็ตรหัสผ่านแล้ว',
-        description: 'ตรวจสอบกล่องจดหมาย (และโฟลเดอร์สแปม) แล้วคลิกลิงก์จาก Firebase เพื่อตั้งรหัสผ่านใหม่',
+        title: 'Password reset link sent',
+        description: 'Check your inbox (and spam) and use the link from Firebase to set a new password.',
       });
       setShowForgotPasswordDialog(false);
       setForgotEmail('');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'ส่งไม่สำเร็จ';
-      toast({ variant: 'destructive', title: 'ส่งอีเมลไม่สำเร็จ', description: msg });
+      const msg = err instanceof Error ? err.message : 'Request failed';
+      toast({ variant: 'destructive', title: 'Could not send email', description: msg });
     } finally {
       setIsSendingResetEmail(false);
     }
@@ -320,15 +327,15 @@ export default function Home() {
     const phone = regPhone.trim();
     const em = regEmail.trim();
     if (!name || !phone || !em) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรอกชื่อ เบอร์โทร และอีเมล' });
+      toast({ variant: 'destructive', title: 'Missing information', description: 'Enter your full name, phone, and email.' });
       return;
     }
     if (regPassword.length < 8) {
-      toast({ variant: 'destructive', title: 'รหัสผ่านสั้นเกินไป', description: 'อย่างน้อย 8 ตัวอักษร' });
+      toast({ variant: 'destructive', title: 'Password too short', description: 'Use at least 8 characters.' });
       return;
     }
     if (regPassword !== regPasswordConfirm) {
-      toast({ variant: 'destructive', title: 'รหัสผ่านไม่ตรงกัน', description: 'กรอกยืนยันรหัสผ่านให้ตรงกัน' });
+      toast({ variant: 'destructive', title: 'Passwords do not match', description: 'Enter the same password in both fields.' });
       return;
     }
 
@@ -345,7 +352,7 @@ export default function Home() {
       const cred = await withTimeout(
         createUserWithEmailAndPassword(auth, em, regPassword),
         90_000,
-        'การสร้างบัญชีหมดเวลา — ตรวจสอบการเชื่อมต่อแล้วลองใหม่'
+        'Account creation timed out. Check your connection and try again.'
       );
       newUid = cred.user.uid;
       const now = Date.now();
@@ -366,7 +373,7 @@ export default function Home() {
       await withTimeout(
         setDoc(doc(firestore, 'users', newUid), sanitizeFirestorePayload(newUser)),
         45_000,
-        'บันทึกข้อมูลในระบบหมดเวลา — ตรวจสอบเน็ตหรือ deploy กฎ Firestore ล่าสุด'
+        'Saving to the system timed out. Check your network or the latest Firestore security rules deploy.'
       );
       try {
         await signOut(auth);
@@ -383,8 +390,8 @@ export default function Home() {
       setRegPasswordConfirm('');
       setRegistrationSuccessEmail(em);
       toast({
-        title: 'ส่งคำขอลงทะเบียนแล้ว',
-        description: 'รอผู้ดูแลระบบอนุมัติและกำหนดสิทธิ์ที่เมนูจัดการผู้ใช้ — จากนั้นจึงเข้าสู่ระบบด้วยอีเมลนี้ได้',
+        title: 'Registration request sent',
+        description: 'An administrator will approve and assign a role in User management. You can then sign in with this email.',
       });
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -399,11 +406,11 @@ export default function Home() {
       let description = raw;
       if (lower.includes('permission') || lower.includes('insufficient')) {
         description =
-          'ไม่มีสิทธิ์บันทึกโปรไฟล์ใน Firestore (กฎความปลอดภัย) — อีเมลอาจถูกสร้างใน Auth ชั่วคราวแล้วถูกลบอัตโนมัติ กรุณาลองใหม่หลัง deploy กฎ หรือติดต่อผู้ดูแลระบบ';
+          'No permission to save the profile in Firestore (security rules). A temporary Auth user may have been created and removed. Try again after the rules are deployed, or contact an administrator.';
       } else if (lower.includes('email-already') || lower.includes('already in use')) {
-        description = 'อีเมลนี้ลงทะเบียนในระบบแล้ว — ลองเข้าสู่ระบบ หรือใช้อีเมลอื่น';
+        description = 'This email is already registered. Try signing in, or use a different email.';
       }
-      toast({ variant: 'destructive', title: 'ลงทะเบียนไม่สำเร็จ', description });
+      toast({ variant: 'destructive', title: 'Registration failed', description });
     } finally {
       selfRegisterInProgressRef.current = false;
       setIsRegistering(false);
@@ -421,11 +428,12 @@ export default function Home() {
       <LoginStageBackdrop>
         <div className="relative z-10 flex max-w-md flex-col items-center justify-center gap-3 px-4 text-center">
           <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          <p className="text-sm text-white/85">กำลังเตรียมระบบ…</p>
+          <p className="text-sm text-white/85">Preparing the app…</p>
           {authSlowHint && (
             <p className="text-xs text-white/60">
-              ถ้ารอนานเกินไป: ตรวจว่ารัน <span className="font-mono">npm run dev</span> ตามพอร์ตในเทอร์มินัล (ค่าเริ่มต้น 9003) แล้วลองรีเฟรช
-              (Ctrl+Shift+R) หรือตรวจเครือข่าย / VPN
+              If this takes too long, confirm you are running <span className="font-mono">npm run dev</span> on the
+              port shown in the terminal (default 9003), then try a hard refresh (Ctrl+Shift+R) or check your
+              network / VPN.
             </p>
           )}
         </div>
@@ -467,7 +475,7 @@ export default function Home() {
           <CardHeader className="space-y-1 text-center">
             {userError && (
               <Alert variant="destructive" className="mb-4 text-left">
-                <AlertTitle>เชื่อมต่อระบบไม่สำเร็จ</AlertTitle>
+                <AlertTitle>Could not connect to the app</AlertTitle>
                 <AlertDescription className="text-sm">
                   {userError.message}
                 </AlertDescription>
@@ -475,9 +483,10 @@ export default function Home() {
             )}
             {authBootstrapTimedOut && isUserLoading && !userError && (
               <Alert className="mb-4 text-left border-amber-200 bg-amber-50 text-amber-950">
-                <AlertTitle>กำลังเชื่อมต่อ Firebase…</AlertTitle>
+                <AlertTitle>Connecting to Firebase…</AlertTitle>
                 <AlertDescription className="text-sm">
-                  ระบบยังไม่ได้สถานะล็อกอินภายในเวลาที่กำหนด — ลองรีเฟรช (Ctrl+Shift+R) หรือตรวจอินเทอร์เน็ต / VPN / ไฟร์วอลล์
+                  Sign-in state did not arrive in time. Try a hard refresh (Ctrl+Shift+R) or check your internet,
+                  VPN, or firewall.
                 </AlertDescription>
               </Alert>
             )}
@@ -489,11 +498,12 @@ export default function Home() {
             {registrationSuccessEmail && (
               <Alert className="mt-4 text-left border-green-200 bg-green-50 text-green-900">
                 <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <AlertTitle className="text-green-900 font-bold">ลงทะเบียนแล้ว — รออนุมัติ</AlertTitle>
+                <AlertTitle className="text-green-900 font-bold">Registered — pending approval</AlertTitle>
                 <AlertDescription className="text-sm text-green-800 space-y-2">
                   <p>
-                    ส่งคำขอสำหรับ <span className="font-mono font-semibold">{registrationSuccessEmail}</span> แล้ว
-                    ผู้ดูแลระบบจะอนุมัติและกำหนดสิทธิ์ที่เมนู <b>จัดการผู้ใช้งาน</b> (แท็บรออนุมัติ)
+                    A request for <span className="font-mono font-semibold">{registrationSuccessEmail}</span> has
+                    been submitted. An administrator will approve and assign permissions in <b>User management</b>{' '}
+                    (Pending tab).
                   </p>
                   <Button
                     type="button"
@@ -501,7 +511,7 @@ export default function Home() {
                     className="mt-1 bg-green-700 hover:bg-green-800"
                     onClick={() => setRegistrationSuccessEmail(null)}
                   >
-                    เข้าใจแล้ว — ไปหน้าเข้าสู่ระบบ
+                    Got it — return to sign in
                   </Button>
                 </AlertDescription>
               </Alert>
@@ -510,18 +520,18 @@ export default function Home() {
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email" className="font-bold">อีเมลใช้งาน (Email)</Label>
+                <Label htmlFor="email" className="font-bold">Email</Label>
                 <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" required className="h-11" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password" title="password" className="font-bold">รหัสผ่าน (Password)</Label>
+                <Label htmlFor="password" title="Password" className="font-bold">Password</Label>
                 <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="h-11" />
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-1">
               <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg bg-primary" disabled={isLoggingIn}>
                 {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
-                เข้าสู่ระบบ
+                Sign in
               </Button>
               <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-center text-sm pt-2 w-full">
                 <button
@@ -533,7 +543,7 @@ export default function Home() {
                   }}
                 >
                   <MailQuestion className="h-3.5 w-3.5" />
-                  ลืมรหัสผ่าน
+                  Forgot password
                 </button>
                 <span className="hidden sm:inline text-muted-foreground">|</span>
                 <button
@@ -545,7 +555,7 @@ export default function Home() {
                   }}
                 >
                   <UserPlus className="h-3.5 w-3.5" />
-                  ลงทะเบียนผู้ใช้ใหม่
+                  Register new user
                 </button>
               </div>
             </CardFooter>
@@ -555,14 +565,15 @@ export default function Home() {
         <Dialog open={showForgotPasswordDialog} onOpenChange={setShowForgotPasswordDialog}>
           <DialogContent className="sm:max-w-md border-t-8 border-t-primary">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">ลืมรหัสผ่าน</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">Forgot password</DialogTitle>
               <DialogDescription>
-                ระบุอีเมลที่ใช้ลงทะเบียน — Firebase จะส่งลิงก์รีเซ็ตรหัสผ่านไปที่อีเมลนี้ (ตรวจสอบโฟลเดอร์สแปมด้วย)
+                Enter the email you used to register. Firebase will send a password reset link to this address
+                (check spam as well).
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSendPasswordResetEmail} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="forgot-email">อีเมล</Label>
+                <Label htmlFor="forgot-email">Email</Label>
                 <Input
                   id="forgot-email"
                   type="email"
@@ -575,11 +586,11 @@ export default function Home() {
               </div>
               <DialogFooter className="gap-2 sm:gap-0">
                 <Button type="button" variant="outline" onClick={() => setShowForgotPasswordDialog(false)}>
-                  ยกเลิก
+                  Cancel
                 </Button>
                 <Button type="submit" disabled={isSendingResetEmail}>
                   {isSendingResetEmail ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  ส่งลิงก์รีเซ็ต
+                  Send reset link
                 </Button>
               </DialogFooter>
             </form>
@@ -589,14 +600,15 @@ export default function Home() {
         <Dialog open={showRegisterDialog} onOpenChange={setShowRegisterDialog}>
           <DialogContent className="sm:max-w-lg border-t-8 border-t-primary max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">ลงทะเบียนผู้ใช้ใหม่</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">Register new user</DialogTitle>
               <DialogDescription>
-                กรอกข้อมูลให้ครบ — หลังลงทะเบียน ผู้ดูแลระบบจะอนุมัติและกำหนดบทบาทที่เมนูจัดการผู้ใช้ ก่อนจึงจะเข้าสู่ระบบได้
+                Fill in all fields. After registration, an administrator will approve and assign a role in User
+                management before you can sign in.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSelfRegister} className="space-y-3">
               <div className="space-y-2">
-                <Label htmlFor="reg-name">ชื่อ-นามสกุล</Label>
+                <Label htmlFor="reg-name">Full name</Label>
                 <Input
                   id="reg-name"
                   value={regDisplayName}
@@ -607,7 +619,7 @@ export default function Home() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reg-phone">เบอร์โทร</Label>
+                <Label htmlFor="reg-phone">Phone</Label>
                 <Input
                   id="reg-phone"
                   type="tel"
@@ -619,7 +631,7 @@ export default function Home() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reg-email">อีเมล (ใช้ login)</Label>
+                <Label htmlFor="reg-email">Email (for sign-in)</Label>
                 <Input
                   id="reg-email"
                   type="email"
@@ -631,7 +643,7 @@ export default function Home() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reg-pw">รหัสผ่าน (อย่างน้อย 8 ตัว)</Label>
+                <Label htmlFor="reg-pw">Password (at least 8 characters)</Label>
                 <Input
                   id="reg-pw"
                   type="password"
@@ -644,7 +656,7 @@ export default function Home() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reg-pw2">ยืนยันรหัสผ่าน</Label>
+                <Label htmlFor="reg-pw2">Confirm password</Label>
                 <Input
                   id="reg-pw2"
                   type="password"
@@ -658,11 +670,11 @@ export default function Home() {
               </div>
               <DialogFooter className="gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setShowRegisterDialog(false)}>
-                  ยกเลิก
+                  Cancel
                 </Button>
                 <Button type="submit" disabled={isRegistering}>
                   {isRegistering ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  ส่งคำขอลงทะเบียน
+                  Submit registration
                 </Button>
               </DialogFooter>
             </form>
@@ -688,7 +700,7 @@ export default function Home() {
       <LoginStageBackdrop>
         <div className="relative z-10 flex flex-col items-center justify-center gap-4 px-4 text-center">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          <p className="text-sm font-medium text-white/90">กำลังเปิดพอร์ทัลลูกค้า…</p>
+          <p className="text-sm font-medium text-white/90">Opening client portal…</p>
         </div>
       </LoginStageBackdrop>
     );

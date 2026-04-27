@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -85,8 +85,7 @@ function isWorkerProfileTab(s: string | null): s is WorkerProfileTab {
   return s != null && (WORKER_TAB_VALUES as readonly string[]).includes(s);
 }
 
-export default function WorkerDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+function WorkerDetailContent({ id }: { id: string }) {
   const searchParams = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<WorkerProfileTab>(() =>
@@ -600,5 +599,18 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ id: str
         </Tabs>
       </div>
     </AppShell>
+  );
+}
+
+export default function WorkerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+      }
+    >
+      <WorkerDetailContent id={id} />
+    </Suspense>
   );
 }

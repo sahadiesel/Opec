@@ -305,7 +305,7 @@ export default function AccountingDashboardPage() {
                 <ShortcutItem
                   href="/tax-invoices"
                   label="ใบกำกับภาษี"
-                  sub="ฉบับเดียว — ไม่มีเมนูใบเสร็จแยก"
+                  sub="แยกจากใบเสร็จ — ออกรับเงินทีหลัง"
                   icon={FileBadge}
                 />
                 <ShortcutItem href="/accounts-receivable" label="ลูกหนี้การค้า (AR)" sub="AR Aging" icon={ArrowUpRight} />

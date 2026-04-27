@@ -399,9 +399,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     try {
       const { taxInvoiceId } = await createTaxInvoiceDraftFromIssuedCommercial(firestore, invoice.id, currentUser);
       toast({
-        title: 'สร้างใบกำกับภาษีร่างแล้ว',
+        title: 'สร้างใบวางบิล + ใบกำกับภาษี (ร่าง) แล้ว',
         description:
-          'แนบรูปสลิปได้ในหน้าใบกำกับ — พิมพ์เป็นเอกสารเดียว (ใบกำกับภาษี/ใบเสร็จ) ยังไม่มี e-Tax',
+          'ส่งลูกค้า/พิมพ์ได้จากหน้าใบกำกับ — ยังไม่ e-Tax — ใบเสร็จรับเงินอีกขั้นหลังลูกค้าโอนและบัญชียืนยันรับเงิน',
       });
       router.push(`/tax-invoices/${taxInvoiceId}`);
     } catch (e: unknown) {
@@ -430,8 +430,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         { bankAccountId: verifyBankId, entryDate: verifyEntryDate },
       );
       toast({
-        title: 'บันทึกรับเงิน/ออกใบกำกับแล้ว',
-        description: `INV ${r.taxInvoiceNo} · สมุด ${r.entryNo} — เปิดจากรายการใบกำกับฯ ได้`,
+        title: 'ยืนยันรับเงินแล้ว',
+        description: `ออกใบกำกับ ${r.taxInvoiceNo} (ISSUED) · สมุด ${r.entryNo} — ตรวจรายละเอียดที่เมนูใบกำกับ/ใบเสร็จ`,
       });
     } catch (e: unknown) {
       toast({
@@ -525,7 +525,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <strong>รอลูกค้าตรวจ</strong> — ลูกค้า (Approver) หรือผู้จัดการฝั่ง OPEC สามารถกดยืนยันยอดได้
             </p>
             <p className="text-xs text-muted-foreground">
-              หลังยืนยันเรียกเก็บแล้ว — ฝ่ายบัญชีออกใบกำกับภาษี/ใบเสร็จฉบับเดียว (พิมพ์ได้ ไม่ใช่ e-Tax) แล้วบันทึกรับเงินในเมนูใบเสร็จเมื่อลูกค้าชำระ
+              หลังยืนยันเรียกเก็บแล้ว — ฝ่ายบัญชีสร้าง <strong>ใบกำกับภาษี (กับใบวางบิล)</strong> ส่งลูกค้า — แยกจาก{' '}
+              <strong>ใบเสร็จรับเงิน</strong> ที่ออกหลังลูกค้าโอนแล้วบัญชีตรวจสอบและยืนยันรับเงิน (ยังไม่ e-Tax)
             </p>
           </AlertDescription>
         </Alert>
@@ -632,7 +633,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     onClick={() => void handleVerifyOpecPayment()}
                   >
                     {verifyPayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    ยืนยันรับเงิน + ออกใบกำกับ + ลง cashbook
+                    ยืนยันรับเงิน · ออกใบกำกับ (ISSUED) · ลง cashbook
                   </Button>
                 </div>
               ) : (
@@ -654,16 +655,17 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         {invoice.status === 'ISSUED' && (
           <Alert className="border-emerald-200 bg-emerald-50/80 dark:bg-emerald-950/25">
             <FileBadge className="h-4 w-4" />
-            <AlertTitle>ขั้นตอนบัญชี — ใบกำกับภาษี / ใบเสร็จรับเงิน</AlertTitle>
+            <AlertTitle>ขั้นตอนบัญชี — ใบกำกับภาษี แยกจาก ใบเสร็จรับเงิน</AlertTitle>
             <AlertDescription className="space-y-2 text-sm">
               <p>
-                ออกเอกสารภาษีเป็นฉบับเดียว (ไม่แยกใบกำกับกับใบเสร็จตามนโยบายระบบ) — พิมพ์จากหน้าใบกำกับ เหมือนเอกสารอื่น (ยังไม่มี e-Tax)
+                สร้าง <strong>ใบวางบิล + ใบกำกับภาษี (ร่าง)</strong> จากใบนี้เพื่อส่งลูกค้า — <strong>ใบเสร็จรับเงิน</strong> ออก
+                หลังลูกค้าโอนและบัญชียืนยันรับเงิน (พิมพ์/ e-Tax ตามนโยบายบริษัท)
               </p>
               {invoice.linkedTaxInvoiceId ? (
                 <Button variant="default" className="gap-2 w-fit" asChild>
                   <Link href={`/tax-invoices/${invoice.linkedTaxInvoiceId}`}>
                     <FileBadge className="h-4 w-4" />
-                    เปิดใบกำกับภาษี / ใบเสร็จ
+                    เปิดใบกำกับภาษี
                   </Link>
                 </Button>
               ) : canCreateTax ? (
@@ -674,7 +676,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   onClick={() => void handleCreateTaxFromCommercial()}
                 >
                   {taxFromComBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileBadge className="h-4 w-4" />}
-                  สร้างใบกำกับภาษี / ใบเสร็จ (ร่าง)
+                  สร้างใบกำกับภาษี (ร่าง) + ใบวางบิล
                 </Button>
               ) : (
                 <p className="text-muted-foreground">
@@ -987,9 +989,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       <AlertDialog open={offerTaxDialogOpen} onOpenChange={setOfferTaxDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>สร้างใบกำกับภาษี / ใบเสร็จรับเงิน (ร่าง)?</AlertDialogTitle>
+            <AlertDialogTitle>สร้างใบวางบิล + ใบกำกับภาษี (ร่าง)?</AlertDialogTitle>
             <AlertDialogDescription>
-              ระบบจะสร้างใบวางบิลและใบกำกับภาษีร่างจากใบเรียกเก็บนี้ — พิมพ์เป็นเอกสารฉบับเดียว (ไม่ใช่ e-Tax) จากนั้นฝ่ายบัญชีกดยืนยัน ISSUED ที่เมนูใบกำกับเพื่อบันทึกลูกหนี้ (AR)
+              ระบบจะสร้างใบวางบิลและใบกำกับภาษี (ร่าง) จากใบเรียกเก็บนี้เพื่อส่งลูกค้า (คนละชุดกับใบเสร็จรับเงิน) — หลังลูกค้าโอน
+              บัญชียืนยันรับเงินแล้วจะออกใบกำกับ (ISSUED) ปิด AR / ลง cashbook ตามเมนูบัญชี
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { ChevronLeft, Loader2 } from 'lucide-react';
@@ -32,7 +32,7 @@ function ymNow(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export default function ClientPortalWaveMonthDetailPage() {
+function ClientPortalWaveMonthDetailContent() {
   const params = useParams();
   const searchParams = useSearchParams();
   const waveId = typeof params?.waveId === 'string' ? params.waveId : '';
@@ -216,5 +216,17 @@ export default function ClientPortalWaveMonthDetailPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function ClientPortalWaveMonthDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+      }
+    >
+      <ClientPortalWaveMonthDetailContent />
+    </Suspense>
   );
 }

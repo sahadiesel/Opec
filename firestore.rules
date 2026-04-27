@@ -455,12 +455,13 @@ service cloud.firestore {
     // Commercial invoices (draft → customer approval → issued) — not tax invoices; internal creates from timesheet/wave.
     match /commercial_invoices/{id} {
       // Portal: same customer. DRAFT = readable so the app can show “not shared yet” instead of a rules error (e.g. from timesheet hub links).
-      allow read: if isInternalUser()
+      // isInternalStaffDoc: list ได้แม้ approval/activation ยังไม่สมบูรณ์ (เทียบ purchase_orders, worker_month_timesheets, …)
+      allow read: if isInternalUser() || isInternalStaffDoc()
         || (portalCustomerIdOk()
             && resource.data.customerId == userData().customerId
             && resource.data.status in ['DRAFT', 'PENDING_CUSTOMER', 'ISSUED', 'VOID']);
-      allow create: if isInternalUser();
-      allow update: if isInternalUser()
+      allow create: if isInternalUser() || isInternalStaffDoc();
+      allow update: if isInternalUser() || isInternalStaffDoc()
         || (
           portalIsApprover()
           && portalOwnsResourceCustomerId()
@@ -480,7 +481,8 @@ service cloud.firestore {
           && request.resource.data.status == 'ISSUED'
           && portalCommercialPaymentProofKeysOnly()
         );
-      allow delete: if isAdmin() || (isInternalUser() && resource.data.status == 'DRAFT');
+      allow delete: if isAdmin()
+        || ((isInternalUser() || isInternalStaffDoc()) && resource.data.status == 'DRAFT');
     }
 
     match /tax_invoices/{id} {
@@ -589,12 +591,12 @@ service cloud.firestore {
 
     // ---------- Core operations (all active internal) ----------
     match /customers/{id} {
-      allow read: if isInternalUser()
+      allow read: if isInternalUser() || isInternalStaffDoc()
         || (portalCustomerIdOk() && userData().customerId == id);
-      allow write: if isInternalUser();
+      allow write: if isInternalUser() || isInternalStaffDoc();
     }
     match /customers/{customerId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     // Portal list/get: customer sees only post-"sent" statuses (draft stays internal-only).
@@ -772,8 +774,14 @@ service cloud.firestore {
     }
 
     match /wave_month_timesheet_reviews/{id} {
-      allow read: if isInternalStaffDoc() || portalWaveMonthTimesheetReviewReadable();
-      allow write: if isInternalStaffDoc();
+      allow read: if isInternalUser() || isInternalStaffDoc() || portalWaveMonthTimesheetReviewReadable();
+      allow write: if isInternalUser() || isInternalStaffDoc();
+    }
+
+    /** งวด timesheet รอบเดือนต่อ PO (หลาย wave) — ใช้ /draft-invoices, /timesheets/po-month, ศูนย์อนุมัติ */
+    match /po_month_timesheet_reviews/{id} {
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /wave_month_timesheet_photo_bundles/{id} {

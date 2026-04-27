@@ -593,7 +593,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </CardTitle>
                 <CardDescription className="text-xs text-amber-900/80 dark:text-amber-100/80">
                   {invoice.sourceCommercialInvoiceId
-                    ? 'ยอดถูกยืนยันแล้วผ่านใบเรียกเก็บ — เอกสารพิมพ์เป็นใบกำกับภาษี/ใบเสร็จฉบับเดียว (ไม่ใช่ e-Tax) ฝ่ายบัญชีออก ISSUED ได้เมื่อพร้อม'
+                    ? 'ยอดถูกยืนยันผ่านใบเรียกเก็บ — ใบกำกับ+ใบวางบิล แยกจากใบเสร็จ (ออกหลังรับเงิน) — ฝ่ายบัญชีออก ISSUED เมื่อยืนยันรับเงิน/พร้อม (ยังไม่ e-Tax ตามตั้งค่า)'
                     : 'หลังอนุมัติ timesheet ที่เกี่ยวกับใบวางบิลนี้จะถูกล็อก — บัญชีจะออก ISSUED ได้เมื่อขั้นตอนนี้เสร็จแล้ว'}
                 </CardDescription>
               </CardHeader>

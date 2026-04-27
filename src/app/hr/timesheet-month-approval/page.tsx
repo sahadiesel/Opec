@@ -17,8 +17,9 @@ import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, doc, query, where, updateDoc } from 'firebase/firestore';
-import { canAccess, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
 import { isHrManager, isOperationManager, isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import type { User, PoMonthTimesheetReview, WaveMonthTimesheetReview, PurchaseOrder, Wave } from '@/lib/types';
 import {
   ensureOpenPayrollPeriodForWaveMonthReview,
@@ -50,12 +51,9 @@ export default function TimesheetMonthApprovalQueuePage() {
   const [photoDialogRow, setPhotoDialogRow] = useState<WaveMonthTimesheetReview | null>(null);
   const [photoDialogPo, setPhotoDialogPo] = useState<PoMonthTimesheetReview | null>(null);
 
-  const useMatrixGuards = isMatrixControlledRole(currentUser);
-  const canSeePage = useMatrixGuards
-    ? canAccess(currentUser!, 'payroll_runs', 'view') ||
-      canAccess(currentUser!, 'worker_payroll', 'view') ||
-      canAccess(currentUser!, 'hr_hub', 'view')
-    : isHRStaff(currentUser);
+  const canSeePage =
+    currentUser &&
+    canViewHrApprovalSubsection(currentUser, isSystemAdmin(currentUser) || isSimpleAdmin(currentUser));
 
   const canAct = canReviewMonthlyQueue(currentUser);
 

@@ -36,6 +36,9 @@ import {
   PayrollRunStatus,
 } from '@/lib/types';
 import { isHRStaff, canView } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
@@ -90,6 +93,13 @@ export default function HrPayrollWorkbenchPage() {
   const canOffice = useMemo(() => canView(currentUser, 'office_payroll') && canView(currentUser, 'office_staff'), [currentUser]);
   const canWorkerPayroll = useMemo(() => canView(currentUser, 'worker_payroll'), [currentUser]);
   const canTimesheets = useMemo(() => canView(currentUser, 'timesheets'), [currentUser]);
+  const canOpenPayrollApprovalCenter = useMemo(
+    () =>
+      currentUser
+        ? canViewHrApprovalSubsection(currentUser, isSystemAdmin(currentUser) || isSimpleAdmin(currentUser))
+        : false,
+    [currentUser]
+  );
 
   const staffQuery = useMemoFirebase(
     () => (firestore && canOffice ? collection(firestore, 'office_staff') : null),
@@ -798,11 +808,13 @@ export default function HrPayrollWorkbenchPage() {
                 <Button size="sm" variant="secondary" asChild>
                   <Link href="/office-payroll">งวดออฟฟิศ</Link>
                 </Button>
-                <Button size="sm" variant="outline" asChild>
-                  <Link href="/hr/payroll-approval">
-                    Payroll Approval Center <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-                  </Link>
-                </Button>
+                {canOpenPayrollApprovalCenter && (
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href="/hr/payroll-approval">
+                      Payroll Approval Center <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>

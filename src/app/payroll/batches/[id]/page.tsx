@@ -45,6 +45,8 @@ import {
   isMatrixControlledRole,
 } from '@/lib/permissions';
 import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { useAppUser } from '@/hooks/use-app-user';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
@@ -77,6 +79,10 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const [payoutActionBusy, setPayoutActionBusy] = useState(false);
   const canEditBatch = payrollPerm('payroll_worker', 'edit_batch');
   const canApproveWorker = payrollPerm('payroll_worker', 'approve');
+  const canOpenPayrollApprovalCenter = canViewHrApprovalSubsection(
+    currentUser as User,
+    isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)
+  );
   const canViewBatch = useMemo(() => {
     if (useMatrixGuards) {
       return (
@@ -147,7 +153,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
       await svc.submitOfficerBatchForPayoutApproval(batch.id, currentUser as User);
       toast({
         title: 'ส่งขออนุมัติทำจ่ายแล้ว',
-        description: 'งวดรออนุมัติที่ /hr/payroll-approval (HR_REVIEWED)',
+        description: 'Batch will be queued for manager approval (HR_REVIEWED) in the Payroll approval center',
       });
     } catch (e) {
       toast({ variant: 'destructive', title: 'ส่งคำขอไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
@@ -291,8 +297,8 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
             <CardHeader className="pb-2">
               <CardTitle className="text-base">ฝ่ายเงินเดือน</CardTitle>
               <CardDescription>
-                ตรวจรายละเอียด/correction ครบแล้ว ให้กดส่งงวดนี้เข้าคิวอนุมัติ — งวดจะไปแสดงที่ /hr/payroll-approval รอ
-                ผู้จัดการปฏิบัติการ/HR
+                ตรวจรายละเอียด/correction ครบแล้ว ให้กดส่งงวดนี้เข้าคิวอนุมัติ — งวดจะไปแสดงที่ศูนย์อนุมัติ (D6) รอ
+                ผู้จัดการปฏิบัติการ/HR (ฝ่ายเงินเดือนไม่ต้องเข้าศูนย์อนุมัติ)
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-2">
@@ -306,9 +312,11 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                 {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
                 ส่งขออนุมัติทำจ่าย
               </Button>
-              <Button variant="outline" size="sm" asChild>
-                <Link href={`/hr/payroll-approval?batch=${id}`}>ไปศูนย์อนุมัติ (D6)</Link>
-              </Button>
+              {canOpenPayrollApprovalCenter && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/hr/payroll-approval?batch=${id}`}>ไปศูนย์อนุมัติ (D6)</Link>
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}
@@ -333,9 +341,11 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                 อนุมัติยอดเงิน
                 {canHandoffWorkerPayrollToAccounting(currentUser) ? ' (ส่งบัญชีทำจ่าย)' : ''}
               </Button>
-              <Button variant="outline" size="sm" asChild>
-                <Link href={`/hr/payroll-approval?batch=${id}`}>รายละเอียด/แผง D6</Link>
-              </Button>
+              {canOpenPayrollApprovalCenter && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/hr/payroll-approval?batch=${id}`}>รายละเอียด/แผง D6</Link>
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

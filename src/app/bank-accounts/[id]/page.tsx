@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -66,8 +66,7 @@ function cashbookEntryTypeLabel(t: CashbookEntry['entryType']): string {
   return map[t] ?? t;
 }
 
-export default function BankAccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+function BankAccountDetailContent({ id }: { id: string }) {
   const isNew = id === 'new';
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -645,5 +644,18 @@ export default function BankAccountDetailPage({ params }: { params: Promise<{ id
         )}
       </div>
     </AppShell>
+  );
+}
+
+export default function BankAccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+      }
+    >
+      <BankAccountDetailContent id={id} />
+    </Suspense>
   );
 }

@@ -13,10 +13,11 @@ import {
   canGeneratePayslips,
   canHandoffWorkerPayrollToAccounting,
   canView,
-  isHRStaff,
   isMatrixControlledRole,
 } from '@/lib/permissions';
 import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import type {
   OfficePayrollLine,
   OfficePayrollRun,
@@ -380,9 +381,10 @@ export function PayrollApprovalCenterD6({
     }
   };
 
-  const canOpenCenter = useMatrixGuards
-    ? canAccess(currentUser, 'payroll_runs', 'view') || canAccess(currentUser, 'worker_payroll', 'view')
-    : isHRStaff(currentUser);
+  const canOpenCenter = canViewHrApprovalSubsection(
+    currentUser,
+    isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)
+  );
   if (!canOpenCenter) {
     return (
       <div className="mx-auto max-w-lg py-20 text-center text-muted-foreground">ไม่มีสิทธิ์เข้าหน้านี้</div>

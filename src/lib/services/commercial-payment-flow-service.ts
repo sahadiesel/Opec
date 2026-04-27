@@ -33,7 +33,7 @@ async function findArForCommercial(
 }
 
 /**
- * ฝ่ายบัญชี: หลังลูกค้าแนบสลิป — ออกใบกำกับ/ใบเสร็จ, รับรอง AR, ลง cashbook (บัญชีธนาคาร) อัตโนมัติ
+ * ฝ่ายบัญชี: หลังลูกค้าแนบสลิป — ยืนยันรับเงิน, ออกใบกำกับ (ISSUED) ปิด AR, ลง cashbook (หลักฐานรับเงิน) — ใบเสร็จรับเงินเป็นชุดเอกสารแยกจากใบกำกับที่ส่งก่อนหน้า
  */
 export async function verifyOpecCustomerPaymentForCommercial(
   db: Firestore,
@@ -121,7 +121,7 @@ export async function verifyOpecCustomerPaymentForCommercial(
     direction: 'IN',
     amount: com.totalAmount,
     entryDate: params.entryDate,
-    description: `รับเงิน ${com.invoiceNo} (ก่อนออกใบกำกับ)`.slice(0, 500),
+    description: `รับเงินลูกค้า ${com.invoiceNo} (ยืนยันหลังโอน)`.slice(0, 500),
     paymentMethod: 'TRANSFER',
     entryType: 'CUSTOMER_RECEIPT',
     referenceType: 'RECEIPT',
@@ -194,10 +194,10 @@ export async function verifyOpecCustomerPaymentForCommercial(
     actionType: 'UPDATE',
     entityType: 'CommercialInvoice',
     entityId: com.id,
-    entityLabel: `${com.invoiceNo} → รับเงิน/ออกใบกำกับ`,
+    entityLabel: `${com.invoiceNo} → ยืนยันรับเงิน/ออกใบกำกับ ISSUED`,
     sourceModule: 'commercial_invoices',
     linkedIds: [com.customerId, tax.id, arId, params.bankAccountId],
-    afterSummary: `OPEC ยืนยันรับเงิน, ออก ${tax.taxInvoiceNo}, ลง cashbook ${cash.entryNo}`,
+    afterSummary: `บัญชียืนยันรับเงิน — ${tax.taxInvoiceNo} → ISSUED, ลง cashbook ${cash.entryNo}`,
   });
 
   return {

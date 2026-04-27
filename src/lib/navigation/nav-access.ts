@@ -23,6 +23,7 @@ import {
   isPayrollOfficer,
 } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
+import { deriveBusinessRoleKey } from '@/lib/auth-mapping';
 import { getFlattenedHrNavItems, type HrNavItem } from '@/lib/navigation/hr-nav-items';
 
 export function pathMatches(pathname: string, href: string): boolean {
@@ -58,7 +59,24 @@ export function canViewHrPayrollFlowSubsection(
 export function canViewHrApprovalSubsection(user: User, admin: boolean): boolean {
   if (admin) return true;
   if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
-  return isHrManager(user) || isOperationManager(user);
+  if (isHrManager(user) || isOperationManager(user)) return true;
+  /** สอดคล้อง UI (derive) กรณี assigned role / โปรไฟล์ไม่ตรง getPrimaryLegacyRole โดยตรง */
+  const d = deriveBusinessRoleKey(user);
+  return d === 'hr_manager' || d === 'operations_manager';
+}
+
+/** Paths under HR “อนุมัติ” — ศูนย์อนุมัติ, คิว timesheet รอบเดือน, D6 payroll (manager ไม่รวม payroll_officer) */
+const HR_MANAGER_ONLY_PATH_PREFIXES = [
+  '/hr/approval-center',
+  '/hr/timesheet-month-approval',
+  '/hr/payroll-approval',
+] as const;
+
+export function isHrManagerOnlyApprovalPath(p: string): boolean {
+  const path = (p.split('?')[0] || '/').trim() || '/';
+  return HR_MANAGER_ONLY_PATH_PREFIXES.some(
+    (pre) => path === pre || path.startsWith(`${pre}/`)
+  );
 }
 
 /** เมนูเตรียมจ่าย / อนุมัติ payroll — ไม่แสดงให้ hr_officer */
@@ -87,6 +105,18 @@ export function canViewHrHubItem(
   if (hrOfficerExcludedFromHrNavItem(user, item)) return false;
   const baseHref = item.href.split('#')[0].split('?')[0];
   if (baseHref === '/purchases' && canApprovePurchaseAsManager(user)) return true;
+  /** คิวอนุมัติ (D6/เดือน/Overview) — ไม่อาศัย canSeeHrPillarUi; ops/HR manager อาจไม่มี module HR ใน matrix */
+  if (
+    (baseHref === '/hr/approval-center' ||
+      baseHref === '/hr/payroll-approval' ||
+      baseHref === '/hr/timesheet-month-approval' ||
+      baseHref.startsWith('/hr/approval-center/') ||
+      baseHref.startsWith('/hr/payroll-approval/') ||
+      baseHref.startsWith('/hr/timesheet-month-approval/')) &&
+    canViewHrApprovalSubsection(user, admin)
+  ) {
+    return true;
+  }
   const byMatrix = sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
   if (byMatrix !== null) return byMatrix;
   if (canView(user, item.key, profile)) return true;
@@ -192,6 +222,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   }
   if (pathMatches(p, '/accounting/dashboard')) {
     return canSeeAccountingPillarUi(user, profile);
+  }
+
+  if (isHrManagerOnlyApprovalPath(p)) {
+    return canViewHrApprovalSubsection(user, admin);
   }
 
   const hrSorted = getFlattenedHrNavItems().sort((a, b) => b.href.length - a.href.length);

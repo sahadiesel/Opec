@@ -58,8 +58,8 @@ function commercialLineToBillingLine(
 }
 
 /**
- * หลังใบเรียกเก็บ (commercial) ถูกยืนยัน (ISSUED) — สร้างใบวางบิล + ใบกำกับภาษีร่างในคราวเดียว
- * รายการพิมพ์เป็น **ใบกำกับภาษี / ใบเสร็จรับเงิน** ฉบับเดียว (ไม่แยกเอกสาร — ตามนโยบายระบบ)
+ * หลังใบเรียกเก็บ (commercial) ถูกยืนยัน (ISSUED) — สร้างใบวางบิล + ใบกำกับภาษี (ร่าง) ในคราวเดียว
+ * ใบกำกับภาษี/ใบวางบิล = ชุดเรียกเก็บส่งลูกค้า — **แยก**จากใบเสร็จรับเงิน (ออกหลังบัญชียืนยันรับเงินจริง)
  */
 export async function createTaxInvoiceDraftFromIssuedCommercial(
   db: Firestore,
@@ -131,7 +131,7 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     totalAmount: com.totalAmount,
     currency: com.currency || 'THB',
     status: 'DRAFT',
-    notes: `จากใบเรียกเก็บ ${com.invoiceNo} — พิมพ์เป็นใบกำกับภาษี/ใบเสร็จ (ไม่ใช่ e-Tax)`,
+    notes: `จากใบเรียกเก็บ ${com.invoiceNo} — ใบกำกับภาษี+ใบวางบิล (ยังไม่ e-Tax) — ใบเสร็จรับเงินอีกขั้นหลังรับเงินจริง`,
     ...(com.customerApprovedAt
       ? {
           billingCustomerApprovedAt: com.customerApprovedAt,

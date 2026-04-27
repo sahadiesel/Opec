@@ -5,7 +5,9 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canAccess, isHRStaff, isMatrixControlledRole } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { CalendarCheck, Coins, PackageSearch, ShieldCheck } from 'lucide-react';
 import type { User } from '@/lib/types';
 
@@ -15,12 +17,9 @@ import type { User } from '@/lib/types';
  */
 export default function HrApprovalCenterPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const useMatrixGuards = isMatrixControlledRole(currentUser);
-  const canSee = useMatrixGuards
-    ? canAccess(currentUser!, 'payroll_runs', 'view') ||
-      canAccess(currentUser!, 'worker_payroll', 'view') ||
-      canAccess(currentUser!, 'hr_hub', 'view')
-    : isHRStaff(currentUser);
+  const canSee =
+    currentUser &&
+    canViewHrApprovalSubsection(currentUser, isSystemAdmin(currentUser) || isSimpleAdmin(currentUser));
 
   if (userLoading || !currentUser) {
     return (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Waves } from 'lucide-react';
@@ -49,7 +49,7 @@ async function hasDailyTimesheetsForDate(db: Firestore, date: string, waveIds: s
   return false;
 }
 
-export default function WaveTimesheetBoardPage() {
+function WaveTimesheetBoardContent() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { toast } = useToast();
   const searchParams = useSearchParams();
@@ -299,5 +299,17 @@ export default function WaveTimesheetBoardPage() {
         </AlertDialogContent>
       </AlertDialog>
     </AppShell>
+  );
+}
+
+export default function WaveTimesheetBoardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+      }
+    >
+      <WaveTimesheetBoardContent />
+    </Suspense>
   );
 }

@@ -585,13 +585,6 @@ export function SidebarNav({
               return false;
             }
             if (
-              item.key === 'draft_invoices' &&
-              item.href.split('?')[0] === '/draft-invoices' &&
-              !canViewHrApprovalSubsection(user, admin)
-            ) {
-              return false;
-            }
-            if (
               item.href === '/' &&
               item.key === 'overview_dashboard' &&
               isSimpleInternalEligible(user) &&
