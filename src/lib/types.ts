@@ -371,6 +371,32 @@ export interface DrugTestPanelConfig {
 export type DrugTestLocationType = 'OPEC' | 'OTHER';
 export type DrugTestResult = 'none' | 'negative' | 'positive';
 
+/** ทะเบียนชื่อธนาคาร — ในฟอร์มพนักงาน/ลูกจ้างใช้เฉพาะ `nameTh` */
+export interface BankNameCatalogItem {
+  id: string;
+  nameTh: string;
+  /** @deprecated ไม่ใช้ใน UI — คงได้ในเอกสารเก่า */
+  nameEn?: string;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** ทะเบียนโรงพยาบาลประกันสังคม — ในฟอร์มใช้เฉพาะชื่อ (`nameTh`) */
+export interface SsoHospitalCatalogItem {
+  id: string;
+  nameTh: string;
+  /** ที่อยู่ (แสดงในทะเบียนเท่านั้น ไม่ดึงไปฟอร์มพนักงาน) */
+  address?: string;
+  /** เบอร์โทร */
+  phone?: string;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Worker {
   id: string;
   workerCode: string;
@@ -405,6 +431,8 @@ export interface Worker {
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountName?: string;
+  /** โรงพยาบาลประกันสังคม (ถ้ามีการแจ้งเข้า สปส.) */
+  socialSecurityHospital?: string;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
   skills: string[];
@@ -1079,6 +1107,17 @@ export interface WaveMonthTimesheetReview {
  * เอกสาร id = `poId_yyyy-MM` (collection `po_month_timesheet_reviews`)
  * รายวันใน `daily_timesheets` ยังมี waveId ตาม field — แต่การ "ปิดงวด" ทางเอกสารอ้าง PO+เดือน
  */
+/**
+ * แนบรูป/PDF คั่นก่อนส่งผู้จัดการ — คอลเลกชัน `po_month_timesheet_photo_bundles` id = เดียวกับ `po_month_timesheet_reviews` (poId_yyyy-MM)
+ */
+export interface PoMonthTimesheetPhotoBundle {
+  id: string;
+  poId: string;
+  yearMonth: string;
+  attachments: WaveMonthTimesheetPhotoAttachment[];
+  updatedAt: number;
+}
+
 export interface PoMonthTimesheetReview {
   id: string;
   poId: string;
@@ -1467,6 +1506,15 @@ export type CashbookEntryType =
   | 'OTHER';
 export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CHEQUE' | 'OTHER';
 
+/** ปรับยอดรายคนงวดพนักงานออฟฟิศ — รายรับเพิ่ม / หักเพิ่ม (คู่กับ D8 manual_ded_*) */
+export interface OfficePayrollLineHrAdjustments {
+  allowanceItems: Array<{ label: string; amount: number }>;
+  deductionItems: Array<{ label: string; amount: number }>;
+  notes?: string | null;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
 export interface OfficePayrollRun {
   id: string;
   payrollRunNo: string;
@@ -1513,6 +1561,8 @@ export interface OfficePayrollLine {
   grossPay: number;
   netPay: number;
   d8Snapshot?: PayrollLineD8Snapshot;
+  /** รายรับเพิ่ม / หักเพิ่ม — คำนวณรวมใน gross / deductions ผ่าน D8 */
+  hrLineAdjustments?: OfficePayrollLineHrAdjustments | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -2121,6 +2171,13 @@ export interface TaxInvoice {
   vatAmount: number;
   /** ภาษีหัก ณ ที่จ่าย (จากใบวางบิล — ใช้สอดคล้องยอดลูกหนี้กับเงินรับจริง) */
   withholdingTaxAmount?: number;
+  /**
+   * แสดงยอดหัก ณ ที่จ่ายบนใบกำกับภาษี (ฐาน = ก่อน VAT, ภาษี = rate%, สุทธิ = ยอดรวมรวม VAT − หัก ณ ที่จ่าย)
+   * ถ้า false แสดงเฉพาะยอดเงินฐานภาษี + VAT + ยอดรวมสุทธิแบบเดิม
+   */
+  showWithholdingOnDocument?: boolean;
+  /** อัตราที่ใช้คำนวณบนเอกสารเมื่อแสดงหัก ณ ที่จ่าย (ค่าเริ่ม 3) */
+  withholdingTaxRatePercentOnDocument?: number;
   totalAmount: number;
   currency: string;
   status: TaxInvoiceStatus;

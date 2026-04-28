@@ -11,6 +11,10 @@ export type OfficePayrollD8Input = {
   bonus: number;
   overtimeAmount?: number;
   otherIncome?: number;
+  /** รายรับเพิ่มจาก HR — รวมใน gross (เช่นเดียวกับเบี้ยเลี้ยงงวดลูกจ้าง) */
+  hrAllowanceItems?: Array<{ label: string; amount: number }>;
+  /** หักเพิ่ม — ลงเป็น manual_ded_i ใน snapshot */
+  hrDeductionItems?: Array<{ label: string; amount: number }>;
 };
 
 /**
@@ -27,7 +31,11 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
 } {
   const ot = Number(input.overtimeAmount ?? 0);
   const other = Number(input.otherIncome ?? 0);
-  const grossPay = Math.max(0, input.baseSalary + input.allowance + input.bonus + ot + other);
+  const hrAllowanceSum = (input.hrAllowanceItems ?? []).reduce(
+    (s, x) => s + Math.max(0, Number(x.amount) || 0),
+    0,
+  );
+  const grossPay = Math.max(0, input.baseSalary + input.allowance + input.bonus + ot + other + hrAllowanceSum);
 
   const ss = socialSecurityFromPolicy(grossPay, input.policies.sso);
   const pit = pitFromPolicy(grossPay, input.policies.tax);
@@ -38,6 +46,10 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
     pit_withholding: pit,
     ...fixed,
   };
+  (input.hrDeductionItems ?? []).forEach((item, idx) => {
+    const amt = Math.max(0, Number(item.amount) || 0);
+    if (amt > 0) deductionsMap[`manual_ded_${idx}`] = amt;
+  });
 
   const deductionsTotal = Object.values(deductionsMap).reduce((a, b) => a + b, 0);
   const netPay = Math.round((grossPay - deductionsTotal) * 100) / 100;
@@ -53,6 +65,7 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
       bonus: input.bonus,
       overtime: ot,
       other_income: other,
+      hr_additional_income: hrAllowanceSum,
     },
     gross: grossPay,
     deductions: deductionsMap,

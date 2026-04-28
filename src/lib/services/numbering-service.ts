@@ -111,6 +111,16 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     collectionName: 'monthly_timesheet_documents',
     fieldName: 'timesheetNo',
   },
+  /** หนังสือรับรองการหักภาษี ณ ที่จ่าย (มาตรา 50 ทวิ) — ปรับ prefix ได้ที่ Admin เลขที่เอกสาร */
+  wht_certificate_50: {
+    label: 'หนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ)',
+    prefix: 'WHT50-',
+    padding: 5,
+    dept: 'accounting',
+    resetPolicy: 'monthly',
+    collectionName: 'withholding_certificate_issues',
+    fieldName: 'certificateNo',
+  },
 };
 
 /**
@@ -261,4 +271,130 @@ export async function generateNextDocumentCode(
   }
 
   throw new Error(`Critical: Could not generate a unique code for ${sequenceKey}.`);
+}
+
+/** Parse INV-YYYY-MM-NNNN style codes for monthly sequences (must match {@link formatDocumentCode}). */
+export function parseMonthlySequenceCode(
+  config: SequenceConfig,
+  code: string,
+): { year: number; month: number; runningNumber: number } | null {
+  if (config.resetPolicy !== 'monthly') return null;
+  if (!code.startsWith(config.prefix)) return null;
+  const rest = code.slice(config.prefix.length);
+  const m = rest.match(/^(\d{4})-(\d{2})-(\d+)$/);
+  if (!m) return null;
+  return {
+    year: parseInt(m[1], 10),
+    month: parseInt(m[2], 10),
+    runningNumber: parseInt(m[3], 10),
+  };
+}
+
+/**
+ * When the deleted document used the **current last** running number for its month bucket (matches
+ * `number_sequences/{key}` year/month and lastNumber), decrement so the next issuance reuses that slot.
+ * No-op if the code is from another period or not the tip of the sequence (gaps stay).
+ */
+export async function releaseSequenceSlotIfLastIssued(
+  db: Firestore,
+  sequenceKey: string,
+  issuedCode: string,
+): Promise<boolean> {
+  const config = SEQUENCE_REGISTRY[sequenceKey];
+  if (!config || config.resetPolicy !== 'monthly') return false;
+
+  const parsed = parseMonthlySequenceCode(config, issuedCode);
+  if (!parsed) return false;
+
+  const seqRef = doc(db, 'number_sequences', sequenceKey);
+
+  return await runTransaction(db, async (transaction) => {
+    const seqSnap = await transaction.get(seqRef);
+    if (!seqSnap.exists()) return false;
+
+    const data = seqSnap.data() as Partial<NumberSequence> & Record<string, unknown>;
+    const lastNumber = typeof data.lastNumber === 'number' ? data.lastNumber : 0;
+    const sy = data.year;
+    const sm = data.month;
+
+    if (sy !== parsed.year || sm !== parsed.month) return false;
+    if (lastNumber !== parsed.runningNumber) return false;
+
+    const nextNumber = Math.max(0, lastNumber - 1);
+    const previewDate = new Date(parsed.year, parsed.month - 1, 15);
+    const prevIssued =
+      nextNumber > 0 ? formatDocumentCode(config, nextNumber, previewDate) : null;
+
+    transaction.set(
+      seqRef,
+      {
+        lastNumber: nextNumber,
+        ...(prevIssued != null ? { lastIssuedCode: prevIssued } : { lastIssuedCode: null }),
+        updatedAt: Date.now(),
+        updatedBy: 'sequence_release',
+      },
+      { merge: true },
+    );
+    return true;
+  });
+}
+
+/** e.g. AR-YYYY-NNNNN — must match {@link formatDocumentCode} for yearly sequences */
+export function parseYearlySequenceCode(
+  config: SequenceConfig,
+  code: string,
+): { year: number; runningNumber: number } | null {
+  if (config.resetPolicy !== 'yearly') return null;
+  if (!code.startsWith(config.prefix)) return null;
+  const rest = code.slice(config.prefix.length);
+  const m = rest.match(/^(\d{4})-(\d+)$/);
+  if (!m) return null;
+  return {
+    year: parseInt(m[1], 10),
+    runningNumber: parseInt(m[2], 10),
+  };
+}
+
+/** Same idea as {@link releaseSequenceSlotIfLastIssued} for yearly sequences (e.g. `ar`). */
+export async function releaseYearlySequenceSlotIfLastIssued(
+  db: Firestore,
+  sequenceKey: string,
+  issuedCode: string,
+): Promise<boolean> {
+  const config = SEQUENCE_REGISTRY[sequenceKey];
+  if (!config || config.resetPolicy !== 'yearly') return false;
+
+  const parsed = parseYearlySequenceCode(config, issuedCode);
+  if (!parsed) return false;
+
+  const seqRef = doc(db, 'number_sequences', sequenceKey);
+
+  return await runTransaction(db, async (transaction) => {
+    const seqSnap = await transaction.get(seqRef);
+    if (!seqSnap.exists()) return false;
+
+    const data = seqSnap.data() as Partial<NumberSequence> & Record<string, unknown>;
+    const lastNumber = typeof data.lastNumber === 'number' ? data.lastNumber : 0;
+    const sy = data.year;
+
+    if (sy !== parsed.year) return false;
+    if (lastNumber !== parsed.runningNumber) return false;
+
+    const nextNumber = Math.max(0, lastNumber - 1);
+    const previewDate = new Date(parsed.year, 5, 15);
+    const prevIssued =
+      nextNumber > 0 ? formatDocumentCode(config, nextNumber, previewDate) : null;
+
+    transaction.set(
+      seqRef,
+      {
+        lastNumber: nextNumber,
+        ...(prevIssued != null ? { lastIssuedCode: prevIssued } : { lastIssuedCode: null }),
+        updatedAt: Date.now(),
+        updatedBy: 'sequence_release',
+      },
+      { merge: true },
+    );
+    return true;
+  });
 }

@@ -228,6 +228,17 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
     }
 
+    /** อ่าน timesheet รายวันตาม PO เมื่อ PO เป็นของลูกค้า (เอกสาร timesheet รอบ PO+เดือน) */
+    function portalDailyTimesheetReadableViaPo() {
+      return portalCustomerIdOk()
+        && resource != null
+        && resource.data.keys().hasAll(['purchaseOrderId'])
+        && resource.data.purchaseOrderId is string
+        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId))
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.keys().hasAll(['customerId'])
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.customerId == userData().customerId;
+    }
+
     function portalIsApprover() {
       return portalCustomerIdOk()
         && 'portalRole' in userData()
@@ -395,6 +406,28 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
         && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.keys().hasAll(['customerId'])
         && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
+    }
+
+    /** Portal: งวด timesheet ราย PO+เดือน — อ่านได้เมื่อผู้จัดการอนุมัติ (ฉบับเดียวกับ invoice/payroll) */
+    function portalPoMonthTimesheetReviewReadable() {
+      return portalCustomerIdOk()
+        && resource != null
+        && resource.data.keys().hasAll(['poId', 'status'])
+        && resource.data.poId is string
+        && resource.data.status == 'approved'
+        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.poId))
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.keys().hasAll(['customerId'])
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.customerId == userData().customerId;
+    }
+
+    function portalPoMonthTimesheetPhotoBundleReadable() {
+      return portalCustomerIdOk()
+        && resource != null
+        && exists(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id))
+        && get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.status == 'approved'
+        && get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.poId is string
+        && exists(/databases/$(database)/documents/purchase_orders/$(get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.poId))
+        && get(/databases/$(database)/documents/purchase_orders/$(get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.poId)).data.customerId == userData().customerId;
     }
 
     // ---------- Admin-only (no overlapping permissive catch-all) ----------
@@ -733,6 +766,21 @@ service cloud.firestore {
       allow read, write: if isInternalUser();
     }
 
+    // Master registries: match app canManage (internal staff) — isInternalStaffDoc สำหรับบัญชีที่ยัง pending/ยังไม่ active ครบ
+    match /bank_name_catalog/{id} {
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
+    }
+    match /sso_hospital_catalog/{id} {
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
+    }
+
+    /** บันทึกการออกหนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ) — เลขที่ไม่ซ้ำ */
+    match /withholding_certificate_issues/{id} {
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow create: if isInternalUser() || isInternalStaffDoc();
+      allow update, delete: if isAdmin();
+    }
+
     match /payroll_runs/{id} {
       allow read, write: if isInternalUser();
     }
@@ -780,8 +828,13 @@ service cloud.firestore {
 
     /** งวด timesheet รอบเดือนต่อ PO (หลาย wave) — ใช้ /draft-invoices, /timesheets/po-month, ศูนย์อนุมัติ */
     match /po_month_timesheet_reviews/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow read: if isInternalUser() || isInternalStaffDoc() || portalPoMonthTimesheetReviewReadable();
       allow write: if isInternalUser() || isInternalStaffDoc();
+    }
+
+    match /po_month_timesheet_photo_bundles/{id} {
+      allow read: if isInternalStaffDoc() || portalPoMonthTimesheetPhotoBundleReadable();
+      allow write: if isInternalStaffDoc();
     }
 
     match /wave_month_timesheet_photo_bundles/{id} {
@@ -794,7 +847,7 @@ service cloud.firestore {
     }
 
     match /daily_timesheets/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId() || portalDailyTimesheetReadableViaWave();
+      allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId() || portalDailyTimesheetReadableViaWave() || portalDailyTimesheetReadableViaPo();
       allow create, delete: if isInternalUser();
       allow update: if isInternalUser()
         || (

@@ -19,6 +19,7 @@ import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -67,6 +68,11 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
   db: Firestore,
   commercialInvoiceId: string,
   actor: User,
+  options?: {
+    /** แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ — คำนวณจากฐานก่อน VAT × อัตรา */
+    showWithholdingOnDocument?: boolean;
+    withholdingTaxRatePercentOnDocument?: number;
+  },
 ): Promise<{ taxInvoiceId: string; billingNoteId: string; taxInvoiceNo: string }> {
   const comRef = doc(db, 'commercial_invoices', commercialInvoiceId);
   const snap = await getDoc(comRef);
@@ -88,8 +94,13 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
   const bnRef = doc(collection(db, 'billing_notes'));
   const taxRef = doc(collection(db, 'tax_invoices'));
   const now = Date.now();
-  const issueYmd = com.issueDate || timestampToHtmlDateValue(now);
+  /** วันที่ร่าง — ตอนสร้างชุดนี้ (local) ไม่ดึง com.issueDate ที่อาจเป็นวันย้อนหลัง; วันที่ออกเอกสารจริงตามวันที่กด ISSUED */
+  const issueYmd = timestampToHtmlDateValue(now);
   const dueYmd = addDaysToHtmlDate(issueYmd, 30);
+
+  const ratePct = Math.max(0, Number(options?.withholdingTaxRatePercentOnDocument ?? 3));
+  const showWht = options?.showWithholdingOnDocument === true;
+  const withholdingForDocs = showWht ? roundMoney2((com.amountBeforeTax * ratePct) / 100) : 0;
 
   const billingNotePayload: Omit<BillingNote, 'id'> = {
     billingNoteNo,
@@ -104,7 +115,7 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     amountBeforeTax: com.amountBeforeTax,
     vatPercent: com.vatPercent,
     vatAmount: com.vatAmount,
-    withholdingTaxAmount: com.withholdingTaxAmount ?? 0,
+    withholdingTaxAmount: withholdingForDocs,
     netAmount: com.totalAmount,
     currency: com.currency || 'THB',
     status: 'SUBMITTED',
@@ -129,7 +140,9 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     issueDate: issueYmd,
     taxableAmount: com.amountBeforeTax,
     vatAmount: com.vatAmount,
-    withholdingTaxAmount: com.withholdingTaxAmount ?? 0,
+    withholdingTaxAmount: withholdingForDocs,
+    showWithholdingOnDocument: showWht,
+    withholdingTaxRatePercentOnDocument: ratePct,
     totalAmount: com.totalAmount,
     currency: com.currency || 'THB',
     status: 'DRAFT',

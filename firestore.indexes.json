@@ -88,6 +88,14 @@
       "collectionGroup": "daily_timesheets",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "purchaseOrderId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "waveId", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "ASCENDING" }
       ]
@@ -228,6 +236,30 @@
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "accountName", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "office_payroll_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "payrollMonth", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bank_name_catalog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isActive", "order": "ASCENDING" },
+        { "fieldPath": "sortOrder", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sso_hospital_catalog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isActive", "order": "ASCENDING" },
+        { "fieldPath": "sortOrder", "order": "ASCENDING" }
       ]
     }
   ],

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,43 +10,19 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import {
-  CalendarRange,
-  ChevronLeft,
-  FileText,
-  ImagePlus,
-  Loader2,
-  Lock,
-  Send,
-  Trash2,
-  Waves,
-} from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
-import {
-  collection,
-  deleteDoc,
-  deleteField,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  setDoc,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
+import { CalendarRange, ChevronLeft, FileText, Loader2, Waves } from 'lucide-react';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import type {
   Assignment,
   DailyTimesheet,
   DailyTimesheetStatus,
+  PoMonthTimesheetReview,
   PurchaseOrder,
   RateConditionEventType,
   User,
   Wave,
-  WaveMonthTimesheetPhotoAttachment,
-  WaveMonthTimesheetPhotoBundle,
   WaveMonthTimesheetReview,
-  WaveMonthTimesheetReviewStatus,
   Worker,
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
@@ -55,7 +32,6 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 import {
-  isWaveMonthAttachmentPdf,
   lastDayOfCalendarMonth,
   listDaysInMonth,
   timesheetCellSummary,
@@ -74,11 +50,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { cn } from '@/lib/utils';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  deleteWaveMonthTimesheetPhotoFile,
-  uploadWaveMonthTimesheetPhoto,
-} from '@/lib/storage/wave-month-timesheet-photos';
 import {
   ensureOpenPayrollPeriodForWaveMonthReview,
   markTimesheetsReadyForPayrollAfterMonthApproval,
@@ -104,7 +75,7 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันเดินทางกลับ (Demob)', value: 'demobilization_day' },
   { label: 'ลาป่วย (ได้รับค่าจ้าง)', value: 'sick_leave_paid' },
   { label: 'ส่งกลับ/กลับก่อนกำหนด (Early return)', value: 'early_return' },
-  { label: 'ลาหยุดไม่รับค่าจ้าง (Unpaid)', value: 'unpaid_leave' },
+  { label: 'ไม่จ่ายค่าแรง (Unpaid)', value: 'unpaid_leave' },
 ];
 
 function isWaveMonthReviewLocked(r: WaveMonthTimesheetReview | undefined): boolean {
@@ -113,6 +84,21 @@ function isWaveMonthReviewLocked(r: WaveMonthTimesheetReview | undefined): boole
     r?.status === 'pending_manager_review' ||
     r?.status === 'approved'
   );
+}
+
+function isPoMonthDocumentLockedForGrid(r: PoMonthTimesheetReview | undefined): boolean {
+  if (!r) return false;
+  return (
+    r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'
+  );
+}
+
+function isMonthTimesheetRowLocked(
+  poReview: PoMonthTimesheetReview | undefined,
+  waveReview: WaveMonthTimesheetReview | undefined,
+): boolean {
+  if (isPoMonthDocumentLockedForGrid(poReview)) return true;
+  return isWaveMonthReviewLocked(waveReview);
 }
 
 type CellEditContext = {
@@ -141,30 +127,19 @@ export default function WaveMonthTimesheetSummaryPage() {
   );
 
   const [monthYm, setMonthYm] = useState(ymNow);
-  /** วันสุดท้ายของช่วงปิดงวดต่อ wave (yyyy-MM-dd) — ค่าเริ่มต้นสิ้นเดือน */
-  const [periodEndByWave, setPeriodEndByWave] = useState<Record<string, string>>({});
   const [mobAssignments, setMobAssignments] = useState<Assignment[]>([]);
   const [mobLoading, setMobLoading] = useState(false);
-  const [submittingWaveId, setSubmittingWaveId] = useState<string | null>(null);
   const [cellEdit, setCellEdit] = useState<CellEditContext | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editEvent, setEditEvent] = useState<RateConditionEventType>('work_day');
   const [editHours, setEditHours] = useState(12);
   const [editRemark, setEditRemark] = useState('');
   const [savingCell, setSavingCell] = useState(false);
-  const [submitReviewTarget, setSubmitReviewTarget] = useState<{ waveId: string; poId: string } | null>(null);
-  const [submitQ1, setSubmitQ1] = useState(false);
-  const [submitQ2, setSubmitQ2] = useState(false);
-  const [uploadingPhotoWaveId, setUploadingPhotoWaveId] = useState<string | null>(null);
-  const [syncingPayrollReviewId, setSyncingPayrollReviewId] = useState<string | null>(null);
   const payrollAutoHealRef = useRef<Set<string>>(new Set());
   const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
   const [monthlyDocLoading, setMonthlyDocLoading] = useState(false);
 
-  const firebaseApp = useFirebaseApp();
-
   useEffect(() => {
-    setPeriodEndByWave({});
     payrollAutoHealRef.current.clear();
   }, [monthYm]);
 
@@ -176,13 +151,6 @@ export default function WaveMonthTimesheetSummaryPage() {
     setEditHours(typeof ts?.normalHours === 'number' ? ts.normalHours : 12);
     setEditRemark(ts?.remark ?? '');
   }, [cellEdit]);
-
-  useEffect(() => {
-    if (submitReviewTarget) {
-      setSubmitQ1(false);
-      setSubmitQ2(false);
-    }
-  }, [submitReviewTarget]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -304,6 +272,20 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [monthReviewRows]);
 
+  const poMonthQuery = useMemoFirebase(
+    () =>
+      firestore && canViewTs && monthYm && /^\d{4}-\d{2}$/.test(monthYm)
+        ? query(collection(firestore, 'po_month_timesheet_reviews'), where('yearMonth', '==', monthYm))
+        : null,
+    [firestore, canViewTs, monthYm],
+  );
+  const { data: poMonthRows } = useCollection<PoMonthTimesheetReview>(poMonthQuery as any);
+  const poMonthByPoId = useMemo(() => {
+    const m = new Map<string, PoMonthTimesheetReview>();
+    for (const r of poMonthRows ?? []) m.set(r.poId, r);
+    return m;
+  }, [poMonthRows]);
+
   useEffect(() => {
     if (!firestore || !currentUser || !monthYm || !canViewTs) return;
     setMonthlyDocLoading(true);
@@ -323,44 +305,6 @@ export default function WaveMonthTimesheetSummaryPage() {
       c = false;
     };
   }, [firestore, currentUser, monthYm, canViewTs]);
-
-  /** หลังผู้จัดการอนุมัติ — ซิงค์ readyForPayroll ให้ timesheet ในช่วงงวด (กรณีครั้งแรกล้มเหลวหรือข้อมูลย้อนหลัง) */
-  const handleSyncPayrollFlags = useCallback(
-    async (waveId: string) => {
-      const r = reviewByWaveId.get(waveId);
-      if (!firestore || !currentUser || !r || r.status !== 'approved') return;
-      setSyncingPayrollReviewId(r.id);
-      try {
-        const { updated } = await markTimesheetsReadyForPayrollAfterMonthApproval(firestore, r);
-        const actorName = currentUser.displayName || currentUser.email || currentUser.id;
-        const { created: periodCreated } = await ensureOpenPayrollPeriodForWaveMonthReview(
-          firestore,
-          r,
-          actorName,
-        );
-        toast({
-          title: updated > 0 ? 'ซิงค์พร้อมจ่าย payroll แล้ว' : 'ไม่มีรายการที่เปลี่ยนแปลง',
-          description:
-            updated > 0
-              ? `ตั้งค่า readyForPayroll ให้ ${updated} รายการ — ไปเมนูงวดจ่ายลูกจ้างแล้วเลือกรอบบัญชีเดือนเดียวกับงวดนี้${
-                  periodCreated ? ' (สร้างรอบบัญชีลูกจ้างอัตโนมัติแล้ว)' : ''
-                }`
-              : periodCreated
-                ? 'สร้างรอบบัญชีลูกจ้างอัตโนมัติแล้ว — ไปเลือกรอบที่เมนูงวดจ่ายลูกจ้าง (timesheet อาจถูก LOCKED หรือไม่มีในช่วงงวด)'
-                : 'รายการอาจถูก LOCKED แล้ว หรือไม่มี daily timesheet ในช่วงวันที่งวด — ตรวจช่วงปิดงวดและตารางลงเวลา',
-        });
-      } catch (e: unknown) {
-        toast({
-          variant: 'destructive',
-          title: 'ซิงค์ไม่สำเร็จ',
-          description: e instanceof Error ? e.message : String(e),
-        });
-      } finally {
-        setSyncingPayrollReviewId(null);
-      }
-    },
-    [firestore, currentUser, reviewByWaveId, toast],
-  );
 
   useEffect(() => {
     if (!firestore || !currentUser || !monthReviewRows?.length) return;
@@ -386,41 +330,6 @@ export default function WaveMonthTimesheetSummaryPage() {
       })();
     }
   }, [firestore, currentUser, monthReviewRows, toast]);
-
-  /** โหลดรูปแนบทีละเอกสาร (get) แทน list คอลเลกชัน — สอดคล้องกฎ Firestore และไม่ต้อง query index */
-  const [bundleByWaveId, setBundleByWaveId] = useState<Map<string, WaveMonthTimesheetPhotoBundle>>(() => new Map());
-
-  const refreshPhotoBundlesForWaves = useCallback(async () => {
-    if (!firestore || !canViewTs || !monthYm || !/^\d{4}-\d{2}$/.test(monthYm)) {
-      setBundleByWaveId(new Map());
-      return;
-    }
-    if (sortedWaves.length === 0) {
-      setBundleByWaveId(new Map());
-      return;
-    }
-    try {
-      const refs = sortedWaves.map((w) =>
-        doc(firestore, 'wave_month_timesheet_photo_bundles', `${w.id}_${monthYm}`),
-      );
-      const snaps = await Promise.all(refs.map((r) => getDoc(r)));
-      const m = new Map<string, WaveMonthTimesheetPhotoBundle>();
-      sortedWaves.forEach((w, i) => {
-        const s = snaps[i];
-        if (s.exists()) {
-          m.set(w.id, { id: s.id, ...(s.data() as object) } as WaveMonthTimesheetPhotoBundle);
-        }
-      });
-      setBundleByWaveId(m);
-    } catch (e) {
-      console.error(e);
-      setBundleByWaveId(new Map());
-    }
-  }, [firestore, canViewTs, monthYm, sortedWaves]);
-
-  useEffect(() => {
-    void refreshPhotoBundlesForWaves();
-  }, [refreshPhotoBundlesForWaves]);
 
   useEffect(() => {
     const ids = sortedWaves.map((w) => w.id);
@@ -499,180 +408,6 @@ export default function WaveMonthTimesheetSummaryPage() {
     return out;
   }, [sortedWaves, mobAssignments, allWorkers, poById]);
 
-  const appendPhotoToBundle = useCallback(
-    async (wave: Wave, poId: string, file: File) => {
-      if (!firebaseApp || !firestore || !monthYm) return;
-      const bundleId = `${wave.id}_${monthYm}`;
-      setUploadingPhotoWaveId(wave.id);
-      try {
-        const att = await uploadWaveMonthTimesheetPhoto(firebaseApp, bundleId, file);
-        const bundleRef = doc(firestore, 'wave_month_timesheet_photo_bundles', bundleId);
-        const snap = await getDoc(bundleRef);
-        const prev = snap.exists() ? ((snap.data() as WaveMonthTimesheetPhotoBundle).attachments ?? []) : [];
-        await setDoc(
-          bundleRef,
-          {
-            id: bundleId,
-            waveId: wave.id,
-            poId,
-            yearMonth: monthYm,
-            attachments: [...prev, att],
-            updatedAt: Date.now(),
-          },
-          { merge: true },
-        );
-        const after = await getDoc(bundleRef);
-        if (after.exists()) {
-          setBundleByWaveId((prev) => {
-            const m = new Map(prev);
-            m.set(wave.id, { id: after.id, ...(after.data() as object) } as WaveMonthTimesheetPhotoBundle);
-            return m;
-          });
-        }
-        toast({ title: 'แนบไฟล์แล้ว', description: file.name });
-      } catch (e: unknown) {
-        toast({
-          variant: 'destructive',
-          title: 'อัปโหลดไม่สำเร็จ',
-          description: e instanceof Error ? e.message : String(e),
-        });
-      } finally {
-        setUploadingPhotoWaveId(null);
-      }
-    },
-    [firebaseApp, firestore, monthYm, toast],
-  );
-
-  const removePhotoFromBundle = useCallback(
-    async (wave: Wave, att: WaveMonthTimesheetPhotoAttachment) => {
-      if (!firebaseApp || !firestore || !monthYm) return;
-      const bundleId = `${wave.id}_${monthYm}`;
-      setUploadingPhotoWaveId(wave.id);
-      try {
-        await deleteWaveMonthTimesheetPhotoFile(firebaseApp, att.storagePath);
-        const bundleRef = doc(firestore, 'wave_month_timesheet_photo_bundles', bundleId);
-        const snap = await getDoc(bundleRef);
-        if (!snap.exists()) return;
-        const bd = snap.data() as WaveMonthTimesheetPhotoBundle;
-        const next = (bd.attachments ?? []).filter((a) => a.id !== att.id);
-        await updateDoc(bundleRef, { attachments: next, updatedAt: Date.now() });
-        const after = await getDoc(bundleRef);
-        setBundleByWaveId((prev) => {
-          const m = new Map(prev);
-          if (after.exists() && (after.data() as WaveMonthTimesheetPhotoBundle).attachments?.length) {
-            m.set(wave.id, { id: after.id, ...(after.data() as object) } as WaveMonthTimesheetPhotoBundle);
-          } else {
-            m.delete(wave.id);
-          }
-          return m;
-        });
-        toast({ title: 'ลบไฟล์แล้ว' });
-      } catch (e: unknown) {
-        toast({
-          variant: 'destructive',
-          title: 'ลบไม่สำเร็จ',
-          description: e instanceof Error ? e.message : String(e),
-        });
-      } finally {
-        setUploadingPhotoWaveId(null);
-      }
-    },
-    [firebaseApp, firestore, monthYm, toast],
-  );
-
-  const getPeriodBounds = useCallback(
-    (waveId: string) => {
-      const monthFirst = `${monthYm}-01`;
-      const monthLast = lastDayOfCalendarMonth(monthYm);
-      const end = periodEndByWave[waveId] ?? monthLast;
-      return { periodStartDate: monthFirst, periodEndDate: end < monthFirst ? monthLast : end };
-    },
-    [monthYm, periodEndByWave],
-  );
-
-  const writeMonthReview = useCallback(
-    async (waveId: string, poId: string, status: WaveMonthTimesheetReviewStatus) => {
-      if (!firestore || !currentUser || !monthYm || !canEditTs) return;
-      const { periodStartDate, periodEndDate } = getPeriodBounds(waveId);
-      if (periodEndDate < periodStartDate) {
-        toast({ variant: 'destructive', title: 'ช่วงวันที่ไม่ถูกต้อง', description: 'วันสุดท้ายต้องไม่ก่อนวันเริ่มต้นเดือน' });
-        return;
-      }
-      setSubmittingWaveId(waveId);
-      try {
-        const id = `${waveId}_${monthYm}`;
-        const now = Date.now();
-        const ref = doc(firestore, 'wave_month_timesheet_reviews', id);
-        const existing = await getDoc(ref);
-        const createdAt =
-          existing.exists() && typeof existing.data()?.createdAt === 'number'
-            ? (existing.data() as WaveMonthTimesheetReview).createdAt
-            : now;
-        const base: Record<string, unknown> = {
-          id,
-          waveId,
-          poId,
-          yearMonth: monthYm,
-          status,
-          periodStartDate,
-          periodEndDate,
-          submittedAt: now,
-          submittedByUserId: currentUser.id,
-          submittedByName: currentUser.displayName || currentUser.email || '',
-          createdAt,
-          updatedAt: now,
-        };
-        if (status === 'entry_locked') {
-          base.entryLockedAt = now;
-          base.entryLockedByUserId = currentUser.id;
-          base.entryLockedByName = currentUser.displayName || currentUser.email || '';
-        }
-        if (status === 'pending_manager_review') {
-          base.reviewedAt = deleteField();
-          base.reviewedByUserId = deleteField();
-          base.reviewedByName = deleteField();
-          base.reviewNote = deleteField();
-          const bundleRef = doc(firestore, 'wave_month_timesheet_photo_bundles', id);
-          const bundleSnap = await getDoc(bundleRef);
-          let atts: WaveMonthTimesheetPhotoAttachment[] = [];
-          if (bundleSnap.exists()) {
-            const bd = bundleSnap.data() as WaveMonthTimesheetPhotoBundle;
-            atts = Array.isArray(bd.attachments) ? bd.attachments : [];
-          }
-          base.timesheetPhotoAttachments = atts;
-        }
-        await setDoc(ref, base, { merge: true });
-        if (status === 'entry_locked') {
-          toast({
-            title: 'ปิดงวดเดือนแล้ว',
-            description: 'ล็อกการแก้ไขลงเวลาในช่วงนี้บน Wave Board — กดส่งตรวจผู้จัดการเมื่อพร้อม',
-          });
-        } else {
-          toast({
-            title: 'ส่งตรวจสอบแล้ว',
-            description: 'รายการเข้าคิวที่ศูนย์อนุมัติให้ Operations / HR Manager ตรวจ — หลังอนุมัติระบบจะตั้งพร้อมจ่าย payroll ตามช่วงงวด',
-          });
-        }
-      } catch (e: unknown) {
-        toast({
-          variant: 'destructive',
-          title: 'บันทึกไม่สำเร็จ',
-          description: e instanceof Error ? e.message : String(e),
-        });
-      } finally {
-        setSubmittingWaveId(null);
-      }
-    },
-    [firestore, currentUser, monthYm, canEditTs, toast, getPeriodBounds],
-  );
-
-  const handleEntryLockMonth = useCallback(
-    async (waveId: string, poId: string) => {
-      await writeMonthReview(waveId, poId, 'entry_locked');
-    },
-    [writeMonthReview],
-  );
-
   const openCellEdit = useCallback(
     (
       wave: Wave,
@@ -687,11 +422,11 @@ export default function WaveMonthTimesheetSummaryPage() {
         toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขลงเวลา' });
         return;
       }
-      if (isWaveMonthReviewLocked(monthReview)) {
+      if (isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
         toast({
           variant: 'destructive',
           title: 'งวดนี้แก้ไขไม่ได้',
-          description: 'มีการปิดงวดเดือน / ส่งตรวจ / อนุมัติแล้ว',
+          description: 'เอกสาร PO+งวดถูกล็อก/ส่งตรวจแล้ว หรืองวดราย wave เดิมล็อกแล้ว',
         });
         return;
       }
@@ -728,13 +463,13 @@ export default function WaveMonthTimesheetSummaryPage() {
         timesheet: ts,
       });
     },
-    [canEditTs, toast],
+    [canEditTs, toast, poMonthByPoId],
   );
 
   const handleSaveCellEdit = useCallback(async () => {
     if (!firestore || !currentUser || !cellEdit) return;
     const { wave, po, monthReview, workerId, workerName, assignment, timesheet: existingTs } = cellEdit;
-    if (!canEditTs || isWaveMonthReviewLocked(monthReview)) {
+    if (!canEditTs || isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
       toast({
         variant: 'destructive',
         title: 'บันทึกไม่ได้',
@@ -833,6 +568,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     currentUser,
     cellEdit,
     canEditTs,
+    poMonthByPoId,
     toast,
     editDate,
     editEvent,
@@ -890,6 +626,9 @@ export default function WaveMonthTimesheetSummaryPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" asChild>
+              <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}>เอกสาร PO+งวด (ล็อก / ส่งตรวจ)</Link>
+            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link href="/timesheets/wave-board">ไป Wave Board</Link>
             </Button>
@@ -899,10 +638,9 @@ export default function WaveMonthTimesheetSummaryPage() {
         <PageGuidance
           title="คีย์การใช้งาน"
           tips={[
-            'เลือกเดือน — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; ส่วน "ดำเนินการต่อ Wave" ยังยึดราย Wave สำหรับปิดงวด/แนบ/ส่งตรวจ',
-            'ตารางรวม: แถว = คนใน Wave แต่ละรอบ (คนเดียวกันหลายรอบ = หลายแถว) — คลิกช่องรายวันเพื่อแก้/เพิ่ม (เมื่องวด wave นั้นยังไม่ล็อก)',
+            'ปิดงวด / ส่งตรวจ / แนบรูป—PDF / ออกเอกสาร (invoice+payroll): ทำที่เมนู «เอกสาร timesheet ราย PO+เดือน» ไม่อ้างอิง Wave',
+            'เลือกเดือน — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; ตารางด้านล่าง = รวมทุก wave เพื่อแก้รายวันจนกว่า PO+งวดจะถูกล็อก',
             'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
-            'ปิดงวด/ส่งตรวจ/แนบรูป: ยังต้องทำทีละ Wave ในหัวข้อ "ดำเนินการต่อ Wave" ด้านบน (คนละสถานะราย Wave ตาม business เดิม)',
           ]}
         />
 
@@ -931,233 +669,23 @@ export default function WaveMonthTimesheetSummaryPage() {
           </p>
         ) : (
           <div className="space-y-6">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">ดำเนินการต่อ Wave (ล็อก / ส่งตรวจ / แนบ)</CardTitle>
-                <CardDescription>
-                  รายรอบงาน — ใช้เมื่อปิดงวด/ส่งอนุมัติ (สถานะล็อก/ส่งตรวจยังเก็บต่อ wave ในรีวิว)
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-0">
-            {sortedWaves.map((wave) => {
-              const waveMobs = mobAssignments.filter((m) => m.waveId === wave.id);
-              const waveSheets = monthSheetsForOpenWaves.filter((t) => t.waveId === wave.id);
-              const monthReview = reviewByWaveId.get(wave.id);
-
-              const rosterWorkers = [...new Set(waveMobs.map((x) => x.workerId).filter(Boolean))]
-                .map((wid) => {
-                  const w = allWorkers?.find((x) => x.id === wid);
-                  const name = w ? `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.workerCode : wid;
-                  return { workerId: wid, name };
-                })
-                .sort((a, b) => a.name.localeCompare(b.name, 'th'));
-
-              const submitting = submittingWaveId === wave.id;
-              const photoReadOnly =
-                monthReview?.status === 'pending_manager_review' || monthReview?.status === 'approved';
-              const displayPhotos = photoReadOnly
-                ? monthReview?.timesheetPhotoAttachments ?? []
-                : bundleByWaveId.get(wave.id)?.attachments ?? [];
-
-              return (
-                <div
-                  key={wave.id}
-                  id={`wave-month-wave-${wave.id}`}
-                  className="overflow-hidden scroll-mt-4 rounded-lg border bg-card"
-                >
-                  <div className="border-b bg-muted/30 py-4 space-y-3 px-3 sm:px-4">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="space-y-1 min-w-0">
-                        <h3 className="text-base font-semibold flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <Waves className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="font-mono">Wave {wave.waveCode}</span>
-                          <Badge variant="secondary" className="text-[10px] font-normal">
-                            {wave.status}
-                          </Badge>
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                          {waveRoundMonthLabel(wave)} · {wave.siteLocation || '—'}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <Button variant="outline" size="sm" asChild>
-                          <Link href="/timesheets/wave-board">Wave Board</Link>
-                        </Button>
-                        <div className="flex flex-col gap-1 w-full sm:w-auto">
-                          <Label className="text-[10px] uppercase text-muted-foreground">วันสุดท้ายของงวดปิด</Label>
-                          <Input
-                            type="date"
-                            className="h-9 w-[160px]"
-                            min={`${monthYm}-01`}
-                            max={lastDayOfCalendarMonth(monthYm)}
-                            value={periodEndByWave[wave.id] ?? lastDayOfCalendarMonth(monthYm)}
-                            onChange={(e) =>
-                              setPeriodEndByWave((prev) => ({ ...prev, [wave.id]: e.target.value }))
-                            }
-                            disabled={
-                              monthReview?.status === 'pending_manager_review' ||
-                              monthReview?.status === 'approved'
-                            }
-                          />
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          className="gap-1.5"
-                          disabled={
-                            !canEditTs ||
-                            submitting ||
-                            monthReview?.status === 'entry_locked' ||
-                            monthReview?.status === 'pending_manager_review' ||
-                            monthReview?.status === 'approved'
-                          }
-                          onClick={() => void handleEntryLockMonth(wave.id, wave.poId)}
-                        >
-                          <Lock className="h-4 w-4" />
-                          ปิดงวดเดือน
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="gap-1.5"
-                          disabled={
-                            !canEditTs ||
-                            submitting ||
-                            monthReview?.status === 'pending_manager_review' ||
-                            monthReview?.status === 'approved'
-                          }
-                          onClick={() => setSubmitReviewTarget({ waveId: wave.id, poId: wave.poId })}
-                        >
-                          <Send className="h-4 w-4" />
-                          {monthReview?.status === 'pending_manager_review'
-                            ? 'รอผู้จัดการตรวจ'
-                            : monthReview?.status === 'approved'
-                              ? 'ผู้จัดการอนุมัติแล้ว'
-                              : 'ปิดงวดและส่งตรวจสอบ'}
-                        </Button>
-                        {monthReview?.status === 'entry_locked' ? (
-                          <Badge variant="outline" className="text-[10px]">
-                            ล็อกลงเวลาแล้ว — กดส่งตรวจผู้จัดการเมื่อพร้อม
-                          </Badge>
-                        ) : null}
-                        {monthReview?.status === 'rejected' && canEditTs ? (
-                          <span className="text-xs text-destructive">ถูกปฏิเสธ — แก้แล้วกดส่งใหม่ได้</span>
-                        ) : null}
-                        {monthReview?.status === 'approved' ? (
-                          <div className="flex w-full flex-col gap-1 sm:max-w-md">
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              className="gap-1.5 w-fit"
-                              disabled={syncingPayrollReviewId === monthReview.id}
-                              onClick={() => void handleSyncPayrollFlags(wave.id)}
-                            >
-                              {syncingPayrollReviewId === monthReview.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : null}
-                              ซิงค์พร้อมจ่าย payroll
-                            </Button>
-                            <span className="text-[10px] text-muted-foreground leading-snug">
-                              ถ้าไปสร้างงวดจ่ายลูกจ้างแล้วไม่เจอ timesheet — กดปุ่มนี้เพื่อตั้งค่า readyForPayroll ให้ครบตามช่วงงวดที่อนุมัติ
-                            </span>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2 pt-3 border-t border-dashed border-muted-foreground/30 w-full">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp,application/pdf"
-                          className="hidden"
-                          id={`wave-photo-${wave.id}`}
-                          disabled={
-                            photoReadOnly || !canEditTs || uploadingPhotoWaveId === wave.id || submitting
-                          }
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            e.target.value = '';
-                            if (f) void appendPhotoToBundle(wave, wave.poId, f);
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-1.5"
-                          disabled={
-                            photoReadOnly || !canEditTs || uploadingPhotoWaveId === wave.id || submitting
-                          }
-                          onClick={() => document.getElementById(`wave-photo-${wave.id}`)?.click()}
-                        >
-                          {uploadingPhotoWaveId === wave.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <ImagePlus className="h-4 w-4" />
-                          )}
-                          แนบรูป / PDF
-                        </Button>
-                        <span className="text-xs text-muted-foreground">
-                          รูป: บีบให้ประมาณ 500 KB — PDF: สูงสุด 10 MB
-                        </span>
-                      </div>
-                      {displayPhotos.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {displayPhotos.map((att) => (
-                            <div key={att.id} className="relative">
-                              {isWaveMonthAttachmentPdf(att) ? (
-                                <a
-                                  href={att.downloadUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded border bg-muted/50 text-[9px] text-muted-foreground hover:bg-muted"
-                                >
-                                  <FileText className="h-6 w-6 shrink-0 text-primary" />
-                                  <span className="line-clamp-2 px-0.5 text-center leading-tight">PDF</span>
-                                </a>
-                              ) : (
-                                <a
-                                  href={att.downloadUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="block"
-                                >
-                                  <img
-                                    src={att.downloadUrl}
-                                    alt={att.fileName}
-                                    className="h-16 w-16 rounded border object-cover"
-                                  />
-                                </a>
-                              )}
-                              {!photoReadOnly && canEditTs ? (
-                                <button
-                                  type="button"
-                                  className="absolute -right-1 -top-1 rounded-full bg-destructive p-0.5 text-destructive-foreground shadow"
-                                  aria-label="ลบไฟล์แนบ"
-                                  disabled={uploadingPhotoWaveId === wave.id}
-                                  onClick={() => void removePhotoFromBundle(wave, att)}
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </button>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">ยังไม่มีไฟล์แนบ</p>
-                      )}
-                    </div>
-
-                    <p className="text-sm text-muted-foreground">
-                      {monthYm} · {rosterWorkers.length} คน · {waveSheets.length} แถว timesheet ในเดือน
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-              </CardContent>
-            </Card>
+            <Alert className="border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20">
+              <AlertTitle>ปิดงวด &amp; ส่งตรวจ &amp; แนบ — ย้ายไปเอกสาร PO+เดือน</AlertTitle>
+              <AlertDescription className="text-sm space-y-2">
+                <p>
+                  ใช้{' '}
+                  <Link
+                    className="font-semibold text-primary underline"
+                    href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}
+                  >
+                    เอกสาร timesheet ราย PO+เดือน
+                  </Link>{' '}
+                  เพื่อล็อกงวด แนบรูป/PDF สูงสุด 4 ไฟล์ (รูป &gt; ~500 KB บีบอัตโนมัติ) แล้วส่งผู้จัดการ — หลังอนุมัติใช้ทำ invoice + payroll
+                  (ไม่อ้างอิง Wave ในเอกสารจ่าย/วางบิล)
+                </p>
+                <p className="text-xs text-muted-foreground">ตารางด้านล่าง = ลงเวลารายวันต่อ wave จนกว่า PO+งวดจะถูกล็อก</p>
+              </AlertDescription>
+            </Alert>
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">สรุปลงเวลา — ทุกคนทุก Wave</CardTitle>
@@ -1200,7 +728,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                             byDate.set(t.date, t);
                           }
                           const rowTotal = rowSheets.reduce((s, t) => s + (t.normalHours ?? 0), 0);
-                          const editableGrid = canEditTs && !isWaveMonthReviewLocked(monthReview);
+                          const editableGrid =
+                            canEditTs &&
+                            !isMonthTimesheetRowLocked(
+                              po ? poMonthByPoId.get(po.id) : undefined,
+                              monthReview,
+                            );
                           return (
                             <TableRow
                               key={`${wave.id}-${rw.workerId}`}
@@ -1377,75 +910,6 @@ export default function WaveMonthTimesheetSummaryPage() {
                 </>
               ) : (
                 'บันทึก'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!submitReviewTarget}
-        onOpenChange={(open) => {
-          if (!open) setSubmitReviewTarget(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>ยืนยันการส่งตรวจผู้จัดการ</DialogTitle>
-            <DialogDescription>
-              กรุณายืนยันข้อมูลก่อนส่งงวด {monthYm} เข้าคิวอนุมัติ
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="flex items-start gap-3">
-              <Checkbox
-                id="wm-submit-q1"
-                checked={submitQ1}
-                onCheckedChange={(v) => setSubmitQ1(v === true)}
-              />
-              <label htmlFor="wm-submit-q1" className="text-sm leading-snug cursor-pointer">
-                1. คุณได้ตรวจสอบระหว่าง timesheet กับ การบันทึกในระบบถูกต้อง แล้วหรือไม่?
-              </label>
-            </div>
-            <div className="flex items-start gap-3">
-              <Checkbox
-                id="wm-submit-q2"
-                checked={submitQ2}
-                onCheckedChange={(v) => setSubmitQ2(v === true)}
-              />
-              <label htmlFor="wm-submit-q2" className="text-sm leading-snug cursor-pointer">
-                2. คุณได้แนบเอกสารรูปถ่ายหรือ PDF timesheet เรียบร้อยแล้วหรือไม่?
-              </label>
-            </div>
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setSubmitReviewTarget(null)}>
-              ยกเลิก
-            </Button>
-            <Button
-              type="button"
-              disabled={
-                !submitQ1 ||
-                !submitQ2 ||
-                !submitReviewTarget ||
-                submittingWaveId === submitReviewTarget.waveId
-              }
-              onClick={() => {
-                if (!submitReviewTarget) return;
-                void writeMonthReview(
-                  submitReviewTarget.waveId,
-                  submitReviewTarget.poId,
-                  'pending_manager_review',
-                ).then(() => setSubmitReviewTarget(null));
-              }}
-            >
-              {submitReviewTarget && submittingWaveId === submitReviewTarget.waveId ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  กำลังส่ง…
-                </>
-              ) : (
-                'ยืนยันส่งตรวจ'
               )}
             </Button>
           </DialogFooter>

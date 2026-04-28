@@ -254,9 +254,21 @@ export function buildPayslipFromOfficeLine(
   if (allowance > 0) incomeLines.push({ label: 'เบี้ยเลี้ยง / Allowance', amount: round2(allowance) });
   if (bonus > 0) incomeLines.push({ label: 'โบนัส', amount: round2(bonus) });
   if (otherInc > 0) incomeLines.push({ label: 'รายได้อื่น', amount: round2(otherInc) });
+  const hrAllow = line.hrLineAdjustments?.allowanceItems ?? [];
+  for (const it of hrAllow) {
+    const a = Number(it.amount) || 0;
+    if (a > 0) {
+      incomeLines.push({
+        label: it.label?.trim() ? it.label.trim() : 'รายรับเพิ่ม (HR)',
+        amount: round2(a),
+      });
+    }
+  }
   if (incomeLines.length === 0 && gross > 0) {
     incomeLines.push({ label: 'รายได้รวม', amount: round2(gross) });
   }
+
+  const hrDedItems = line.hrLineAdjustments?.deductionItems ?? [];
 
   const deductionLines: PayslipLineItem[] = [];
   deductionLines.push({ label: 'ประกันสังคม', amount: round2(ss) });
@@ -267,7 +279,15 @@ export function buildPayslipFromOfficeLine(
       if (k === 'social_security' || k === 'pit_withholding') continue;
       const amt = round2(Number(v) || 0);
       if (amt === 0) continue;
-      deductionLines.push({ label: humanizeDeductionKey(k), amount: amt });
+      let label = humanizeDeductionKey(k);
+      const m = /^manual_ded_(\d+)$/.exec(k);
+      if (m) {
+        const idx = Number(m[1]);
+        const item = hrDedItems[idx];
+        if (item?.label?.trim()) label = item.label.trim();
+        else label = `หักเพิ่ม (${idx + 1})`;
+      }
+      deductionLines.push({ label, amount: amt });
     }
   } else {
     const otherTotal = Math.max(0, line.deductions - tax - ss);

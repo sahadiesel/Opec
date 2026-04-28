@@ -19,9 +19,10 @@
     "migrate:phase6": "npx --yes tsx scripts/phase6-strip-main-contract-costing-denorm.ts",
     "deploy:app": "firebase deploy --only apphosting:opecbackend --force",
     "deploy:rules": "firebase deploy --only firestore:rules",
-    "deploy:firestore": "firebase deploy --only firestore:rules",
+    "deploy:indexes": "firebase deploy --only firestore:indexes",
+    "deploy:firestore": "firebase deploy --only firestore",
     "deploy:storage": "firebase deploy --only storage",
-    "deploy:all": "firebase deploy --only firestore:rules,storage,apphosting:opecbackend --force"
+    "deploy:all": "firebase deploy --only firestore,storage,apphosting:opecbackend --force"
   },
   "dependencies": {
     "@genkit-ai/google-genai": "^1.28.0",

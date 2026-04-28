@@ -16,14 +16,15 @@ import {
   Building2, 
   Calendar,
   Info,
-  Loader2
+  Loader2,
+  Trash2,
 } from 'lucide-react';
 import {
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
 import { collection, query, orderBy, where } from 'firebase/firestore';
@@ -38,17 +39,30 @@ import {
   DialogFooter
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
 import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
+import { deleteTaxInvoiceBundleAsAdmin } from '@/lib/services/tax-invoice-delete-service';
+import { isSystemAdmin } from '@/lib/permission-core';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export default function TaxInvoicesPage() {
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
 
   const isAuthorized = useMemo(
@@ -86,6 +100,13 @@ export default function TaxInvoicesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedCommercialId, setSelectedCommercialId] = useState<string>('');
+  /** แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ (ฐานก่อน VAT × 3%) */
+  const [showWithholdingOnDocument, setShowWithholdingOnDocument] = useState(false);
+
+  const canAdminDelete = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TaxInvoice | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -104,10 +125,15 @@ export default function TaxInvoicesPage() {
         firestore,
         selectedCommercialId,
         currentUser as User,
+        {
+          showWithholdingOnDocument,
+          withholdingTaxRatePercentOnDocument: 3,
+        },
       );
 
       setIsDialogOpen(false);
       setSelectedCommercialId('');
+      setShowWithholdingOnDocument(false);
       toast({
         title: 'สร้างใบกำกับภาษีร่างสำเร็จ',
         description: `เลขที่ ${taxInvoiceNo} — แนบสลิปได้ที่หน้ารายละเอียด ก่อนกดออกเอกสารจริง (ISSUED)`,
@@ -119,6 +145,29 @@ export default function TaxInvoicesPage() {
       toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleConfirmDeleteTaxInvoice = async () => {
+    if (!firestore || !currentUser || !deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteTaxInvoiceBundleAsAdmin(firestore, firebaseApp, deleteTarget, currentUser as User);
+      toast({
+        title: 'ลบชุดเอกสารแล้ว',
+        description: `เลขที่ ${deleteTarget.taxInvoiceNo} — ถ้าเป็นเลขล่าสุดของเดือน การสร้างครั้งถัดไปจะใช้เลขเดิมแทนการข้าม`,
+      });
+      setDeleteDialogOpen(false);
+      setDeleteTarget(null);
+    } catch (e: unknown) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -167,7 +216,10 @@ export default function TaxInvoicesPage() {
             open={isAuthorized && canCreateInvoice && isDialogOpen}
             onOpenChange={(open) => {
               setIsDialogOpen(open);
-              if (!open) setSelectedCommercialId('');
+              if (!open) {
+                setSelectedCommercialId('');
+                setShowWithholdingOnDocument(false);
+              }
             }}
           >
             <DialogTrigger asChild>
@@ -210,6 +262,21 @@ export default function TaxInvoicesPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
+                  <Checkbox
+                    id="ti-show-wht"
+                    checked={showWithholdingOnDocument}
+                    onCheckedChange={(c) => setShowWithholdingOnDocument(c === true)}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="ti-show-wht" className="cursor-pointer font-semibold leading-snug">
+                      แสดงยอดหัก ณ ที่จ่ายบนใบกำกับภาษี
+                    </Label>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      ถ้าเลือก ระบบจะคำนวณจากยอดก่อน VAT × 3% และแสดงยอดสุทธิที่ต้องชำระหลังหัก — ถ้าไม่เลือก ออกยอดแบบปกติ (ฐานภาษี + VAT + ยอดรวมสุทธิ)
+                    </p>
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
@@ -221,6 +288,39 @@ export default function TaxInvoicesPage() {
             </DialogContent>
           </Dialog>
         </div>
+
+        <AlertDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            setDeleteDialogOpen(open);
+            if (!open) setDeleteTarget(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบใบกำกับภาษีและใบวางบิลที่คู่กัน?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span>
+                  จะลบถาวรเอกสาร <strong className="font-mono">{deleteTarget?.taxInvoiceNo}</strong> พร้อมใบวางบิลและรายการบรรทัด
+                  และคืนสิทธิ์สร้างใบกำกับจากใบเรียกเก็บเดิมได้ (ถ้ามี)
+                </span>
+                <span className="block text-xs">
+                  ถ้าเลขนี้เป็นลำดับล่าสุดของเดือนในระบบ — เลขที่จะถูกนำกลับมาใช้เมื่อสร้างชุดใหม่ (ไม่กระโดดข้าม) ยกเว้นมีเลขถัดไปออกไปแล้ว
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>ยกเลิก</AlertDialogCancel>
+              <Button
+                variant="destructive"
+                disabled={deleting}
+                onClick={() => void handleConfirmDeleteTaxInvoice()}
+              >
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบถาวร'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
@@ -265,7 +365,36 @@ export default function TaxInvoicesPage() {
                         </TableCell>
                         <TableCell>{getStatusBadge(inv.status)}</TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                          <div className="inline-flex items-center gap-1 justify-end">
+                            {canAdminDelete && inv.status !== 'ISSUED' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                title="ลบชุดเอกสาร (ผู้ดูแลระบบ)"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteTarget(inv);
+                                  setDeleteDialogOpen(true);
+                                }}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="group-hover:text-primary"
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/tax-invoices/${inv.id}`);
+                              }}
+                            >
+                              <ChevronRight className="h-5 w-5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

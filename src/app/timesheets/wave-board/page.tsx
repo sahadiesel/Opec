@@ -222,17 +222,25 @@ function WaveTimesheetBoardContent() {
             คีย์ลงเวลาแบบกลุ่ม (PO / งวด timesheet รายเดือน)
           </h1>
           <p className="text-muted-foreground text-lg max-w-4xl">
-            แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แต่ละแถวคนแสดง <strong>Wave ที่มอบหมาย</strong> — บันทึกร่าง DRAFT ที่นี่; ส่ง
-            ตรวจงวดเดือนได้ที่{' '}
+            แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แต่ละแถวแสดง <strong>Wave ที่ assignment นั้นอยู่</strong> (รอบลงงานต่างกันได้) — บันทึกร่าง DRAFT
+            ที่นี่; รอบส่งตรวจ/ใบกำกับ: สรุปราย wave ได้ที่{' '}
             <Link href="/timesheets/wave-month" className="text-primary font-semibold underline">
-              สรุปลงเวลารายเดือน
+              สรุปลงเวลารายเดือน (wave)
             </Link>
+            {', '}
+            หรือ**งวดเดียวรวมทุก wave ใต้ PO** สำหรับเชิงการเรียกเก็บที่{' '}
+            <Link href="/timesheets/po-month" className="text-primary font-semibold underline">
+              เอกสาร timesheet ราย PO+เดือน
+            </Link>
+            .
           </p>
         </section>
 
         <PageGuidance
           title="วิธีใช้"
           tips={[
+            'PO = คำสั่งจ้าง/โควต้า; **Wave = กลุ่ม mobilize ตามรอบ** — คนลงสนามไม่พร้อมกันทั้ง PO; แถวลงเวลาสะท้อน wave ราย assignment',
+            '**วางบิลรอบเดือนใต้ PO ที่มีหลาย wave ในเดือนนั้น** ให้ยึด **เอกสาร PO+เดือน** หลังอนุมัติ (รวม timesheet ทุก wave) ไม่ใช่ “เลือกอ้าง wave ใด wave หนึ่ง” แทนเดือน',
             'รายคน = 1 assignment — ย้าย wave แล้ว demob รายเก่า รายนั้นไม่นับซ้ำในราย active',
             'ตัวกรอง URL: ?month=2026-04&poId=… — กำหนดวันที่ 1 ของงวดและ/หรือ PO',
             'แถวที่ lock ตาม wave_month_timesheet_reviews ของ wave นั้น — แก้เวลาไม่ได้',

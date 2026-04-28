@@ -35,6 +35,8 @@ import type {
 import { useRouter } from 'next/navigation';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canPayrollPermission, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin, isSimpleAccounting } from '@/lib/simple-tier-model';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
@@ -148,6 +150,9 @@ export default function PayrollBatchWorkerLinePage({
   const useMatrixGuards = isMatrixControlledRole(currentUser);
 
   const canViewBatch = useMemo(() => {
+    if (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser) || isSimpleAccounting(currentUser)) {
+      return true;
+    }
     if (useMatrixGuards) {
       return (
         canAccess(currentUser, 'worker_payroll', 'view') ||

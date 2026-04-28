@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useRef } from 'react';
+import { useState, use, useRef, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -20,6 +20,7 @@ import {
   Trash2,
   ExternalLink,
   UserCheck,
+  Pencil,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useFirebaseApp, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
@@ -39,7 +40,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
+import {
+  formatDateTimeThaiBE,
+  formatStoredDateThaiBE,
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+} from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
@@ -60,7 +66,11 @@ import {
   deleteTaxInvoiceAttachmentFile,
   validateTimesheetImageFile,
 } from '@/lib/storage/tax-invoice-attachments';
-import { buildTaxInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildTaxInvoicePrintHtml,
+  openStandardPrintWindow,
+  type TaxInvoicePrintSheet,
+} from '@/lib/documents/standard-document-print';
 import {
   recordTaxInvoicePaymentNotification,
   confirmPaymentAndIssueMoneyReceipt,
@@ -68,6 +78,19 @@ import {
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+
+const ACCOUNTING_TAX_INVOICE_PRINT_PRESETS: Record<
+  'p1' | 'p2' | 'p3' | 'p4',
+  { sheets: TaxInvoicePrintSheet[]; label: string }
+> = {
+  p1: { sheets: ['original', 'copy'], label: 'ต้นฉบับ 1 แผ่น + สำเนา 1 แผ่น' },
+  p2: { sheets: ['original', 'copy', 'copy'], label: 'ต้นฉบับ 1 แผ่น + สำเนา 2 แผ่น' },
+  p3: { sheets: ['copy'], label: 'สำเนา 1 แผ่น' },
+  p4: { sheets: ['copy', 'copy'], label: 'สำเนา 2 แผ่น' },
+};
 
 export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -87,9 +110,28 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [billingApproving, setBillingApproving] = useState(false);
   const [payNotifyLoading, setPayNotifyLoading] = useState(false);
   const [payConfirmLoading, setPayConfirmLoading] = useState(false);
+  const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
+  const [editShowWht, setEditShowWht] = useState(false);
+  const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
+  const [printPresetOpen, setPrintPresetOpen] = useState(false);
+  const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
 
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
+
+  const showWhtBlock = useMemo(() => {
+    if (!invoice) return false;
+    const w = Number(invoice.withholdingTaxAmount) || 0;
+    return invoice.showWithholdingOnDocument === true && w > 0.005;
+  }, [invoice]);
+
+  const netAfterWht = useMemo(() => {
+    if (!invoice) return 0;
+    const w = Number(invoice.withholdingTaxAmount) || 0;
+    return roundMoney2(invoice.totalAmount - w);
+  }, [invoice]);
+
+  const whtRateDisplay = Number(invoice?.withholdingTaxRatePercentOnDocument ?? 3);
 
   const customerRef = useMemoFirebase(
     () => (firestore && invoice ? doc(firestore, 'customers', invoice.customerId) : null),
@@ -166,6 +208,12 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
     setIssuing(true);
     try {
+      const issuedAt = Date.now();
+      /** วันที่ออกเอกสาร = วันที่กดยืนยัน ISSUED (ส่งฉบับจริง) — ไม่ใช้ issueDate ของร่าง/ใบ commercial ย้อนหลัง */
+      const issueYmd = timestampToHtmlDateValue(issuedAt);
+      const issueStartMs = htmlDateValueToTimestampMs(issueYmd) ?? issuedAt;
+      const dueYmd = timestampToHtmlDateValue(issueStartMs + 30 * 86400000);
+
       let arEntryId = invoice.arEntryId;
       if (!arEntryId) {
         const { code: arNo } = await generateNextDocumentCode(firestore, 'ar', {
@@ -177,8 +225,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           referenceId: invoice.id,
           referenceNo: invoice.taxInvoiceNo,
           documentNo: arNo,
-          issueDate: invoice.issueDate,
-          dueDate: billingNote.dueDate,
+          issueDate: issueYmd,
+          dueDate: dueYmd,
           debitAmount: invoice.totalAmount,
           creditAmount: 0,
           outstandingAmount: invoice.totalAmount,
@@ -187,17 +235,26 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           updatedAt: Date.now(),
         });
         arEntryId = arRef.id;
+      } else {
+        await updateDoc(doc(firestore, 'accounts_receivable', arEntryId), {
+          issueDate: issueYmd,
+          dueDate: dueYmd,
+          updatedAt: Date.now(),
+        });
       }
 
       await updateDoc(invRef, {
         status: 'ISSUED' as TaxInvoiceStatus,
         arEntryId,
+        issueDate: issueYmd,
         printDocumentLocale: printLocale,
         updatedAt: Date.now(),
       });
 
       await updateDoc(doc(firestore, 'billing_notes', invoice.billingNoteId), {
         status: 'INVOICED',
+        billingDate: issueYmd,
+        dueDate: dueYmd,
         updatedAt: Date.now(),
       });
 
@@ -320,7 +377,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  const handlePrintTaxInvoice = () => {
+  const executeTaxInvoicePrint = (sheets: TaxInvoicePrintSheet[]) => {
     if (!invoice) return;
     const body = buildTaxInvoicePrintHtml({
       company: companyProfile ?? undefined,
@@ -331,6 +388,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       sourceCommercialInvoice: sourceCommercial ?? null,
       printedAtMs: Date.now(),
       locale: printLocale,
+      sheets,
     });
     if (
       !openStandardPrintWindow({
@@ -345,6 +403,22 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
       });
     }
+  };
+
+  const handlePrintTaxInvoice = () => {
+    if (!invoice) return;
+    if (isAccountingActor) {
+      setAccountingPrintPreset('p1');
+      setPrintPresetOpen(true);
+      return;
+    }
+    executeTaxInvoicePrint(['original']);
+  };
+
+  const handleConfirmAccountingPrint = () => {
+    const preset = ACCOUNTING_TAX_INVOICE_PRINT_PRESETS[accountingPrintPreset];
+    executeTaxInvoicePrint(preset.sheets);
+    setPrintPresetOpen(false);
   };
 
   const handleNotifyPaymentAccounting = async () => {
@@ -397,6 +471,56 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       });
     } finally {
       setPayConfirmLoading(false);
+    }
+  };
+
+  const handleSaveTaxInvoiceEdit = async () => {
+    if (!firestore || !invRef || !invoice || !billingNoteRef || !currentUser) return;
+    if (invoice.status !== 'DRAFT') {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่ได้',
+        description: 'ปรับการแสดงหัก ณ ที่จ่ายได้เฉพาะใบกำกับภาษีในสถานะร่าง (DRAFT)',
+      });
+      return;
+    }
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    setSavingInvoiceEdit(true);
+    try {
+      const ratePct = Math.max(0, Number(invoice.withholdingTaxRatePercentOnDocument ?? 3));
+      const wht = editShowWht ? roundMoney2((invoice.taxableAmount * ratePct) / 100) : 0;
+      const now = Date.now();
+      const actorName = currentUser.displayName || currentUser.email || currentUser.id;
+      await updateDoc(invRef, {
+        showWithholdingOnDocument: editShowWht,
+        withholdingTaxRatePercentOnDocument: ratePct,
+        withholdingTaxAmount: wht,
+        updatedAt: now,
+      });
+      await updateDoc(billingNoteRef, {
+        withholdingTaxAmount: wht,
+        updatedAt: now,
+        updatedBy: actorName,
+      });
+      setEditInvoiceOpen(false);
+      toast({
+        title: 'บันทึกแล้ว',
+        description: editShowWht
+          ? `แสดงหัก ณ ที่จ่ายบนเอกสาร — ยอดหัก ${wht.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท`
+          : 'ไม่แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ — พิมพ์แบบยอดรวมสุทธิเต็มจำนวน',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSavingInvoiceEdit(false);
     }
   };
 
@@ -600,13 +724,43 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     {invoice.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-lg pt-2 border-t">
-                  <span className="font-black text-primary uppercase">ยอดรวมสุทธิ (Net Total)</span>
-                  <span className="font-black text-2xl text-primary">
-                    {invoice.currency}{' '}
-                    {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
+                {showWhtBlock ? (
+                  <>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">ยอดรวมตามใบแจ้งหนี้ (รวม VAT)</span>
+                      <span className="font-bold">
+                        {invoice.currency}{' '}
+                        {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">
+                        หัก ณ ที่จ่าย ({whtRateDisplay}% จากฐานก่อน VAT)
+                      </span>
+                      <span className="font-bold text-destructive">
+                        −{invoice.currency}{' '}
+                        {(Number(invoice.withholdingTaxAmount) || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                        })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-lg pt-2 border-t">
+                      <span className="font-black text-primary uppercase">ยอดสุทธิที่ต้องชำระ</span>
+                      <span className="font-black text-2xl text-primary">
+                        {invoice.currency}{' '}
+                        {netAfterWht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex justify-between items-center text-lg pt-2 border-t">
+                    <span className="font-black text-primary uppercase">ยอดรวมสุทธิ (Net Total)</span>
+                    <span className="font-black text-2xl text-primary">
+                      {invoice.currency}{' '}
+                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2 pt-4">
@@ -691,6 +845,20 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-3">
+                {invoice.status === 'DRAFT' && isAccountingActor && (
+                  <Button
+                    variant="outline"
+                    className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20 font-semibold"
+                    type="button"
+                    onClick={() => {
+                      setEditShowWht(!!invoice.showWithholdingOnDocument);
+                      setEditInvoiceOpen(true);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    แก้ไข (การแสดงหัก ณ ที่จ่ายบนเอกสาร)
+                  </Button>
+                )}
                 {invoice.status === 'DRAFT' && isAccountingActor && (
                   <Button
                     className="w-full bg-white text-primary hover:bg-slate-100 font-bold"
@@ -867,6 +1035,76 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 disabled={billingApproving}
               >
                 {billingApproving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยันอนุมัติ billing'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={printPresetOpen} onOpenChange={setPrintPresetOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>เลือกชุดพิมพ์ (บัญชี OPEC)</DialogTitle>
+              <DialogDescription>
+                แต่ละแผ่นแสดง &quot;ต้นฉบับ&quot; หรือ &quot;สำเนา&quot; (ไทย) / &quot;Original&quot; หรือ &quot;Copy&quot; (อังกฤษ) ใต้ชื่อเอกสาร — ตามภาษาที่เลือกพิมพ์ด้านบน
+              </DialogDescription>
+            </DialogHeader>
+            <RadioGroup
+              value={accountingPrintPreset}
+              onValueChange={(v) => setAccountingPrintPreset(v as 'p1' | 'p2' | 'p3' | 'p4')}
+              className="gap-3"
+            >
+              {(Object.keys(ACCOUNTING_TAX_INVOICE_PRINT_PRESETS) as Array<'p1' | 'p2' | 'p3' | 'p4'>).map(
+                (key) => (
+                  <div key={key} className="flex items-start gap-3 rounded-lg border p-3">
+                    <RadioGroupItem value={key} id={`print-${key}`} className="mt-1" />
+                    <Label htmlFor={`print-${key}`} className="cursor-pointer font-normal leading-snug flex-1">
+                      <span className="font-semibold">{ACCOUNTING_TAX_INVOICE_PRINT_PRESETS[key].label}</span>
+                    </Label>
+                  </div>
+                ),
+              )}
+            </RadioGroup>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setPrintPresetOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={handleConfirmAccountingPrint}>
+                พิมพ์
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={editInvoiceOpen} onOpenChange={setEditInvoiceOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>แก้ไขการแสดงหัก ณ ที่จ่ายบนใบกำกับภาษี</DialogTitle>
+              <DialogDescription>
+                ใช้ได้เฉพาะเอกสารร่าง (DRAFT) — ฐานหัก = ยอดก่อน VAT อัตรา {whtRateDisplay}% ตามที่ตั้งไว้ตอนสร้างชุดเอกสาร
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-4">
+              <Checkbox
+                id="edit-show-wht"
+                checked={editShowWht}
+                onCheckedChange={(v) => setEditShowWht(v === true)}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="edit-show-wht" className="cursor-pointer font-semibold leading-none">
+                  แสดงยอดหัก ณ ที่จ่ายบนใบกำกับภาษี
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  เมื่อเปิด: พิมพ์และหน้าจอจะแสดงยอดรวมรวม VAT แล้วหักภาษี ณ ที่จ่าย และยอดสุทธิที่ต้องชำระ — เมื่อปิด:
+                  แสดงยอดรวมสุทธิแบบเดิม (ไม่มีบรรทัดหัก)
+                </p>
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setEditInvoiceOpen(false)} disabled={savingInvoiceEdit}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={() => void handleSaveTaxInvoiceEdit()} disabled={savingInvoiceEdit}>
+                {savingInvoiceEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
               </Button>
             </DialogFooter>
           </DialogContent>

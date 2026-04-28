@@ -25,7 +25,13 @@ import {
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
 import { supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
-import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  buildWithholdingCertificate50TwHtml,
+  openWithholdingCertificatePrintWindow,
+  type CompanyProfileForWhtCert,
+} from '@/lib/documents/withholding-certificate-50-tw-print';
+import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -46,14 +52,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
@@ -97,6 +95,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   );
   const { data: vendor } = useDoc<Vendor>(vendorRef as any);
 
+  const companyProfileRef = useMemoFirebase(
+    () => (firestore && canOpen ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore, canOpen],
+  );
+  const { data: companyProfile } = useDoc<CompanyProfileForWhtCert>(companyProfileRef as any);
+
   const milestoneRef = useMemoFirebase(
     () =>
       firestore && bill?.purchaseId && bill?.milestoneId
@@ -119,6 +123,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [payoutMethod, setPayoutMethod] = useState<PaymentMethod>('TRANSFER');
   const [payoutEntryDate, setPayoutEntryDate] = useState('');
   const [paying, setPaying] = useState(false);
+  const [whtPrintBusy, setWhtPrintBusy] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
 
   useEffect(() => {
@@ -171,48 +176,67 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     return grossInclVatForBill || grossForPayment;
   }, [withholdingPreview, grossForPayment, grossInclVatForBill]);
 
-  const handlePrintWithholding = () => {
-    if (!purchase || !bill || !vendor || !withholdingPreview || !canPrintWithholdingSummary) return;
-    const m = linkedMilestone;
-    const seq = m?.sequence ?? 1;
-    const label = m?.label || 'ชำระตามใบรับวางบิล';
-    const gross = m ? m.amount : grossForPayment;
-    const { wht, netPaid } = withholdingPreview;
-    const rate = Number(purchase.supplierWithholdingRatePercent) || 0;
-    const w = window.open('', '_blank');
-    if (!w) return;
-    const vn = vendor.vendorName || '—';
-    const rows = `<tr>
-      <td style="padding:6px;border:1px solid #ccc">${seq}</td>
-      <td style="padding:6px;border:1px solid #ccc">${escapeHtml(label)}</td>
-      <td style="padding:6px;border:1px solid #ccc;text-align:right">${gross.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-      <td style="padding:6px;border:1px solid #ccc;text-align:right">${wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-      <td style="padding:6px;border:1px solid #ccc;text-align:right;font-weight:bold">${netPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-    </tr>`;
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปหัก ณ ที่จ่าย ${escapeHtml(bill.receiptNo)}</title>
-  <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:900px;margin:0 auto} table{border-collapse:collapse;width:100%;margin-top:16px} th{background:#f3f4f6;text-align:left;padding:8px;border:1px solid #ccc}</style></head><body>
-  <h1>สรุปหัก ณ ที่จ่าย — ผู้รับเงิน (คู่ค้า)</h1>
-  <p><strong>เลขที่ PO:</strong> ${escapeHtml(purchase.purchaseNo || purchase.id)} &nbsp;|&nbsp; <strong>คู่ค้า:</strong> ${escapeHtml(vn)}</p>
-  <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ยอดแต่ละงวดชำระ)</p>
-  <p><strong>พิมพ์เมื่อ:</strong> ${escapeHtml(formatDateThaiBE(Date.now()))}</p>
-  <table>
-    <thead><tr>
-      <th>งวด</th><th>รายละเอียด</th><th style="text-align:right">ฐานจ่าย (บาท)</th><th style="text-align:right">หัก ณ ที่จ่าย (บาท)</th><th style="text-align:right">สุทธิจ่าย (บาท)</th>
-    </tr></thead>
-    <tbody>${rows}
-    <tr style="font-weight:bold;background:#fafafa">
-      <td colspan="2" style="padding:8px;border:1px solid #ccc">รวม</td>
-      <td style="padding:8px;border:1px solid #ccc;text-align:right">${gross.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-      <td style="padding:8px;border:1px solid #ccc;text-align:right">${wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-      <td style="padding:8px;border:1px solid #ccc;text-align:right">${netPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-    </tr>
-    </tbody>
-  </table>
-  <p style="margin-top:24px;font-size:12px;color:#666">เอกสารสำหรับแผนกบัญชี — ตรวจสอบอัตราตามประกาศกรมสรรพากร</p>
-  </body></html>`);
-    w.document.close();
-    w.focus();
-    w.print();
+  const handlePrintWithholding = async () => {
+    if (
+      !firestore ||
+      !currentUser ||
+      !purchase ||
+      !bill ||
+      !vendor ||
+      !withholdingPreview ||
+      !canPrintWithholdingSummary
+    ) {
+      return;
+    }
+    setWhtPrintBusy(true);
+    try {
+      const paymentMs = htmlDateValueToTimestampMs(payoutEntryDate) ?? Date.now();
+      const { code } = await generateNextDocumentCode(firestore, 'wht_certificate_50', {
+        actor: currentUser.displayName || currentUser.email || currentUser.id,
+        userId: currentUser.id,
+        date: new Date(paymentMs),
+      });
+      const issueRef = doc(collection(firestore, 'withholding_certificate_issues'));
+      await setDoc(issueRef, {
+        id: issueRef.id,
+        certificateNo: code,
+        purchaseVendorBillId: bill.id,
+        purchaseId: purchase.id,
+        vendorId: vendor.id,
+        purchaseOrderNo: purchase.purchaseNo ?? null,
+        vendorBillReceiptNo: bill.receiptNo ?? null,
+        issuedAt: Date.now(),
+        issuedByUid: currentUser.id,
+        issuedByName: currentUser.displayName || currentUser.email || '',
+      });
+      const issuerDisplayName =
+        currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+      const html = buildWithholdingCertificate50TwHtml({
+        company: companyProfile,
+        vendor,
+        purchase,
+        bill,
+        milestone: linkedMilestone ?? undefined,
+        baseBeforeVat: withholdingPreview.baseBeforeVat,
+        wht: withholdingPreview.wht,
+        netPaid: withholdingPreview.netPaid,
+        grossInclVat: grossInclVatForBill,
+        whtRatePercent: Number(purchase.supplierWithholdingRatePercent) || 0,
+        paymentDateMs: paymentMs,
+        certificateNo: code,
+        issuerDisplayName,
+      });
+      openWithholdingCertificatePrintWindow(html);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ออกเลขที่หรือพิมพ์ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setWhtPrintBusy(false);
+    }
   };
 
   const saveDraft = async () => {
@@ -500,15 +524,15 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       type="button"
                       variant="outline"
                       className="font-bold gap-2 border-primary/30 min-h-11 sm:flex-1"
-                      disabled={!canPrintWithholdingSummary}
-                      onClick={() => handlePrintWithholding()}
+                      disabled={!canPrintWithholdingSummary || whtPrintBusy}
+                      onClick={() => void handlePrintWithholding()}
                       title={
                         canPrintWithholdingSummary
-                          ? 'พิมพ์สรุปหัก ณ ที่จ่าย (ผู้รับเงิน)'
+                          ? 'ออกเลขที่หนังสือรับรองและพิมพ์ (ปรับ prefix ได้ที่ Admin เลขที่เอกสาร)'
                           : 'เปิดใช้เมื่อ PO เปิดหัก ณ ที่จ่ายและมียอดหักจากงวดนี้'
                       }
                     >
-                      <Printer className="h-4 w-4" />
+                      {whtPrintBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
                       สร้างใบหัก ณ ที่จ่าย (พิมพ์)
                     </Button>
                   </div>

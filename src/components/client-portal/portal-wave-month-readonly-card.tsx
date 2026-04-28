@@ -41,6 +41,7 @@ export function PortalWaveMonthReadonlyCard({
   bundle,
   waveAssignments,
   waveSheets,
+  hideAttachmentSection = false,
   t,
 }: {
   wave: Wave;
@@ -52,6 +53,8 @@ export function PortalWaveMonthReadonlyCard({
   bundle?: WaveMonthTimesheetPhotoBundle | null;
   waveAssignments: Assignment[];
   waveSheets: DailyTimesheet[];
+  /** When true, hide the photo/PDF block (e.g. PO+month page shows one shared bundle above). */
+  hideAttachmentSection?: boolean;
   t: (k: PortalDictKey) => string;
 }) {
   const firestore = useFirestore();
@@ -141,6 +144,7 @@ export function PortalWaveMonthReadonlyCard({
           </CardDescription>
         </div>
 
+        {!hideAttachmentSection ? (
         <div className="flex flex-col gap-2 pt-3 border-t border-dashed border-muted-foreground/30 w-full">
           <p className="text-xs font-medium text-muted-foreground">{t('tsMonthlyAttachments')}</p>
           {displayPhotos.length > 0 ? (
@@ -173,6 +177,7 @@ export function PortalWaveMonthReadonlyCard({
             <p className="text-xs text-muted-foreground">{t('tsMonthlyNoAttach')}</p>
           )}
         </div>
+        ) : null}
 
         <p className="text-sm text-muted-foreground">{summaryText}</p>
         {monthReview?.periodEndDate ? (

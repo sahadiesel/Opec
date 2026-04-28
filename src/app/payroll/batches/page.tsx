@@ -45,7 +45,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,9 +61,15 @@ import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canCreate, canPreparePayroll, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { isSimpleAccounting } from '@/lib/simple-tier-model';
+import {
+  shouldFilterToAccountingPayoutQueue,
+  WORKER_BATCH_STATUSES_FOR_ACCOUNTING_PAYOUT,
+} from '@/lib/payroll/accounting-payout-queue';
 
 export default function PayrollBatchesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -79,19 +85,49 @@ export default function PayrollBatchesPage() {
     return canView(currentUser, 'worker_payroll');
   }, [currentUser, useMatrixGuards]);
   const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
+  const canCreateOfficePayroll = useMemo(() => canCreate(currentUser, 'office_payroll'), [currentUser]);
   const canPrepareWorkerPayroll = useMemo(() => canPreparePayroll(currentUser), [currentUser]);
   const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const isSimpleAcc = useMemo(() => isSimpleAccounting(currentUser), [currentUser]);
+  const canAccessBatchesPage = useMemo(
+    () => isAdmin || canViewWorkerPayroll || isSimpleAcc,
+    [isAdmin, canViewWorkerPayroll, isSimpleAcc],
+  );
+  const accountingPayoutQueueOnly = useMemo(() => {
+    const payoutQ = searchParams.get('payout') === '1';
+    return (
+      shouldFilterToAccountingPayoutQueue(currentUser, {
+        canCreateOfficePayroll,
+        canCreateWorkerPayroll,
+        canPrepareWorkerPayroll,
+      }) || (payoutQ && isSimpleAcc)
+    );
+  }, [
+    currentUser,
+    canCreateOfficePayroll,
+    canCreateWorkerPayroll,
+    canPrepareWorkerPayroll,
+    searchParams,
+    isSimpleAcc,
+  ]);
+  const showGenerateBatch = canCreateWorkerPayroll && canPrepareWorkerPayroll;
 
   const batchQuery = useMemoFirebase(() => {
-    if (!firestore || !canViewWorkerPayroll) return null;
+    if (!firestore || !canAccessBatchesPage) return null;
     return query(collection(firestore, 'payroll_batches'), orderBy('createdAt', 'desc'), limit(50));
-  }, [firestore, canViewWorkerPayroll]);
+  }, [firestore, canAccessBatchesPage]);
   const { data: batches, isLoading: isBatchesLoading } = useCollection<PayrollBatch>(batchQuery as any);
+  const visibleBatches = useMemo(() => {
+    const list = batches ?? [];
+    if (!accountingPayoutQueueOnly) return list;
+    const allow = new Set<PayrollBatch['status']>(WORKER_BATCH_STATUSES_FOR_ACCOUNTING_PAYOUT);
+    return list.filter((b) => allow.has(b.status));
+  }, [batches, accountingPayoutQueueOnly]);
 
   const periodsQuery = useMemoFirebase(() => {
-    if (!firestore || !canViewWorkerPayroll) return null;
+    if (!firestore || !canAccessBatchesPage) return null;
     return query(collection(firestore, 'payroll_periods'), orderBy('startDate', 'desc'));
-  }, [firestore, canViewWorkerPayroll]);
+  }, [firestore, canAccessBatchesPage]);
   const { data: periods } = useCollection<PayrollPeriod>(periodsQuery as any);
 
   const selectablePeriods = useMemo(() => {
@@ -202,7 +238,7 @@ export default function PayrollBatchesPage() {
   };
 
   if (userLoading || !currentUser) return null;
-  if (!canViewWorkerPayroll) {
+  if (!canAccessBatchesPage) {
     return (
       <AppShell user={currentUser as User} onLogout={() => {}}>
         <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
@@ -222,8 +258,14 @@ export default function PayrollBatchesPage() {
             <p className="text-muted-foreground text-lg italic">
               <strong>Worker Payroll</strong> — รวมเฉพาะรายวันที่ตั้งค่า readyForPayroll แล้ว (หลังผู้จัดการอนุมัติงวดเดือน Wave) ภายในรอบ period ที่เลือก
             </p>
+            {accountingPayoutQueueOnly && (
+              <p className="text-sm text-blue-800 bg-blue-50/80 border border-blue-200 rounded-md px-3 py-2 max-w-3xl">
+                มุมบัญชี: แสดงเฉพาะชุดจ่ายที่ <strong>ผู้จัดการ/ฝ่าย HR อนุมัติแล้ว</strong> (HR_APPROVED ขึ้นไป) เพื่อเตรียมตัดจ่าย/บันทึกบัญชี
+              </p>
+            )}
           </div>
           
+          {showGenerateBatch && (
           <Dialog open={isGenerateOpen} onOpenChange={setIsGenerateOpen}>
             <DialogTrigger asChild>
               <Button
@@ -322,6 +364,7 @@ export default function PayrollBatchesPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          )}
         </div>
 
         <PageGuidance 
@@ -400,7 +443,7 @@ export default function PayrollBatchesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {batches?.map((b) => (
+                  {visibleBatches.map((b) => (
                     <TableRow key={b.id} className="hover:bg-muted/30 group transition-all cursor-pointer" onClick={() => router.push(`/payroll/batches/${b.id}`)}>
                       <TableCell className="pl-6 py-4 font-mono text-xs font-bold text-primary">{b.id}</TableCell>
                       <TableCell className="capitalize text-xs font-medium">{b.workModeScope}</TableCell>
@@ -455,9 +498,13 @@ export default function PayrollBatchesPage() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(!batches || batches.length === 0) && !isBatchesLoading && (
+                  {visibleBatches.length === 0 && !isBatchesLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ยังไม่มีประวัติการจ่ายเงิน</TableCell>
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
+                        {accountingPayoutQueueOnly
+                          ? 'ยังไม่มีชุดจ่ายที่อนุมัติแล้ว (รอ HR/ผู้จัดการอนุมัติ batch) — หรือรายการยังไม่ถึงขั้น HR_APPROVED'
+                          : 'ยังไม่มีประวัติการจ่ายเงิน'}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

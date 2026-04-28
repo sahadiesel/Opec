@@ -1,9 +1,9 @@
 
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   ArrowUpRight, 
@@ -11,27 +11,45 @@ import {
   Filter, 
   Building2, 
   Calendar,
-  AlertCircle,
   Clock,
-  TrendingUp,
-  CircleDollarSign,
-  Info
+  Info,
+  Loader2,
+  Trash2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { AccountsReceivable, ARStatus, User, Customer } from '@/lib/types';
+import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
-import { collection, query, orderBy } from 'firebase/firestore';
+import { collection, query, orderBy, doc, getDoc } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { deleteAccountsReceivableEntryAsAdmin } from '@/lib/services/accounts-receivable-delete-service';
+import { useToast } from '@/hooks/use-toast';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export default function AccountsReceivablePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
+
+  const canAdminDeleteAr = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<(AccountsReceivable & { id: string }) | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const isAuthorized = useMemo(
     () => !!currentUser && canView(currentUser, 'accounts_receivable'),
@@ -56,6 +74,57 @@ export default function AccountsReceivablePage() {
       collected: arItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
   }, [arItems]);
+
+  const handleConfirmDeleteAr = async () => {
+    if (!firestore || !currentUser || !deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteAccountsReceivableEntryAsAdmin(firestore, deleteTarget.id, currentUser as User);
+      toast({
+        title: 'ลบรายการลูกหนี้แล้ว',
+        description: `เลขที่ ${deleteTarget.documentNo} — หากเป็นเลขล่าสุดของปี ระบบจะคืนลำดับเลข AR`,
+      });
+      setDeleteDialogOpen(false);
+      setDeleteTarget(null);
+    } catch (e: unknown) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const openDeleteArDialog = async (item: AccountsReceivable & { id: string }) => {
+    if (!firestore || item.referenceType !== 'TAX_INVOICE') {
+      toast({
+        variant: 'destructive',
+        title: 'ลบจากเมนูนี้ไม่ได้',
+        description: 'รองรับเฉพาะรายการที่อ้างใบกำกับภาษี',
+      });
+      return;
+    }
+    const taxSnap = await getDoc(doc(firestore, 'tax_invoices', item.referenceId));
+    if (!taxSnap.exists()) {
+      setDeleteTarget(item);
+      setDeleteDialogOpen(true);
+      return;
+    }
+    const tax = { ...taxSnap.data(), id: taxSnap.id } as TaxInvoice;
+    if (tax.status !== 'CANCELLED') {
+      toast({
+        variant: 'destructive',
+        title: 'ยังลบไม่ได้',
+        description: 'ต้องไปยกเลิกใบกำกับภาษีให้เป็นสถานะ CANCELLED ก่อน',
+      });
+      return;
+    }
+    setDeleteTarget(item);
+    setDeleteDialogOpen(true);
+  };
 
   const getStatusBadge = (status: ARStatus) => {
     switch (status) {
@@ -119,6 +188,34 @@ export default function AccountsReceivablePage() {
           </AlertDescription>
         </Alert>
 
+        <AlertDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            setDeleteDialogOpen(open);
+            if (!open) setDeleteTarget(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบรายการลูกหนี้นี้?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span>
+                  จะลบถาวร <strong className="font-mono">{deleteTarget?.documentNo}</strong> และถอนการอ้างอิงจากใบกำกับภาษี (ถ้ามี)
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  ใช้ได้เมื่อยังไม่มีการรับชำระจริงในรายการนี้ และใบกำกับถูกยกเลิกแล้ว (ไม่มีใบเสร็จ / ไม่ยืนยันรับเงิน — การแจ้งชำระอย่างเดียวไม่บล็อกการลบ)
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>ยกเลิก</AlertDialogCancel>
+              <Button variant="destructive" disabled={deleting} onClick={() => void handleConfirmDeleteAr()}>
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบถาวร'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
@@ -144,11 +241,17 @@ export default function AccountsReceivablePage() {
                     <TableHead className="font-bold text-right">รับแล้ว (Credit)</TableHead>
                     <TableHead className="font-bold text-right">คงเหลือ</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
+                    <TableHead className="text-right pr-6 font-bold">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {arItems?.map((item) => {
                     const customer = customers?.find(c => c.id === item.customerId);
+                    const row = item as AccountsReceivable & { id: string };
+                    const showTrash =
+                      canAdminDeleteAr &&
+                      row.referenceType === 'TAX_INVOICE' &&
+                      row.creditAmount <= 0.005;
                     return (
                       <TableRow key={item.id} className="hover:bg-muted/20">
                         <TableCell className="py-4 pl-6">
@@ -168,12 +271,28 @@ export default function AccountsReceivablePage() {
                         <TableCell className="text-right text-sm text-green-600">฿ {item.creditAmount.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-black text-primary">฿ {item.outstandingAmount.toLocaleString()}</TableCell>
                         <TableCell>{getStatusBadge(item.status)}</TableCell>
+                        <TableCell className="text-right pr-6">
+                          {showTrash ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              type="button"
+                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              title="ลบรายการลูกหนี้ (ผู้ดูแลระบบ)"
+                              onClick={() => void openDeleteArDialog(row)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
                   {(!arItems || arItems.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการลูกหนี้ค้างชำระ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการลูกหนี้ค้างชำระ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

@@ -77,8 +77,30 @@ export function formatYearMonthLabel(ym: string, locale: PortalLocale): string {
   return d.toLocaleDateString(locale === 'th' ? 'th-TH' : 'en-US', { month: 'short', year: 'numeric' });
 }
 
+/** `poId_yyyy-MM` — แยก `poId` กับเดือนจาก `sourcePoMonthReviewId` */
+export function poIdAndYearMonthFromPoMonthReviewId(source: string | undefined): { poId: string; yearMonth: string } | null {
+  const s = source?.trim();
+  if (!s) return null;
+  const i = s.lastIndexOf('_');
+  if (i < 0) return null;
+  const ym = s.slice(i + 1);
+  if (!/^\d{4}-\d{2}$/.test(ym)) return null;
+  const poId = s.slice(0, i);
+  if (!poId) return null;
+  return { poId, yearMonth: ym };
+}
+
+export function poMonthTimesheetReviewDocId(poId: string, yearMonth: string): string {
+  return `${poId}_${yearMonth}`;
+}
+
 /** Calendar month yyyy-MM for a commercial invoice (review id suffix or period start). */
 export function yearMonthFromCommercialInvoice(inv: CommercialInvoice): string | null {
+  const poSrc = inv.sourcePoMonthReviewId?.trim();
+  if (poSrc) {
+    const p = poIdAndYearMonthFromPoMonthReviewId(poSrc);
+    if (p) return p.yearMonth;
+  }
   const sid = inv.sourceWaveMonthReviewId?.trim();
   if (sid) {
     const m = sid.match(/(\d{4}-\d{2})$/);
@@ -101,6 +123,18 @@ export async function portalTryGetWaveMonthReviewSnap(
 ): Promise<DocumentSnapshot | null> {
   try {
     return await getDoc(doc(db, 'wave_month_timesheet_reviews', `${waveId}_${yearMonth}`));
+  } catch {
+    return null;
+  }
+}
+
+export async function portalTryGetPoMonthReviewSnap(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+): Promise<DocumentSnapshot | null> {
+  try {
+    return await getDoc(doc(db, 'po_month_timesheet_reviews', poMonthTimesheetReviewDocId(poId, yearMonth)));
   } catch {
     return null;
   }
@@ -152,6 +186,22 @@ export function dailyTimesheetsQueryForPortalWaveMonth(
   ) as Query<DailyTimesheet>;
 }
 
+/** One PO + calendar month — ใช้ `purchaseOrderId` + ช่วง `date` (กฎพอร์ทัล: PO ลูกค้าเดียวกัน) */
+export function dailyTimesheetsQueryForPortalPoMonth(
+  db: Firestore,
+  poId: string,
+  monthYm: string,
+): Query<DailyTimesheet> | null {
+  if (!/^\d{4}-\d{2}$/.test(monthYm)) return null;
+  const monthLast = lastDayOfCalendarMonth(monthYm);
+  return query(
+    collection(db, 'daily_timesheets'),
+    where('purchaseOrderId', '==', poId),
+    where('date', '>=', `${monthYm}-01`),
+    where('date', '<=', monthLast),
+  ) as Query<DailyTimesheet>;
+}
+
 /**
  * ซ่อนงวด timesheet ในพอร์ทัลเมื่อชุดเรียกเก็บปิดวงแล้ว: ใบแจ้งหนี้เชิงพาณิธุรกิจยืนยันแล้ว + มีใบกำกับภาษีในเดือนนั้น + ลูกหนี้ปิดยอดแล้ว
  * (ไม่เกี่ยวกับ payroll ภายใน OPEC)
@@ -178,6 +228,36 @@ export function shouldHidePortalWaveMonthAfterBillingSettlement(
   });
   if (tis.length === 0) return false;
 
+  for (const ti of tis) {
+    const ar = arItems.find((a) => a.referenceType === 'TAX_INVOICE' && a.referenceId === ti.id);
+    if (!ar) return false;
+    if (ar.outstandingAmount > 0.02) return false;
+  }
+  return true;
+}
+
+/** ซ่อนราย PO+เดือน หลัง commercial + ใบกำกับ + AR ปิดยอด (อ้าง `sourcePoMonthReviewId`) */
+export function shouldHidePortalPoMonthAfterBillingSettlement(
+  poId: string,
+  yearMonth: string,
+  commercials: CommercialInvoice[],
+  taxInvoices: TaxInvoice[],
+  arItems: AccountsReceivable[],
+): boolean {
+  const reviewId = poMonthTimesheetReviewDocId(poId, yearMonth);
+  const comm = commercials.find((c) => c.sourcePoMonthReviewId === reviewId && c.status === 'ISSUED');
+  if (!comm) return false;
+
+  const monthFirst = `${yearMonth}-01`;
+  const monthLast = lastDayOfCalendarMonth(yearMonth);
+  const tis = taxInvoices.filter((t) => {
+    if (t.status !== 'ISSUED') return false;
+    if (t.issueDate < monthFirst || t.issueDate > monthLast) return false;
+    if (t.sourceCommercialInvoiceId) return t.sourceCommercialInvoiceId === comm.id;
+    if (t.waveId) return t.waveId === comm.waveId;
+    return false;
+  });
+  if (tis.length === 0) return false;
   for (const ti of tis) {
     const ar = arItems.find((a) => a.referenceType === 'TAX_INVOICE' && a.referenceId === ti.id);
     if (!ar) return false;

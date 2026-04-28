@@ -131,7 +131,7 @@ export const portalNav = {
       'Each row is a month OPEC has released for your review. Payroll is internal — this screen is for checking hours against what we bill. The photos/PDF attachments are the primary evidence; the grid is to make review easier.',
     tsHubLoading: 'Loading PO / wave periods…',
     tsHubEmpty:
-      'No approved monthly periods yet. They appear here after your OPEC manager approves the monthly wave timesheet review.',
+      'No approved monthly periods yet. They appear here after your OPEC manager approves the signed PO+month timesheet and/or a wave month review.',
     tsHubPeriodCount: 'period(s)',
     tsHubColWave: 'Wave',
     tsHubColCustomerPoNo: 'Customer PO no.',
@@ -149,6 +149,15 @@ export const portalNav = {
     tsHubApprovedBadge: 'Manager approved',
     tsHubBillingBadge: 'Released for billing',
     tsHubViewMonthly: 'View monthly summary',
+    tsHubSectionPoMonth: 'PO + month timesheet (signed document)',
+    tsHubSectionWaves: 'By wave (detail)',
+    tsHubViewPoMonth: 'View PO+month document',
+    tsPoMonthPageTitle: 'PO + month timesheet',
+    tsPoMonthPageLead:
+      'The photos/PDFs here are the same signed-off timesheet OPEC uses for this PO and month. The grids below split the same month by wave/site for easier review.',
+    tsPoMonthWavesEmpty: 'No wave breakdown is linked for this period — use the document attachments above.',
+    tsPoMonthWavesSection: 'By wave (this month)',
+    tsPoMonthNotApproved: 'This PO+month timesheet is not available or is not yet manager-approved.',
     tsHubFootnote:
       'Read-only. If totals match, confirm the billing document under Billing & documents. If not, use Dispute on that billing row — OPEC will follow up. Rows disappear here after the related tax invoice and receipt are fully settled.',
     tsHubPolicyTitle: 'How this relates to billing (not payroll)',
@@ -369,7 +378,7 @@ export const portalNav = {
       'แต่ละแถวคืองวดที่ OPEC ส่งให้ตรวจ การจ่ายเงินเดือนพนักงานเป็นภายใน OPEC — หน้านี้ใช้เทียบชั่วโมงกับสิ่งที่เราจะเรียกเก็บ รูป/PDF สลิปเป็นหลักฐานหลัก ตารางรายเดือนช่วยให้อ่านง่ายขึ้น',
     tsHubLoading: 'กำลังโหลด PO / งวดเวฟ…',
     tsHubEmpty:
-      'ยังไม่มีงวดรายเดือนที่อนุมัติแล้ว — จะแสดงเมื่อผู้จัดการ OPEC อนุมัติสรุปลงเวลารายเดือนของเวฟนั้น',
+      'ยังไม่มีงวดรายเดือนที่อนุมัติ — แสดงหลังผู้จัดการ OPEC อนุมัติเอกสาร timesheet ราย PO+เดือน และ/หรือ งวดรายเดือนของเวฟ',
     tsHubPeriodCount: 'งวด',
     tsHubColWave: 'Wave',
     tsHubColCustomerPoNo: 'เลขที่ PO ลูกค้า',
@@ -387,6 +396,15 @@ export const portalNav = {
     tsHubApprovedBadge: 'ผู้จัดการอนุมัติแล้ว',
     tsHubBillingBadge: 'เปิดให้ตรวจตามการเรียกเก็บ',
     tsHubViewMonthly: 'ดูสรุปรายเดือน',
+    tsHubSectionPoMonth: 'เอกสาร timesheet ราย PO+เดือน (ฉบับอนุมัติ)',
+    tsHubSectionWaves: 'รายเวฟ (รายละเอียด)',
+    tsHubViewPoMonth: 'ดูเอกสาร PO+เดือน',
+    tsPoMonthPageTitle: 'เอกสาร timesheet ราย PO+เดือน',
+    tsPoMonthPageLead:
+      'รูป/PDF ชุดนี้คือเอกสาร timesheet งวดเดียวกับที่ OPEC ใช้สำหรับ PO และเดือนนี้ ตารางด้านล่างแยกเดือนเดียวกันตามเวฟ/สถานที่เพื่ออ่านง่าย',
+    tsPoMonthWavesEmpty: 'ยังไม่เชื่อมราย wave สำหรับงวดนี้ — อ้างอิงไฟล์แนบด้านบน',
+    tsPoMonthWavesSection: 'รายเวฟ (เดือนเดียวกัน)',
+    tsPoMonthNotApproved: 'เอกสาร PO+เดือนนี้ยังไม่อนุมัติ หรือยังไม่สามารถดูได้',
     tsHubFootnote:
       'ดูอย่างเดียว หายอดตรงกัน ให้ยืนยันเอกสารเรียกเก็บใน Billing & documents ถ้าไม่ตรงให้ใช้ ทักท้วง ที่แถวเรียกเก็บ — OPEC จะติดตาม แถวจะหายจากรายการนี้เมื่อใบกำกับภาษีและการรับชำระปิดงบแล้ว',
     tsHubPolicyTitle: 'ความเกี่ยวข้องกับการวางบิล (ไม่ใช่ payroll)',

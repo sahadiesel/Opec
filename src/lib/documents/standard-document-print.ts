@@ -52,6 +52,7 @@ import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
 import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 export type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 
@@ -92,27 +93,6 @@ export function sortBillingNoteLinesForDisplay(
   });
 }
 
-/** แยกที่อยู่ยาวให้ “ส่วนหลัง” ลงบรรทัดสอง (จุลภาค / คำว่า Province / รหัส TH + 5 หลัก) */
-function splitAddressLineForPrint(address: string): { line1: string; line2: string } {
-  const t = address.trim();
-  if (!t) return { line1: '', line2: '' };
-  const lastComma = t.lastIndexOf(',');
-  if (lastComma > 0) {
-    const a = t.slice(0, lastComma).trim();
-    const b = t.slice(lastComma + 1).trim();
-    if (a && b) return { line1: a, line2: b };
-  }
-  const prov = t.search(/\b[A-Za-z][a-zA-Z]*\s+Province\b/i);
-  if (prov > 0) {
-    return { line1: t.slice(0, prov).trim(), line2: t.slice(prov).trim() };
-  }
-  const thZip = t.match(/^(.*\s)(TH\s*\d{4,5})$/i);
-  if (thZip && thZip[1] && thZip[2]) {
-    return { line1: thZip[1].trim(), line2: thZip[2].trim() };
-  }
-  return { line1: t, line2: '' };
-}
-
 function formatIssueDateYmdForPrint(issueYmd: string | undefined, locale: PrintDocumentLocale): string {
   if (!issueYmd?.trim()) return '—';
   return locale === 'en' ? formatStoredDateGregorian(issueYmd) : formatStoredDateThaiBE(issueYmd);
@@ -137,6 +117,11 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     max-width: 21cm;
     margin: 0 auto;
     position: relative;
+  }
+  @media print {
+    .sd-page + .sd-page {
+      page-break-before: always;
+    }
   }
   .sd-header {
     display: flex;
@@ -449,13 +434,9 @@ export function buildStandardCompanyColumnHtml(
     : '';
   let addrBlock = '';
   if (singleAddr) {
-    const { line1, line2 } = splitAddressLineForPrint(singleAddr);
-    if (line2) {
-      addrBlock = `<p class="sd-company-line sd-company-addr">${escapeHtmlDoc(line1)}</p>
-      <p class="sd-company-line sd-company-addr">${escapeHtmlDoc(line2)}</p>`;
-    } else {
-      addrBlock = `<p class="sd-company-line sd-company-addr">${escapeHtmlDoc(line1)}</p>`;
-    }
+    /** หนึ่งบล็อก `<p>` — ให้ตัดบรรทัดตามความกว้างคอลัมน์ ไม่บังคับแยกที่จุลภาคสุดท้ายเป็น `<p>` คู่ */
+    const normalizedAddr = singleAddr.replace(/\s+/g, ' ').trim();
+    addrBlock = `<p class="sd-company-line sd-company-addr">${escapeHtmlDoc(normalizedAddr)}</p>`;
   }
 
   return `<div>
@@ -1011,6 +992,16 @@ function buildCommercialLinesTableRowsForPrint(
     .join('');
 }
 
+/** แผ่นพิมพ์ใบกำกับ — ต้นฉบับ / สำเนา (ตามภาษาที่เลือกพิมพ์ TH/EN) */
+export type TaxInvoicePrintSheet = 'original' | 'copy';
+
+export function taxInvoiceSheetSubtitleForPrintLocale(
+  sheet: TaxInvoicePrintSheet,
+  locale: PrintDocumentLocale,
+): string {
+  return sheet === 'copy' ? printT(locale, 'docCopy') : printT(locale, 'docOriginal');
+}
+
 /** ใบกำกับภาษี — รายการจากใบวางบิล / หรือสอดคล้องใบเรียกเก็บเดิม (ลูกค้า approve) */
 export function buildTaxInvoicePrintHtml(params: {
   company: CompanyProfilePrint | null | undefined;
@@ -1023,6 +1014,30 @@ export function buildTaxInvoicePrintHtml(params: {
   sourceCommercialInvoice?: CommercialInvoice | null;
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
+  /**
+   * ลำดับแผ่นพิมพ์ — ต้นฉบับ/สำเนา แต่ละรายการ = 1 หน้า
+   * ฝั่งลูกค้า/ผู้ใช้ทั่วไป: ใช้ค่าเริ่มต้น `['original']` เท่านั้น
+   */
+  sheets?: TaxInvoicePrintSheet[];
+}): string {
+  const { sheets, ...rest } = params;
+  const sheetList: TaxInvoicePrintSheet[] = sheets?.length ? sheets : ['original'];
+  return sheetList
+    .map((sheetKind) => buildTaxInvoicePrintHtmlSinglePage({ ...rest, sheetKind }))
+    .join('');
+}
+
+function buildTaxInvoicePrintHtmlSinglePage(params: {
+  company: CompanyProfilePrint | null | undefined;
+  invoice: TaxInvoice;
+  billingNote: BillingNote | null | undefined;
+  billingLines: BillingNoteLine[] | null | undefined;
+  customer: Customer | null | undefined;
+  customerPartyNameOverride?: string;
+  sourceCommercialInvoice?: CommercialInvoice | null;
+  printedAtMs?: number;
+  locale?: PrintDocumentLocale;
+  sheetKind: TaxInvoicePrintSheet;
 }): string {
   const { company, invoice, billingNote, billingLines, customer, customerPartyNameOverride, printedAtMs } = params;
   const L = params.locale ?? 'th';
@@ -1061,6 +1076,11 @@ export function buildTaxInvoicePrintHtml(params: {
   const vatPct = billingNote ? Number(billingNote.vatPercent) || 0 : 7;
   const vatRowLabel =
     vatPct > 0 ? `${printT(L, 'vat')} ${vatPct}%` : printT(L, 'vat');
+  const whtAmt = Number(invoice.withholdingTaxAmount) || 0;
+  const rateDoc = Number(invoice.withholdingTaxRatePercentOnDocument ?? 3);
+  const showWhtOnDoc = invoice.showWithholdingOnDocument === true && whtAmt > 0.005;
+  const netPayable = roundMoney2(invoice.totalAmount - whtAmt);
+
   const totalRows: StandardTotalsRow[] = [
     {
       label: printT(L, 'taxableBase'),
@@ -1071,23 +1091,35 @@ export function buildTaxInvoicePrintHtml(params: {
       value: invoice.vatAmount.toLocaleString(loc, { minimumFractionDigits: 2 }),
     },
   ];
-  if ((invoice.withholdingTaxAmount ?? 0) > 0.005) {
+  if (showWhtOnDoc) {
     totalRows.push({
-      label: printT(L, 'wht'),
-      value: `-${invoice.withholdingTaxAmount!.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      label: printT(L, 'invoiceTotalInclVat'),
+      value: invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 }),
+    });
+    totalRows.push({
+      label: `${printT(L, 'wht')} (${rateDoc}%)`,
+      value: `-${whtAmt.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+    });
+    totalRows.push({
+      label: printT(L, 'netPayableAfterWht'),
+      value: `฿ ${netPayable.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      grand: true,
+    });
+  } else {
+    totalRows.push({
+      label: printT(L, 'grandTotal'),
+      value: `฿ ${invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      grand: true,
     });
   }
-  totalRows.push({
-    label: printT(L, 'grandTotal'),
-    value: `฿ ${invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
-    grand: true,
-  });
-  const totalWords = L === 'en' ? amountToEnglishBahtText(invoice.totalAmount) : amountToThaiBahtText(invoice.totalAmount);
+  const amountForWords = showWhtOnDoc ? netPayable : invoice.totalAmount;
+  const totalWords =
+    L === 'en' ? amountToEnglishBahtText(amountForWords) : amountToThaiBahtText(amountForWords);
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,
     documentTitleTh: 'ใบกำกับภาษี',
     documentTitleEn: 'Tax Invoice',
-    subtitleUnderTitle: printT(L, 'docOriginal'),
+    subtitleUnderTitle: taxInvoiceSheetSubtitleForPrintLocale(params.sheetKind, L),
     metaRows: [
       { line: `${printT(L, 'dateIssued')} ${issueStr}` },
       { line: `${printT(L, 'docNo')}: ${invoice.taxInvoiceNo}` },

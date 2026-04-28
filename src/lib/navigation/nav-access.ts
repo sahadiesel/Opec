@@ -27,7 +27,7 @@ import { deriveBusinessRoleKey } from '@/lib/auth-mapping';
 import { getFlattenedHrNavItems, type HrNavItem } from '@/lib/navigation/hr-nav-items';
 
 export function pathMatches(pathname: string, href: string): boolean {
-  const base = href.split('#')[0];
+  const base = href.split('#')[0].split('?')[0];
   if (pathname === base) return true;
   if (base !== '/' && pathname.startsWith(`${base}/`)) return true;
   return false;
@@ -234,6 +234,11 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     if (pathMatches(p, baseHref)) {
       return canViewHrHubItem(user, profile, false, item);
     }
+  }
+
+  /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) — ไม่ต้องมี module worker_payroll ทั้งชุด */
+  if (!admin && isSimpleAccounting(user) && (p === '/payroll/batches' || p.startsWith('/payroll/batches/'))) {
+    return true;
   }
 
   for (const [prefix, key] of SORTED_PREFIXES) {

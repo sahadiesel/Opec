@@ -10,12 +10,14 @@ import {
   HardHat,
   UserSearch,
   Activity,
+  Landmark,
   FileText,
   Settings,
   ListChecks,
   Database,
   PackageSearch,
   CalendarCheck,
+  HeartPulse,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -104,6 +106,8 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
       { key: 'office_staff', title: 'ทะเบียนพนักงานออฟฟิศ', href: '/office-staff', icon: UserSearch },
       { key: 'positions', title: 'ตำแหน่งงาน', href: '/positions', icon: Activity },
       { key: 'worker_documents', title: 'เอกสารบุคลากร (Catalog)', href: '/worker-document-catalog', icon: FileText },
+      { key: 'hr_hub', title: 'ทะเบียนธนาคาร', href: '/hr/bank-registry', icon: Landmark },
+      { key: 'hr_hub', title: 'ทะเบียนโรงพยาบาล (สปส.)', href: '/hr/hospital-registry', icon: HeartPulse },
       { key: 'hr_hub', title: 'ตั้งค่า HR', href: '/hr/settings', icon: Settings },
     ],
   },

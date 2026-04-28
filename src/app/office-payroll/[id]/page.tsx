@@ -32,7 +32,7 @@ import {
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   OfficePayrollRun, 
@@ -51,12 +51,11 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { canView } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
+import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
 import {
-  computeOfficePayrollLineD8,
-  loadPayrollPoliciesFromFirestore,
-  resolvePayrollPoliciesForDate,
-  runStatusToD8Lifecycle,
-} from '@/lib/payroll/d8';
+  applyStandardOfficeRunLines,
+  isOfficeStaffEligibleForStandardOfficeRun,
+} from '@/lib/payroll/office-payroll-run-apply';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
@@ -134,88 +133,44 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
   };
 
   const handleCalculate = async () => {
-    if (!firestore || !run || !allStaff || !runRef) return;
+    if (!firestore || !run || !allStaff) return;
     setIsProcessing(true);
 
     try {
-      const batch = writeBatch(firestore);
-      const linesCol = collection(firestore, 'office_payroll_runs', id, 'lines');
-      
-      // พนักงานสำนักงาน — ไม่รวมผู้บริหาร (งวดแยกในเมนูบัญชี)
-      const activeStaff = allStaff.filter(
-        (s) => s.status === 'ACTIVE' && s.payrollBand !== 'EXECUTIVE'
-      );
-      let totalGross = 0;
-      let totalNet = 0;
-      let totalAllowances = 0;
-      let totalDeductions = 0;
-
-      const policyRecords = await loadPayrollPoliciesFromFirestore(firestore);
-      const asOf = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
-      const officePolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'office');
-
-      for (const staff of activeStaff) {
-        const lineId = `OPL-${staff.staffCode}-${id.substring(0, 5)}`;
-        const lineDoc = doc(linesCol, lineId);
-        
-        const baseSalary = staff.monthlySalary || 0;
-        const allowance = 0;
-        const bonus = 0;
-        const d8 = computeOfficePayrollLineD8({
-          asOfDate: asOf,
-          policies: officePolicies,
-          baseSalary,
-          allowance,
-          bonus,
-          overtimeAmount: 0,
-          otherIncome: 0,
-        });
-
-        const newLine: OfficePayrollLine = {
-          id: lineId,
-          officePayrollRunId: id,
-          staffId: staff.id,
-          staffName: staff.fullName,
-          department: staff.department,
-          positionTitle: staff.positionTitle,
-          baseSalary,
-          allowance,
-          bonus,
-          overtimeAmount: 0,
-          otherIncome: 0,
-          deductions: d8.deductions,
-          tax: d8.tax,
-          socialSecurity: d8.socialSecurity,
-          grossPay: d8.grossPay,
-          netPay: d8.netPay,
-          d8Snapshot: d8.snapshot,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-
-        batch.set(lineDoc, newLine);
-        totalGross += d8.grossPay;
-        totalNet += d8.netPay;
-        totalAllowances += allowance + bonus;
-        totalDeductions += d8.deductions;
+      let staffList: OfficeStaff[];
+      if (lines && lines.length > 0) {
+        const byId = new Map(allStaff.map((s) => [s.id, s]));
+        staffList = [];
+        for (const line of lines) {
+          const s = byId.get(line.staffId);
+          if (!s) {
+            toast({
+              variant: 'destructive',
+              title: 'ข้อมูลไม่สอดคล้อง',
+              description: `ไม่พบทะเบียนพนักงาน: ${line.staffName} (${line.staffId})`,
+            });
+            return;
+          }
+          staffList.push(s);
+        }
+      } else {
+        staffList = allStaff.filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s));
       }
 
-      await batch.commit();
+      if (staffList.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายชื่อ',
+          description: 'ยังไม่มีบรรทัดรายคน หรือไม่มีพนักงานที่พร้อมคำนวณ (ACTIVE / ไม่ใช่ executive / ไม่ถูกกันจากงวดนี้)',
+        });
+        return;
+      }
 
-      await updateDoc(runRef, {
-        status: 'CALCULATED',
-        d8LifecycleStatus: runStatusToD8Lifecycle('CALCULATED'),
-        staffCount: activeStaff.length,
-        grossAmount: totalGross,
-        netAmount: totalNet,
-        totalAllowances,
-        totalDeductions,
-        updatedAt: Date.now()
-      });
-
-      toast({ title: "คำนวณยอดสำเร็จ", description: `ประมวลผลพนักงาน ${activeStaff.length} รายเรียบร้อยแล้ว` });
+      await applyStandardOfficeRunLines(firestore, id, run, staffList, { newStatus: 'CALCULATED' });
+      toast({ title: "คำนวณยอดสำเร็จ", description: `ประมวลผลพนักงาน ${staffList.length} รายเรียบร้อยแล้ว` });
     } catch (e) {
-      toast({ variant: "destructive", title: "Error", description: "เกิดข้อผิดพลาดในการคำนวณ" });
+      console.error(e);
+      toast({ variant: "destructive", title: "Error", description: e instanceof Error ? e.message : "เกิดข้อผิดพลาดในการคำนวณ" });
     } finally {
       setIsProcessing(false);
     }
@@ -362,7 +317,16 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                           <PayslipDialog model={slipModel} />
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon"><ChevronRight className="h-4 w-4" /></Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            asChild
+                            title="รายละเอียดรายคน · สลิป · snapshot"
+                          >
+                            <Link href={`/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`}>
+                              <ChevronRight className="h-4 w-4" />
+                            </Link>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );})}

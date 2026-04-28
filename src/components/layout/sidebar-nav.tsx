@@ -151,7 +151,8 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
     title: 'เงินเดือน (บัญชี)',
     icon: Coins,
     items: [
-      { key: 'office_payroll', title: 'พนักงานสำนักงาน', href: '/office-payroll', icon: Users },
+      { key: 'office_payroll', title: 'พนักงานออฟฟิศ (ตัดจ่าย)', href: '/office-payroll', icon: Users },
+      { key: 'worker_payroll', title: 'ลูกจ้าง (รอตัดจ่าย · หลังอนุมัติ)', href: '/payroll/batches?payout=1', icon: Banknote },
       { key: 'executive_payroll', title: 'ผู้บริหาร (ความลับ)', href: '/accounting/executive-payroll', icon: LockKeyhole },
     ],
   },
@@ -363,6 +364,7 @@ export function SidebarNav({
           if (group.accountingStructured) {
             const filterNav = (item: NavItem) => {
               if (admin) return true;
+              if (isSimpleAccounting(user) && item.href.split('?')[0] === '/payroll/batches') return true;
               const byMatrix = sidebarMatrixVisibility(user, item);
               if (byMatrix !== null) return byMatrix;
               return canView(user, item.key, profile);

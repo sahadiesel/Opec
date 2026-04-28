@@ -35,6 +35,8 @@ export const printDocStrings = {
     docNo: 'เลขที่เอกสาร',
     /** ใบกำกับภาษี — ใต้หัวเอกสาร */
     docOriginal: 'ต้นฉบับ',
+    /** ใบกำกับภาษี — แผ่นสำเนา */
+    docCopy: 'สำเนา',
     /** ใบกำกับภาษี — ใต้เลขที่เอกสาร */
     docIssuedAsSet: 'เอกสารออกเป็นชุด',
     validUntil: 'ใช้ได้ถึง',
@@ -45,6 +47,8 @@ export const printDocStrings = {
     grandTotal: 'ยอดสุทธิรวม',
     discount: 'ส่วนลด',
     taxableBase: 'รวมเป็นเงิน (ฐานภาษี)',
+    invoiceTotalInclVat: 'ยอดรวมตามใบแจ้งหนี้ (รวม VAT)',
+    netPayableAfterWht: 'ยอดสุทธิที่ต้องชำระ',
     colNo: '#',
     description: 'รายการ',
     qty: 'จำนวน',
@@ -109,6 +113,7 @@ export const printDocStrings = {
     dateIssued: 'Date issued :',
     docNo: 'Document no.',
     docOriginal: 'Original',
+    docCopy: 'Copy',
     docIssuedAsSet: 'Document issued as a set',
     validUntil: 'Valid until',
     currency: 'Currency',
@@ -118,6 +123,8 @@ export const printDocStrings = {
     grandTotal: 'Grand total',
     discount: 'Discount',
     taxableBase: 'Taxable amount',
+    invoiceTotalInclVat: 'Invoice total (incl. VAT)',
+    netPayableAfterWht: 'Net amount payable',
     colNo: '#',
     description: 'Description',
     qty: 'Qty',

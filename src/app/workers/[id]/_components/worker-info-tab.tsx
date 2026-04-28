@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,11 +9,12 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { CreditCard, User, Phone, History, AlertTriangle, Wallet } from 'lucide-react';
+import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet } from 'lucide-react';
 import type { Worker, Position } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
+import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -48,6 +50,9 @@ export function WorkerInfoTab({
   canViewLaborCost,
   canEditLaborCost,
 }: WorkerInfoTabProps) {
+  const activeBankCatalog = useActiveBankNameCatalog();
+  const activeHospitalCatalog = useActiveSsoHospitalCatalog();
+
   const positionsSorted = useMemo(
     () => sortPositionsByDisplayName(allPositions ?? []),
     [allPositions]
@@ -279,7 +284,23 @@ export function WorkerInfoTab({
           <CardContent className="pt-6 space-y-4">
             <div className="space-y-2">
               <Label className="font-bold">ชื่อธนาคาร (Bank Name)</Label>
-              <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankName : worker.bankName) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankName: e.target.value})} />
+              <Input
+                disabled={!isEditing}
+                list="hrm-bank-datalist-worker"
+                value={(isEditing ? editedWorker.bankName : worker.bankName) ?? ''}
+                onChange={(e) => setEditedWorker({ ...editedWorker, bankName: e.target.value })}
+                placeholder="พิมพ์หรือเลือกจากรายการ"
+              />
+              <datalist id="hrm-bank-datalist-worker">
+                {activeBankCatalog.map((b) => (
+                  <option key={b.id} value={b.nameTh} />
+                ))}
+              </datalist>
+              <p className="text-[11px] text-muted-foreground">
+                <Link href="/hr/bank-registry" className="text-primary underline hover:no-underline">
+                  จัดการทะเบียนธนาคาร
+                </Link>
+              </p>
             </div>
             <div className="space-y-2">
               <Label className="font-bold">ชื่อบัญชี (Account Holder Name)</Label>
@@ -289,6 +310,34 @@ export function WorkerInfoTab({
               <Label className="font-bold">เลขที่บัญชี (Bank Account No.)</Label>
               <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankAccountNumber : worker.bankAccountNumber) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankAccountNumber: e.target.value})} />
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border-emerald-100 bg-emerald-50/15">
+          <CardHeader className="bg-emerald-100/40 border-b border-emerald-100">
+            <CardTitle className="text-lg flex items-center gap-2 text-emerald-900">
+              <HeartPulse className="h-5 w-5" /> ประกันสังคม — โรงพยาบาลหลัก (ถ้ามี)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6 space-y-2">
+            <Label className="font-bold">โรงพยาบาลประกันสังคม</Label>
+            <Input
+              disabled={!isEditing}
+              list="hrm-hospital-datalist-worker"
+              value={(isEditing ? editedWorker.socialSecurityHospital : worker.socialSecurityHospital) ?? ''}
+              onChange={(e) => setEditedWorker({ ...editedWorker, socialSecurityHospital: e.target.value })}
+              placeholder="พิมพ์หรือเลือกจากรายการ"
+            />
+            <datalist id="hrm-hospital-datalist-worker">
+              {activeHospitalCatalog.map((h) => (
+                <option key={h.id} value={h.nameTh} />
+              ))}
+            </datalist>
+            <p className="text-[11px] text-muted-foreground">
+              <Link href="/hr/hospital-registry" className="text-primary underline hover:no-underline">
+                จัดการทะเบียนโรงพยาบาล
+              </Link>
+            </p>
           </CardContent>
         </Card>
 

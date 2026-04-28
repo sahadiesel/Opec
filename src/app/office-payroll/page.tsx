@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -19,13 +19,15 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react';
-import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { OfficePayrollRun, PayrollRunStatus } from '@/lib/types';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { formatDateThaiBE } from '@/lib/date-thai';
+import { OfficePayrollRun, OfficeStaff, PayrollRunStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import {
+  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -46,11 +48,14 @@ import {
   DialogFooter
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { canView, canCreate } from '@/lib/permissions';
+import { canView, canCreate, canPreparePayroll } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
+import {
+  OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT,
+  shouldFilterToAccountingPayoutQueue,
+} from '@/lib/payroll/accounting-payout-queue';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import {
@@ -63,6 +68,24 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  applyStandardOfficeRunLines,
+  getPayrollMonthPeriodBounds,
+  getStaffIdsUsedInOtherRunsForSameMonth,
+  isOfficeStaffEligibleForStandardOfficeRun,
+} from '@/lib/payroll/office-payroll-run-apply';
+
+function initNewRunState(): Partial<OfficePayrollRun> {
+  const m = new Date().toISOString().slice(0, 7);
+  const b = getPayrollMonthPeriodBounds(m);
+  return {
+    payrollRunNo: getPreviewPattern('office_payroll_run'),
+    payrollMonth: m,
+    payrollPeriodStart: b.payrollPeriodStart,
+    payrollPeriodEnd: b.payrollPeriodEnd,
+    notes: '',
+  };
+}
 
 /** ลบบรรทัดใน subcollection แล้วลบเอกสารงวด — ใช้เมื่อ admin ลบรายการจากรายการ */
 async function deleteOfficePayrollRunCascade(firestore: Firestore, runId: string): Promise<void> {
@@ -94,7 +117,18 @@ export default function OfficePayrollPage() {
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
   const canCreateOfficePayroll = useMemo(() => canCreate(currentUser, 'office_payroll'), [currentUser]);
+  const canCreateWorkerPayroll = useMemo(() => canCreate(currentUser, 'worker_payroll'), [currentUser]);
+  const canPrepareWorkerPayroll = useMemo(() => canPreparePayroll(currentUser), [currentUser]);
   const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const accountingPayoutQueueOnly = useMemo(
+    () =>
+      shouldFilterToAccountingPayoutQueue(currentUser, {
+        canCreateOfficePayroll,
+        canCreateWorkerPayroll,
+        canPrepareWorkerPayroll,
+      }),
+    [currentUser, canCreateOfficePayroll, canCreateWorkerPayroll, canPrepareWorkerPayroll],
+  );
 
   const [deleteTarget, setDeleteTarget] = useState<OfficePayrollRun | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -104,17 +138,88 @@ export default function OfficePayrollPage() {
     return query(collection(firestore, 'office_payroll_runs'), orderBy('payrollMonth', 'desc'));
   }, [firestore, isAuthorized]);
   
-  const { data: runs, isLoading } = useCollection<OfficePayrollRun>(runsQuery as any);
+  const { data: runs, isLoading, error: runsQueryError } = useCollection<OfficePayrollRun>(runsQuery as any);
+
+  const visibleRuns = useMemo(() => {
+    if (!runs) return undefined;
+    if (accountingPayoutQueueOnly) {
+      return runs.filter((r) => OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT.includes(r.status));
+    }
+    return runs;
+  }, [runs, accountingPayoutQueueOnly]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>({
-    payrollRunNo: getPreviewPattern('office_payroll_run'),
-    payrollMonth: new Date().toISOString().slice(0, 7),
-    payrollPeriodStart: '',
-    payrollPeriodEnd: '',
-    notes: ''
-  });
+  const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>(() => initNewRunState());
+  const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(() => new Set());
+  const [createStaffSearch, setCreateStaffSearch] = useState('');
+  const [loadingLocked, setLoadingLocked] = useState(false);
+  const [lockedInOtherRuns, setLockedInOtherRuns] = useState<Set<string>>(() => new Set());
+  const [staffPickVersion, setStaffPickVersion] = useState(0);
+
+  const staffForCreateQuery = useMemoFirebase(
+    () => (firestore && isAuthorized && isDialogOpen ? collection(firestore, 'office_staff') : null),
+    [firestore, isAuthorized, isDialogOpen],
+  );
+  const { data: allOfficeStaff } = useCollection<OfficeStaff>(staffForCreateQuery as any);
+
+  useEffect(() => {
+    if (!isDialogOpen || !firestore || !newRun.payrollMonth) return;
+    let cancel = false;
+    setLoadingLocked(true);
+    void getStaffIdsUsedInOtherRunsForSameMonth(firestore, newRun.payrollMonth, null)
+      .then((s) => {
+        if (cancel) return;
+        setLockedInOtherRuns(s);
+        setStaffPickVersion((v) => v + 1);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancel) toast({ variant: 'destructive', title: 'โหลดสถานะงวดเดือนล้มเหลว', description: e instanceof Error ? e.message : String(e) });
+      })
+      .finally(() => {
+        if (!cancel) setLoadingLocked(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [isDialogOpen, newRun.payrollMonth, firestore, toast]);
+
+  const nStaff = allOfficeStaff?.length ?? 0;
+  useEffect(() => {
+    if (!isDialogOpen || loadingLocked) return;
+    if (!allOfficeStaff?.length) return;
+    const eligible = allOfficeStaff
+      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s) && !lockedInOtherRuns.has(s.id))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+    setSelectedStaffIds(new Set(eligible.map((s) => s.id)));
+  }, [isDialogOpen, loadingLocked, lockedInOtherRuns, staffPickVersion, nStaff]);
+
+  const eligibleForCreate = useMemo(() => {
+    if (!allOfficeStaff) return [];
+    return allOfficeStaff
+      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s) && !lockedInOtherRuns.has(s.id))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+  }, [allOfficeStaff, lockedInOtherRuns]);
+
+  const lockedOutForCreate = useMemo(() => {
+    if (!allOfficeStaff) return [];
+    return allOfficeStaff
+      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s) && lockedInOtherRuns.has(s.id))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+  }, [allOfficeStaff, lockedInOtherRuns]);
+
+  const filteredEligible = useMemo(() => {
+    const q = createStaffSearch.trim().toLowerCase();
+    if (!q) return eligibleForCreate;
+    return eligibleForCreate.filter(
+      (s) =>
+        s.fullName.toLowerCase().includes(q) ||
+        s.staffCode.toLowerCase().includes(q) ||
+        (s.nickname && s.nickname.toLowerCase().includes(q)) ||
+        s.department.toLowerCase().includes(q),
+    );
+  }, [eligibleForCreate, createStaffSearch]);
 
   const handleCreateRun = async () => {
     if (!canCreateOfficePayroll) {
@@ -123,18 +228,45 @@ export default function OfficePayrollPage() {
     }
     if (!firestore || !currentUser) return;
     if (!newRun.payrollMonth || !newRun.payrollPeriodStart || !newRun.payrollPeriodEnd) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเดือนและช่วงเวลาการจ่ายเงิน" });
+      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาเลือกเดือนจ่าย" });
+      return;
+    }
+    if (!allOfficeStaff) {
+      toast({ variant: "destructive", title: "รอข้อมูล", description: "กำลังโหลดทะเบียนพนักงาน" });
+      return;
+    }
+    if (selectedStaffIds.size === 0) {
+      toast({ variant: "destructive", title: "ยังไม่ได้เลือกรายชื่อ", description: "เลือกอย่างน้อย 1 คนที่ต้องจ่ายในงวดนี้" });
+      return;
+    }
+
+    const byId = new Map(allOfficeStaff.map((s) => [s.id, s]));
+    const staffList: OfficeStaff[] = [];
+    for (const id of selectedStaffIds) {
+      const s = byId.get(id);
+      if (!s) continue;
+      if (!isOfficeStaffEligibleForStandardOfficeRun(s) || lockedInOtherRuns.has(s.id)) {
+        toast({ variant: 'destructive', title: 'รายชื่อไม่ถูกต้อง', description: 'มีรายชื่อที่ถูกงวดอื่นใช้แล้วหรือไม่เข้าเงื่อนไข — ลองปิดแล้วเปิดใหม่' });
+        return;
+      }
+      staffList.push(s);
+    }
+    if (staffList.length === 0) {
+      toast({ variant: "destructive", title: "รายชื่อไม่ถูกต้อง" });
       return;
     }
 
     setIsCreating(true);
     try {
-      // Atomic Number Generation
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'office_payroll_run', { actor: currentUser.displayName });
 
-      const docRef = await addDocumentNonBlocking(collection(firestore, 'office_payroll_runs'), {
-        ...newRun,
+      const notesTrim = typeof newRun.notes === 'string' ? newRun.notes.trim() : '';
+      const docRef = await addDoc(collection(firestore, 'office_payroll_runs'), {
         payrollRunNo: finalNo,
+        payrollMonth: newRun.payrollMonth,
+        payrollPeriodStart: newRun.payrollPeriodStart,
+        payrollPeriodEnd: newRun.payrollPeriodEnd,
+        ...(notesTrim ? { notes: notesTrim } : {}),
         status: 'DRAFT',
         staffCount: 0,
         grossAmount: 0,
@@ -142,15 +274,27 @@ export default function OfficePayrollPage() {
         totalAllowances: 0,
         totalDeductions: 0,
         createdAt: Date.now(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       });
 
+      await applyStandardOfficeRunLines(
+        firestore,
+        docRef.id,
+        { payrollMonth: newRun.payrollMonth, payrollPeriodEnd: newRun.payrollPeriodEnd },
+        staffList,
+        { newStatus: 'CALCULATED' },
+      );
+
       setIsDialogOpen(false);
-      toast({ title: "สร้างงวดเงินเดือนสำเร็จ", description: `เลขที่: ${finalNo}` });
-      if (docRef) router.push(`/office-payroll/${docRef.id}`);
+      toast({ title: "สร้างงวดเงินเดือนสำเร็จ", description: `${finalNo} · คำนวณ ${staffList.length} ราย` });
+      router.push(`/office-payroll/${docRef.id}`);
     } catch (e) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างงวดการจ่ายเงินได้" });
+      toast({
+        variant: 'destructive',
+        title: 'สร้างงวดไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ไม่สามารถสร้างงวดการจ่ายเงินได้',
+      });
     } finally {
       setIsCreating(false);
     }
@@ -229,12 +373,22 @@ export default function OfficePayrollPage() {
           </div>
         </div>
 
+        {accountingPayoutQueueOnly && (
+          <Alert className="bg-slate-100 border-slate-300">
+            <Info className="h-5 w-5" />
+            <AlertTitle className="font-bold">มุมมองบัญชี (ตัดจ่าย)</AlertTitle>
+            <AlertDescription className="text-xs">
+              แสดงเฉพาะงวดที่ <strong>HR/Manager อนุมัติแล้ว</strong> (HR_APPROVED ขึ้นไป) — รายการคำนวณอย่างเดียวยังไม่มาถึงขั้นตัดจ่าย
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
             <Info className="h-5 w-5 text-blue-600" />
             <AlertTitle className="font-bold">นโยบายสายงาน (Workflow Policy)</AlertTitle>
             <AlertDescription className="text-xs">
-              HR มีหน้าที่คำนวณและยืนยันยอดเงินเดือนตามประวัติ Staff → การเงินมีหน้าที่อนุมัติเบิกจ่ายและลงบัญชี
+              Payroll/HR คำนวณและส่งอนุมัติ → ผู้จัดการ/HR อนุมัติรายการ → <strong>บัญชี</strong>อนุมัติเบิกจ่ายและลงบัญชี (ลำดับนี้ ห้ามข้าม)
             </AlertDescription>
           </Alert>
           <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
@@ -255,52 +409,150 @@ export default function OfficePayrollPage() {
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
           
-          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog
+            open={isAuthorized && isDialogOpen}
+            onOpenChange={(open) => {
+              setIsDialogOpen(open);
+              if (open) {
+                setNewRun(initNewRunState());
+                setCreateStaffSearch('');
+                setStaffPickVersion((v) => v + 1);
+              }
+            }}
+          >
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canCreateOfficePayroll}>
                 <Plus className="h-5 w-5" /> สร้างงวดเงินเดือน (New Office Payroll)
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col gap-0">
               <DialogHeader>
                 <DialogTitle>สร้างงวดเงินเดือนพนักงานใหม่</DialogTitle>
-                <DialogDescription>ระบุเดือนและช่วงเวลาสำหรับคำนวณเงินเดือน ระบบจะรันเลขที่อัตโนมัติเมื่อบันทึก</DialogDescription>
+                <DialogDescription>
+                  เลือกเดือนจ่าย (ช่วงวันที่เป็นต้นเดือน–สิ้นเดือนอัตโนมัติ) จากนั้นเลือกพนักงาน ACTIVE ที่ต้องจ่าย — คนที่อยู่งวดอื่นในเดือนเดียวกันแล้วจะเลือกไม่ได้
+                </DialogDescription>
               </DialogHeader>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
-                <div className="space-y-2 md:col-span-2">
+              <div className="grid grid-cols-1 gap-4 py-4 overflow-y-auto flex-1 min-h-0">
+                <div className="space-y-2">
                   <Label>เลขที่งวด (Run No.)</Label>
                   <Input value={newRun.payrollRunNo} disabled className="bg-muted/50 font-mono font-bold" />
                 </div>
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label>เดือนที่จ่าย (Payroll Month)</Label>
-                  <Input type="month" value={newRun.payrollMonth} onChange={e => setNewRun({...newRun, payrollMonth: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>วันที่เริ่ม (Period Start)</Label>
-                  <DatePickerThaiBE
-                    className="h-10"
-                    value={htmlDateValueToTimestampMs(newRun.payrollPeriodStart)}
-                    onChange={(ms) => setNewRun({ ...newRun, payrollPeriodStart: timestampToHtmlDateValue(ms) })}
+                  <Input
+                    type="month"
+                    value={newRun.payrollMonth}
+                    onChange={(e) => {
+                      const ym = e.target.value;
+                      try {
+                        const b = getPayrollMonthPeriodBounds(ym);
+                        setNewRun((prev) => ({
+                          ...prev,
+                          payrollMonth: ym,
+                          payrollPeriodStart: b.payrollPeriodStart,
+                          payrollPeriodEnd: b.payrollPeriodEnd,
+                        }));
+                        setStaffPickVersion((v) => v + 1);
+                      } catch {
+                        setNewRun((prev) => ({ ...prev, payrollMonth: ym }));
+                      }
+                    }}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>วันที่สิ้นสุด (Period End)</Label>
-                  <DatePickerThaiBE
-                    className="h-10"
-                    value={htmlDateValueToTimestampMs(newRun.payrollPeriodEnd)}
-                    onChange={(ms) => setNewRun({ ...newRun, payrollPeriodEnd: timestampToHtmlDateValue(ms) })}
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-md border bg-muted/30 p-3 text-sm">
+                  <div>
+                    <span className="text-muted-foreground text-xs">วันเริ่มงวด</span>
+                    <p className="font-mono font-semibold">{newRun.payrollPeriodStart || '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs">วันสิ้นงวด</span>
+                    <p className="font-mono font-semibold">{newRun.payrollPeriodEnd || '—'}</p>
+                  </div>
                 </div>
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-2">
                   <Label>หมายเหตุ</Label>
-                  <Input value={newRun.notes} onChange={e => setNewRun({...newRun, notes: e.target.value})} placeholder="ระบุโครงการหรือข้อความเพิ่มเติม..." />
+                  <Input
+                    value={newRun.notes ?? ''}
+                    onChange={(e) => setNewRun({ ...newRun, notes: e.target.value })}
+                    placeholder="ระบุโครงการหรือข้อความเพิ่มเติม..."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="mb-0">เลือกพนักงานที่จ่ายในงวดนี้ ({selectedStaffIds.size} คน)</Label>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        disabled={loadingLocked || eligibleForCreate.length === 0}
+                        onClick={() => setSelectedStaffIds(new Set(eligibleForCreate.map((s) => s.id)))}
+                      >
+                        เลือกทั้งหมด
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setSelectedStaffIds(new Set())}>
+                        ไม่เลือก
+                      </Button>
+                    </div>
+                  </div>
+                  <Input
+                    placeholder="ค้นหาชื่อ / รหัส / แผนก..."
+                    value={createStaffSearch}
+                    onChange={(e) => setCreateStaffSearch(e.target.value)}
+                  />
+                  {loadingLocked && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" /> กำลังตรวจสอบงวดเดือนอื่น...
+                    </p>
+                  )}
+                  <ScrollArea className="h-[220px] rounded-md border p-2">
+                    <div className="space-y-2 pr-3">
+                      {filteredEligible.map((s) => (
+                        <label
+                          key={s.id}
+                          className="flex items-start gap-3 rounded-md border border-transparent px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={selectedStaffIds.has(s.id)}
+                            onCheckedChange={(checked) => {
+                              setSelectedStaffIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked === true) next.add(s.id);
+                                else next.delete(s.id);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span className="text-sm leading-tight">
+                            <span className="font-semibold">{s.fullName}</span>
+                            <span className="text-muted-foreground text-xs block font-mono">{s.staffCode} · {s.department}</span>
+                          </span>
+                        </label>
+                      ))}
+                      {filteredEligible.length === 0 && !loadingLocked && (
+                        <p className="text-sm text-muted-foreground py-6 text-center">ไม่มีรายชื่อที่เลือกได้ในเดือนนี้</p>
+                      )}
+                    </div>
+                  </ScrollArea>
+                  {lockedOutForCreate.length > 0 && (
+                    <Alert className="bg-amber-50 border-amber-200 py-2">
+                      <AlertTitle className="text-xs font-bold">อยู่งวดจ่ายอื่นในเดือนนี้แล้ว ({lockedOutForCreate.length} คน)</AlertTitle>
+                      <AlertDescription className="text-[11px] leading-snug">
+                        {lockedOutForCreate.slice(0, 8).map((s) => s.fullName).join(', ')}
+                        {lockedOutForCreate.length > 8 ? ` และอีก ${lockedOutForCreate.length - 8} คน` : ''}
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </div>
               </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                <Button onClick={handleCreateRun} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll}>
+              <DialogFooter className="border-t pt-4 mt-2">
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>
+                  ยกเลิก
+                </Button>
+                <Button onClick={() => void handleCreateRun()} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll}>
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  สร้างงวดเงินเดือน (Confirm)
+                  สร้างงวดและคำนวณ
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -309,6 +561,15 @@ export default function OfficePayrollPage() {
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
+            {runsQueryError && (
+              <Alert variant="destructive" className="m-4">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle className="font-bold">โหลดรายการงวดไม่สำเร็จ</AlertTitle>
+                <AlertDescription className="text-xs font-mono whitespace-pre-wrap">
+                  {runsQueryError.message}
+                </AlertDescription>
+              </Alert>
+            )}
             {isLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลข้อมูลงวดเงินเดือน...</div>
             ) : (
@@ -325,7 +586,7 @@ export default function OfficePayrollPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {runs?.map((run) => (
+                  {visibleRuns?.map((run) => (
                     <TableRow 
                       key={run.id} 
                       className="cursor-pointer hover:bg-muted/30 group transition-all" 
@@ -374,9 +635,13 @@ export default function OfficePayrollPage() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(!runs || runs.length === 0) && !isLoading && (
+                  {(!visibleRuns || visibleRuns.length === 0) && !isLoading && !runsQueryError && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีงวดการจ่ายเงินในขณะนี้</TableCell>
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
+                        {accountingPayoutQueueOnly
+                          ? 'ยังไม่มีงวดที่อนุมัติแล้ว (รอ HR/Manager) — หรือยังไม่ถึงขั้นตัดจ่าย'
+                          : 'ไม่มีงวดการจ่ายเงินในขณะนี้'}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

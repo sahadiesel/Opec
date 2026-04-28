@@ -62,6 +62,7 @@ import { sanitizeFirestorePayload } from '@/lib/utils';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canEdit } from '@/lib/permissions';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
+import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 
 /** ตำแหน่งที่ผูกพนักงานออฟฟิศได้: หมวด Office ทั้งหมด หรือ Onshore/Offshore ที่ฐานเงินเดือนเป็นรายเดือน (เช่น Construction Manager) — ไม่ดึงคนงานรายวัน (DAILY/HOURLY) ทั้งแผง */
 function positionEligibleForOfficeStaff(p: Position): boolean {
@@ -123,6 +124,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
 
   const positionsQuery = useMemoFirebase(() => (firestore && canViewOfficeStaff ? collection(firestore, 'positions') : null), [firestore, canViewOfficeStaff]);
   const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const activeBankCatalog = useActiveBankNameCatalog();
+  const activeHospitalCatalog = useActiveSsoHospitalCatalog();
 
   const officeCategoryPositions = useMemo(
     () => sortPositionsByDisplayName((allPositions || []).filter(positionEligibleForOfficeStaff)),
@@ -742,10 +746,21 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   <div className="space-y-2">
                     <Label className="font-bold">โรงพยาบาลประกันสังคม</Label>
                     <Input
+                      list="hrm-hospital-datalist-office"
                       value={formData.socialSecurityHospital ?? ''}
                       onChange={(e) => setFormData({ ...formData, socialSecurityHospital: e.target.value })}
-                      placeholder="ชื่อโรงพยาบาลที่เลือก"
+                      placeholder="พิมพ์หรือเลือกจากรายการ"
                     />
+                    <datalist id="hrm-hospital-datalist-office">
+                      {activeHospitalCatalog.map((h) => (
+                        <option key={h.id} value={h.nameTh} />
+                      ))}
+                    </datalist>
+                    <p className="text-[11px] text-muted-foreground">
+                      <Link href="/hr/hospital-registry" className="text-primary underline hover:no-underline">
+                        จัดการทะเบียนโรงพยาบาล
+                      </Link>
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -756,17 +771,28 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Building2 className="h-5 w-5 text-primary" /> บัญชีธนาคาร
                 </CardTitle>
-                <CardDescription>สำหรับโอนเงินเดือน — ครบถ้วนช่วยลดงานในงวดจ่าย</CardDescription>
+                <CardDescription>สำหรับโอนเงินเดือน — เลือกจากทะเบียนหรือพิมพ์ชื่อเอง</CardDescription>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2 md:col-span-1">
                     <Label className="font-bold">ชื่อธนาคาร</Label>
                     <Input
+                      list="hrm-bank-datalist-office"
                       value={formData.bankName ?? ''}
                       onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
-                      placeholder="เช่น กสิกรไทย"
+                      placeholder="พิมพ์หรือเลือกจากรายการ"
                     />
+                    <datalist id="hrm-bank-datalist-office">
+                      {activeBankCatalog.map((b) => (
+                        <option key={b.id} value={b.nameTh} />
+                      ))}
+                    </datalist>
+                    <p className="text-[11px] text-muted-foreground">
+                      <Link href="/hr/bank-registry" className="text-primary underline hover:no-underline">
+                        จัดการทะเบียนธนาคาร
+                      </Link>
+                    </p>
                   </div>
                   <div className="space-y-2 md:col-span-1">
                     <Label className="font-bold">ชื่อบัญชี</Label>

@@ -17,7 +17,9 @@ import {
   formatYearMonthLabel,
   getLastNCalendarMonths,
   mergeWavesWithCommercialReferences,
+  portalTryGetPoMonthReviewSnap,
   portalTryGetWaveMonthReviewSnap,
+  shouldHidePortalPoMonthAfterBillingSettlement,
   shouldHidePortalWaveMonthAfterBillingSettlement,
   yearMonthFromCommercialInvoice,
 } from '@/lib/client-portal/timesheet-portal-utils';
@@ -28,6 +30,7 @@ import type {
   CommercialInvoice,
   PurchaseOrder,
   TaxInvoice,
+  PoMonthTimesheetReview,
   Wave,
   WaveMonthTimesheetReview,
 } from '@/lib/types';
@@ -40,6 +43,13 @@ type ApprovedMonthRow = {
   /** Present when the month review doc exists; may be non-approved when tied to commercial billing */
   review: WaveMonthTimesheetReview | null;
   reviewDisplay: 'manager' | 'billing';
+};
+
+type ApprovedPoMonthRow = {
+  po: PurchaseOrder;
+  poId: string;
+  yearMonth: string;
+  review: PoMonthTimesheetReview;
 };
 
 export default function ClientPortalTimesheetHubPage() {
@@ -96,11 +106,13 @@ export default function ClientPortalTimesheetHubPage() {
   }, [commercialInvoices]);
 
   const [approvedRows, setApprovedRows] = useState<ApprovedMonthRow[]>([]);
+  const [approvedPoMonthRows, setApprovedPoMonthRows] = useState<ApprovedPoMonthRow[]>([]);
   const [scanLoading, setScanLoading] = useState(true);
 
   useEffect(() => {
     if (!firestore || !currentUser?.customerId) {
       setApprovedRows([]);
+      setApprovedPoMonthRows([]);
       setScanLoading(false);
       return;
     }
@@ -119,6 +131,7 @@ export default function ClientPortalTimesheetHubPage() {
       const customerId = currentUser.customerId;
       if (!customerId) return;
       try {
+        const posList = pos ?? [];
         const waveList = await mergeWavesWithCommercialReferences(
           firestore,
           customerId,
@@ -153,7 +166,17 @@ export default function ClientPortalTimesheetHubPage() {
             }),
           ),
         );
-        const settled = await Promise.all(tasks);
+        const poMonthTasks = posList.flatMap((p) =>
+          monthsForScan.map((ym) =>
+            portalTryGetPoMonthReviewSnap(firestore, p.id, ym).then((snap) => {
+              if (!snap || !snap.exists()) return null;
+              const r = { id: snap.id, ...(snap.data() as object) } as PoMonthTimesheetReview;
+              if (r.status !== 'approved') return null;
+              return { po: p, poId: p.id, yearMonth: ym, review: r };
+            }),
+          ),
+        );
+        const [settled, poMonthSettled] = await Promise.all([Promise.all(tasks), Promise.all(poMonthTasks)]);
         if (cancelled) return;
         const rows = settled.filter(Boolean) as ApprovedMonthRow[];
         const seen = new Set(rows.map((x) => `${x.wave.id}_${x.yearMonth}`));
@@ -176,9 +199,11 @@ export default function ClientPortalTimesheetHubPage() {
           return (a.wave.waveCode || '').localeCompare(b.wave.waveCode || '', 'th');
         });
         setApprovedRows(rows);
+        setApprovedPoMonthRows(poMonthSettled.filter(Boolean) as ApprovedPoMonthRow[]);
       } catch (e) {
         console.warn('[portal ts hub]', e);
         setApprovedRows([]);
+        setApprovedPoMonthRows([]);
       } finally {
         if (!cancelled) setScanLoading(false);
       }
@@ -186,7 +211,7 @@ export default function ClientPortalTimesheetHubPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, waves, monthsForScan, commercialInvoices, currentUser?.customerId]);
+  }, [firestore, waves, pos, monthsForScan, commercialInvoices, currentUser?.customerId]);
 
   const visibleApprovedRows = useMemo(() => {
     const comm = commercialInvoices ?? [];
@@ -198,6 +223,15 @@ export default function ClientPortalTimesheetHubPage() {
     );
   }, [approvedRows, commercialInvoices, taxInvoices, arItems]);
 
+  const visiblePoMonthRows = useMemo(() => {
+    const comm = commercialInvoices ?? [];
+    const tax = taxInvoices ?? [];
+    const ar = arItems ?? [];
+    return approvedPoMonthRows.filter(
+      (row) => !shouldHidePortalPoMonthAfterBillingSettlement(row.poId, row.yearMonth, comm, tax, ar),
+    );
+  }, [approvedPoMonthRows, commercialInvoices, taxInvoices, arItems]);
+
   const commercialByWaveMonth = useMemo(() => {
     const m = new Map<string, CommercialInvoice>();
     for (const c of commercialInvoices ?? []) {
@@ -205,6 +239,15 @@ export default function ClientPortalTimesheetHubPage() {
       const ym = yearMonthFromCommercialInvoice(c);
       if (!ym || !c.waveId) continue;
       m.set(`${c.waveId}_${ym}`, c);
+    }
+    return m;
+  }, [commercialInvoices]);
+
+  const commercialByPoMonthReviewId = useMemo(() => {
+    const m = new Map<string, CommercialInvoice>();
+    for (const c of commercialInvoices ?? []) {
+      if (c.status === 'VOID' || !c.sourcePoMonthReviewId?.trim()) continue;
+      m.set(c.sourcePoMonthReviewId.trim(), c);
     }
     return m;
   }, [commercialInvoices]);
@@ -232,16 +275,32 @@ export default function ClientPortalTimesheetHubPage() {
 
   const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
 
-  const poSections = useMemo(() => {
-    return [...rowsByPoId.entries()]
-      .filter(([, rows]) => rows.length > 0)
-      .map(([poId, rows]) => ({ poId, rows, po: poById.get(poId) }))
-      .sort((a, b) => {
-        const la = formatCustomerPoNumberForPortal(a.po, a.poId);
-        const lb = formatCustomerPoNumberForPortal(b.po, b.poId);
-        return la.localeCompare(lb, 'th');
-      });
-  }, [rowsByPoId, poById]);
+  const poMonthRowsByPo = useMemo(() => {
+    const m = new Map<string, ApprovedPoMonthRow[]>();
+    for (const r of visiblePoMonthRows) {
+      const list = m.get(r.poId) ?? [];
+      list.push(r);
+      m.set(r.poId, list);
+    }
+    for (const list of m.values()) {
+      list.sort((a, b) => b.yearMonth.localeCompare(a.yearMonth));
+    }
+    return m;
+  }, [visiblePoMonthRows]);
+
+  const poKeysOrdered = useMemo(() => {
+    const ids = new Set([...rowsByPoId.keys(), ...poMonthRowsByPo.keys()]);
+    return [...ids].sort((a, b) => {
+      const la = formatCustomerPoNumberForPortal(poById.get(a), a);
+      const lb = formatCustomerPoNumberForPortal(poById.get(b), b);
+      return la.localeCompare(lb, 'th');
+    });
+  }, [rowsByPoId, poMonthRowsByPo, poById]);
+
+  const hubEmpty = useMemo(
+    () => poKeysOrdered.length === 0,
+    [poKeysOrdered],
+  );
 
   const loading =
     userLoading ||
@@ -290,12 +349,16 @@ export default function ClientPortalTimesheetHubPage() {
           <Loader2 className="h-4 w-4 animate-spin" />
           {t('tsHubLoading')}
         </p>
-      ) : poSections.length === 0 ? (
+      ) : hubEmpty ? (
         <p className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">{t('tsHubEmpty')}</p>
       ) : (
         <div className="space-y-8">
-          {poSections.map(({ poId, rows, po }) => {
+          {poKeysOrdered.map((poId) => {
+            const po = poById.get(poId);
             const poLabel = formatCustomerPoNumberForPortal(po, poId);
+            const monthRows = poMonthRowsByPo.get(poId) ?? [];
+            const rows = rowsByPoId.get(poId) ?? [];
+            const n = monthRows.length + rows.length;
             return (
               <Card key={poId} className="overflow-hidden shadow-sm">
                 <CardHeader className="border-b bg-muted/30">
@@ -307,93 +370,161 @@ export default function ClientPortalTimesheetHubPage() {
                       </CardTitle>
                     </div>
                     <Badge variant="secondary">
-                      {rows.length} {t('tsHubPeriodCount')}
+                      {n} {t('tsHubPeriodCount')}
                     </Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('tsHubColWave')}</TableHead>
-                        <TableHead className="whitespace-nowrap min-w-[9rem]">{t('tsHubColCustomerPoNo')}</TableHead>
-                        <TableHead className="whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
-                        <TableHead>{t('tsHubColLocation')}</TableHead>
-                        <TableHead className="text-center">{t('tsHubColWaveStatus')}</TableHead>
-                        <TableHead className="text-center">{t('tsHubColAssigned')}</TableHead>
-                        <TableHead className="text-center max-w-[120px]">{t('tsHubColReady')}</TableHead>
-                        <TableHead className="text-left min-w-[7rem]">{t('tsHubColBillingRef')}</TableHead>
-                        <TableHead className="w-14 text-right">{t('tsHubColDetail')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.map(({ wave: w, yearMonth }) => {
-                        const mobs = mobsByWave.get(w.id) ?? [];
-                        const activeMobs = mobs.filter((m) => isAssignmentActiveOnWaveRoster(m));
-                        const assignedActive = activeMobs.length;
-                        const ready = activeMobs.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
-                        const planned = totalPlannedWorkersOnWave(w) || w.plannedWorkers || 0;
-                        const detailHref = `/client-portal/timesheets/wave/${encodeURIComponent(w.id)}?month=${encodeURIComponent(yearMonth)}`;
-                        const commRow = commercialByWaveMonth.get(`${w.id}_${yearMonth}`);
-                        const billingHref = commRow
-                          ? `/client-portal/commercial-invoices/${encodeURIComponent(commRow.id)}`
-                          : null;
-                        return (
-                          <TableRow key={`${w.id}-${yearMonth}`}>
-                            <TableCell className="font-mono font-semibold">
-                              <span className="flex items-center gap-1">
-                                <Waves className="h-3.5 w-3.5 text-primary" />
-                                {w.waveCode}
-                              </span>
-                            </TableCell>
-                            <TableCell className="font-mono text-sm">{poLabel}</TableCell>
-                            <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
-                              {formatYearMonthLabel(yearMonth, locale)}
-                            </TableCell>
-                            <TableCell>
-                              <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                                <MapPin className="h-3 w-3 shrink-0" />
-                                {w.siteLocation || '—'}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <Badge variant="outline">{w.status}</Badge>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <span className="inline-flex items-center justify-center gap-1">
-                                <Users className="h-3.5 w-3.5" />
-                                {assignedActive}
-                                <span className="text-muted-foreground">/</span>
-                                {planned}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-center font-semibold text-green-700">{ready}</TableCell>
-                            <TableCell className="text-sm">
-                              {billingHref && commRow ? (
-                                <Link
-                                  href={billingHref}
-                                  className="font-mono text-primary underline-offset-4 hover:underline"
-                                >
-                                  {commRow.invoiceNo}
-                                </Link>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right p-1">
-                              <Link
-                                href={detailHref}
-                                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
-                                aria-label={t('tsHubColDetail')}
-                              >
-                                <ChevronRight className="h-5 w-5" aria-hidden />
-                              </Link>
-                            </TableCell>
+                <CardContent className="p-0 space-y-0">
+                  {monthRows.length > 0 ? (
+                    <div className="space-y-0">
+                      <div className="px-4 sm:px-6 pt-4 text-sm font-semibold text-foreground/90">
+                        {t('tsHubSectionPoMonth')}
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="whitespace-nowrap min-w-[9rem]">{t('tsHubColCustomerPoNo')}</TableHead>
+                            <TableHead className="whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
+                            <TableHead className="text-center">{t('tsHubColReview')}</TableHead>
+                            <TableHead className="text-left min-w-[7rem]">{t('tsHubColBillingRef')}</TableHead>
+                            <TableHead className="w-14 text-right">{t('tsHubColDetail')}</TableHead>
                           </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
+                        </TableHeader>
+                        <TableBody>
+                          {monthRows.map((r) => {
+                            const commRow = commercialByPoMonthReviewId.get(r.review.id);
+                            const billingHref = commRow
+                              ? `/client-portal/commercial-invoices/${encodeURIComponent(commRow.id)}`
+                              : null;
+                            const detailHref = `/client-portal/timesheets/po-month?poId=${encodeURIComponent(poId)}&month=${encodeURIComponent(r.yearMonth)}`;
+                            return (
+                              <TableRow key={r.review.id}>
+                                <TableCell className="font-mono text-sm">{poLabel}</TableCell>
+                                <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
+                                  {formatYearMonthLabel(r.yearMonth, locale)}
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <Badge variant="outline" className="text-[10px] border-emerald-600/50 text-emerald-800">
+                                    {t('tsHubApprovedBadge')}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-sm">
+                                  {billingHref && commRow ? (
+                                    <Link
+                                      href={billingHref}
+                                      className="font-mono text-primary underline-offset-4 hover:underline"
+                                    >
+                                      {commRow.invoiceNo}
+                                    </Link>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right p-1">
+                                  <Link
+                                    href={detailHref}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
+                                    aria-label={t('tsHubViewPoMonth')}
+                                  >
+                                    <ChevronRight className="h-5 w-5" aria-hidden />
+                                  </Link>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : null}
+                  {rows.length > 0 ? (
+                    <div className={monthRows.length > 0 ? 'space-y-0 border-t' : 'space-y-0'}>
+                      <div className="px-4 sm:px-6 pt-4 text-sm font-semibold text-foreground/90">
+                        {t('tsHubSectionWaves')}
+                      </div>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>{t('tsHubColWave')}</TableHead>
+                            <TableHead className="whitespace-nowrap min-w-[9rem]">{t('tsHubColCustomerPoNo')}</TableHead>
+                            <TableHead className="whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
+                            <TableHead>{t('tsHubColLocation')}</TableHead>
+                            <TableHead className="text-center">{t('tsHubColWaveStatus')}</TableHead>
+                            <TableHead className="text-center">{t('tsHubColAssigned')}</TableHead>
+                            <TableHead className="text-center max-w-[120px]">{t('tsHubColReady')}</TableHead>
+                            <TableHead className="text-left min-w-[7rem]">{t('tsHubColBillingRef')}</TableHead>
+                            <TableHead className="w-14 text-right">{t('tsHubColDetail')}</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {rows.map(({ wave: w, yearMonth }) => {
+                            const mobs = mobsByWave.get(w.id) ?? [];
+                            const activeMobs = mobs.filter((m) => isAssignmentActiveOnWaveRoster(m));
+                            const assignedActive = activeMobs.length;
+                            const ready = activeMobs.filter((m) => assignmentReadyForWaveTimesheet(m)).length;
+                            const planned = totalPlannedWorkersOnWave(w) || w.plannedWorkers || 0;
+                            const detailHref = `/client-portal/timesheets/wave/${encodeURIComponent(w.id)}?month=${encodeURIComponent(yearMonth)}`;
+                            const commRow = commercialByWaveMonth.get(`${w.id}_${yearMonth}`);
+                            const billingHref = commRow
+                              ? `/client-portal/commercial-invoices/${encodeURIComponent(commRow.id)}`
+                              : null;
+                            return (
+                              <TableRow key={`${w.id}-${yearMonth}`}>
+                                <TableCell className="font-mono font-semibold">
+                                  <span className="flex items-center gap-1">
+                                    <Waves className="h-3.5 w-3.5 text-primary" />
+                                    {w.waveCode}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="font-mono text-sm">{poLabel}</TableCell>
+                                <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
+                                  {formatYearMonthLabel(yearMonth, locale)}
+                                </TableCell>
+                                <TableCell>
+                                  <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+                                    <MapPin className="h-3 w-3 shrink-0" />
+                                    {w.siteLocation || '—'}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <Badge variant="outline">{w.status}</Badge>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <span className="inline-flex items-center justify-center gap-1">
+                                    <Users className="h-3.5 w-3.5" />
+                                    {assignedActive}
+                                    <span className="text-muted-foreground">/</span>
+                                    {planned}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center font-semibold text-green-700">{ready}</TableCell>
+                                <TableCell className="text-sm">
+                                  {billingHref && commRow ? (
+                                    <Link
+                                      href={billingHref}
+                                      className="font-mono text-primary underline-offset-4 hover:underline"
+                                    >
+                                      {commRow.invoiceNo}
+                                    </Link>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right p-1">
+                                  <Link
+                                    href={detailHref}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
+                                    aria-label={t('tsHubViewMonthly')}
+                                  >
+                                    <ChevronRight className="h-5 w-5" aria-hidden />
+                                  </Link>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             );

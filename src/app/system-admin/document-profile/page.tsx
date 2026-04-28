@@ -162,7 +162,11 @@ export default function DocumentProfileAdminPage() {
           <CardHeader>
             <CardTitle>ข้อมูลบริษัทบนเอกสาร</CardTitle>
             <CardDescription>
-              ใช้ร่วมกับใบเสนอราคา/แจ้งหนี้/ใบกำกับ/ใบสั่งซื้อ (เริ่มใช้งานแล้วกับใบเสนอราคา)
+              ใช้ร่วมกับใบเสนอราคา/แจ้งหนี้/ใบกำกับ/ใบสั่งซื้อ — รวมถึงหัวกระดาษในหนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ){' '}
+              <span className="text-muted-foreground">
+                (prefix เลขที่หนังสือรับรองแยกตั้งได้ที่เมนู Admin · เลขที่เอกสาร — ลำดับ{' '}
+                <code className="text-xs bg-muted px-1 rounded">wht_certificate_50</code>)
+              </span>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

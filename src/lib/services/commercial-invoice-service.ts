@@ -44,6 +44,15 @@ export const QUOTATION_PO_WAVE_PLACEHOLDER = '__quotation_po__';
 /** งวดอนุมัติ timesheet รวมราย PO+เดือน (ไม่แยก wave) — ใบแจ้งหนี้รวม timesheet ทุก wave ใต้ PO ในช่วงงวด */
 export const PO_MONTH_WAVE_PLACEHOLDER = '__po_month__';
 
+/**
+ * นโยบายอ้างอิงงวดวางบิล (Commercial / ลูกค้า)
+ *
+ * - **ลงเวลาจริง** มาจาก `daily_timesheets` รายวันต่อ assignment+wave; PO เป็น “โควต้า/สั่งงาน” คนมาไม่พร้อมกัน
+ * - เมื่อ**ในเดือนเดียวกันภายใต้ PO มีมากกว่า 1 wave** (คน mobilize คนล่ะชุด) จะ**อ้าง “wave ฉบับเดียว” บนใบแจ้งหนี้เดียวไม่ครอบยอดเดือน** — ใบที่ถูกต้องสำหรับเรียกเก็บรวมเดือน =
+ *   เอกสาร **PO+เดือน** หลัง manager approve + `sourcePoMonthReviewId` (บรรทัดใบยึด `timesheetIds` จากทุก wave ในช่วง)
+ * - Path **wave+เดือน** / `sourceWaveMonthReviewId` ยังใช้ได้เมื่องวดนั้น “มี effective wave ตัวเดียว” หรือเป็น history — **ห้ามแก้**ใบ
+ *   `ISSUED` / ที่ลูกค้า approve แล้ว; ราย DRAFT อาจ void แล้วสร้างใหม่จาก PO+เดือนตาม runbook
+ */
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -379,6 +388,13 @@ export async function createCommercialDraftFromQuotationPoLines(
   return { id: ref.id, invoiceNo };
 }
 
+/**
+ * สร้าง DRAFT หลังอนุมัติ **wave+เดือน** (อ้าง `sourceWaveMonthReviewId` + `waveId` หนึ่งตัว)
+ *
+ * เหมาะเมื่องวดนั้นมี **wave เดียวที่มี activity** ต่อ PO หรือเป็น flow เดิม/ยอดรอง
+ * ถ้าในปฏิทินเดียวกันภายใต้ PO มี **หลาย wave** ที่ยังลงเวลา — ใบเรียกเก็บ “เต็มเดือน” ต้องใช้
+ * {@link ensureCommercialDraftInvoiceAfterPoMonthApproval} (รวม timesheet ทุก wave, `sourcePoMonthReviewId`)
+ */
 export async function ensureCommercialDraftInvoiceAfterMonthApproval(
   db: Firestore,
   review: WaveMonthTimesheetReview,

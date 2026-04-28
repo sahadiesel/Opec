@@ -28,7 +28,6 @@ import {
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import Link from 'next/link';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
@@ -56,8 +55,26 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'สแตนด์บาย (Standby)', value: 'standby_day' },
   { label: 'เตรียมส่งตัว (Mob)', value: 'mobilization_day' },
   { label: 'วันเดินทางกลับ (Demob)', value: 'demobilization_day' },
-  { label: 'ลาหยุดไม่รับค่าจ้าง (Unpaid)', value: 'unpaid_leave' },
+  { label: 'ไม่จ่ายค่าแรง (Unpaid)', value: 'unpaid_leave' },
 ];
+
+/** คอลัมน์สถานะ — แสดงรหัสจากประเภทวันที่บันทึกแล้วเท่านั้น (ไม่แสดง DRAFT) */
+function waveBoardStatusCode(
+  persisted: boolean,
+  eventType: RateConditionEventType | undefined,
+): string {
+  if (!persisted) return ' - ';
+  const et = eventType ?? 'work_day';
+  if (et === 'work_day') return 'W';
+  if (et === 'standby_day') return 'SB';
+  const rest: Partial<Record<RateConditionEventType, string>> = {
+    travel_day: 'TV',
+    mobilization_day: 'MO',
+    demobilization_day: 'DE',
+    unpaid_leave: 'NP',
+  };
+  return rest[et] ?? String(et).replace(/_/g, ' ').slice(0, 3).toUpperCase();
+}
 
 function isMonthReviewLocked(r: WaveMonthTimesheetReview | undefined | null): boolean {
   if (!r) return false;
@@ -99,6 +116,8 @@ export function PoDailyBoardCard({
   const [reviewByWaveId, setReviewByWaveId] = useState<Map<string, WaveMonthTimesheetReview | null>>(
     () => new Map(),
   );
+  /** assignment ที่มีเอกสาร daily_timesheets จริงในวันที่เลือก (ไม่ใช่แค่ placeholder บนจอ) */
+  const [persistedAssignmentIds, setPersistedAssignmentIds] = useState<Set<string>>(() => new Set());
 
   const monthYm = targetDate.slice(0, 7);
   const waveById = useMemo(() => new Map(waves.map((w) => [w.id, w])), [waves]);
@@ -207,9 +226,11 @@ export function PoDailyBoardCard({
       });
     }
     const next: Record<string, Partial<DailyTimesheet>> = {};
+    const persisted = new Set<string>();
     for (const asgn of assignmentRows) {
       const dft = defaultHoursByWave.get(asgn.waveId) ?? 12;
       if (existing[asgn.id]) {
+        persisted.add(asgn.id);
         const ex = existing[asgn.id];
         next[asgn.id] =
           ex.eventType === 'unpaid_leave' && (ex.normalHours ?? 0) !== 0 ? { ...ex, normalHours: 0 } : ex;
@@ -225,6 +246,7 @@ export function PoDailyBoardCard({
         };
       }
     }
+    setPersistedAssignmentIds(persisted);
     setRosterData(next);
   }, [firestore, targetDate, assignmentRows, waves, defaultHoursByWave]);
 
@@ -315,6 +337,7 @@ export function PoDailyBoardCard({
 
       const results = await service.bulkUpsertTimesheets(payloads, currentUser);
       toast({ title: 'บันทึกร่างสำเร็จ', description: `สร้าง ${results.created} · อัปเดต ${results.updated}` });
+      await loadRoster();
     } catch (e: unknown) {
       toast({ variant: 'destructive', title: 'Error', description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -384,14 +407,22 @@ export function PoDailyBoardCard({
                 <span className="text-xs font-normal opacity-90">({monthYm})</span>
               </CardTitle>
               <CardDescription className="text-primary-foreground/80 text-sm mt-1">
-                รวม {waves.length} wave: {waves.map((w) => `${w.waveCode} [${w.status}]`).join(' · ')} — รายเดียวต่อ row แสดง wave
+                รวม {waves.length} wave: {waves.map((w) => `${w.waveCode} [${w.status}]`).join(' · ')} — แต่ละ row อ้าง wave/assignment
+                ของรายนั้น (เวลาจริง = timesheet) · PO เป็นกรอบสั่งงาน ไม่ใช่ “ปฏิทินเดียวกับทุก wave”
               </CardDescription>
             </div>
-            <Button variant="secondary" size="sm" className="shrink-0" asChild>
-              <Link href={`/timesheets/wave-month?month=${encodeURIComponent(monthYm)}`}>
-                สรุปลงเวลารายเดือน (ส่งตรวจ) →
-              </Link>
-            </Button>
+            <div className="flex flex-col gap-1.5 sm:items-end shrink-0">
+              <Button variant="secondary" size="sm" asChild>
+                <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}&highlightPo=${encodeURIComponent(po.id)}`}>
+                  เอกสาร PO+เดือน (วางบิล · รวมทุก wave) →
+                </Link>
+              </Button>
+              <Button variant="outline" size="sm" className="bg-primary-foreground/10 border-primary-foreground/30" asChild>
+                <Link href={`/timesheets/wave-month?month=${encodeURIComponent(monthYm)}`}>
+                  สรุปรอบเดือนต่อ wave (ส่งตรวจ) →
+                </Link>
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0 space-y-4">
@@ -400,6 +431,17 @@ export function PoDailyBoardCard({
               <AlertTitle>งวด {monthYm} ถูกล็อกใน wave บางตัวใต้ PO นี้</AlertTitle>
               <AlertDescription>
                 มีรอบ wave ที่ entry_locked / รออนุมัติ / อนุมัติ — ราย wave นั้นแก้เวลาไม่ได้
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {waves.length > 1 ? (
+            <Alert className="rounded-none border-x-0 border-t-0 border-amber-200 bg-amber-50 text-amber-900">
+              <AlertTitle>งวดนี้ PO เดียวกันมี {waves.length} wave</AlertTitle>
+              <AlertDescription>
+                ลูกจ้างอาจ mobilize ต่างรอบ — ชั่วโมงและบรรทัด timesheet ยึด**ราย wave + รายวัน**; งาน**เรียกเก็บลูกค้าในเดือนนี้
+                ให้ยึด<strong>เอกสาร timesheet ราย PO+เดือน</strong> หลัง manager อนุมัติ (รวม timesheet ทุก wave ใต้ PO) แทนการ “เลือก
+                อ้างอิง wave ใด wave หนึ่ง” มาแทนเดือน (ใบเก่าในช่วง wave เดียวในงวดอาจอ้าง wave ได้; **ห้ามแก้**
+                ใบที่ออก/ลูกค้า approve แล้ว หากต้องรวมแบบ PO+เดือน ให้ใช้ DRAFT ใหม่ตาม runbook บัญชี/OPS)
               </AlertDescription>
             </Alert>
           ) : null}
@@ -424,6 +466,24 @@ export function PoDailyBoardCard({
               onClick={() => applyBulk('eventType', 'standby_day')}
             >
               2. Standby
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="bg-white border-primary/20"
+              disabled={anyMonthLocked}
+              onClick={() => applyBulk('eventType', 'mobilization_day')}
+            >
+              3. Mob
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="bg-white border-primary/20"
+              disabled={anyMonthLocked}
+              onClick={() => applyBulk('eventType', 'demobilization_day')}
+            >
+              4. Dmob
             </Button>
             <div className="flex w-full min-w-0 flex-1 flex-col gap-3 border-t border-dashed border-muted-foreground/25 pt-3 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:items-end sm:justify-end sm:gap-3 sm:border-t-0 sm:pt-0 sm:pl-3 sm:border-l sm:border-muted-foreground/25">
               <div className="space-y-1.5 w-full min-w-[11rem] sm:w-auto shrink-0">
@@ -453,17 +513,17 @@ export function PoDailyBoardCard({
             <div className="py-20 text-center animate-pulse">Loading Roster…</div>
           )}
           {!isAsgnLoading && assignmentRows.length > 0 ? (
-            <Table>
+            <Table className="w-full text-sm">
               <TableHeader className="bg-muted/50">
                 <TableRow>
-                  <TableHead className="pl-6 py-4 font-bold">พนักงาน (Worker)</TableHead>
-                  <TableHead className="font-bold">Wave</TableHead>
-                  <TableHead className="font-bold">ตำแหน่ง</TableHead>
-                  <TableHead className="font-bold w-[220px]">ประเภทวัน</TableHead>
-                  <TableHead className="font-bold text-center w-[110px]">ชั่วโมงปกติ</TableHead>
-                  <TableHead className="font-bold">สถานะ</TableHead>
-                  <TableHead className="w-[128px] text-center font-bold">จบงวด</TableHead>
-                  <TableHead className="text-right pr-6">หมายเหตุ</TableHead>
+                  <TableHead className="pl-6 py-4 font-bold min-w-[9rem]">พนักงาน (Worker)</TableHead>
+                  <TableHead className="font-bold w-[6.5rem] min-w-[6rem]">Wave</TableHead>
+                  <TableHead className="font-bold min-w-[5rem] max-w-[8rem]">ตำแหน่ง</TableHead>
+                  <TableHead className="font-bold w-[148px] max-w-[160px] shrink-0">ประเภทวัน</TableHead>
+                  <TableHead className="font-bold text-center w-[5.5rem] shrink-0">ชั่วโมงปกติ</TableHead>
+                  <TableHead className="font-bold w-[6.5rem] shrink-0 whitespace-nowrap">สถานะปัจจุบัน</TableHead>
+                  <TableHead className="w-[5.75rem] text-center font-bold shrink-0">จบงวด</TableHead>
+                  <TableHead className="text-right pr-6 min-w-[6rem] w-[18%]">หมายเหตุ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -484,6 +544,7 @@ export function PoDailyBoardCard({
                   const tsService = new TimesheetService(firestore!);
                   const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
                   const rowEditLocked = isLocked || rowLocked || anyMonthLocked;
+                  const persisted = persistedAssignmentIds.has(asgn.id);
 
                   return (
                     <TableRow key={asgn.id} className={rowEditLocked ? 'bg-slate-50 opacity-80' : 'hover:bg-muted/20'}>
@@ -497,12 +558,20 @@ export function PoDailyBoardCard({
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs font-mono text-primary/90">
-                        {wv?.waveCode ?? asgn.waveId}
-                        <span className="ml-1 text-muted-foreground">({waveRoundMonthLabel(wv as Wave)})</span>
+                      <TableCell className="align-top text-xs font-mono text-primary/90 py-4">
+                        <div className="flex flex-col gap-0.5 leading-tight">
+                          <span className="break-all">{wv?.waveCode ?? asgn.waveId}</span>
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            ({waveRoundMonthLabel(wv as Wave)})
+                          </span>
+                        </div>
                       </TableCell>
-                      <TableCell className="text-sm">{positionLabel(asgn.positionId)}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-sm align-top py-4 max-w-[8rem]">
+                        <span className="line-clamp-2" title={positionLabel(asgn.positionId)}>
+                          {positionLabel(asgn.positionId)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="w-[148px] max-w-[160px] align-top py-4 shrink-0">
                         <Select
                           disabled={rowEditLocked}
                           value={row.eventType}
@@ -524,7 +593,7 @@ export function PoDailyBoardCard({
                             });
                           }}
                         >
-                          <SelectTrigger className="h-9 text-xs">
+                          <SelectTrigger className="h-9 text-xs w-full max-w-[160px] min-w-0 [&_span]:truncate">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -552,15 +621,18 @@ export function PoDailyBoardCard({
                         />
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          {rowEditLocked && <Lock className="h-3 w-3 text-muted-foreground" aria-hidden />}
-                          {raw?.status ? (
-                            <Badge variant="outline" className="text-[9px] font-black uppercase">
-                              {raw.status}
-                            </Badge>
-                          ) : (
-                            <span className="text-[10px] text-muted-foreground italic">No Log</span>
-                          )}
+                        <div className="flex items-center gap-2 tabular-nums">
+                          {rowEditLocked && <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />}
+                          <span
+                            className="text-xs font-semibold text-foreground min-w-[2rem]"
+                            title={
+                              persisted
+                                ? `บันทึกแล้ว · ${row.eventType}`
+                                : 'ยังไม่มีการบันทึก timesheet สำหรับวันนี้'
+                            }
+                          >
+                            {waveBoardStatusCode(persisted, row.eventType)}
+                          </span>
                         </div>
                       </TableCell>
                       <TableCell className="text-center">
@@ -602,13 +674,20 @@ export function PoDailyBoardCard({
             </div>
           ) : null}
         </CardContent>
-        <CardFooter className="bg-muted/20 border-t py-3 flex justify-between flex-wrap gap-2">
-          <p className="text-xs text-muted-foreground">
-            ชั่วโมงค่าเริ่มต้นจาก wave + PO/สัญญา
+        <CardFooter className="bg-muted/20 border-t py-3 flex flex-wrap justify-between items-center gap-2">
+          <p className="text-xs text-muted-foreground max-w-2xl">
+            บันทึกลง <span className="font-medium">daily timesheets</span> ราย row (wave) — ชั่วโมงเริ่มต้นจาก wave + สัญญา/PO line
           </p>
-          <Button variant="link" className="text-xs h-auto p-0" asChild>
-            <Link href="/timesheets/wave-month">ศูนย์สรุปรอบเดือน (wave-month)</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="link" className="text-xs h-auto p-0" asChild>
+              <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}&highlightPo=${encodeURIComponent(po.id)}`}>
+                เอกสาร PO+เดือน (ปิดงวด / วางบิล)
+              </Link>
+            </Button>
+            <Button variant="link" className="text-xs h-auto p-0" asChild>
+              <Link href="/timesheets/wave-month">สรุปรอบเดือนราย wave</Link>
+            </Button>
+          </div>
         </CardFooter>
       </Card>
       <AlertDialog

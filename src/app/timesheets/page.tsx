@@ -259,8 +259,8 @@ export default function TimesheetHubPage() {
                                       </Link>
                                     </Button>
                                     <Button size="sm" variant="outline" className="gap-1" asChild>
-                                      <Link href={`/timesheets/wave-month?month=${encodeURIComponent(ym)}`}>
-                                        สรุปเดือน
+                                      <Link href={`/timesheets/po-month?month=${encodeURIComponent(ym)}`}>
+                                        ปิดงวด / เอกสาร PO+เดือน
                                       </Link>
                                     </Button>
                                   </div>

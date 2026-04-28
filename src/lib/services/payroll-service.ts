@@ -28,6 +28,9 @@ import {
   PayrollBatchStatus,
   LaborCostResolutionSnapshot,
   WorkerPitCalculationMode,
+  OfficePayrollLine,
+  OfficePayrollRun,
+  OfficePayrollLineHrAdjustments,
 } from '@/lib/types';
 import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
@@ -43,6 +46,7 @@ import { writeAuditLog } from './audit-service';
 import {
   batchStatusToD8Lifecycle,
   computeWorkerPayrollLineD8,
+  computeOfficePayrollLineD8,
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
 } from '@/lib/payroll/d8';
@@ -997,6 +1001,83 @@ export class PayrollService {
     });
   }
 
+  /**
+   * HR ปรับรายรับเพิ่ม / หักเพิ่มรายคนงวดพนักงานออฟฟิศ — คำนวณ gross / SS / PIT / net ใหม่ตาม policy
+   */
+  async applyOfficeLineHrAdjustments(
+    runId: string,
+    lineId: string,
+    user: User,
+    input: {
+      allowanceItems: Array<{ label: string; amount: number }>;
+      deductionItems: Array<{ label: string; amount: number }>;
+      notes?: string;
+    },
+  ): Promise<void> {
+    assertPayrollPermission(user, 'payroll_office', 'edit_batch');
+    const runRef = doc(this.db, 'office_payroll_runs', runId);
+    const lineRef = doc(this.db, 'office_payroll_runs', runId, 'lines', lineId);
+
+    const [runSnap, lineSnap] = await Promise.all([getDoc(runRef), getDoc(lineRef)]);
+    if (!runSnap.exists()) throw new Error('ไม่พบ office payroll run');
+    if (!lineSnap.exists()) throw new Error('ไม่พบบรรทัดพนักงานออฟฟิศในงวดนี้');
+
+    const run = runSnap.data() as OfficePayrollRun;
+    const line = lineSnap.data() as OfficePayrollLine;
+
+    const blocked = ['LOCKED', 'PAID', 'CANCELLED', 'FINANCE_APPROVED'] as const;
+    if ((blocked as readonly string[]).includes(run.status)) {
+      throw new Error('แก้ไขรายคนได้เฉพาะก่อนอนุมัติจ่าย/ล็อกงวด (สถานะ DRAFT–HR_APPROVED)');
+    }
+
+    const asOf = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
+    const policies = await loadPayrollPoliciesFromFirestore(this.db);
+    const resolved = resolvePayrollPoliciesForDate(asOf, policies, 'office');
+
+    const d8 = computeOfficePayrollLineD8({
+      asOfDate: asOf,
+      policies: resolved,
+      baseSalary: line.baseSalary,
+      allowance: line.allowance ?? 0,
+      bonus: line.bonus ?? 0,
+      overtimeAmount: line.overtimeAmount ?? 0,
+      otherIncome: line.otherIncome ?? 0,
+      hrAllowanceItems: input.allowanceItems,
+      hrDeductionItems: input.deductionItems,
+    });
+
+    const trimmedNotes = input.notes?.trim();
+    const hrLineAdjustments: OfficePayrollLineHrAdjustments = {
+      allowanceItems: input.allowanceItems,
+      deductionItems: input.deductionItems,
+      notes: trimmedNotes ? trimmedNotes : null,
+      updatedAt: Date.now(),
+      updatedBy: user.displayName || user.email || user.id,
+    };
+
+    await updateDoc(lineRef, {
+      grossPay: d8.grossPay,
+      tax: d8.tax,
+      socialSecurity: d8.socialSecurity,
+      deductions: d8.deductions,
+      netPay: d8.netPay,
+      d8Snapshot: d8.snapshot,
+      hrLineAdjustments,
+      updatedAt: Date.now(),
+    });
+
+    await this.recalculateOfficeRunTotalsFromLines(runId, user);
+
+    const hrExtra = input.allowanceItems.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    await writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'OfficePayrollLine',
+      entityId: lineId,
+      sourceModule: 'hr',
+      afterSummary: `HR adjustments office run ${runId} line ${lineId} (extra income +${hrExtra.toFixed(2)})`,
+    });
+  }
+
   private async recalculateBatchTotalsFromLines(batchId: string, user: User): Promise<void> {
     const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
     let batchGross = 0;
@@ -1019,6 +1100,32 @@ export class PayrollService {
       netAmount: Math.round(batchNet * 100) / 100,
       updatedAt: Date.now(),
       updatedBy: user.displayName || user.email || user.id,
+    });
+  }
+
+  private async recalculateOfficeRunTotalsFromLines(runId: string, user: User): Promise<void> {
+    const linesSnap = await getDocs(collection(this.db, 'office_payroll_runs', runId, 'lines'));
+    let grossAmount = 0;
+    let netAmount = 0;
+    let totalDeductions = 0;
+    let totalAllowances = 0;
+    for (const d of linesSnap.docs) {
+      const pl = d.data() as OfficePayrollLine;
+      grossAmount += Number(pl.grossPay) || 0;
+      netAmount += Number(pl.netPay) || 0;
+      totalDeductions += Number(pl.deductions) || 0;
+      const hrAllow = (pl.hrLineAdjustments?.allowanceItems ?? []).reduce(
+        (s, x) => s + (Number(x.amount) || 0),
+        0,
+      );
+      totalAllowances += (Number(pl.allowance) || 0) + (Number(pl.bonus) || 0) + hrAllow;
+    }
+    await updateDoc(doc(this.db, 'office_payroll_runs', runId), {
+      grossAmount: Math.round(grossAmount * 100) / 100,
+      netAmount: Math.round(netAmount * 100) / 100,
+      totalDeductions: Math.round(totalDeductions * 100) / 100,
+      totalAllowances: Math.round(totalAllowances * 100) / 100,
+      updatedAt: Date.now(),
     });
   }
 }

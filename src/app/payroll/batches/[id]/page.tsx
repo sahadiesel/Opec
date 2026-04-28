@@ -45,7 +45,7 @@ import {
   isMatrixControlledRole,
 } from '@/lib/permissions';
 import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
-import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { isSimpleAdmin, isSimpleAccounting } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { useAppUser } from '@/hooks/use-app-user';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -84,6 +84,9 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
     isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)
   );
   const canViewBatch = useMemo(() => {
+    if (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser) || isSimpleAccounting(currentUser)) {
+      return true;
+    }
     if (useMatrixGuards) {
       return (
         canAccess(currentUser, 'worker_payroll', 'view') ||
