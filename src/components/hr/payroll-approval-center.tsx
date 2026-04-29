@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { collection, doc, getDocs, limit, orderBy, query, updateDoc } from 'firebase/firestore';
+import { collection, deleteField, doc, getDocs, limit, orderBy, query, updateDoc } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -15,7 +15,7 @@ import {
   canView,
   isMatrixControlledRole,
 } from '@/lib/permissions';
-import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { canApproveOfficePayrollAsManager, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import type {
@@ -25,6 +25,7 @@ import type {
   PayrollBatch,
   PayrollBatchLine,
   PayrollPeriod,
+  PayrollRunStatus,
   User,
 } from '@/lib/types';
 import {
@@ -59,6 +60,8 @@ import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine, buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { cn } from '@/lib/utils';
+import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
+import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
 
 /** รายการใน D6 รวมงวดย้อนหลังเพื่อเปิดสลิป */
 const WORKER_D6_STATUSES = new Set([
@@ -70,7 +73,14 @@ const WORKER_D6_STATUSES = new Set([
   'PAID',
   'LOCKED',
 ]);
-const OFFICE_D6_STATUSES = new Set(['CALCULATED', 'HR_APPROVED', 'FINANCE_APPROVED', 'PAID', 'LOCKED']);
+const OFFICE_D6_STATUSES = new Set<PayrollRunStatus>([
+  'CALCULATED',
+  'HR_REVIEW',
+  'HR_APPROVED',
+  'FINANCE_APPROVED',
+  'PAID',
+  'LOCKED',
+]);
 
 const WORKER_PAYSLIP_VISIBLE_STATUSES = new Set([
   'GENERATED',
@@ -182,7 +192,12 @@ export function PayrollApprovalCenterD6({
 
   const officeRuns = useMemo(() => {
     const list = (allRuns || []).filter((r) => OFFICE_D6_STATUSES.has(r.status));
-    list.sort((a, b) => (b.payrollMonth || '').localeCompare(a.payrollMonth || ''));
+    const rank = (s: PayrollRunStatus) => (s === 'HR_REVIEW' ? 0 : s === 'CALCULATED' ? 1 : 2);
+    list.sort((a, b) => {
+      const d = rank(a.status) - rank(b.status);
+      if (d !== 0) return d;
+      return (b.payrollMonth || '').localeCompare(a.payrollMonth || '');
+    });
     return list.slice(0, 40);
   }, [allRuns]);
 
@@ -341,15 +356,47 @@ export function PayrollApprovalCenterD6({
     }
   };
 
-  const handleOfficeApprove = async () => {
-    if (!firestore || !selectedRun || officeBlocking) return;
-    if (!canOfficeApprove) return;
+  const handleOfficeOfficerSubmit = async () => {
+    if (!firestore || !selectedRun) return;
+    if (officeBlocking) return;
+    if (!isSystemAdmin(currentUser) && !isPayrollOfficer(currentUser)) return;
+    if (!canOfficeEdit) return;
+    if (selectedRun.status !== 'CALCULATED') return;
     setBusy(true);
     try {
       const ref = doc(firestore, 'office_payroll_runs', selectedRun.id);
       await updateDoc(ref, {
+        status: 'HR_REVIEW' as const,
+        d8LifecycleStatus: runStatusToD8Lifecycle('HR_REVIEW'),
+        submittedForReviewBy: currentUser.displayName,
+        submittedForReviewAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'ส่งอนุมัติแล้ว', description: `${selectedRun.payrollRunNo} → HR_REVIEW (รอผู้จัดการ)` });
+      setOfficeLines(null);
+      await loadOfficeLines(selectedRun.id);
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'ส่งอนุมัติไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleOfficeApprove = async () => {
+    if (!firestore || !selectedRun) return;
+    if (officeBlocking) return;
+    if (!canApproveOfficePayrollAsManager(currentUser) && !canOfficeApprove) return;
+    if (selectedRun.status !== 'HR_REVIEW') return;
+    setBusy(true);
+    try {
+      const ref = doc(firestore, 'office_payroll_runs', selectedRun.id);
+      const name = currentUser.displayName;
+      await updateDoc(ref, {
         status: 'HR_APPROVED',
-        hrApprovedBy: currentUser.displayName,
+        d8LifecycleStatus: runStatusToD8Lifecycle('HR_APPROVED'),
+        managerApprovedBy: name,
+        managerApprovedAt: Date.now(),
+        hrApprovedBy: name,
         updatedAt: Date.now(),
       });
       toast({ title: 'อนุมัติงวดออฟฟิศแล้ว', description: `${selectedRun.payrollRunNo} → HR_APPROVED` });
@@ -367,11 +414,23 @@ export function PayrollApprovalCenterD6({
     setBusy(true);
     try {
       const ref = doc(firestore, 'office_payroll_runs', selectedRun.id);
-      await updateDoc(ref, {
-        status: 'DRAFT',
-        updatedAt: Date.now(),
-      });
-      toast({ title: 'ส่งกลับแก้ไข', description: 'สถานะ → DRAFT (กดคำนวณใหม่ที่หน้างวด)' });
+      if (selectedRun.status === 'HR_REVIEW') {
+        await updateDoc(ref, {
+          status: 'CALCULATED' as const,
+          d8LifecycleStatus: runStatusToD8Lifecycle('CALCULATED'),
+          submittedForReviewBy: deleteField(),
+          submittedForReviewAt: deleteField(),
+          updatedAt: Date.now(),
+        });
+        toast({ title: 'ส่งกลับ', description: 'สถานะ → CALCULATED (ฝ่ายเงินเดือนแก้/ส่งใหม่)' });
+      } else {
+        await updateDoc(ref, {
+          status: 'DRAFT' as const,
+          d8LifecycleStatus: runStatusToD8Lifecycle('DRAFT'),
+          updatedAt: Date.now(),
+        });
+        toast({ title: 'ส่งกลับแก้ไข', description: 'สถานะ → DRAFT (กดคำนวณใหม่ที่หน้างวด)' });
+      }
       setOfficeLines(null);
       await loadOfficeLines(selectedRun.id);
     } catch (e) {
@@ -693,7 +752,9 @@ export function PayrollApprovalCenterD6({
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">งวดออฟฟิศที่เกี่ยวข้อง</CardTitle>
-                  <CardDescription>CALCULATED = รออนุมัติ HR · HR_APPROVED = ส่งต่อการเงิน</CardDescription>
+                  <CardDescription>
+                    CALCULATED = ฝ่ายเงินเดือนส่งได้ · HR_REVIEW = รอผู้จัดการ · HR_APPROVED = ส่งต่อการเงิน
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <Table>
@@ -710,7 +771,7 @@ export function PayrollApprovalCenterD6({
                       {officeRuns.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
-                            ไม่มีงวด CALCULATED / HR_APPROVED
+                            ไม่มีงวด office ในขั้น workflow นี้
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -724,7 +785,9 @@ export function PayrollApprovalCenterD6({
                             }}
                           >
                             <TableCell className="font-mono text-xs">{r.payrollRunNo}</TableCell>
-                            <TableCell>{r.payrollMonth}</TableCell>
+                            <TableCell>
+                              {formatPayrollYearMonthEnAbbrev(r.payrollMonth)} <span className="text-muted-foreground">({r.payrollMonth})</span>
+                            </TableCell>
                             <TableCell>
                               <Badge variant="outline">{r.status}</Badge>
                             </TableCell>
@@ -753,10 +816,13 @@ export function PayrollApprovalCenterD6({
                     <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
                       <div>
                         <div className="text-muted-foreground text-xs uppercase">งวด</div>
-                        <div className="font-medium">{selectedRun.payrollMonth}</div>
+                        <div className="font-medium">
+                          {formatPayrollYearMonthEnAbbrev(selectedRun.payrollMonth)}{' '}
+                          <span className="text-muted-foreground">({selectedRun.payrollMonth})</span>
+                        </div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground text-xs uppercase">จำนวนคน</div>
+                        <div className="text-muted-foreground text-xs uppercase">จำนวนคน (งวดนี้)</div>
                         <div className="tabular-nums">{selectedRun.staffCount}</div>
                       </div>
                       <div>
@@ -806,18 +872,35 @@ export function PayrollApprovalCenterD6({
 
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">C. การกระทำของผู้จัดการ</CardTitle>
+                      <CardTitle className="text-base">C. ฝ่ายเงินเดือน &amp; ผู้จัดการ</CardTitle>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                       <Button
-                        disabled={busy || !canOfficeApprove || officeBlocking || selectedRun.status !== 'CALCULATED'}
+                        disabled={
+                          busy ||
+                          officeBlocking ||
+                          !canOfficeEdit ||
+                          selectedRun.status !== 'CALCULATED' ||
+                          (!isSystemAdmin(currentUser) && !isPayrollOfficer(currentUser))
+                        }
+                        onClick={() => void handleOfficeOfficerSubmit()}
+                      >
+                        ส่งอนุมัติ (ฝ่ายเงินเดือน)
+                      </Button>
+                      <Button
+                        disabled={
+                          busy ||
+                          (!canApproveOfficePayrollAsManager(currentUser) && !canOfficeApprove) ||
+                          officeBlocking ||
+                          selectedRun.status !== 'HR_REVIEW'
+                        }
                         onClick={() => void handleOfficeApprove()}
                       >
-                        อนุมัติ (HR)
+                        อนุมัติ (ผู้จัดการ)
                       </Button>
                       <Button
                         variant="secondary"
-                        disabled={busy || !canOfficeEdit || selectedRun.status !== 'CALCULATED'}
+                        disabled={busy || !canOfficeEdit || !['CALCULATED', 'HR_REVIEW'].includes(selectedRun.status)}
                         onClick={() => void handleOfficeSendBack()}
                       >
                         ส่งกลับแก้ไข

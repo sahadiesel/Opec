@@ -488,6 +488,13 @@ export function isPayrollOfficer(user: User | null): boolean {
   return getPrimaryLegacyRole(user) === 'payroll_officer';
 }
 
+/** อนุมัติงวด office หลังฝ่ายเงินเดือนส่ง (HR_REVIEW) — ผู้จัดการปฏิบัติการ / HR manager + แอดมิน */
+export function canApproveOfficePayrollAsManager(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  return isHrManager(user) || isOperationManager(user);
+}
+
 /**
  * บันทึก "ลูกค้าอนุมัติ billing" บน draft tax invoice (แยกจาก payroll) —
  * ผู้จัดการปฏิบัติการ/HR/ขาย, บัญชี, แอดมิน; ไม่รวม payroll_officer เป็นค่าเริ่มต้น

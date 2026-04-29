@@ -42,7 +42,8 @@ import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy, limit } from 'firebase/firestore';
-import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthEnAbbrev, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
+import { fetchUniqueOfficeStaffIdsForPayrollMonth } from '@/lib/payroll/office-month-staff-aggregate';
 import {
   assignmentInWaveBoard,
   assignmentOverlapsPeriod,
@@ -56,6 +57,7 @@ import {
   workerWaveHasTimesheet,
   workerWavePayrollComplete,
 } from '@/lib/hr/payroll-workbench-stats';
+import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 
 const OFFICE_FINANCE_READY: PayrollRunStatus[] = ['HR_APPROVED', 'FINANCE_APPROVED', 'PAID', 'LOCKED'];
 const BATCH_FINANCE_READY = ['HR_APPROVED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED', 'PAID', 'LOCKED'] as const;
@@ -174,6 +176,35 @@ export default function HrPayrollWorkbenchPage() {
   }, [firestore, canOffice, focusOfficeRun?.id]);
   const { data: officeLines, isLoading: loadingLines } = useCollection<OfficePayrollLine>(officeLinesQuery as any);
 
+  const [monthOfficeLineStaffIds, setMonthOfficeLineStaffIds] = useState<Set<string> | null>(null);
+  const [loadingMonthOfficeAgg, setLoadingMonthOfficeAgg] = useState(false);
+
+  useEffect(() => {
+    if (!firestore || !canOffice || !focusOfficeRun?.payrollMonth) {
+      setMonthOfficeLineStaffIds(null);
+      setLoadingMonthOfficeAgg(false);
+      return;
+    }
+    setLoadingMonthOfficeAgg(true);
+    let cancelled = false;
+    void fetchUniqueOfficeStaffIdsForPayrollMonth(firestore, focusOfficeRun.payrollMonth)
+      .then((set) => {
+        if (!cancelled) {
+          setMonthOfficeLineStaffIds(set);
+          setLoadingMonthOfficeAgg(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMonthOfficeLineStaffIds(null);
+          setLoadingMonthOfficeAgg(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, canOffice, focusOfficeRun?.payrollMonth]);
+
   const focusPeriod = useMemo(() => {
     if (!periods?.length) return null;
     const open = periods.find((p) => p.status === 'OPEN');
@@ -193,8 +224,13 @@ export default function HrPayrollWorkbenchPage() {
   const officeStats = useMemo(() => {
     const staff = (officeStaff || []).filter(isActiveOfficePayrollStaff);
     const total = staff.length;
-    const lineIds = buildOfficeLineStaffIdSet(officeLines ?? undefined);
-    const linesResolved = Boolean(focusOfficeRun && !loadingLines);
+    const lineIds =
+      monthOfficeLineStaffIds != null
+        ? monthOfficeLineStaffIds
+        : buildOfficeLineStaffIdSet(officeLines ?? undefined);
+    const linesResolved = Boolean(
+      focusOfficeRun && !loadingLines && !loadingMonthOfficeAgg && monthOfficeLineStaffIds != null
+    );
     const missingBank = staff.filter((s) => !officeStaffHasBank(s)).length;
     const missingTax = staff.filter((s) => !officeStaffHasTax(s)).length;
     const missingSalary = staff.filter((s) => !officeStaffHasSalary(s)).length;
@@ -219,8 +255,16 @@ export default function HrPayrollWorkbenchPage() {
       incompleteMaster,
       payrollMonth: focusOfficeRun?.payrollMonth,
       runLabel: focusOfficeRun?.payrollRunNo ?? '—',
+      monthLabel: formatPayrollYearMonthEnAbbrev(focusOfficeRun?.payrollMonth ?? '', ''),
     };
-  }, [officeStaff, officeLines, focusOfficeRun, loadingLines]);
+  }, [
+    officeStaff,
+    officeLines,
+    focusOfficeRun,
+    loadingLines,
+    monthOfficeLineStaffIds,
+    loadingMonthOfficeAgg,
+  ]);
 
   const waveMap = useMemo(() => {
     const m = new Map<string, Wave>();
@@ -308,7 +352,9 @@ export default function HrPayrollWorkbenchPage() {
     const waveRows = [...byWave.entries()]
       .map(([waveId, b]) => {
         const w = waveMap.get(waveId);
-        const label = w ? `${w.waveCode} · ${w.projectName || ''}`.trim() : waveId.slice(0, 8);
+        const label = w
+          ? `${w.waveCode} · ${[w.projectName, waveRoundMonthLabel(w)].filter(Boolean).join(' · ')}`.trim()
+          : waveId.slice(0, 8);
         const total = b.workers.size;
         const withTs = b.withTs.size;
         const complete = b.complete.size;
@@ -335,7 +381,7 @@ export default function HrPayrollWorkbenchPage() {
       poMonthRows.push({
         poId,
         yearMonth,
-        label: `${name} · ${yearMonth}`,
+        label: `${name} · ${formatPayrollYearMonthEnAbbrev(yearMonth, yearMonth)}`,
         workers: wset.size,
         href: `/timesheets/po-month?month=${encodeURIComponent(yearMonth)}&highlightPo=${encodeURIComponent(poId)}`,
       });
@@ -502,6 +548,7 @@ export default function HrPayrollWorkbenchPage() {
     loadingLines ||
     loadingPeriods ||
     loadingBatches ||
+    loadingMonthOfficeAgg ||
     (focusPeriod && loadingPeriodTs);
 
   if (!currentUser) {
@@ -546,7 +593,11 @@ export default function HrPayrollWorkbenchPage() {
                 <CardTitle className="text-lg">1) Office Payroll</CardTitle>
               </div>
               <CardDescription>
-                งวดอ้างอิง: <strong>{officeStats.payrollMonth ?? '—'}</strong> · {officeStats.runLabel}
+                งวดอ้างอิง: <strong>{officeStats.monthLabel || officeStats.payrollMonth || '—'}</strong>
+                {officeStats.monthLabel && officeStats.payrollMonth ? (
+                  <span className="text-muted-foreground"> ({officeStats.payrollMonth})</span>
+                ) : null}{' '}
+                · {officeStats.runLabel}
                 {!canOffice && <span className="text-amber-600"> (ไม่มีสิทธิ์ดู office payroll — ตัวเลขอาจว่าง)</span>}
               </CardDescription>
             </CardHeader>
@@ -580,7 +631,7 @@ export default function HrPayrollWorkbenchPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="secondary" asChild>
-                  <Link href={focusOfficeRun ? `/office-payroll/${focusOfficeRun.id}` : '/office-payroll'}>
+                  <Link href="/office-payroll">
                     <CalendarDays className="mr-1.5 h-3.5 w-3.5" /> งวดจ่ายพนักงานออฟฟิศ
                   </Link>
                 </Button>

@@ -170,3 +170,20 @@ export function formatDateTimeGregorian(input: Date | number | string | null | u
   if (!d) return '';
   return `${formatStoredDateGregorian(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
+
+const PAYROLL_YM = /^(\d{4})-(\d{2})$/;
+
+/**
+ * งวดเงินเดือนเก็บเป็น YYYY-MM → ชื่อเดือนอังกฤษแบบย่อ (Jan…Dec)
+ * สำหรับคอลัมน์ "ประจำเดือน" ใน office payroll
+ */
+export function formatPayrollYearMonthEnAbbrev(ym: string | null | undefined, empty: string = '—'): string {
+  const s = (ym || '').trim();
+  const m = PAYROLL_YM.exec(s);
+  if (!m) return empty;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (!Number.isFinite(y) || mo < 1 || mo > 12) return empty;
+  const d = new Date(y, mo - 1, 1, 12, 0, 0, 0);
+  return d.toLocaleDateString('en-US', { month: 'short' });
+}

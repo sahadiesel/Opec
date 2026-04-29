@@ -41,7 +41,7 @@ import {
   PayrollRunStatus,
   OfficeStaff
 } from '@/lib/types';
-import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -49,6 +49,7 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { canView } from '@/lib/permissions';
+import { canApproveOfficePayrollAsManager, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
@@ -59,7 +60,6 @@ import {
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
-
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -84,6 +84,15 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
   const staffQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_staff') : null), [firestore, isAuthorized]);
   const { data: allStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
+  const canSubmitForReview = useMemo(
+    () => Boolean(currentUser && (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser)) && canMutate),
+    [currentUser, canMutate]
+  );
+  const canManagerApprove = useMemo(
+    () => Boolean(currentUser && canApproveOfficePayrollAsManager(currentUser) && canMutate),
+    [currentUser, canMutate]
+  );
+
   const handleUpdateStatus = async (newStatus: PayrollRunStatus) => {
     if (!firestore || !run || !runRef || !currentUser) return;
     const updateData: Record<string, unknown> = {
@@ -92,7 +101,13 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
       updatedAt: Date.now(),
     };
 
+    if (newStatus === 'HR_REVIEW') {
+      updateData.submittedForReviewBy = currentUser.displayName;
+      updateData.submittedForReviewAt = Date.now();
+    }
     if (newStatus === 'HR_APPROVED') {
+      updateData.managerApprovedBy = currentUser.displayName;
+      updateData.managerApprovedAt = Date.now();
       updateData.hrApprovedBy = currentUser.displayName;
     }
     if (newStatus === 'FINANCE_APPROVED') {
@@ -220,7 +235,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <span>งวดเดือน: {formatDateThaiBE(run.payrollMonth + '-01')}</span>
+                <span>งวดเดือน: {formatPayrollYearMonthEnAbbrev(run.payrollMonth)}</span>
               </div>
             </div>
           </div>
@@ -253,11 +268,48 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           </Alert>
         )}
 
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>เฉพาะงวดนี้ (ไม่รวมงวดอื่นในเดือนเดียวกัน)</AlertTitle>
+          <AlertDescription className="text-xs sm:text-sm">
+            รายชื่อและยอดบนหน้านี้คือ <strong>งวด {run.payrollRunNo}</strong> เท่านั้น — หากมีหลายงวดแยกใน {formatPayrollYearMonthEnAbbrev(run.payrollMonth)} (
+            {run.payrollMonth}) ให้ดูยอดรวมและรายชื่อ unique ทุกงวดได้ที่{' '}
+            <Link className="font-medium underline" href={`/office-payroll/month/${encodeURIComponent(run.payrollMonth)}`}>
+              มุมมองรวมรายเดือน
+            </Link>
+            หรือ <Link className="font-medium underline" href="/office-payroll">รายการงวดจ่าย</Link>
+          </AlertDescription>
+        </Alert>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard title="จำนวนพนักงาน" value={`${run.staffCount} คน`} sub="Internal Office Staff" icon={Users} colorClass="border-l-blue-600" />
-          <StatCard title="ยอดจ่ายรวม (Gross)" value={`฿${run.grossAmount.toLocaleString()}`} sub="Base Salary + Fixed Allowances" icon={Calculator} colorClass="border-l-amber-500" />
-          <StatCard title="หักภาษี/SSO" value={`฿${run.totalDeductions.toLocaleString()}`} sub="Statutory Deductions" icon={TrendingUp} colorClass="border-l-red-500" />
-          <StatCard title="ยอดจ่ายสุทธิ (Net)" value={`฿${run.netAmount.toLocaleString()}`} sub="Net Staff Payable" icon={Coins} colorClass="border-l-green-600" />
+          <StatCard
+            title="จำนวนพนักงาน"
+            value={`${run.staffCount} คน`}
+            sub={`เฉพาะงวด ${run.payrollRunNo}`}
+            icon={Users}
+            colorClass="border-l-blue-600"
+          />
+          <StatCard
+            title="ยอดจ่ายรวม (Gross)"
+            value={`฿${run.grossAmount.toLocaleString()}`}
+            sub="Base + Allowances ของงวดนี้"
+            icon={Calculator}
+            colorClass="border-l-amber-500"
+          />
+          <StatCard
+            title="หักภาษี/SSO"
+            value={`฿${run.totalDeductions.toLocaleString()}`}
+            sub="Statutory ของงวดนี้"
+            icon={TrendingUp}
+            colorClass="border-l-red-500"
+          />
+          <StatCard
+            title="ยอดจ่ายสุทธิ (Net)"
+            value={`฿${run.netAmount.toLocaleString()}`}
+            sub="Net ของงวดนี้"
+            icon={Coins}
+            colorClass="border-l-green-600"
+          />
         </div>
 
         <Tabs defaultValue="lines" className="w-full">
@@ -274,9 +326,9 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
                   <CardTitle className="text-lg">รายการจ่ายเงินพนักงานบริษัท (Internal Settlement)</CardTitle>
-                  <CardDescription>สรุปยอดจ่ายตามฐานข้อมูลพนักงานออฟฟิศส่วนกลาง</CardDescription>
+                  <CardDescription>รายชื่อและยอดเฉพาะงวด {run.payrollRunNo} — ไม่รวมงวดอื่นในเดือนเดียวกัน</CardDescription>
                 </div>
-                {!isLocked && canMutate && (
+                {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (
                   <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">
                     {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Calculator className="h-4 w-4 mr-2" />}
                     {run.status === 'DRAFT' ? 'คำนวณเงินเดือนพนักงาน' : 'คำนวณใหม่ (Refresh)'}
@@ -297,43 +349,52 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map(line => {
-                      const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
-                      return (
-                      <TableRow key={line.id} className="hover:bg-muted/20">
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{line.staffName}</span>
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1"><Building2 className="h-2.5 w-2.5" /> {line.department} | {line.positionTitle}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-sm font-medium">฿{line.baseSalary.toLocaleString()}</span>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">฿{line.grossPay.toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">
-                          <PayslipDialog model={slipModel} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            asChild
-                            title="รายละเอียดรายคน · สลิป · snapshot"
-                          >
-                            <Link href={`/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`}>
-                              <ChevronRight className="h-4 w-4" />
-                            </Link>
-                          </Button>
+                    {isLinesLoading && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
+                          <Loader2 className="h-6 w-6 inline animate-spin mr-2" />
+                          กำลังโหลดรายการ…
                         </TableCell>
                       </TableRow>
-                    );})}
-                    {(!lines || lines.length === 0) && !isLinesLoading && (
+                    )}
+                    {!isLinesLoading &&
+                      (lines ?? []).map((line) => {
+                        const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
+                        return (
+                          <TableRow key={line.id} className="hover:bg-muted/20">
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-bold text-sm text-primary">{line.staffName}</span>
+                                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                  <Building2 className="h-2.5 w-2.5" /> {line.department} | {line.positionTitle}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm font-medium">฿{line.baseSalary.toLocaleString()}</span>
+                            </TableCell>
+                            <TableCell className="text-right font-medium">฿{line.grossPay.toLocaleString()}</TableCell>
+                            <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
+                            <TableCell className="text-right">
+                              <PayslipDialog model={slipModel} />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="icon" asChild title="รายละเอียดรายคน">
+                                <Link
+                                  href={`/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`}
+                                >
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    {!isLinesLoading && (!lines || lines.length === 0) && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
-                          ยังไม่มีข้อมูลรายการจ่ายเงิน กรุณากดปุ่ม "คำนวณเงินเดือนพนักงาน"
+                          ยังไม่มีข้อมูลรายการจ่ายเงิน กรุณากดปุ่ม &quot;คำนวณเงินเดือนพนักงาน&quot;
                         </TableCell>
                       </TableRow>
                     )}
@@ -344,8 +405,16 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           </TabsContent>
 
           <TabsContent value="summary" className="mt-6 space-y-6">
-             <Card>
-              <CardHeader><CardTitle>สรุปยอดรวมงวด (Payroll Summary)</CardTitle></CardHeader>
+            <Card>
+              <CardHeader>
+                <CardTitle>สรุปยอดรวม (งวดนี้เท่านั้น)</CardTitle>
+                <CardDescription className="text-xs">
+                  ยอดตามเอกสาร {run.payrollRunNo} — ดูรวมทุกงวดในเดือนได้ที่{' '}
+                  <Link className="font-medium underline" href={`/office-payroll/month/${encodeURIComponent(run.payrollMonth)}`}>
+                    มุมมองรวมรายเดือน
+                  </Link>
+                </CardDescription>
+              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-8">
                   <div className="space-y-2">
@@ -378,57 +447,104 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           </TabsContent>
 
           <TabsContent value="approvals" className="mt-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card className={run.status === 'CALCULATED' ? 'border-blue-500 bg-blue-50/20' : ''}>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              <Card className={run.status === 'CALCULATED' || run.status === 'HR_REVIEW' ? 'border-blue-500 bg-blue-50/20' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> 1. HR Review (Preparation)</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4" /> 1. ฝ่ายเงินเดือน (เตรียมรายการ)
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    {run.hrApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{run.hrApprovedBy ? `Prepared/Approved by ${run.hrApprovedBy}` : 'รอ HR ตรวจสอบ'}</span>
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    {run.submittedForReviewBy ? (
+                      <p>ส่งขออนุมัติโดย {run.submittedForReviewBy}</p>
+                    ) : (
+                      <p>รอส่งคิวอนุมัติ (หลังคำนวณ)</p>
+                    )}
+                    {run.submittedForReviewAt != null && (
+                      <p className="text-xs tabular-nums">{formatDateTimeThaiBE(run.submittedForReviewAt)}</p>
+                    )}
                   </div>
-                  <Button 
-                    className="w-full bg-primary" 
-                    disabled={!canMutate || run.status !== 'CALCULATED'} 
-                    onClick={() => void handleUpdateStatus('HR_APPROVED')}
+                  <Button
+                    className="w-full bg-primary"
+                    disabled={!canSubmitForReview || run.status !== 'CALCULATED'}
+                    onClick={() => void handleUpdateStatus('HR_REVIEW')}
                   >
-                    ยืนยันรายการ (HR Approval)
+                    ส่งอนุมัติ
                   </Button>
                 </CardContent>
               </Card>
 
-              <Card className={run.status === 'HR_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''}>
+              <Card className={run.status === 'HR_REVIEW' || run.status === 'HR_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2"><Coins className="h-4 w-4" /> 2. Finance Approval (Payment)</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4" /> 2. ผู้จัดการ (Ops / HR)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    {run.managerApprovedBy || run.hrApprovedBy ? (
+                      <CheckCircle2 className="text-green-600 h-4 w-4" />
+                    ) : (
+                      <Clock className="text-muted-foreground h-4 w-4" />
+                    )}
+                    <span className="text-sm">
+                      {run.managerApprovedBy || run.hrApprovedBy
+                        ? `อนุมัติโดย ${run.managerApprovedBy || run.hrApprovedBy}`
+                        : 'รอผู้จัดการอนุมัติ (หน้านี้หรือศูนย์อนุมัติ)'}
+                    </span>
+                  </div>
+                  {run.managerApprovedAt != null && (
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      {formatDateTimeThaiBE(run.managerApprovedAt)}
+                    </p>
+                  )}
+                  <Button
+                    className="w-full"
+                    variant="default"
+                    disabled={!canManagerApprove || run.status !== 'HR_REVIEW'}
+                    onClick={() => void handleUpdateStatus('HR_APPROVED')}
+                  >
+                    อนุมัติ
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className={run.status === 'HR_APPROVED' || run.status === 'FINANCE_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''}>
+                <CardHeader>
+                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2">
+                    <Coins className="h-4 w-4" /> 3. การเงิน (จ่าย)
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
                     {run.financeApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{run.financeApprovedBy ? `Approved/Paid by ${run.financeApprovedBy}` : 'รอการเงินอนุมัติจ่าย'}</span>
+                    <span className="text-sm">{run.financeApprovedBy ? `อนุมัติ/จ่าย ${run.financeApprovedBy}` : 'รอการเงินอนุมัติจ่าย'}</span>
                   </div>
-                  <Button 
-                    className="w-full" 
-                    variant="outline" 
+                  <Button
+                    className="w-full"
+                    variant="outline"
                     disabled={!canMutate || run.status !== 'HR_APPROVED'}
                     onClick={() => void handleUpdateStatus('FINANCE_APPROVED')}
                   >
-                    อนุมัติการเบิกจ่าย (Finance — สร้างรายการ cashbook + ตัดบัญชีธนาคาร)
+                    อนุมัติการเบิกจ่าย (Finance — cashbook + บัญชีธนาคาร)
                   </Button>
                 </CardContent>
               </Card>
 
-              <Card className={run.status === 'FINANCE_APPROVED' ? 'border-primary bg-primary/5' : ''}>
+              <Card className={run.status === 'FINANCE_APPROVED' || isLocked ? 'border-primary bg-primary/5' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase flex items-center gap-2"><Lock className="h-4 w-4" /> 3. Final Lock</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase flex items-center gap-2">
+                    <Lock className="h-4 w-4" /> 4. ล็อกงวด
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
                     {isLocked ? <Lock className="text-primary h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
                     <span className="text-sm">{isLocked ? `ล็อกเมื่อ ${formatDateThaiBE(run.lockedAt!)}` : 'รอล็อกงวดถาวร'}</span>
                   </div>
-                  <Button 
-                    className="w-full bg-primary" 
+                  <Button
+                    className="w-full bg-primary"
                     disabled={!canMutate || run.status !== 'FINANCE_APPROVED'}
                     onClick={() => void handleUpdateStatus('LOCKED')}
                   >
@@ -437,6 +553,9 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                 </CardContent>
               </Card>
             </div>
+            <p className="text-xs text-muted-foreground text-center">
+              ศูนย์อนุมัติ: <Link className="underline font-medium" href="/hr/payroll-approval">/hr/payroll-approval</Link> (Office tab)
+            </p>
           </TabsContent>
 
           <TabsContent value="details" className="mt-6 space-y-6">
@@ -450,7 +569,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">ประจำเดือน:</Label>
-                    <p className="font-bold">{formatDateThaiBE(run.payrollMonth + '-01')}</p>
+                    <p className="font-bold">{formatPayrollYearMonthEnAbbrev(run.payrollMonth)}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">วันที่เริ่มงวด:</Label>
@@ -503,9 +622,10 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             <div className="space-y-0.5">
               <p className="font-bold text-primary flex items-center gap-2">คำแนะนำขั้นตอนถัดไป (Workflow Process)</p>
               <p className="text-sm text-muted-foreground">
-                {run.status === 'DRAFT' && "ขั้นตอนถัดไป: HR กดคำนวณเงินเดือนจากฐานข้อมูล Office Staff"}
-                {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: HR Manager ตรวจสอบความถูกต้องและยืนยันรายการ"}
-                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: Finance Officer อนุมัติเบิกจ่ายและโอนเงิน"}
+                {run.status === 'DRAFT' && "ขั้นตอนถัดไป: ฝ่ายเงินเดือนกดคำนวณเงินเดือนจากฐานข้อมูล Office Staff"}
+                {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: ฝ่ายเงินเดือนกด «ส่งอนุมัติ» เพื่อส่งคิวให้ผู้จัดการ (หรือศูนย์อนุมัติ)"}
+                {run.status === 'HR_REVIEW' && "ขั้นตอนถัดไป: ผู้จัดการ (Ops/HR) อนุมัติรายการ หรือกดอนุมัติในศูนย์อนุมัติ"}
+                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: การเงินอนุมัติเบิกจ่ายและโอนเงิน"}
                 {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชีรายเดือน"}
                 {isLocked && "สถานะสิ้นสุด: ข้อมูลถูกล็อกและบันทึก Snapshot ไว้เรียบร้อยแล้ว"}
               </p>

@@ -1531,6 +1531,12 @@ export interface OfficePayrollRun {
   netAmount: number;
   hrApprovedBy?: string;
   financeApprovedBy?: string;
+  /** ฝ่ายเงินเดือน: ส่งให้ผู้จัดการอนุมัติ (CALCULATED → HR_REVIEW) */
+  submittedForReviewBy?: string;
+  submittedForReviewAt?: number;
+  /** ผู้จัดการ/HR: อนุมัติหลังฝ่ายเงินเดือนส่ง (HR_REVIEW → HR_APPROVED) — เอกสารเก่าอาจมีแค่ hrApprovedBy */
+  managerApprovedBy?: string;
+  managerApprovedAt?: number;
   lockedAt?: number;
   /** บัญชีอนุมัติจ่ายแล้ว — รายการ cashbook ที่สร้างอัตโนมัติ */
   financeCashbookEntryId?: string;

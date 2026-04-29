@@ -120,7 +120,7 @@ export default function OperationsDashboardPage() {
 
   const pendingOfficePayrollQuery = useMemoFirebase(() => {
     if (!firestore || !isOperationsAuthorized || viewerOnly || !showManagerApprovalQueue) return null;
-    return query(collection(firestore, 'office_payroll_runs'), where('status', '==', 'CALCULATED'), limit(30));
+    return query(collection(firestore, 'office_payroll_runs'), where('status', '==', 'HR_REVIEW'), limit(30));
   }, [firestore, isOperationsAuthorized, viewerOnly, showManagerApprovalQueue]);
   const { data: pendingOfficePayrollRuns } = useCollection<OfficePayrollRun>(pendingOfficePayrollQuery as any);
 
@@ -154,7 +154,7 @@ export default function OperationsDashboardPage() {
           id: `office-payroll-${r.id}`,
           type: 'อนุมัติเงินเดือนพนักงาน',
           label: `${r.payrollRunNo || r.id} · งวด ${r.payrollMonth || '—'}`,
-          status: 'CALCULATED',
+          status: 'รอผู้จัดการ',
           link: `/office-payroll/${r.id}`,
           priority: 'high',
           icon: Coins,

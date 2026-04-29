@@ -6,23 +6,24 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  ChevronRight, 
-  Coins, 
+import {
+  Plus,
+  Search,
+  Filter,
+  ChevronRight,
+  Coins,
   AlertTriangle,
   Info,
   Clock,
   Loader2,
   ShieldAlert,
   Trash2,
+  Users,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
 import { OfficePayrollRun, OfficeStaff, PayrollRunStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -58,6 +59,7 @@ import {
 } from '@/lib/payroll/accounting-payout-queue';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
+import Link from 'next/link';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -74,6 +76,7 @@ import {
   getStaffIdsUsedInOtherRunsForSameMonth,
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
+import { fetchOfficePayrollMonthConsolidation, type OfficePayrollMonthConsolidation } from '@/lib/payroll/office-month-staff-aggregate';
 
 function initNewRunState(): Partial<OfficePayrollRun> {
   const m = new Date().toISOString().slice(0, 7);
@@ -147,6 +150,43 @@ export default function OfficePayrollPage() {
     }
     return runs;
   }, [runs, accountingPayoutQueueOnly]);
+
+  const distinctPayrollMonths = useMemo(() => {
+    if (!visibleRuns?.length) return [] as string[];
+    return [...new Set(visibleRuns.map((r) => r.payrollMonth))].sort().reverse();
+  }, [visibleRuns]);
+
+  const [monthlyByYm, setMonthlyByYm] = useState<Record<string, OfficePayrollMonthConsolidation>>({});
+  const [monthlySummaryLoading, setMonthlySummaryLoading] = useState(false);
+
+  useEffect(() => {
+    if (!firestore || !visibleRuns?.length) {
+      setMonthlyByYm({});
+      setMonthlySummaryLoading(false);
+      return;
+    }
+    const months = [...new Set(visibleRuns.map((r) => r.payrollMonth))].sort().reverse();
+    let cancel = false;
+    setMonthlySummaryLoading(true);
+    void (async () => {
+      const out: Record<string, OfficePayrollMonthConsolidation> = {};
+      for (const ym of months) {
+        try {
+          out[ym] = await fetchOfficePayrollMonthConsolidation(firestore, ym);
+        } catch (e) {
+          console.error(e);
+        }
+        if (cancel) return;
+      }
+      if (!cancel) {
+        setMonthlyByYm(out);
+        setMonthlySummaryLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [firestore, visibleRuns]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -593,7 +633,10 @@ export default function OfficePayrollPage() {
                       onClick={() => router.push(`/office-payroll/${run.id}`)}
                     >
                       <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
-                      <TableCell className="font-medium">{formatDateThaiBE(run.payrollMonth + '-01')}</TableCell>
+                      <TableCell className="font-medium">
+                        {formatPayrollYearMonthEnAbbrev(run.payrollMonth)}
+                        <span className="ml-1 text-xs text-muted-foreground">({run.payrollMonth})</span>
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{run.payrollPeriodStart} ถึง {run.payrollPeriodEnd}</TableCell>
                       <TableCell className="text-center font-bold">{run.staffCount} คน</TableCell>
                       <TableCell className="text-right font-black text-primary">
@@ -649,6 +692,66 @@ export default function OfficePayrollPage() {
             )}
           </CardContent>
         </Card>
+
+        {distinctPayrollMonths.length > 0 && (
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-muted-foreground">สรุปรวมรายเดือน (ทุกงวดที่คำนวณแล้ว)</h2>
+            {monthlySummaryLoading && Object.keys(monthlyByYm).length === 0 && (
+              <p className="text-xs text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                กำลังคำนวณสรุปรายเดือน…
+              </p>
+            )}
+            <div className="grid gap-2">
+              {distinctPayrollMonths.map((ym) => {
+                const s = monthlyByYm[ym];
+                return (
+                  <Card key={ym} className="border-dashed border-primary/25 bg-muted/10">
+                    <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                      <div className="space-y-1 min-w-0">
+                        <p className="text-sm font-semibold">
+                          {formatPayrollYearMonthEnAbbrev(ym)}{' '}
+                          <span className="text-xs font-normal text-muted-foreground">({ym})</span>
+                        </p>
+                        {s ? (
+                          <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span className="inline-flex items-center gap-1">
+                              <Users className="h-3.5 w-3.5" />
+                              {s.uniqueStaffCount} คน (unique)
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <Coins className="h-3.5 w-3.5" />
+                              ยอดสุทธิรวม ฿{s.sumNetFromRuns.toLocaleString()}
+                            </span>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground flex items-center gap-2">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            กำลังโหลด…
+                          </p>
+                        )}
+                      </div>
+                      {s ? (
+                        <Button variant="secondary" size="icon" asChild className="shrink-0">
+                          <Link
+                            href={`/office-payroll/month/${encodeURIComponent(ym)}`}
+                            aria-label="ดูรายการรวมรายเดือน"
+                          >
+                            <ChevronRight className="h-5 w-5" />
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button type="button" variant="secondary" size="icon" className="shrink-0" disabled>
+                          <ChevronRight className="h-5 w-5" />
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
           <AlertDialogContent>
