@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Suspense } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -67,7 +67,7 @@ import {
   WORKER_BATCH_STATUSES_FOR_ACCOUNTING_PAYOUT,
 } from '@/lib/payroll/accounting-payout-queue';
 
-export default function PayrollBatchesPage() {
+function PayrollBatchesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -514,5 +514,19 @@ export default function PayrollBatchesPage() {
         </Card>
       </div>
     </AppShell>
+  );
+}
+
+export default function PayrollBatchesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] w-full items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <PayrollBatchesPageContent />
+    </Suspense>
   );
 }
