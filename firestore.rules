@@ -88,12 +88,38 @@ service cloud.firestore {
       return v is string && v.size() > 0 && v.lower() == 'admin';
     }
 
+    /** สอดคล้องกับ isSystemAdmin() ฝั่งแอป — ผู้ใช้ที่ได้สิทธิ์จาก permissionProfileKey โดยไม่มี role/scalar */
+    function permissionProfileKeyIndicatesSystemAdmin(d) {
+      return d != null
+        && 'permissionProfileKey' in d
+        && d.permissionProfileKey is string
+        && (
+          d.permissionProfileKey.lower() == 'system_admin'
+          || d.permissionProfileKey.lower() == 'admin_admin'
+        );
+    }
+
+    function permissionProfileKeysListIndicatesSystemAdmin(d) {
+      return d != null
+        && 'permissionProfileKeys' in d
+        && d.permissionProfileKeys is list
+        && d.permissionProfileKeys.hasAny([
+          'system_admin', 'SYSTEM_ADMIN', 'admin_admin', 'ADMIN_ADMIN',
+        ]);
+    }
+
     function userDocIndicatesSystemAdmin(d) {
       return d != null && (
         effectiveRole(d) == 'system_admin'
+        || effectiveRole(d) == 'admin_admin'
+        || permissionProfileKeyIndicatesSystemAdmin(d)
+        || permissionProfileKeysListIndicatesSystemAdmin(d)
         || (
           'roleIds' in d && d.roleIds is list
-          && (d.roleIds.hasAny(['system_admin']) || d.roleIds.hasAny(['SYSTEM_ADMIN']))
+          && (
+            d.roleIds.hasAny(['system_admin']) || d.roleIds.hasAny(['SYSTEM_ADMIN'])
+            || d.roleIds.hasAny(['admin_admin']) || d.roleIds.hasAny(['ADMIN_ADMIN'])
+          )
         )
         || (('accessGroup' in d) && stringLowerEqAdmin(d.accessGroup))
         || (('departmentGroup' in d) && stringLowerEqAdmin(d.departmentGroup))
@@ -105,10 +131,40 @@ service cloud.firestore {
       return isInternalUser() && userDocIndicatesSystemAdmin(userData());
     }
 
+    /** สอดคล้องกับบทบาทบัญชีเมื่อกำหนดผ่าน permission profile แทน role scalar */
+    function permissionProfileKeyIndicatesAccounting(d) {
+      return d != null
+        && 'permissionProfileKey' in d
+        && d.permissionProfileKey is string
+        && (
+          d.permissionProfileKey.lower() == 'accounting_manager'
+          || d.permissionProfileKey.lower() == 'accounting_officer'
+        );
+    }
+
+    function permissionProfileKeysListIndicatesAccounting(d) {
+      return d != null
+        && 'permissionProfileKeys' in d
+        && d.permissionProfileKeys is list
+        && d.permissionProfileKeys.hasAny([
+          'accounting_manager', 'ACCOUNTING_MANAGER',
+          'accounting_officer', 'ACCOUNTING_OFFICER',
+        ]);
+    }
+
     function isAccounting() {
       return isInternalUser()
-        && effectiveRole(userData()).size() > 0
-        && (effectiveRole(userData()) == 'accounting_manager' || effectiveRole(userData()) == 'accounting_officer');
+        && (
+          (
+            effectiveRole(userData()).size() > 0
+            && (
+              effectiveRole(userData()) == 'accounting_manager'
+              || effectiveRole(userData()) == 'accounting_officer'
+            )
+          )
+          || permissionProfileKeyIndicatesAccounting(userData())
+          || permissionProfileKeysListIndicatesAccounting(userData())
+        );
     }
 
     function isAccountingOrAdmin() {

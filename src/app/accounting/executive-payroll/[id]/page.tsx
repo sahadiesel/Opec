@@ -26,9 +26,13 @@ import {
   Clock,
   Building2,
   Briefcase,
-  ShieldAlert
+  ShieldAlert,
+  Printer,
+  Trash2,
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
+import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
@@ -45,11 +49,29 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { canView } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
 import { pitFromPolicy, socialSecurityFromPolicy } from '@/lib/payroll/d8/deductions-from-policy';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
+import {
+  applyExecutivePayrollRunLines,
+  adminExecutivePayrollDeleteBlocked,
+  deleteExecutivePayrollRunCascade,
+  isExecutivePayrollStaffEligible,
+} from '@/lib/payroll/executive-payroll-run-apply';
+import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export default function ExecutivePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -80,6 +102,11 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
     [firestore, isAuthorized],
   );
   const { data: executiveRoster } = useCollection<ExecutivePayrollStaff>(rosterQuery as any);
+
+  const { profile: companyProfile } = useCompanyDocumentProfile();
+  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeletingRun, setIsDeletingRun] = useState(false);
 
   const handleUpdateStatus = async (newStatus: PayrollRunStatus) => {
     if (!firestore || !run || !runRef || !currentUser) return;
@@ -161,6 +188,25 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
     }
   };
 
+  const handleConfirmDeleteRun = async () => {
+    if (!firestore || !run || !isAdmin || adminExecutivePayrollDeleteBlocked(run)) return;
+    setIsDeletingRun(true);
+    try {
+      await deleteExecutivePayrollRunCascade(firestore, id);
+      toast({ title: 'ลบงวดแล้ว', description: `เลขที่ ${run.payrollRunNo}` });
+      setDeleteDialogOpen(false);
+      router.push('/accounting/executive-payroll');
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setIsDeletingRun(false);
+    }
+  };
+
   if (isRunLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
@@ -207,7 +253,31 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {lines && lines.length > 0 && (
+              <Button variant="outline" size="sm" className="gap-2" asChild>
+                <Link href={`/accounting/executive-payroll/${id}/print`}>
+                  <Printer className="h-4 w-4" /> พิมพ์สลิปทั้งงวด
+                </Link>
+              </Button>
+            )}
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                disabled={adminExecutivePayrollDeleteBlocked(run)}
+                title={
+                  adminExecutivePayrollDeleteBlocked(run)
+                    ? 'ลบไม่ได้ — งวดล็อกหรืออนุมัติการเงิน/จ่ายแล้ว'
+                    : 'ลบงวดนี้ (เฉพาะผู้ดูแลระบบ)'
+                }
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="h-4 w-4" /> ลบงวด
+              </Button>
+            )}
             <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4' : 'py-1.5 px-4'}>
               {isLocked && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {run.status}
@@ -251,9 +321,9 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
                   <CardTitle className="text-lg">รายการจ่ายผู้บริหาร</CardTitle>
-                  <CardDescription>สรุปยอดจ่ายตามฐานข้อมูลพนักงานออฟฟิศส่วนกลาง</CardDescription>
+                  <CardDescription>สรุปยอดจ่ายจากทะเบียนผู้บริหาร — สลิปและภาษีใช้สูตรเดียวกับพนักงานออฟฟิศตามนโยบาย HR</CardDescription>
                 </div>
-                {!isLocked && canMutate && (
+                {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (
                   <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">
                     {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Calculator className="h-4 w-4 mr-2" />}
                     {run.status === 'DRAFT' ? 'คำนวณเงินเดือนผู้บริหาร' : 'คำนวณใหม่ (Refresh)'}
@@ -269,33 +339,55 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                       <TableHead className="text-right">ยอดรวม (Gross)</TableHead>
                       <TableHead className="text-right">รายการหัก</TableHead>
                       <TableHead className="text-right font-bold">สุทธิ (Net)</TableHead>
+                      <TableHead className="text-right w-[100px]">สลิป</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map(line => (
-                      <TableRow key={line.id} className="hover:bg-muted/20">
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{line.staffName}</span>
-                            <span className="text-[10px] text-muted-foreground flex items-center gap-1"><Building2 className="h-2.5 w-2.5" /> {line.department} | {line.positionTitle}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-sm font-medium">฿{line.baseSalary.toLocaleString()}</span>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">฿{line.grossPay.toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon"><ChevronRight className="h-4 w-4" /></Button>
+                    {isLinesLoading && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                          <Loader2 className="h-6 w-6 inline animate-spin mr-2" />
+                          กำลังโหลดรายการ…
                         </TableCell>
                       </TableRow>
-                    ))}
-                    {(!lines || lines.length === 0) && !isLinesLoading && (
+                    )}
+                    {!isLinesLoading &&
+                      (lines ?? []).map((line) => {
+                        const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
+                        return (
+                          <TableRow key={line.id} className="hover:bg-muted/20">
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-bold text-sm text-primary">{line.staffName}</span>
+                                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                  <Building2 className="h-2.5 w-2.5" /> {line.department} | {line.positionTitle}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm font-medium">฿{line.baseSalary.toLocaleString()}</span>
+                            </TableCell>
+                            <TableCell className="text-right font-medium">฿{line.grossPay.toLocaleString()}</TableCell>
+                            <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
+                            <TableCell className="text-right">
+                              <PayslipDialog model={slipModel} />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="icon" asChild title="รายละเอียดผู้บริหาร">
+                                <Link href={`/accounting/executive-payroll/staff/${encodeURIComponent(line.staffId)}`}>
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    {!isLinesLoading && (!lines || lines.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">
-                          ยังไม่มีข้อมูลรายการจ่ายเงิน กรุณากดปุ่ม "คำนวณเงินเดือนผู้บริหาร"
+                        <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                          ยังไม่มีข้อมูลรายการจ่ายเงิน กรุณากดปุ่ม &quot;คำนวณเงินเดือนผู้บริหาร&quot;
                         </TableCell>
                       </TableRow>
                     )}
@@ -479,6 +571,33 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
             </Button>
           )}
         </div>
+
+        <AlertDialog open={deleteDialogOpen} onOpenChange={(open) => !open && !isDeletingRun && setDeleteDialogOpen(false)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบงวดเงินเดือนผู้บริหาร?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span className="block">
+                  จะลบ <span className="font-mono font-semibold">{run.payrollRunNo}</span> และรายการจ่ายทั้งหมดในงวดนี้
+                  การกระทำนี้ย้อนกลับไม่ได้
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingRun}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={isDeletingRun}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDeleteRun();
+                }}
+              >
+                {isDeletingRun ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

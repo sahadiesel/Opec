@@ -12,22 +12,21 @@ import {
   Filter, 
   ChevronRight, 
   Coins, 
-  Calendar,
   AlertTriangle,
   Info,
   Clock,
   CheckCircle2,
   FileText,
   Loader2,
-  ShieldAlert
+  ShieldAlert,
+  Trash2,
 } from 'lucide-react';
-import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
+import { formatDateThaiBE } from '@/lib/date-thai';
+import { ExecutivePayrollStaff, OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, doc, query, orderBy } from 'firebase/firestore';
+import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Dialog, 
@@ -43,7 +42,37 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { canView } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 import Link from 'next/link';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  applyExecutivePayrollRunLines,
+  adminExecutivePayrollDeleteBlocked,
+  deleteExecutivePayrollRunCascade,
+  isExecutivePayrollStaffEligible,
+} from '@/lib/payroll/executive-payroll-run-apply';
+import { getPayrollMonthPeriodBounds } from '@/lib/payroll/office-payroll-run-apply';
+
+function initialNewExecutiveRun(): Partial<OfficePayrollRun> {
+  const payrollMonth = new Date().toISOString().slice(0, 7);
+  const { payrollPeriodStart, payrollPeriodEnd } = getPayrollMonthPeriodBounds(payrollMonth);
+  return {
+    payrollRunNo: getPreviewPattern('executive_payroll_run'),
+    payrollMonth,
+    payrollPeriodStart,
+    payrollPeriodEnd,
+    notes: '',
+  };
+}
 
 export default function ExecutivePayrollPage() {
   const router = useRouter();
@@ -57,6 +86,7 @@ export default function ExecutivePayrollPage() {
   }, []);
 
   const isAuthorized = useMemo(() => canView(currentUser, 'executive_payroll'), [currentUser]);
+  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -67,18 +97,24 @@ export default function ExecutivePayrollPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>({
-    payrollRunNo: getPreviewPattern('executive_payroll_run'),
-    payrollMonth: new Date().toISOString().slice(0, 7),
-    payrollPeriodStart: '',
-    payrollPeriodEnd: '',
-    notes: ''
-  });
+  const [deleteTarget, setDeleteTarget] = useState<OfficePayrollRun | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>(initialNewExecutiveRun);
 
   const handleCreateRun = async () => {
     if (!firestore || !currentUser) return;
-    if (!newRun.payrollMonth || !newRun.payrollPeriodStart || !newRun.payrollPeriodEnd) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเดือนและช่วงเวลาการจ่ายเงิน" });
+    if (!newRun.payrollMonth) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาเลือกเดือนที่จ่าย' });
+      return;
+    }
+    let payrollPeriodStart = newRun.payrollPeriodStart;
+    let payrollPeriodEnd = newRun.payrollPeriodEnd;
+    try {
+      const b = getPayrollMonthPeriodBounds(newRun.payrollMonth);
+      payrollPeriodStart = payrollPeriodStart || b.payrollPeriodStart;
+      payrollPeriodEnd = payrollPeriodEnd || b.payrollPeriodEnd;
+    } catch {
+      toast({ variant: 'destructive', title: 'เดือนไม่ถูกต้อง', description: 'เลือกเดือนที่จ่ายใหม่' });
       return;
     }
 
@@ -89,6 +125,8 @@ export default function ExecutivePayrollPage() {
 
       const docRef = await addDocumentNonBlocking(collection(firestore, 'executive_payroll_runs'), {
         ...newRun,
+        payrollPeriodStart,
+        payrollPeriodEnd,
         payrollRunNo: finalNo,
         status: 'DRAFT',
         staffCount: 0,
@@ -101,13 +139,77 @@ export default function ExecutivePayrollPage() {
       });
 
       setIsDialogOpen(false);
-      toast({ title: "สร้างงวดเงินเดือนสำเร็จ", description: `เลขที่: ${finalNo}` });
-      if (docRef) router.push(`/accounting/executive-payroll/${docRef.id}`);
+      setNewRun(initialNewExecutiveRun());
+
+      if (docRef) {
+        try {
+          const rosterSnap = await getDocs(collection(firestore, 'executive_payroll_staff'));
+          const staffList = rosterSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as ExecutivePayrollStaff[];
+          const eligible = staffList.filter(isExecutivePayrollStaffEligible);
+          if (eligible.length > 0) {
+            await applyExecutivePayrollRunLines(
+              firestore,
+              docRef.id,
+              {
+                payrollMonth: newRun.payrollMonth!,
+                payrollPeriodEnd: payrollPeriodEnd!,
+              },
+              eligible,
+              { newStatus: 'CALCULATED' },
+            );
+            toast({
+              title: 'สร้างและคำนวณงวดสำเร็จ',
+              description: `เลขที่ ${finalNo} — ประมวลผล ${eligible.length} รายจากทะเบียนผู้บริหาร`,
+            });
+          } else {
+            toast({
+              title: 'สร้างงวดเงินเดือนสำเร็จ',
+              description: `เลขที่: ${finalNo} — ยังไม่มีผู้บริหาร ACTIVE ในเมนูรายชื่อผู้บริหาร เปิดหน้ารายละเอียดแล้วกดคำนวณเมื่อพร้อม`,
+            });
+          }
+        } catch (calcErr) {
+          console.error(calcErr);
+          toast({
+            variant: 'destructive',
+            title: 'สร้างงวดแล้ว แต่คำนวณอัตโนมัติไม่สำเร็จ',
+            description: calcErr instanceof Error ? calcErr.message : 'เปิดหน้ารายละเอียดแล้วลองกดคำนวณอีกครั้ง',
+          });
+        }
+        router.push(`/accounting/executive-payroll/${docRef.id}`);
+      } else {
+        toast({ title: 'สร้างงวดเงินเดือนสำเร็จ', description: `เลขที่: ${finalNo}` });
+      }
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถสร้างงวดการจ่ายเงินได้" });
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleConfirmDeleteRun = async () => {
+    if (!firestore || !deleteTarget || !currentUser || !isAdmin) return;
+    if (adminExecutivePayrollDeleteBlocked(deleteTarget)) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่ได้',
+        description: 'งวดล็อกหรืออนุมัติการเงิน/มีรายการตัดจ่ายแล้ว',
+      });
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      await deleteExecutivePayrollRunCascade(firestore, deleteTarget.id);
+      toast({ title: 'ลบงวดแล้ว', description: `เลขที่ ${deleteTarget.payrollRunNo}` });
+      setDeleteTarget(null);
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -179,7 +281,13 @@ export default function ExecutivePayrollPage() {
             </Button>
           </div>
           
-          <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog
+            open={isAuthorized && isDialogOpen}
+            onOpenChange={(open) => {
+              setIsDialogOpen(open);
+              if (open) setNewRun(initialNewExecutiveRun());
+            }}
+          >
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
                 <Plus className="h-5 w-5" /> สร้างงวดเงินเดือนผู้บริหาร
@@ -188,7 +296,9 @@ export default function ExecutivePayrollPage() {
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างงวดเงินเดือนผู้บริหารใหม่</DialogTitle>
-                <DialogDescription>ระบุเดือนและช่วงเวลา ระบบจะออกเลขที่ EPR- อัตโนมัติเมื่อบันทึก</DialogDescription>
+                <DialogDescription>
+                  เลือกเดือนที่จ่าย — ระบบกำหนดช่วงวันที่เป็นวันแรกถึงวันสุดท้ายของเดือนนั้นโดยอัตโนมัติ และออกเลขที่ EPR- เมื่อบันทึก
+                </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                 <div className="space-y-2 md:col-span-2">
@@ -197,23 +307,32 @@ export default function ExecutivePayrollPage() {
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>เดือนที่จ่าย (Payroll Month)</Label>
-                  <Input type="month" value={newRun.payrollMonth} onChange={e => setNewRun({...newRun, payrollMonth: e.target.value})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>วันที่เริ่ม (Period Start)</Label>
-                  <DatePickerThaiBE
-                    className="h-10"
-                    value={htmlDateValueToTimestampMs(newRun.payrollPeriodStart)}
-                    onChange={(ms) => setNewRun({ ...newRun, payrollPeriodStart: timestampToHtmlDateValue(ms) })}
+                  <Input
+                    type="month"
+                    value={newRun.payrollMonth}
+                    onChange={(e) => {
+                      const ym = e.target.value;
+                      try {
+                        const b = getPayrollMonthPeriodBounds(ym);
+                        setNewRun({
+                          ...newRun,
+                          payrollMonth: ym,
+                          payrollPeriodStart: b.payrollPeriodStart,
+                          payrollPeriodEnd: b.payrollPeriodEnd,
+                        });
+                      } catch {
+                        setNewRun({ ...newRun, payrollMonth: ym });
+                      }
+                    }}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>วันที่สิ้นสุด (Period End)</Label>
-                  <DatePickerThaiBE
-                    className="h-10"
-                    value={htmlDateValueToTimestampMs(newRun.payrollPeriodEnd)}
-                    onChange={(ms) => setNewRun({ ...newRun, payrollPeriodEnd: timestampToHtmlDateValue(ms) })}
-                  />
+                <div className="space-y-2 md:col-span-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">ช่วงเวลางวด (คำนวณอัตโนมัติ)</span>
+                  <p className="mt-1 font-mono text-xs">
+                    {newRun.payrollPeriodStart && newRun.payrollPeriodEnd
+                      ? `${newRun.payrollPeriodStart} ถึง ${newRun.payrollPeriodEnd}`
+                      : '—'}
+                  </p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>หมายเหตุ</Label>
@@ -263,8 +382,38 @@ export default function ExecutivePayrollPage() {
                         ฿{run.netAmount.toLocaleString()}
                       </TableCell>
                       <TableCell>{getStatusBadge(run.status)}</TableCell>
-                      <TableCell className="text-right pr-6">
-                        <Button variant="ghost" size="icon" className="group-hover:text-primary"><ChevronRight className="h-5 w-5" /></Button>
+                      <TableCell
+                        className="text-right pr-6"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="inline-flex items-center justify-end gap-0.5">
+                          {isAdmin && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              disabled={adminExecutivePayrollDeleteBlocked(run)}
+                              title={
+                                adminExecutivePayrollDeleteBlocked(run)
+                                  ? 'ลบไม่ได้ — งวดล็อกหรืออนุมัติการเงิน/จ่ายแล้ว'
+                                  : 'ลบงวดนี้ (เฉพาะผู้ดูแลระบบ)'
+                              }
+                              onClick={() => setDeleteTarget(run)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="group-hover:text-primary"
+                            onClick={() => router.push(`/accounting/executive-payroll/${run.id}`)}
+                          >
+                            <ChevronRight className="h-5 w-5" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -278,6 +427,33 @@ export default function ExecutivePayrollPage() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบงวดเงินเดือนผู้บริหาร?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span className="block">
+                  จะลบ <span className="font-mono font-semibold">{deleteTarget?.payrollRunNo}</span> และรายการจ่ายทั้งหมดในงวดนี้
+                  การกระทำนี้ย้อนกลับไม่ได้
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={isDeleting}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDeleteRun();
+                }}
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

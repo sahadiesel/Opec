@@ -3,7 +3,7 @@
  * แหล่งรายชื่อ: `executive_payroll_staff` (เมนูบัญชี)
  */
 
-import { collection, doc, getDocs, writeBatch, type Firestore } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, writeBatch, type Firestore } from 'firebase/firestore';
 import type {
   ExecutivePayrollStaff,
   OfficePayrollLine,
@@ -35,6 +35,18 @@ async function deleteAllLinesForExecutiveRun(firestore: Firestore, runId: string
     }
     await batch.commit();
   }
+}
+
+/** ลบบรรทัดใน subcollection แล้วลบเอกสารงวด — ใช้เมื่อ admin ลบรายการจากรายการ */
+export async function deleteExecutivePayrollRunCascade(firestore: Firestore, runId: string): Promise<void> {
+  await deleteAllLinesForExecutiveRun(firestore, runId);
+  await deleteDoc(doc(firestore, 'executive_payroll_runs', runId));
+}
+
+export function adminExecutivePayrollDeleteBlocked(run: Pick<OfficePayrollRun, 'status' | 'financeCashbookEntryId'>): boolean {
+  if (run.status === 'LOCKED' || run.status === 'PAID' || run.status === 'FINANCE_APPROVED') return true;
+  if (run.financeCashbookEntryId) return true;
+  return false;
 }
 
 export interface ApplyExecutiveRunLinesResult {
