@@ -19,6 +19,7 @@ import {
   ShieldAlert,
   Trash2,
   Users,
+  Send,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -52,7 +53,9 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { canView, canCreate, canPreparePayroll } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { usePermissions } from '@/hooks/use-permissions';
+import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
 import {
   OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT,
   shouldFilterToAccountingPayoutQueue,
@@ -117,6 +120,17 @@ export default function OfficePayrollPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const { check } = usePermissions(currentUser);
+  const canEditOfficePayroll = useMemo(() => check('office_payroll', 'edit'), [check, currentUser]);
+  const canOfficerSendForReview = useMemo(
+    () =>
+      Boolean(
+        currentUser &&
+          canEditOfficePayroll &&
+          (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser))
+      ),
+    [currentUser, canEditOfficePayroll]
+  );
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
   const canCreateOfficePayroll = useMemo(() => canCreate(currentUser, 'office_payroll'), [currentUser]);
@@ -135,6 +149,8 @@ export default function OfficePayrollPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<OfficePayrollRun | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [sendingReviewId, setSendingReviewId] = useState<string | null>(null);
+  const [runSearch, setRunSearch] = useState('');
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -150,6 +166,19 @@ export default function OfficePayrollPage() {
     }
     return runs;
   }, [runs, accountingPayoutQueueOnly]);
+
+  const displayRuns = useMemo(() => {
+    if (!visibleRuns) return undefined;
+    const q = runSearch.trim().toLowerCase();
+    if (!q) return visibleRuns;
+    return visibleRuns.filter(
+      (r) =>
+        (r.payrollRunNo || '').toLowerCase().includes(q) ||
+        (r.payrollMonth || '').toLowerCase().includes(q) ||
+        formatPayrollYearMonthEnAbbrev(r.payrollMonth, '').toLowerCase().includes(q) ||
+        (r.notes || '').toLowerCase().includes(q)
+    );
+  }, [visibleRuns, runSearch]);
 
   const distinctPayrollMonths = useMemo(() => {
     if (!visibleRuns?.length) return [] as string[];
@@ -371,6 +400,35 @@ export default function OfficePayrollPage() {
     }
   };
 
+  const handleSendForManagerReview = async (run: OfficePayrollRun) => {
+    if (!firestore || !currentUser) return;
+    if (!canOfficerSendForReview) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะฝ่ายเงินเดือนหรือผู้ดูแล' });
+      return;
+    }
+    if (run.status !== 'CALCULATED') {
+      toast({ variant: 'destructive', title: 'ส่งไม่ได้', description: 'ส่งได้เฉพาะงวดที่สถานะ CALCULATED' });
+      return;
+    }
+    setSendingReviewId(run.id);
+    try {
+      await submitOfficeRunForManagerReview(firestore, run.id, currentUser);
+      toast({
+        title: 'ส่งขออนุมัติแล้ว',
+        description: `${run.payrollRunNo} → รอผู้จัดการ (ศูนย์อนุมัติ Payroll)`,
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ส่งไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองอีกครั้ง',
+      });
+    } finally {
+      setSendingReviewId(null);
+    }
+  };
+
   const getStatusBadge = (status: PayrollRunStatus) => {
     switch (status) {
       case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
@@ -416,9 +474,11 @@ export default function OfficePayrollPage() {
         {accountingPayoutQueueOnly && (
           <Alert className="bg-slate-100 border-slate-300">
             <Info className="h-5 w-5" />
-            <AlertTitle className="font-bold">มุมมองบัญชี (ตัดจ่าย)</AlertTitle>
+            <AlertTitle className="font-bold">มุมมองบัญชี (Office)</AlertTitle>
             <AlertDescription className="text-xs">
-              แสดงเฉพาะงวดที่ <strong>HR/Manager อนุมัติแล้ว</strong> (HR_APPROVED ขึ้นไป) — รายการคำนวณอย่างเดียวยังไม่มาถึงขั้นตัดจ่าย
+              แสดงเฉพาะงวดที่ <strong>ผู้จัดการ/HR อนุมัติรายงวดแล้ว</strong> (สถานะ <span className="font-mono">HR_APPROVED</span> ขึ้นไป) — ไม่รวม
+              งวดที่ฝ่ายเงินเดือนยังคำนวณหรือยัง <span className="font-mono">HR_REVIEW</span> รออนุมัติ (คนละขั้นกับลูกจ้าง:
+              ลูกจ้างต้องเป็น <span className="font-mono">FINANCE_PREPARED</span>+ จึงจะอยู่ในคิวเดียวกับบัญชี)
             </AlertDescription>
           </Alert>
         )}
@@ -444,7 +504,12 @@ export default function OfficePayrollPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่งวด..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหาเลขที่งวด..."
+                className="pl-9 h-11"
+                value={runSearch}
+                onChange={(e) => setRunSearch(e.target.value)}
+              />
             </div>
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
@@ -622,11 +687,12 @@ export default function OfficePayrollPage() {
                     <TableHead className="font-bold text-center">จำนวนคน</TableHead>
                     <TableHead className="font-bold text-right">ยอดสุทธิ (Net)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
+                    <TableHead className="text-right pr-4">ดำเนินการ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visibleRuns?.map((run) => (
+                  {displayRuns?.map((run) => (
                     <TableRow 
                       key={run.id} 
                       className="cursor-pointer hover:bg-muted/30 group transition-all" 
@@ -643,6 +709,30 @@ export default function OfficePayrollPage() {
                         ฿{run.netAmount.toLocaleString()}
                       </TableCell>
                       <TableCell>{getStatusBadge(run.status)}</TableCell>
+                      <TableCell
+                        className="text-right pr-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {run.status === 'CALCULATED' && canOfficerSendForReview ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="default"
+                            className="h-8 gap-1 text-xs"
+                            disabled={sendingReviewId === run.id}
+                            onClick={() => void handleSendForManagerReview(run)}
+                          >
+                            {sendingReviewId === run.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Send className="h-3.5 w-3.5" />
+                            )}
+                            ส่งอนุมัติ
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell
                         className="text-right pr-6"
                         onClick={(e) => e.stopPropagation()}
@@ -678,12 +768,14 @@ export default function OfficePayrollPage() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(!visibleRuns || visibleRuns.length === 0) && !isLoading && !runsQueryError && (
+                  {(!displayRuns || displayRuns.length === 0) && !isLoading && !runsQueryError && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
-                        {accountingPayoutQueueOnly
-                          ? 'ยังไม่มีงวดที่อนุมัติแล้ว (รอ HR/Manager) — หรือยังไม่ถึงขั้นตัดจ่าย'
-                          : 'ไม่มีงวดการจ่ายเงินในขณะนี้'}
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                        {visibleRuns && visibleRuns.length > 0 && runSearch.trim()
+                          ? 'ไม่พบรายการตามคำค้น'
+                          : accountingPayoutQueueOnly
+                            ? 'ยังไม่มีงวดที่อนุมัติแล้ว (รอ HR/Manager) — หรือยังไม่ถึงขั้นตัดจ่าย'
+                            : 'ไม่มีงวดการจ่ายเงินในขณะนี้'}
                       </TableCell>
                     </TableRow>
                   )}

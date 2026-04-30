@@ -105,6 +105,7 @@ export function canViewHrHubItem(
   if (hrOfficerExcludedFromHrNavItem(user, item)) return false;
   const baseHref = item.href.split('#')[0].split('?')[0];
   if (baseHref === '/purchases' && canApprovePurchaseAsManager(user)) return true;
+  if (baseHref === '/store/purchase-requests' && canApprovePurchaseAsManager(user)) return true;
   /** คิวอนุมัติ (D6/เดือน/Overview) — ไม่อาศัย canSeeHrPillarUi; ops/HR manager อาจไม่มี module HR ใน matrix */
   if (
     (baseHref === '/hr/approval-center' ||
@@ -239,6 +240,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) — ไม่ต้องมี module worker_payroll ทั้งชุด */
   if (!admin && isSimpleAccounting(user) && (p === '/payroll/batches' || p.startsWith('/payroll/batches/'))) {
     return true;
+  }
+
+  if (p === '/store/purchase-requests' || p.startsWith('/store/purchase-requests/')) {
+    if (canApprovePurchaseAsManager(user) || canView(user, 'store_inventory', profile)) return true;
   }
 
   for (const [prefix, key] of SORTED_PREFIXES) {

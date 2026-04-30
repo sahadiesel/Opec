@@ -31,6 +31,8 @@ import {
   deleteField,
 } from 'firebase/firestore';
 import type {
+  Customer,
+  PoLocationMonthTimesheet,
   PoMonthTimesheetPhotoBundle,
   PoMonthTimesheetReview,
   PurchaseOrder,
@@ -48,16 +50,33 @@ import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useToast } from '@/hooks/use-toast';
 import { ensureMonthlyTimesheetDocument } from '@/lib/timesheet/ensure-monthly-timesheet-document';
 import {
+  ensurePoLocationMonthShellsForPo,
+  formatPoLocationMonthShellListLabel,
+  purchaseOrderOverlapsYearMonth,
+} from '@/lib/timesheet/po-location-month-shell';
+import {
   deletePoMonthTimesheetPhotoFile,
   uploadPoMonthTimesheetPhoto,
 } from '@/lib/storage/po-month-timesheet-photos';
-import { FileText, ImagePlus, Info, Loader2, Lock, Send, Trash2, FileText as FileIcon } from 'lucide-react';
+import { FileText, ImagePlus, Info, Loader2, Lock, Send, Trash2, FileText as FileIcon, MapPin } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const MAX_PO_MONTH_ATTACHMENTS = 4;
 
 function ymNow(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function shellStatusBadge(s: PoLocationMonthTimesheet['status']) {
+  switch (s) {
+    case 'active':
+      return <Badge className="bg-emerald-700">ACTIVE</Badge>;
+    case 'closed':
+      return <Badge variant="secondary">ปิด</Badge>;
+    default:
+      return <Badge variant="outline">PLANNING</Badge>;
+  }
 }
 
 function statusBadge(s: PoMonthTimesheetReview['status']) {
@@ -179,6 +198,72 @@ function TimesheetPoMonthContent() {
     [firestore, canViewTs, monthYm]
   );
   const { data: photoBundleRows } = useCollection<PoMonthTimesheetPhotoBundle>(photoBundlesQuery as any);
+
+  const locShellsQuery = useMemoFirebase(
+    () =>
+      firestore && canViewTs && monthYm
+        ? query(collection(firestore, 'po_location_month_timesheets'), where('yearMonth', '==', monthYm), limit(500))
+        : null,
+    [firestore, canViewTs, monthYm],
+  );
+  const { data: locShellRows, isLoading: locShellsLoading } = useCollection<PoLocationMonthTimesheet>(
+    locShellsQuery as any,
+  );
+
+  const customersQuery = useMemoFirebase(
+    () => (firestore && canViewTs ? query(collection(firestore, 'customers'), limit(500)) : null),
+    [firestore, canViewTs],
+  );
+  const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
+
+  const customerNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of allCustomers ?? []) m.set(c.id, c.name);
+    return m;
+  }, [allCustomers]);
+
+  const locShellsSorted = useMemo(() => {
+    const list = [...(locShellRows ?? [])];
+    list.sort((a, b) => {
+      const c0 = (a.poCodeSnapshot || a.poId).localeCompare(b.poCodeSnapshot || b.poId);
+      if (c0 !== 0) return c0;
+      return (a.locationLabel || a.locationKey).localeCompare(b.locationLabel || b.locationKey, 'th');
+    });
+    return list;
+  }, [locShellRows]);
+
+  const contractPosForShellEnsure = useMemo(
+    () =>
+      (allPos ?? []).filter(
+        (p) =>
+          p.status === 'active' &&
+          (p.poType || 'contract') !== 'quotation' &&
+          purchaseOrderOverlapsYearMonth(p, monthYm),
+      ),
+    [allPos, monthYm],
+  );
+
+  useEffect(() => {
+    if (!firestore || !currentUser || !canViewTs || !monthYm) return;
+    if (contractPosForShellEnsure.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      for (const po of contractPosForShellEnsure) {
+        if (cancelled) break;
+        try {
+          await ensurePoLocationMonthShellsForPo(firestore, po, monthYm, {
+            userId: currentUser.id,
+            displayName: currentUser.displayName || currentUser.email || currentUser.id,
+          });
+        } catch (e) {
+          console.error('[po-month] location shells', e);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, currentUser, canViewTs, monthYm, contractPosForShellEnsure]);
 
   const reviewByPoId = useMemo(() => {
     const m = new Map<string, PoMonthTimesheetReview>();
@@ -421,6 +506,73 @@ function TimesheetPoMonthContent() {
             ใช้เพื่อดูตารางรวมและลงรายวัน
           </AlertDescription>
         </Alert>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <MapPin className="h-4 w-4" />
+              งวด timesheet ตามสถานที่ (เฟส B — จาก PO line)
+            </CardTitle>
+            <CardDescription>
+              สร้าง/อัปเดตอัตโนมัติเมื่อโหลดหน้านี้ โดยรวมบรรทัด PO ตาม <strong>workLocation</strong> — แยกหัวงวดต่อ
+              ลูกค้า/สัญญา/PO/สถานที่/เดือน แม้ยังไม่มี wave หรือรายลงเวลา (สถานะเริ่มที่ PLANNING)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {locShellsLoading ? (
+              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดรายการงวด…
+              </p>
+            ) : locShellsSorted.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                ยังไม่มีหัวงวด — ตรวจว่า PO สัญญา (active) ทับช่วงเดือนนี้และมีบรรทัด PO ระบุสถานที่
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>รายการ</TableHead>
+                      <TableHead>ลูกค้า</TableHead>
+                      <TableHead>สถานที่</TableHead>
+                      <TableHead className="w-[7rem]">สถานะ</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {locShellsSorted.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="align-top text-sm">
+                          <div className="font-mono font-medium">{row.poCodeSnapshot || row.poId}</div>
+                          <div className="text-[10px] text-muted-foreground max-w-[18rem] truncate" title={row.id}>
+                            {row.projectNameSnapshot || '—'}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground/80 font-mono mt-0.5" title={row.id}>
+                            {formatPoLocationMonthShellListLabel(
+                              row.poCodeSnapshot || row.poId,
+                              row.yearMonth,
+                              row.locationLabel || row.locationKey,
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm align-top">
+                          {customerNameById.get(row.customerId) || <span className="font-mono text-xs">{row.customerId}</span>}
+                        </TableCell>
+                        <TableCell className="text-sm align-top max-w-[14rem]">
+                          {row.locationLabel || row.locationKey}
+                        </TableCell>
+                        <TableCell className="align-top">{shellStatusBadge(row.status)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-3">
+              เอกสาร PO+งวด (ล็อก/แนบ) ยังทำที่การ์ดด้านล่าง — รายการนี้คือ &quot;หัวงวด&quot; รายสถานที่เพื่อต่อกับกระดานลงเวลา/ใบ
+              invoice ในรอบถัดไป
+            </p>
+          </CardContent>
+        </Card>
 
         <div className="flex flex-col sm:flex-row gap-3 items-end flex-wrap">
           <div className="space-y-1">

@@ -189,10 +189,10 @@ export class PayrollService {
       for (const ts of workerTs) {
         const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
         const wk = preflightWorkerById.get(ts.workerId);
-        const pos = wk?.currentPositionId ? preflightPosById.get(wk.currentPositionId) : undefined;
+        const linePos = ts.positionId ? preflightPosById.get(ts.positionId) : undefined;
         const r = computeRegistryWorkerTimesheetGross(ts, {
           worker: wk,
-          position: pos,
+          linePosition: linePos,
           poLine,
           contractMap,
         });
@@ -340,10 +340,10 @@ export class PayrollService {
       for (const ts of workerTs) {
         const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
         const wk = workerById.get(ts.workerId);
-        const pos = wk?.currentPositionId ? posById.get(wk.currentPositionId) : undefined;
+        const linePos = ts.positionId ? posById.get(ts.positionId) : undefined;
         const r = computeRegistryWorkerTimesheetGross(ts, {
           worker: wk,
-          position: pos,
+          linePosition: linePos,
           poLine,
           contractMap,
         });
@@ -370,7 +370,7 @@ export class PayrollService {
         'registry: ฐานค่าแรงจากทะเบียน (ตำแหน่ง/กำหนดรายคน) — ไม่อาศัย labor cost term',
       ];
       if (anyOpecPositionLaborBase) {
-        rateParts.push('OPEC: position+worker หรือ PO line snapshot');
+        rateParts.push('OPEC: worker + ฐานรายสัญญา/ตำแหน่ง/PO snapshot');
       }
       if (usedPackageLaborCost) {
         rateParts.push(
@@ -785,6 +785,11 @@ export class PayrollService {
     const periodSnap = await getDoc(periodRef);
     const periodLabel = periodSnap.exists() ? (periodSnap.data() as PayrollPeriod).label : batch.payrollPeriodId;
 
+    const chosenBank = (options?.payoutBankAccountId ?? batch.payoutBankAccountId)?.trim();
+    if (!chosenBank) {
+      throw new Error('กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่ายก่อนยืนยันจ่าย (หน้ารายละเอียด batch)');
+    }
+
     const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
       this.db,
       user,
@@ -794,7 +799,7 @@ export class PayrollService {
         payrollRunNo: batch.id,
         payrollMonthLabel: periodLabel,
         existingCashbookEntryId: batch.financeCashbookEntryId,
-        payoutBankAccountId: options?.payoutBankAccountId ?? batch.payoutBankAccountId,
+        payoutBankAccountId: chosenBank,
         kind: 'WORKER',
       }
     );

@@ -23,12 +23,30 @@ import {
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { Purchase, PurchaseType, User, Vendor, PurchaseStatus, PurchaseLineEntryMode } from '@/lib/types';
+import {
+  Purchase,
+  PurchaseType,
+  User,
+  Vendor,
+  PurchaseStatus,
+  PurchaseLineEntryMode,
+  PurchaseRequest,
+} from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canApprovePurchaseAsManager, isSystemAdmin } from '@/lib/permissions';
-import { collection, query, orderBy, where, getDocs, deleteDoc, doc, type Firestore } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  orderBy,
+  where,
+  getDocs,
+  deleteDoc,
+  doc,
+  updateDoc,
+  type Firestore,
+} from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -43,6 +61,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import {
   AlertDialog,
@@ -107,9 +126,21 @@ export default function PurchasesPage() {
   const vendorsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'vendors') : null), [firestore, isAuthorized]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
+  const prApprovedQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return query(collection(firestore, 'purchase_requests'), where('status', '==', 'APPROVED'));
+  }, [firestore, isAuthorized]);
+  const { data: approvedPrs } = useCollection<PurchaseRequest>(prApprovedQuery as any);
+
+  const availablePrs = useMemo(
+    () => (approvedPrs || []).filter((r) => !r.linkedPurchaseId),
+    [approvedPrs]
+  );
+
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newLineMode, setNewLineMode] = useState<PurchaseLineEntryMode>('INVENTORY');
+  const [selectedPrId, setSelectedPrId] = useState<string>('');
   const [newPurchase, setNewPurchase] = useState<Partial<Purchase>>({
     purchaseNo: getPreviewPattern('purchase'),
     purchaseDate: timestampToHtmlDateValue(Date.now()),
@@ -124,8 +155,9 @@ export default function PurchasesPage() {
   const showAdminDelete = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
   const [deleteTarget, setDeleteTarget] = useState<Purchase | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  /** รออนุมัติเฉพาะ PO เก่าที่ไม่อ้าง PR — ทางทำงานหลักอนุมัติที่ PR ไม่ใช่ PO */
   const pendingApprovalCount = useMemo(
-    () => (purchases || []).filter((p) => p.status === 'PENDING_APPROVAL').length,
+    () => (purchases || []).filter((p) => p.status === 'PENDING_APPROVAL' && !p.purchaseRequestId).length,
     [purchases]
   );
 
@@ -135,14 +167,35 @@ export default function PurchasesPage() {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุคู่ค้า" });
       return;
     }
+    if (!selectedPrId) {
+      toast({
+        variant: "destructive",
+        title: "ต้องเลือก PR",
+        description: "สร้างใบสั่งซื้อได้เฉพาะอ้างอิง PR ที่อนุมัติแล้ว (ยังไม่สร้าง PO)",
+      });
+      return;
+    }
+    if (selectedPrId) {
+      const pr = (approvedPrs || []).find((r) => r.id === selectedPrId);
+      if (pr?.vendorId && newPurchase.vendorId && pr.vendorId !== newPurchase.vendorId) {
+        toast({
+          variant: 'destructive',
+          title: 'คู่ค้าไม่ตรงกับ PR',
+          description: 'เลือกคู่ค้าให้ตรงกับ PR หรือเลือก PR อื่น',
+        });
+        return;
+      }
+    }
 
     setIsCreating(true);
     try {
       // Atomic Number Generation
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'purchase', { actor: currentUser.displayName });
 
+      const prId = selectedPrId;
       const docRef = await addDocumentNonBlocking(collection(firestore, 'purchases'), {
         ...newPurchase,
+        purchaseRequestId: prId,
         purchaseNo: finalNo,
         purchaseLineMode: newLineMode,
         amountBeforeTax: 0,
@@ -154,7 +207,19 @@ export default function PurchasesPage() {
         updatedAt: Date.now()
       });
 
+      if (docRef && prId) {
+        try {
+          await updateDoc(doc(firestore, 'purchase_requests', prId), {
+            linkedPurchaseId: docRef.id,
+            updatedAt: Date.now(),
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
       setIsDialogOpen(false);
+      setSelectedPrId('');
       toast({ title: "สร้างรายการซื้อสำเร็จ", description: `เลขที่: ${finalNo}` });
       if (docRef) router.push(`/purchases/${docRef.id}`);
     } catch (e) {
@@ -236,19 +301,19 @@ export default function PurchasesPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <PackageSearch className="h-8 w-8" /> การซื้อสินค้า/บริการ (Purchases)
+            <PackageSearch className="h-8 w-8" /> ใบสั่งซื้อ(Purchase Order)
           </h1>
           <p className="text-muted-foreground text-lg">
-            บันทึกการจัดซื้ออุปกรณ์ PPE เครื่องมือ และบริการต่าง ๆ เพื่อควบคุมสต็อกและต้นทุนบริษัท
+            สร้างใบสั่งซื้อ (PO) ได้หลังขออนุมัติที่ &quot;การขออนุมัติสั่งซื้อ (PR)&quot; แล้ว — เลือก PR ที่อนุมัติเพื่อเปิด PO ฉบับนี้ ก่อนพิมพ์ส่งคู่ค้าและทำรับวางบิล
           </p>
         </div>
 
         {canApprove && pendingApprovalCount > 0 && (
           <Alert className="border-amber-300 bg-amber-50">
             <AlertTriangle className="h-4 w-4 text-amber-700" />
-            <AlertTitle className="text-amber-900">มีใบสั่งซื้อรออนุมัติ</AlertTitle>
+            <AlertTitle className="text-amber-900">มี PO รออนุมัติ (รายการเก่า ไม่อ้าง PR)</AlertTitle>
             <AlertDescription className="text-amber-800">
-              จำนวน {pendingApprovalCount} รายการ — เปิดรายการแล้วใช้เมนูอนุมัติที่หน้ารายละเอียด
+              จำนวน {pendingApprovalCount} รายการ — รายการใหม่ให้ส่งขออนุมัติที่ PR ก่อน แล้วค่อยสร้าง PO จาก PR; รายการนี้เปิดแล้วอนุมัติที่หน้ารายละเอียด
             </AlertDescription>
           </Alert>
         )}
@@ -277,6 +342,34 @@ export default function PurchasesPage() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>เลขที่การซื้อ (Purchase No.)</Label>
                   <Input value={newPurchase.purchaseNo} disabled className="bg-muted/50 font-mono font-bold" />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>PR ที่อนุมัติแล้ว (อ้างอิง — บังคับ)</Label>
+                  <Select
+                    value={selectedPrId}
+                    onValueChange={setSelectedPrId}
+                  >
+                    <SelectTrigger className="h-11">
+                      <SelectValue placeholder="เลือก PREQ-... (ยังไม่สร้าง PO)" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {availablePrs.length === 0 ? (
+                        <div className="p-3 text-sm text-muted-foreground">ไม่มี PR ว่าง</div>
+                      ) : (
+                        availablePrs.map((r) => (
+                          <SelectItem key={r.id} value={r.id}>
+                            {r.requestNo} — {r.title}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    ยังไม่มี PR?{' '}
+                    <Link href="/store/purchase-requests/new" className="font-semibold text-primary underline" target="_blank" rel="noreferrer">
+                      สร้าง PR
+                    </Link>
+                  </p>
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>คู่ค้า / ผู้ขาย (Vendor)</Label>

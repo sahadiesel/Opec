@@ -187,10 +187,14 @@ export interface PayrollLineD8Snapshot {
 /** โหมดงานสำหรับต้นทุนค่าแรง (OPEC) — ไม่อ้าง main_contract/position_rates */
 export type LaborCostWorkMode = 'onshore' | 'offshore';
 
-export type LaborCostSourceKind = 'position_default' | 'worker_custom';
+export type LaborCostSourceKind =
+  | 'position_default'
+  | 'worker_custom'
+  /** ฐานต้นทุนต่อตำแหน่งที่กำหนดบน main_contracts (เฟส A — ต่างกันระหว่างสัญญา) */
+  | 'contract_position_baseline';
 
 /**
- * Snapshot ตอน generate รอบเงิน — ฐานต้นทุน/อัตราแรงที่ใช้ (ยึด position + worker; อ่านจากสนามนี้เท่านั้น ไม่อ่านย้อนสัญญา)
+ * Snapshot ตอน generate รอบเงิน — ฐานต้นทุน/อัตราแรง (ยึด worker + ตำแหน่ง/แหล่งอ้างอิง; `contract_position_baseline` อ่านค่าเดิมบนสนาม batch line)
  */
 export interface LaborCostResolutionSnapshot {
   source: LaborCostSourceKind;
@@ -567,6 +571,31 @@ export interface OfficeStaff {
   updatedBy?: string;
 }
 
+/**
+ * ทะเบียนผู้บริหารสำหรับงวดจ่ายในเมนูบัญชี — แยกจาก `office_staff`
+ * การคำนวณภาษี/ประกันสังคมใช้นโยบายชุดเดียวกับพนักงานออฟฟิศ (HR settings / `office`)
+ */
+export interface ExecutivePayrollStaff {
+  id: string;
+  staffCode: string;
+  fullName: string;
+  department: string;
+  positionTitle: string;
+  monthlySalary: number;
+  employmentType?: OfficeStaff['employmentType'];
+  salaryType?: OfficeStaff['salaryType'];
+  /** ไม่นำเข้างวดคำนวณอัตโนมัติ */
+  excludeFromPayrollRuns?: boolean;
+  status: 'ACTIVE' | 'INACTIVE';
+  notes?: string;
+  /** อ้างอิงทะเบียน office_staff เดิม (ถ้ามี) — ไม่บังคับ */
+  linkedOfficeStaffId?: string;
+  createdAt: number;
+  updatedAt: number;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
 /** Aliases for forms / imports (mirror OfficeStaff fields). */
 export type StaffStatus = OfficeStaff['status'];
 export type EmploymentType = OfficeStaff['employmentType'];
@@ -700,6 +729,11 @@ export interface MainContract {
   lastSubmittedBy?: string;
   /** ฝ่ายที่เริ่มเงื่อนไขเชิงพาณิชย์ (ราคา/ฝั่งขาย) — ต้นทุนแรง OPEC อยู่ที่ /positions */
   commercialTermsOwner?: 'sales' | 'operations';
+  /**
+   * ฐานต้นทุนค่าแรง (บาท/วัน) ต่อตำแหน่ง **ภายใต้สัญญานี้** — ทับ `Position.defaultLaborCost*`
+   * เมื่อคำนวณ payroll สำหรับ daily_timesheets ที่ `contractId` ตรงกับสัญญานี้ (เฟส A)
+   */
+  laborCostBaselinesByPositionId?: Record<string, { onshore?: number; offshore?: number }>;
   /**
    * @deprecated ถูก sync ฝั่งสัญญา (เฟส 4–6) — ไม่ใช้ block อนุมัติแล้ว; ดูฐานต้นทุนได้ที่ /positions
    * รัน `migrate:phase6` เพื่อลบ field เหล่านี้จาก Firestore
@@ -865,6 +899,10 @@ export interface Assignment {
   positionId: string;
   customerId: string;
   projectName: string;
+  /** สถานี/ไซต์ปฏิบัติงาน — คัดลอกจาก PO line ตอน assign, แก้ได้ (เฟส D: ลูกค้าเดิมย้ายสถานที่) */
+  workLocation?: string;
+  workLocationUpdatedAt?: number;
+  workLocationUpdatedByUserId?: string;
   startDate: string;
   endDate: string;
   /** สถานะขั้น mobilization (เอกสาร mobilizations) */
@@ -1141,6 +1179,33 @@ export interface PoMonthTimesheetReview {
   relatedWaveIds?: string[];
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * หัวงวด timesheet ราย **PO + รอบเดือน + สถานที่** (workLocation จาก po_lines) — เฟส B: รอรับรายละเอียด/รายวัน
+ * สร้างอัตโนมัติแม้ยังไม่มี wave หรือคน assign; `daily_timesheets` รุ่นใหม่อาจอ้าง id นี้ในอนาคต
+ * collection: `po_location_month_timesheets`
+ */
+export type PoLocationMonthShellStatus = 'planning' | 'active' | 'closed';
+
+export interface PoLocationMonthTimesheet {
+  id: string;
+  poId: string;
+  customerId: string;
+  contractId: string;
+  poCodeSnapshot?: string;
+  projectNameSnapshot?: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  /** ค่าหลัง normalize จาก workLocation บน po line */
+  locationKey: string;
+  locationLabel?: string;
+  status: PoLocationMonthShellStatus;
+  sourcePoLineIds?: string[];
+  createdAt: number;
+  updatedAt: number;
+  createdByUserId?: string;
+  createdByName?: string;
 }
 
 export type DailyTimesheetStatus = 
@@ -1900,9 +1965,42 @@ export interface Role {
 
 export type PurchaseLineEntryMode = 'INVENTORY' | 'SERVICE';
 
+export type PurchaseRequestStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+/**
+ * คำขออนุมัติสั่งซื้อ (PR) — ต้องอนุมัติก่อนสร้างใบสั่งซื้อ (1 PR สร้าง PO ได้หนึ่งฉบับ)
+ */
+export interface PurchaseRequest {
+  id: string;
+  requestNo: string;
+  title: string;
+  vendorId?: string;
+  notes?: string;
+  estimatedAmount?: number;
+  status: PurchaseRequestStatus;
+  requestedByUid?: string;
+  requestedByName?: string;
+  submittedAt?: number;
+  decidedAt?: number;
+  decidedByUid?: string;
+  decidedByName?: string;
+  rejectionReason?: string | null;
+  /** PO ที่สร้างจาก PR นี้ (ผูก 1:1) */
+  linkedPurchaseId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Purchase {
   id: string;
   purchaseNo: string;
+  /** อ้าง PR ที่อนุมัติแล้ว — ใบสั่งซื้อใหม่ต้องระบุ */
+  purchaseRequestId?: string;
   vendorId: string;
   purchaseDate: string;
   purchaseType: PurchaseType;
@@ -2019,6 +2117,201 @@ export interface WithholdingAtSourceItem {
   updatedAt: number;
 }
 
+/** หนังสือรับรองหัก ณ ที่จ่าย ม.50 ทวิ — สถานะเอกสารหลัก */
+export type WithholdingCertificateDocumentStatus = 'DRAFT' | 'VERIFIED' | 'ISSUED' | 'CANCELLED' | 'REPLACED';
+
+/** สถานะเตรียมส่งอิเล็กทรอนิกส์ / XML (ยังไม่ผูกกรมสรรพากรจริง) */
+export type WithholdingCertificateXmlExportStatus =
+  | 'NOT_EXPORTED'
+  | 'READY_FOR_EXPORT'
+  | 'EXPORTED_XML'
+  | 'SUBMITTED'
+  | 'ACCEPTED'
+  | 'REJECTED';
+
+/** ประเภทสำเนาเอกสารตามแบบใช้งาน */
+export type WithholdingCertificateCopyVariant =
+  | 'COPY_PAYEE_TAX_RETURN'
+  | 'COPY_PAYEE_RECORD'
+  | 'COPY_PAYER_RECORD';
+
+/** เงื่อนไขการหักภาษี (แสดงเป็น checkbox ใน PDF) */
+export type WhtTaxCondition =
+  | 'WITHHOLDING'
+  | 'TAX_PAID_BY_PAYER_ONE_TIME'
+  | 'TAX_PAID_BY_PAYER_FOREVER'
+  | 'OTHER';
+
+/** รหัสประเภทเงินได้ภายในระบบ (mapping XML / e-Withholding ภายหลัง) */
+export type WhtIncomeTypeCode = 'GOODS_MANUFACTURING' | 'SERVICE_CONTRACT' | 'OTHER';
+
+/** แบบภาษีหัก ณ ที่จ่ายที่อ้างอิงในเอกสาร */
+export type WhtWithholdingFormType = 'PND3' | 'PND53';
+
+export interface WhtElectronicData {
+  documentTypeCode?: string;
+  documentNo?: string;
+  issueDate?: string;
+  paymentDate?: string;
+  payerTaxId?: string;
+  payerBranchNo?: string;
+  payerName?: string;
+  payerAddress?: string;
+  payeeTaxId?: string;
+  payeeBranchNo?: string;
+  payeeName?: string;
+  payeeAddress?: string;
+  incomeTypeCode?: string;
+  incomeTypeName?: string;
+  formTypeCode?: string;
+  withholdingTaxRate?: number;
+  withholdingTaxBase?: number;
+  withholdingTaxAmount?: number;
+  taxConditionCode?: string;
+  paymentMethodCode?: string;
+  sendingBankName?: string;
+  bankReferenceNo?: string;
+  sourceInvoiceNo?: string;
+  sourceBillNo?: string;
+  currencyCode?: string;
+  exchangeRate?: number;
+  xmlExportStatus?: WithholdingCertificateXmlExportStatus;
+  xmlFileName?: string;
+  xmlGeneratedAt?: number;
+  xmlGeneratedBy?: string;
+  xmlSubmissionReference?: string;
+  rdResponseCode?: string;
+  rdResponseMessage?: string;
+}
+
+export interface WhtCertificatePayerSnapshot {
+  legalNameTh: string;
+  legalNameEn?: string;
+  taxId: string;
+  branchType: 'HEAD_OFFICE' | 'BRANCH';
+  branchNo?: string;
+  addressTh: string;
+  addressEn?: string;
+  phone?: string;
+  email?: string;
+  taxpayerType?: 'COMPANY' | 'PERSON' | 'OTHER';
+}
+
+export interface WhtCertificatePayeeSnapshot {
+  displayName: string;
+  taxId?: string;
+  branchType: 'HEAD_OFFICE' | 'BRANCH';
+  branchNo?: string;
+  addressTh: string;
+  addressEn?: string;
+  vendorCategory: 'COMPANY' | 'INDIVIDUAL' | 'FOREIGN' | 'OTHER';
+  countryCode?: string;
+}
+
+export type WhtCertificateAuditAction =
+  | 'CREATE_WHT'
+  | 'VERIFY_WHT'
+  | 'ISSUE_WHT'
+  | 'PRINT_WHT'
+  | 'GENERATE_WHT_XML'
+  | 'CANCEL_WHT'
+  | 'REPLACE_WHT';
+
+/** เอกสารหนังสือรับรองหัก ณ ที่จ่าย — collection `withholding_certificate_documents` */
+export interface WithholdingCertificateDocument {
+  id: string;
+  documentStatus: WithholdingCertificateDocumentStatus;
+  xmlExportStatus: WithholdingCertificateXmlExportStatus;
+
+  /** เลขที่หนังสือรับรอง — มีเมื่อ ISSUED */
+  certificateNo?: string;
+
+  /** ประเภทสำเนาล่าสุดที่พิมพ์ (audit) */
+  lastPrintedCopyVariant?: WithholdingCertificateCopyVariant;
+
+  taxCondition: WhtTaxCondition;
+  taxConditionOtherRemark?: string;
+
+  incomeTypeCode: WhtIncomeTypeCode;
+  incomeTypeDisplayTh: string;
+  /** รหัสรายได้สำหรับอนาคต (เชื่อม RD / e-Withholding) */
+  withholdingIncomeCode?: string;
+  formTypeCode?: string;
+  withholdingFormType: WhtWithholdingFormType;
+
+  payer: WhtCertificatePayerSnapshot;
+  payee: WhtCertificatePayeeSnapshot;
+
+  amountBeforeVat: number;
+  vatAmount: number;
+  grossAmount: number;
+  withholdingTaxBase: number;
+  withholdingTaxRatePercent: number;
+  withholdingTaxAmount: number;
+  netPaidAmount: number;
+
+  paymentDate: string;
+  paymentMethod: PaymentMethod;
+  paymentIssueDate: string;
+  bankName?: string;
+  bankAccountLast4?: string;
+  sendingBankName?: string;
+  paymentReferenceNo?: string;
+
+  referenceVendorBillNo: string;
+  referencePurchaseNo?: string;
+  referenceTaxInvoiceNo?: string;
+  referencePaymentNo?: string;
+  jobDescription: string;
+
+  sourceVendorBillId: string;
+  sourcePurchaseId: string;
+  sourceCashbookEntryId?: string;
+  sourceWithholdingAtSourceItemId?: string;
+
+  /** อนุญาตออกเอกสารทางการแม้ไม่มีเลขผู้เสียภาษีคู่ค้า — เฉพาะแอดมิน + ระบุเหตุผล */
+  payeeTaxIdMissingOverride?: boolean;
+  payeeTaxIdMissingReason?: string;
+
+  whtElectronicData: WhtElectronicData;
+
+  authorizedSignerName?: string;
+  signerPosition?: string;
+  signatureImageUrl?: string;
+  companyStampImageUrl?: string;
+
+  cancelReason?: string;
+  replacedByDocumentId?: string;
+
+  createdAt: number;
+  createdByUid: string;
+  createdByName?: string;
+  updatedAt: number;
+  updatedByUid?: string;
+  updatedByName?: string;
+  verifiedAt?: number;
+  verifiedByUid?: string;
+  verifiedByName?: string;
+  issuedAt?: number;
+  issuedByUid?: string;
+  issuedByName?: string;
+  cancelledAt?: number;
+  cancelledByUid?: string;
+  cancelledByName?: string;
+}
+
+export interface WhtCertificateAuditLogEntry {
+  id: string;
+  action: WhtCertificateAuditAction;
+  documentId: string;
+  actorId: string;
+  actorName?: string;
+  timestamp: number;
+  /** field สำคัญที่เปลี่ยน (ถ้ามี) */
+  payloadSummary?: Record<string, unknown>;
+  reason?: string;
+}
+
 export interface PurchaseVendorBill {
   id: string;
   receiptNo: string;
@@ -2044,7 +2337,12 @@ export interface PurchaseVendorBill {
   /** รายการ cashbook ที่สร้างตอนบันทึกจ่าย (Step 5) */
   cashbookEntryId?: string;
   cashbookEntryNo?: string;
+  /** หลักฐานการจ่าย (URL จาก Storage — มักเป็น PDF) */
+  paymentProofUrl?: string;
+  paymentProofFileName?: string;
   notes?: string;
+  /** ลิงก์หนังสือรับรองหัก ณ ที่จ่าย (withholding_certificate_documents) */
+  whtCertificateDocumentId?: string;
   createdAt: number;
   updatedAt: number;
 }

@@ -8,9 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, ShoppingCart, ChevronRight, ClipboardList } from 'lucide-react';
+import { Loader2, ShoppingCart, ChevronRight, ClipboardList, Layers } from 'lucide-react';
 import type { Assignment, Customer, MainContract, PurchaseOrder, POLine, Wave, Position } from '@/lib/types';
-import { aggregateActiveLineTotals, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
+import {
+  aggregateActiveLineTotals,
+  buildPoFulfillmentByLine,
+  buildPositionAggregateAcrossActiveContractPos,
+  type PoPositionAggregateRow,
+} from '@/lib/ops/po-fulfillment-read-model';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 export type PoQuotaQueueRow = {
@@ -22,6 +27,7 @@ export type PoQuotaQueueRow = {
 
 export function usePoQuotaQueueRows(enabled: boolean): {
   queueRows: PoQuotaQueueRow[];
+  positionAggregateRows: PoPositionAggregateRow[];
   customers: Customer[] | undefined;
   loading: boolean;
 } {
@@ -79,16 +85,33 @@ export function usePoQuotaQueueRows(enabled: boolean): {
 
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
+  const activeMainContractIdSet = useMemo(() => {
+    if (activeContracts === undefined) return new Set<string>();
+    return new Set((activeContracts ?? []).map((c) => c.id).filter(Boolean));
+  }, [activeContracts]);
+
+  const positionAggregateRows = useMemo((): PoPositionAggregateRow[] => {
+    if (!activePOs?.length || !allPOLines || activeContracts === undefined) return [];
+    if (activeMainContractIdSet.size === 0) return [];
+    return buildPositionAggregateAcrossActiveContractPos(
+      activePOs,
+      activeMainContractIdSet,
+      allPOLines,
+      allMobs ?? [],
+      allWaves ?? [],
+      allPositions ?? null,
+    );
+  }, [activePOs, allPOLines, activeMainContractIdSet, allMobs, allWaves, allPositions, activeContracts]);
+
   const queueRows = useMemo((): PoQuotaQueueRow[] => {
     if (!activePOs?.length || !allPOLines || activeContracts === undefined) return [];
-    const activeContractIds = new Set((activeContracts ?? []).map((c) => c.id));
-    if (activeContractIds.size === 0) return [];
+    if (activeMainContractIdSet.size === 0) return [];
 
     const contractPOs = activePOs.filter(
       (po) =>
         (po.poType || 'contract') === 'contract' &&
         po.contractId &&
-        activeContractIds.has(po.contractId),
+        activeMainContractIdSet.has(po.contractId),
     );
 
     const rows: PoQuotaQueueRow[] = [];
@@ -121,12 +144,12 @@ export function usePoQuotaQueueRows(enabled: boolean): {
 
     rows.sort((a, b) => b.totals.openSlots - a.totals.openSlots);
     return rows;
-  }, [activePOs, allPOLines, allMobs, allWaves, allPositions, activeContracts]);
+  }, [activePOs, allPOLines, allMobs, allWaves, allPositions, activeContracts, activeMainContractIdSet]);
 
   const loading =
     loadingPOs || loadingLines || loadingWaves || loadingMobs || loadingContracts;
 
-  return { queueRows, customers: customers ?? undefined, loading };
+  return { queueRows, positionAggregateRows, customers: customers ?? undefined, loading };
 }
 
 export function PoQuotaQueueTable({
@@ -267,6 +290,81 @@ export function PoQuotaQueueCardShell({
       </CardHeader>
       <CardContent className="p-0">
         <PoQuotaQueueTable queueRows={queueRows} customers={customers} loading={loading} />
+      </CardContent>
+    </Card>
+  );
+}
+
+export function PoPositionAggregateCardShell({
+  positionRows,
+  loading,
+  className,
+}: {
+  positionRows: PoPositionAggregateRow[];
+  loading: boolean;
+  className?: string;
+}) {
+  return (
+    <Card className={`border-emerald-700/20 shadow-md overflow-hidden ${className ?? ''}`}>
+      <CardHeader className="border-b bg-emerald-50/40 dark:bg-emerald-950/20 pb-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Layers className="h-5 w-5 text-emerald-800 dark:text-emerald-400 shrink-0" />
+              รวมโควต้าตามตำแหน่ง (PO สัญญา active ทั้งหมด) — เฟส C
+            </CardTitle>
+            <CardDescription className="text-xs max-w-3xl leading-relaxed">
+              รวมบรรทัด <strong>active</strong> ข้าม PO ทุกฉบับที่สัญญาหลักยัง <strong>active</strong> — สอดคล้องกระบวนการคุย PO line
+              รวม (เช่น ช่างเชื่อม 3+2 = 5) แยกจากคอลัมน์ Wave ราย PO ด้านบน
+            </CardDescription>
+          </div>
+          <Badge variant="secondary" className="shrink-0 w-fit">
+            {positionRows.length} ตำแหน่ง
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground text-sm">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            กำลังรวมโควต้า…
+          </div>
+        ) : positionRows.length === 0 ? (
+          <div className="py-12 px-6 text-center text-muted-foreground text-sm">
+            ยังไม่มีบรรทัด PO ที่ active สำหรับสัญญาหลักที่ active
+          </div>
+        ) : (
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow>
+                <TableHead className="pl-6 font-bold">ตำแหน่ง</TableHead>
+                <TableHead className="text-center font-bold">โควต้ารวม</TableHead>
+                <TableHead className="text-center font-bold">มอบหมาย</TableHead>
+                <TableHead className="text-center font-bold pr-6">ว่าง</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {positionRows.map((r) => (
+                <TableRow key={r.positionId}>
+                  <TableCell className="pl-6 font-medium text-sm">{r.positionName}</TableCell>
+                  <TableCell className="text-center font-semibold">{r.required}</TableCell>
+                  <TableCell className="text-center">{r.assigned}</TableCell>
+                  <TableCell className="text-center pr-6">
+                    <Badge
+                      className={
+                        r.vacant > 0
+                          ? 'bg-amber-100 text-amber-900 border-amber-200 font-bold'
+                          : 'bg-muted text-foreground'
+                      }
+                    >
+                      {r.vacant}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </CardContent>
     </Card>
   );

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirebaseApp, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { deleteField, doc, setDoc } from 'firebase/firestore';
@@ -30,6 +31,16 @@ type CompanyDocumentProfile = {
   documentHeaderLogoUrl?: string | null;
   /** รูปตรายาง — แสดง ~2"×2" */
   documentHeaderStampUrl?: string | null;
+  /** หนังสือรับรองหัก ณ ที่จ่าย (PDF) — ควบคุมลายเซ็น/ตราประทับ/ข้อความระบบ */
+  whtCertificateDisplay?: {
+    showSignatureImage?: boolean;
+    showCompanyStamp?: boolean;
+    showSystemGeneratedNote?: boolean;
+    authorizedSignerName?: string;
+    signerPosition?: string;
+    signatureImageUrl?: string;
+    companyStampImageUrl?: string;
+  };
   updatedAt?: number;
   updatedBy?: string;
 };
@@ -367,6 +378,85 @@ export default function DocumentProfileAdminPage() {
                 </Button>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>หนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ)</CardTitle>
+            <CardDescription>
+              ควบคุมการแสดงลายเซ็นและตราประทับบน PDF — ถ้าไม่แสดง ระบบจะใช้ข้อความแนะนำตามการตั้งค่า
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {(() => {
+              const wd = draft.whtCertificateDisplay || {};
+              const patch = (p: Partial<NonNullable<CompanyDocumentProfile['whtCertificateDisplay']>>) =>
+                setDraft((d) => ({
+                  ...d,
+                  whtCertificateDisplay: { ...d.whtCertificateDisplay, ...p },
+                }));
+              return (
+                <>
+                  <div className="flex flex-col gap-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={!!wd.showSignatureImage}
+                        onCheckedChange={(c) => patch({ showSignatureImage: c === true })}
+                      />
+                      แสดงรูปลายเซ็น (ถ้ามี URL)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={!!wd.showCompanyStamp}
+                        onCheckedChange={(c) => patch({ showCompanyStamp: c === true })}
+                      />
+                      แสดงตราประทับบริษัท (ถ้ามี URL)
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={wd.showSystemGeneratedNote !== false}
+                        onCheckedChange={(c) => patch({ showSystemGeneratedNote: c === true })}
+                      />
+                      แสดงข้อความ «จัดทำโดยระบบอิเล็กทรอนิกส์…» เมื่อไม่มีลายเซ็น/ตราประทับ
+                    </label>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label>ผู้มีอำนาจลงนาม (ข้อความ)</Label>
+                      <Input
+                        value={wd.authorizedSignerName || ''}
+                        onChange={(e) => patch({ authorizedSignerName: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>ตำแหน่ง</Label>
+                      <Input value={wd.signerPosition || ''} onChange={(e) => patch({ signerPosition: e.target.value })} />
+                    </div>
+                    <div className="grid gap-2 md:col-span-2">
+                      <Label>URL รูปลายเซ็น (ถ้ามี)</Label>
+                      <Input
+                        value={wd.signatureImageUrl || ''}
+                        onChange={(e) => patch({ signatureImageUrl: e.target.value })}
+                        placeholder="https://..."
+                      />
+                    </div>
+                    <div className="grid gap-2 md:col-span-2">
+                      <Label>URL ตราประทับ (ถ้ามี)</Label>
+                      <Input
+                        value={wd.companyStampImageUrl || ''}
+                        onChange={(e) => patch({ companyStampImageUrl: e.target.value })}
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={handleSave} disabled={isSaving} variant="secondary" className="gap-2">
+                    {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    บันทึกค่าเอกสารกลาง (รวมการตั้งค่า WHT)
+                  </Button>
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>

@@ -21,7 +21,7 @@ export const UI_LABELS = {
   ASSIGNMENTS: 'การมอบหมายงาน (Assignments)',
   MOBILIZATION: 'การเตรียมส่งตัว (Mobilization)',
   VENDORS: 'คู่ค้า / ผู้ขาย (Vendors)',
-  PURCHASES: 'การซื้อสินค้า/บริการ (Purchases)',
+  PURCHASES: 'ใบสั่งซื้อ(Purchase Order)',
   STORE: 'คลังอุปกรณ์ (Store / Inventory)',
   FINANCE: 'บัญชี (Accounting)',
   SYSTEM_ADMIN: 'จัดการระบบ (System Admin)',

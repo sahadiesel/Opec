@@ -29,14 +29,14 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, collection } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { 
-  OfficePayrollRun, 
-  OfficePayrollLine, 
-  User as AppUser, 
+import {
+  OfficePayrollRun,
+  OfficePayrollLine,
+  User as AppUser,
   PayrollRunStatus,
-  OfficeStaff
+  ExecutivePayrollStaff,
 } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import Link from 'next/link';
@@ -75,9 +75,11 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // STRICT ENFORCEMENT: Only from 'office_staff' collection
-  const staffQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_staff') : null), [firestore, isAuthorized]);
-  const { data: allStaff } = useCollection<OfficeStaff>(staffQuery as any);
+  const rosterQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'executive_payroll_staff') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: executiveRoster } = useCollection<ExecutivePayrollStaff>(rosterQuery as any);
 
   const handleUpdateStatus = async (newStatus: PayrollRunStatus) => {
     if (!firestore || !run || !runRef || !currentUser) return;
@@ -127,80 +129,33 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
   };
 
   const handleCalculate = async () => {
-    if (!firestore || !run || !allStaff || !runRef) return;
+    if (!firestore || !run || !executiveRoster || !runRef) return;
     setIsProcessing(true);
 
     try {
-      const batch = writeBatch(firestore);
-      const linesCol = collection(firestore, 'executive_payroll_runs', id, 'lines');
-      
-      // พนักงานสำนักงาน — ไม่รวมผู้บริหาร (งวดแยกในเมนูบัญชี)
-      const activeStaff = allStaff.filter(
-        (s) => s.status === 'ACTIVE' && s.payrollBand === 'EXECUTIVE'
-      );
-      let totalGross = 0;
-      let totalNet = 0;
-      let totalAllowances = 0;
-      let totalDeductions = 0;
-
-      const policyRecords = await loadPayrollPoliciesFromFirestore(firestore);
-      const asOfPolicy = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
-      const officePolicies = resolvePayrollPoliciesForDate(asOfPolicy, policyRecords, 'office');
-
-      for (const staff of activeStaff) {
-        const lineId = `EPL-${staff.staffCode}-${id.substring(0, 5)}`;
-        const lineDoc = doc(linesCol, lineId);
-        
-        const baseSalary = staff.monthlySalary || 0;
-        const allowance = 0;
-        const bonus = 0;
-        const grossPay = baseSalary + allowance + bonus;
-        const tax = pitFromPolicy(grossPay, officePolicies.tax);
-        const socialSecurity = socialSecurityFromPolicy(grossPay, officePolicies.sso);
-        const deductions = tax + socialSecurity;
-        
-        const netPay = grossPay - deductions;
-
-        const newLine: OfficePayrollLine = {
-          id: lineId,
-          staffId: staff.id,
-          staffName: staff.fullName,
-          department: staff.department,
-          positionTitle: staff.positionTitle,
-          baseSalary,
-          allowance,
-          bonus,
-          deductions,
-          tax,
-          socialSecurity,
-          grossPay,
-          netPay,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-
-        batch.set(lineDoc, newLine);
-        totalGross += grossPay;
-        totalNet += netPay;
-        totalAllowances += allowance + bonus;
-        totalDeductions += deductions;
+      const activeStaff = executiveRoster.filter(isExecutivePayrollStaffEligible);
+      if (activeStaff.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายชื่อสำหรับคำนวณ',
+          description:
+            'เพิ่มผู้บริหารที่เมนู «รายชื่อผู้บริหาร» และตั้งสถานะ ACTIVE (ไม่เลือกข้ามงวด)',
+        });
+        return;
       }
 
-      await batch.commit();
+      await applyExecutivePayrollRunLines(firestore, id, run, activeStaff, { newStatus: 'CALCULATED' });
 
-      await updateDoc(runRef, {
-        status: 'CALCULATED',
-        staffCount: activeStaff.length,
-        grossAmount: totalGross,
-        netAmount: totalNet,
-        totalAllowances,
-        totalDeductions,
-        updatedAt: Date.now()
+      toast({
+        title: 'คำนวณยอดสำเร็จ',
+        description: `ประมวลผล ${activeStaff.length} รายจากทะเบียนผู้บริหาร`,
       });
-
-      toast({ title: "คำนวณยอดสำเร็จ", description: `ประมวลผลพนักงาน ${activeStaff.length} รายเรียบร้อยแล้ว` });
     } catch (e) {
-      toast({ variant: "destructive", title: "Error", description: "เกิดข้อผิดพลาดในการคำนวณ" });
+      toast({
+        variant: 'destructive',
+        title: 'คำนวณไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'เกิดข้อผิดพลาดในการคำนวณ',
+      });
     } finally {
       setIsProcessing(false);
     }
@@ -264,7 +219,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           <ShieldAlert className="h-5 w-5 text-blue-600" />
           <AlertTitle className="font-bold">งวดเงินเดือนผู้บริหาร (Executive — ไม่แสดงในเมนู HR)</AlertTitle>
           <AlertDescription className="text-sm">
-            งวดนี้เฉพาะพนักงานที่ตั้งค่า <b>กลุ่มผู้บริหาร (EXECUTIVE)</b> ใน Office Staff — สูตรภาษี/ประกันสังคมเดียวกับพนักงานสำนักงาน
+            งวดนี้ดึงรายชื่อจากเมนู <b>รายชื่อผู้บริหาร</b> (ทะเบียนบัญชี) — สูตรภาษี/ประกันสังคมใช้ชุดเดียวกับพนักงานออฟฟิศตามการตั้งค่า HR
           </AlertDescription>
         </Alert>
         {!canMutate && (
@@ -510,7 +465,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
             <div className="space-y-0.5">
               <p className="font-bold text-primary flex items-center gap-2">คำแนะนำขั้นตอนถัดไป (Workflow Process)</p>
               <p className="text-sm text-muted-foreground">
-                {run.status === 'DRAFT' && "ขั้นตอนถัดไป: HR กดคำนวณเงินเดือนจากฐานข้อมูล Office Staff"}
+                {run.status === 'DRAFT' && 'ขั้นตอนถัดไป: กดคำนวณจากทะเบียนรายชื่อผู้บริหาร — ตรวจสอบเมนู «รายชื่อผู้บริหาร» ว่ามีผู้ ACTIVE'}
                 {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: HR Manager ตรวจสอบความถูกต้องและยืนยันรายการ"}
                 {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: Finance Officer อนุมัติเบิกจ่ายและโอนเงิน"}
                 {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชีรายเดือน"}

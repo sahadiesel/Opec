@@ -48,7 +48,8 @@ export function PositionRateFormFields({
         วันหยุดและวันพิเศษกำหนดที่แท็บ &quot;ข้อมูลสัญญาหลัก&quot; (ใช้ร่วมทุกตำแหน่ง) — รายการนี้เฉพาะราคา/OT ต่อตำแหน่ง
         {canViewCostFields && (
           <span className="block mt-1 text-amber-800">
-            ฐานต้นทุนค่าแรง OPEC จ่าย: กำหนดที่เมนู <strong>ตำแหน่งงาน (Positions)</strong> ไม่อยู่ในสัญญา
+            ฐานมาตรฐานที่ <strong>ตำแหน่งงาน (Positions)</strong> — ทับรายสัญญา (ON/OFF ฝ่าย OPEC) ตั้งที่แท็บอัตราสัญญา
+            หลัง Active แล้ว
           </span>
         )}
       </p>

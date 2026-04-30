@@ -60,6 +60,7 @@ import {
   isSimpleAccounting,
   isSimpleAdmin,
   isSimpleInternalEligible,
+  getEffectiveSimpleRole,
 } from './simple-tier-model';
 
 export {
@@ -176,7 +177,7 @@ export const SYSTEM_MODULES = [
     label: 'เบิกจ่าย Petty Cash (หน้างาน)',
   },
   { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
-  { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'การซื้อสินค้า/บริการ (Purchases)' },
+  { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'ใบสั่งซื้อ(Purchase Order)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'store_inventory', label: 'คลังอุปกรณ์ (Store / Inventory)' },
   { group: 'บัญชี (Accounting)', key: 'accounting_dashboard', label: 'แดชบอร์ดบัญชี (Accounting overview)' },
   { group: 'บัญชี (Accounting)', key: 'billing_notes', label: 'ใบวางบิลลูกหนี้ (Billing Notes)' },
@@ -389,11 +390,31 @@ export function getPermissions(
     return isSimpleAccounting(u) ? clonePermission(FULL_ACCESS) : clonePermission(NO_ACCESS);
   }
 
-  /** Petty Cash หน้างาน — ผู้จัดการปฏิบัติการ + บัญชี + แอดมิน */
+  /**
+   * รายการใบแจ้งหนี้ (draft commercial / เรียกเก็บ) — เฉพาะ system admin (ด้านบน) + รายต่อนี้
+   * ไม่รวม accounting officer / หัวหน้าสายอื่น
+   */
+  if (moduleKey === 'draft_invoices') {
+    if (isOperationManager(u) || isHrManager(u)) return clonePermission(FULL_ACCESS);
+    if (getEffectiveSimpleRole(u) === 'accounting_manager') return clonePermission(FULL_ACCESS);
+    return clonePermission(NO_ACCESS);
+  }
+
+  /** Petty Cash หน้างาน — ฝ่ายบัญชี + ผจก.ปฏิบัติการ (รวมกรณี level=manager + operations แต่ legacy role ยังไม่ sync) */
   if (moduleKey === 'operations_petty_cash') {
-    if (isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
     if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
     if (isOperationManager(u)) return clonePermission(FULL_ACCESS);
+    if (
+      isOperationsPillarExecutive(u) &&
+      isOperationGroupMember(u) &&
+      getEffectiveAccessLevel(u) === 'manager' &&
+      getEffectiveAccessGroup(u) === 'operations' &&
+      !isHrManager(u) &&
+      getPrimaryLegacyRole(u) !== 'sales_manager' &&
+      getPrimaryLegacyRole(u) !== 'store_officer'
+    ) {
+      return clonePermission(FULL_ACCESS);
+    }
     return clonePermission(NO_ACCESS);
   }
 
@@ -590,6 +611,39 @@ export function canApprovePurchaseAsManager(user: User | null): boolean {
 export function canMarkPurchaseVendorBillPaid(user: User | null): boolean {
   if (!user) return false;
   return isSystemAdmin(user) || isSimpleAccounting(user);
+}
+
+/** หนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ) — อ่านได้ถ้าเข้าถึง AP หรือเมนูหัก ณ ที่จ่าย */
+export function canReadWhtCertificates(user: User | null, profile?: PermissionProfile | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  return canView(user, 'accounts_payable', profile) || canView(user, 'withholding_tax_items', profile);
+}
+
+/** สร้าง / ตรวจสอบ / พิมพ์ร่าง — เทียบเท่าเจ้าหน้าที่บัญชี */
+export function canCreateVerifyPrintWhtCertificate(user: User | null): boolean {
+  return canMarkPurchaseVendorBillPaid(user);
+}
+
+/** ตรวจสอบความถูกต้อง (DRAFT → VERIFIED) — เจ้าหน้าที่/ผู้จัดการบัญชี */
+export function canVerifyWhtCertificate(user: User | null): boolean {
+  return canCreateVerifyPrintWhtCertificate(user);
+}
+
+/** ออกเลขที่ (ISSUED) / ยกเลิก — ผู้จัดการบัญชีหรือแอดมินเท่านั้น */
+export function canIssueWhtCertificate(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  return getEffectiveSimpleRole(user) === 'accounting_manager';
+}
+
+export function canCancelWhtCertificate(user: User | null): boolean {
+  return canIssueWhtCertificate(user);
+}
+
+/** Generate internal XML payload — เจ้าหน้าที่บัญชีที่มีสิทธิ์ลงรายการจ่าย + ผู้จัดการ */
+export function canGenerateWhtXmlPayload(user: User | null): boolean {
+  return canMarkPurchaseVendorBillPaid(user);
 }
 
 export function getBaselineProfiles(): Partial<PermissionProfile>[] {

@@ -1,6 +1,10 @@
 'use client';
 
-import { PoQuotaQueueCardShell, usePoQuotaQueueRows } from '@/components/ops/po-quota-queue';
+import {
+  PoPositionAggregateCardShell,
+  PoQuotaQueueCardShell,
+  usePoQuotaQueueRows,
+} from '@/components/ops/po-quota-queue';
 
 export interface PoStaffingQueueCardProps {
   /** แสดงเฉพาะเมื่อผู้ใช้เป็นฝ่ายที่เกี่ยวกับการจัดกำลัง / PO */
@@ -12,9 +16,14 @@ export interface PoStaffingQueueCardProps {
  * ใช้ logic เดียวกับการ์ดบนหน้า PO (po-fulfillment-read-model) และหน้า /po-active-quota-queue
  */
 export function PoStaffingQueueCard({ enabled }: PoStaffingQueueCardProps) {
-  const { queueRows, customers, loading } = usePoQuotaQueueRows(enabled);
+  const { queueRows, positionAggregateRows, customers, loading } = usePoQuotaQueueRows(enabled);
 
   if (!enabled) return null;
 
-  return <PoQuotaQueueCardShell queueRows={queueRows} customers={customers} loading={loading} />;
+  return (
+    <div className="space-y-4">
+      <PoQuotaQueueCardShell queueRows={queueRows} customers={customers} loading={loading} />
+      <PoPositionAggregateCardShell positionRows={positionAggregateRows} loading={loading} />
+    </div>
+  );
 }

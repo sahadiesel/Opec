@@ -702,6 +702,34 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     }
   };
 
+  const handleLaborBaselineBlur = (positionId: string, field: 'onshore' | 'offshore', raw: string) => {
+    if (!firestore || !canEditCostSide || !contract) return;
+    const n = parseFloat(raw.trim());
+    const prev = contract.laborCostBaselinesByPositionId || {};
+    const row = { ...(prev[positionId] || {}) };
+    if (Number.isFinite(n) && n > 0) {
+      row[field] = n;
+    } else {
+      delete row[field];
+    }
+    const next: Record<string, { onshore?: number; offshore?: number }> = { ...prev };
+    if (Object.keys(row).length === 0) {
+      delete next[positionId];
+    } else {
+      next[positionId] = row;
+    }
+    updateDocumentNonBlocking(doc(firestore, 'main_contracts', id), {
+      laborCostBaselinesByPositionId: next,
+      updatedAt: Date.now(),
+    });
+    addContractChangeLog({
+      actionType: 'UPDATE_LABOR_BASELINE',
+      changedFields: ['laborCostBaselinesByPositionId'],
+      beforeSummary: `${positionId}:${field}`,
+      afterSummary: JSON.stringify(row),
+    });
+  };
+
   const handleDeleteDraftContract = async () => {
     if (!firestore || !currentUser || !contract) return;
     if (!isSystemAdmin(currentUser) || contract.status !== 'pending') return;
@@ -1205,11 +1233,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 <div>
                   <CardTitle>อัตราราคาตามตำแหน่ง (Position Rates Management)</CardTitle>
                   <CardDescription>
-                    ราคา<strong>ขาย</strong>ต่อตำแหน่งเป็นของสัญญา (A กับ B อาจต่าง) — ฐานต้นทุนค่าแรง OPEC จ่ายกำหนดที่{' '}
+                    ราคา<strong>ขาย</strong>ต่อตำแหน่งเป็นของสัญญา (A กับ B อาจต่าง) — ฐานต้นทุนค่าแรงมาตรฐานกำหนดที่{' '}
                     <Link href="/positions" className="font-medium text-primary underline">
                       ตำแหน่งงาน (Positions)
-                    </Link>{' '}
-                    ไม่อยู่ในสัญญา; สร้าง PO จะ snapshot ฐานจากตำแหน่ง
+                    </Link>
+                    คอลัมน์ <strong>ต้นทุน</strong> แสดงฐานมาตรฐาน; สามารถ <strong>ทับรายสัญญา</strong> ได้ต่อตำแหน่ง (ใช้คำนวณ payroll เมื่องานผูก
+                    สัญญานี้) — สร้าง PO ยัง snapshot ฐานจาก PO line/ตำแหน่งตามเดิม
                     {masterActiveRatesLocked && (
                       <span className="block mt-1 text-amber-800 font-medium">
                         สัญญาหลัก Active: ล็อกจำนวนตำแหน่งและราคา — เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น (วันหยุด/กฎตัวคูณแก้ที่แท็บข้อมูลสัญญาหลัก)
@@ -1357,6 +1386,66 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                     </span>
                                     {contract.currency ? ` ${contract.currency}` : ''} / วัน
                                   </div>
+                                  {canViewCostFields && (
+                                    <div className="text-[10px] border-t border-amber-200/60 pt-1.5 mt-1 space-y-1">
+                                      <p className="font-medium text-amber-900">ทับฐานฝั่ง OPEC สำหรับสัญญานี้ (payroll)</p>
+                                      {canEditCostSide && firestore ? (
+                                        <div className="grid grid-cols-2 gap-1.5">
+                                          <div className="space-y-0.5">
+                                            <span className="text-[9px] text-muted-foreground">ON สัญญา</span>
+                                            <Input
+                                              className="h-7 text-[11px] font-mono"
+                                              type="number"
+                                              min={0}
+                                              step="any"
+                                              key={`lbon-${r.id}-${contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore ?? 'e'}`}
+                                              defaultValue={
+                                                contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore ?? ''
+                                              }
+                                              onBlur={(e) =>
+                                                handleLaborBaselineBlur(
+                                                  r.positionId,
+                                                  'onshore',
+                                                  e.target.value,
+                                                )
+                                              }
+                                            />
+                                          </div>
+                                          <div className="space-y-0.5">
+                                            <span className="text-[9px] text-muted-foreground">OFF สัญญา</span>
+                                            <Input
+                                              className="h-7 text-[11px] font-mono"
+                                              type="number"
+                                              min={0}
+                                              step="any"
+                                              key={`lboff-${r.id}-${contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore ?? 'e'}`}
+                                              defaultValue={
+                                                contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore ?? ''
+                                              }
+                                              onBlur={(e) =>
+                                                handleLaborBaselineBlur(
+                                                  r.positionId,
+                                                  'offshore',
+                                                  e.target.value,
+                                                )
+                                              }
+                                            />
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <p className="text-[10px]">
+                                          ON:{' '}
+                                          {formatTempLaborRef(
+                                            contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore,
+                                          )}{' '}
+                                          / OFF:{' '}
+                                          {formatTempLaborRef(
+                                            contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore,
+                                          )}
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               {!pos && <span className="text-muted-foreground">—</span>}
@@ -1370,7 +1459,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                   href={`/positions/${r.positionId}`}
                                   className="inline-block mt-1.5 text-[10px] text-primary font-medium hover:underline"
                                 >
-                                  แก้ฐานต้นทุน →
+                                  แก้ฐานมาตรฐานที่ตำแหน่ง →
                                 </Link>
                               )}
                             </TableCell>

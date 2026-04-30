@@ -79,6 +79,16 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   position: { label: 'Position', prefix: 'POS-', padding: 3, dept: 'hr', resetPolicy: 'none', collectionName: 'positions', fieldName: 'positionCode' },
   wave: { label: 'Wave', prefix: 'WV-', padding: 4, dept: 'operations', resetPolicy: 'yearly', collectionName: 'waves', fieldName: 'waveCode' },
   assignment: { label: 'Assignment', prefix: 'ASG-', padding: 6, dept: 'operations', resetPolicy: 'yearly', collectionName: 'mobilizations', fieldName: 'assignmentNo' },
+  /** คำขออนุมัติสั่งซื้อ (PR) — ก่อนสร้างใบสั่งซื้อ */
+  purchase_request: {
+    label: 'Purchase request (PR)',
+    prefix: 'PREQ-',
+    padding: 5,
+    dept: 'store',
+    resetPolicy: 'monthly',
+    collectionName: 'purchase_requests',
+    fieldName: 'requestNo',
+  },
   purchase: { label: 'Purchase', prefix: 'PUR-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'purchases', fieldName: 'purchaseNo' },
   purchase_vendor_bill: {
     label: 'Vendor bill receipt',
@@ -97,6 +107,15 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'payroll_runs', fieldName: 'payrollRunNo' },
   office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'office_payroll_runs', fieldName: 'payrollRunNo' },
   executive_payroll_run: { label: 'Executive Payroll', prefix: 'EPR-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'executive_payroll_runs', fieldName: 'payrollRunNo' },
+  executive_payroll_staff: {
+    label: 'Executive roster (payroll)',
+    prefix: 'EPX-',
+    padding: 4,
+    dept: 'accounting',
+    resetPolicy: 'none',
+    collectionName: 'executive_payroll_staff',
+    fieldName: 'staffCode',
+  },
   /**
    * เลขที่เอกสาร Timesheet ฉบับรวมรายเดือน (หนึ่งฉบับ/เดือน) — ใช้ส่งอนุมัติ / ลูกค้า / อ้างในใบวางบิลและ payroll
    * แทนการอ้างอิง “เลข Wave (WV-)” เป็นหลักใน flow เดิม; sequence key = `monthly_timesheet` คงเดิม
@@ -111,14 +130,14 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     collectionName: 'monthly_timesheet_documents',
     fieldName: 'timesheetNo',
   },
-  /** หนังสือรับรองการหักภาษี ณ ที่จ่าย (มาตรา 50 ทวิ) — ปรับ prefix ได้ที่ Admin เลขที่เอกสาร */
+  /** หนังสือรับรองการหักภาษี ณ ที่จ่าย (ม.50 ทวิ) — ปรับ prefix ได้ที่ Admin เลขที่เอกสาร */
   wht_certificate_50: {
     label: 'หนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ)',
     prefix: 'WHT50-',
     padding: 5,
     dept: 'accounting',
     resetPolicy: 'monthly',
-    collectionName: 'withholding_certificate_issues',
+    collectionName: 'withholding_certificate_documents',
     fieldName: 'certificateNo',
   },
 };

@@ -46,6 +46,12 @@ export async function recordPayrollFinanceApprovalPayout(
 
   let bankAccountId = params.payoutBankAccountId?.trim();
   if (!bankAccountId) {
+    /** งวดลูกจ้าง: ห้ามเดาเลขบัญชี — ต้องระบุในหน้า batch ก่อนยืนยันจ่าย */
+    if (params.kind === 'WORKER') {
+      throw new Error(
+        'กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่าย (หน้ารายละเอียดงวด > บัญชี · ยืนยันจ่าย) — ระบบจะไม่เลือกบัญชีแทนอัตโนมัติ'
+      );
+    }
     const bankQ = query(collection(db, 'bank_accounts'), where('status', '==', 'ACTIVE'), limit(1));
     const snap = await getDocs(bankQ);
     if (snap.empty) throw new Error('ไม่พบบัญชีธนาคาร ACTIVE — กรุณาตั้งค่าบัญชีหรือระบุบัญชีตัดจ่ายในงวด');

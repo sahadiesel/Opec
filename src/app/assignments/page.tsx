@@ -24,6 +24,7 @@ import {
   UserX,
   Pencil,
   Trash2,
+  MapPin,
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
@@ -563,6 +564,7 @@ function AssignmentsPageContent() {
       const newMobRef = doc(mobCollectionRef);
       
       const workerDisplayName = mobilizationWorkerNameFromWorker(worker);
+      const locFromLine = (poLine.workLocation || '').trim();
       const newAssignment: Assignment = {
         id: newMobRef.id,
         assignmentNo: finalNo, // Apply unique sequential code
@@ -575,6 +577,9 @@ function AssignmentsPageContent() {
         positionId: position?.id || poLine?.positionId || '', 
         customerId: wave.customerId,
         projectName: wave.projectName,
+        workLocation: locFromLine || undefined,
+        workLocationUpdatedAt: locFromLine ? Date.now() : undefined,
+        workLocationUpdatedByUserId: locFromLine ? currentUser.id : undefined,
         startDate: startDate,
         endDate: endDate,
         deploymentStatus: 'DRAFT',
@@ -923,6 +928,7 @@ function AssignmentsPageContent() {
                         <TableHead className="font-bold py-4 pl-6">เลขที่ / ลูกจ้างหน้างาน</TableHead>
                         <TableHead className="font-bold">Wave & โครงการ</TableHead>
                         <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
+                        <TableHead className="font-bold">สถานที่</TableHead>
                         <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
                         <TableHead className="font-bold">สถานะ Deployment</TableHead>
                         <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -932,6 +938,11 @@ function AssignmentsPageContent() {
                       {displayedAssignments.map((asgn) => {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
                         const wave = allWaves?.find(w => w.id === asgn.waveId);
+                        const lineForAsgn = allPOLines?.find(
+                          (l) => l.id === asgn.poLineId && l.poId === asgn.poId
+                        );
+                        const workLocationLabel =
+                          (asgn.workLocation || lineForAsgn?.workLocation || '').toString().trim() || '—';
                         
                         return (
                           <TableRow key={asgn.id} className="cursor-pointer hover:bg-muted/30 group transition-all" onClick={() => router.push(`/assignments/${asgn.id}`)}>
@@ -952,6 +963,15 @@ function AssignmentsPageContent() {
                               <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-bold">
                                 <Calendar className="h-3.5 w-3.5" />
                                 {formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div
+                                className="flex max-w-[200px] items-start gap-1.5 text-xs text-foreground/90"
+                                title={workLocationLabel}
+                              >
+                                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className="line-clamp-2 break-words">{workLocationLabel}</span>
                               </div>
                             </TableCell>
                             <TableCell>
@@ -1023,7 +1043,7 @@ function AssignmentsPageContent() {
                       })}
                       {!isAssignmentsLoading && displayedAssignments.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-16 text-muted-foreground text-sm">
+                          <TableCell colSpan={7} className="text-center py-16 text-muted-foreground text-sm">
                             {!assignments || assignments.length === 0 ? (
                               <span className="italic">ยังไม่มีรายการมอบหมายในระบบ</span>
                             ) : (

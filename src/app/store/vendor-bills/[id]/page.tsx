@@ -8,13 +8,19 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Loader2, Send, Banknote, ClipboardCheck, Printer } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { collection, doc, setDoc } from 'firebase/firestore';
+import { ArrowLeft, ExternalLink, Loader2, Send, Banknote, ClipboardCheck, FileText, Printer } from 'lucide-react';
+import { useFirestore, useDoc, useMemoFirebase, useCollection, useFirebaseApp } from '@/firebase';
+import { collection, doc, limit, query, setDoc, where, writeBatch } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canMarkPurchaseVendorBillPaid, canView } from '@/lib/permissions';
 import {
+  canCreateVerifyPrintWhtCertificate,
+  canMarkPurchaseVendorBillPaid,
+  canView,
+} from '@/lib/permissions';
+import {
+  BankAccount,
+  CashbookEntry,
   PaymentMethod,
   Purchase,
   PurchasePaymentMilestone,
@@ -22,15 +28,25 @@ import {
   PurchaseVendorBillStatus,
   User,
   Vendor,
+  WithholdingCertificateCopyVariant,
+  WithholdingCertificateDocument,
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
 import { supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
 import {
-  buildWithholdingCertificate50TwHtml,
+  buildWithholdingCertificateDocumentHtml,
   openWithholdingCertificatePrintWindow,
-  type CompanyProfileForWhtCert,
 } from '@/lib/documents/withholding-certificate-50-tw-print';
-import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import {
+  buildWithholdingCertificateDraft,
+  stripUndefinedForFirestore,
+  type CompanyProfileWhtInput,
+} from '@/lib/wht/wht-certificate-build';
+import { buildWhtAuditLogEntry } from '@/lib/wht/wht-certificate-audit';
+import {
+  validateWhtCertificateForOfficialPrint,
+  validateWhtCertificateForPreviewPrint,
+} from '@/lib/wht/wht-certificate-validation';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import {
@@ -52,6 +68,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { uploadVendorBillPaymentProofPdf, validateVendorBillPaymentProofPdf } from '@/lib/storage/vendor-bill-payment-proofs';
 
 function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
@@ -63,6 +80,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const { id } = use(params);
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
 
   const okStore = useMemo(
@@ -99,7 +117,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     () => (firestore && canOpen ? doc(firestore, 'system', 'company_profile') : null),
     [firestore, canOpen],
   );
-  const { data: companyProfile } = useDoc<CompanyProfileForWhtCert>(companyProfileRef as any);
+  const { data: companyProfile } = useDoc<CompanyProfileWhtInput>(companyProfileRef as any);
 
   const milestoneRef = useMemoFirebase(
     () =>
@@ -116,6 +134,42 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   );
   const { data: bankAccounts } = useCollection(bankAccountsQuery as any);
 
+  const cashbookRef = useMemoFirebase(
+    () => (firestore && bill?.cashbookEntryId ? doc(firestore, 'cashbook_entries', bill.cashbookEntryId) : null),
+    [firestore, bill?.cashbookEntryId],
+  );
+  const { data: payoutCashbook, isLoading: payoutCashbookLoading } = useDoc<CashbookEntry>(cashbookRef as any);
+
+  const payoutBankRef = useMemoFirebase(
+    () =>
+      firestore && payoutCashbook?.bankAccountId
+        ? doc(firestore, 'bank_accounts', payoutCashbook.bankAccountId)
+        : null,
+    [firestore, payoutCashbook?.bankAccountId],
+  );
+  const { data: payoutBankAccount } = useDoc<BankAccount>(payoutBankRef as any);
+
+  const whtCertRef = useMemoFirebase(
+    () =>
+      firestore && bill?.whtCertificateDocumentId
+        ? doc(firestore, 'withholding_certificate_documents', bill.whtCertificateDocumentId)
+        : null,
+    [firestore, bill?.whtCertificateDocumentId],
+  );
+  const { data: whtCertificate } = useDoc<WithholdingCertificateDocument>(whtCertRef as any);
+
+  const whtAtSourceQuery = useMemoFirebase(
+    () =>
+      firestore && bill?.status === 'PAID' && bill?.id
+        ? query(collection(firestore, 'withholding_at_source_items'), where('vendorBillId', '==', bill.id), limit(1))
+        : null,
+    [firestore, bill?.id, bill?.status],
+  );
+  const { data: whtAtSourceRows } = useCollection(whtAtSourceQuery as any);
+  const whtAtSourceItem = whtAtSourceRows?.[0] as { id?: string } | undefined;
+
+  const canWhtAccounting = useMemo(() => canCreateVerifyPrintWhtCertificate(currentUser), [currentUser]);
+
   const [billingDate, setBillingDate] = useState('');
   const [payDate, setPayDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -123,6 +177,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [payoutMethod, setPayoutMethod] = useState<PaymentMethod>('TRANSFER');
   const [payoutEntryDate, setPayoutEntryDate] = useState('');
   const [paying, setPaying] = useState(false);
+  const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const [createWhtBusy, setCreateWhtBusy] = useState(false);
+  const [submittedWhtBusy, setSubmittedWhtBusy] = useState(false);
   const [whtPrintBusy, setWhtPrintBusy] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
 
@@ -135,12 +192,6 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       setPayoutEntryDate((d) => d || timestampToHtmlDateValue(Date.now()));
     }
   }, [bill?.id, bill?.status]);
-
-  useEffect(() => {
-    if (!bankAccounts?.length || payoutBankId) return;
-    const first = bankAccounts.find((b) => b.status === 'ACTIVE');
-    if (first) setPayoutBankId(first.id);
-  }, [bankAccounts, bill?.id, payoutBankId]);
 
   const grossForPayment = useMemo(() => {
     if (!purchase || !bill) return 0;
@@ -176,66 +227,206 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     return grossInclVatForBill || grossForPayment;
   }, [withholdingPreview, grossForPayment, grossInclVatForBill]);
 
-  const handlePrintWithholding = async () => {
+  const mergeWhtCertDisplaySettings = (c: CompanyProfileWhtInput | null | undefined) => {
+    const d = c?.whtCertificateDisplay;
+    return {
+      showSignatureImage: !!d?.showSignatureImage,
+      showCompanyStamp: !!d?.showCompanyStamp,
+      showSystemGeneratedNote: d?.showSystemGeneratedNote !== false,
+    };
+  };
+
+  /** พิมพ์ตัวอย่างหนังสือรับรองก่อนบันทึกจ่าย — ใช้วันที่/ธนาคารจากฟอร์มด้านบน (ไม่เผาเลขที่จริง) */
+  const handleSubmittedPreviewWhtCertificate = async () => {
+    if (!currentUser || !purchase || !bill || !vendor || !withholdingPreview || !canPrintWithholdingSummary) {
+      return;
+    }
+    if (!canWhtAccounting) return;
+    const entryYmd = payoutEntryDate.trim();
+    if (!entryYmd) {
+      toast({ variant: 'destructive', title: 'ระบุวันที่ทำรายการ', description: 'ต้องมีวันที่จ่าย (cashbook) เพื่อแสดงบนหนังสือรับรอง' });
+      return;
+    }
+    const payoutBank = (bankAccounts || []).find((b) => b.id === payoutBankId);
+    const pseudoCashbook: CashbookEntry = {
+      id: '_preview_before_pay',
+      entryNo: payoutBank ? `(รอยืนยันจ่าย — ${payoutBank.bankName})` : '(รอยืนยันจ่าย)',
+      bankAccountId: payoutBankId || '_pending',
+      entryDate: entryYmd,
+      direction: 'OUT',
+      entryType: 'SUPPLIER_PAYMENT',
+      amount: bankDebitAmount,
+      description: 'รอยืนยันจ่ายเงิน — ตัวอย่างก่อนลง cashbook',
+      paymentMethod: payoutMethod,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      grossPaymentAmount: grossInclVatForBill,
+      ...(withholdingPreview.wht > 0.005 ? { supplierWithholdingAmount: withholdingPreview.wht } : {}),
+    };
+    setSubmittedWhtBusy(true);
+    try {
+      const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+      const draftCore = buildWithholdingCertificateDraft({
+        bill,
+        purchase,
+        vendor,
+        company: companyProfile ?? undefined,
+        milestone: linkedMilestone ?? undefined,
+        cashbook: pseudoCashbook,
+        bank: payoutBank,
+        paymentDateYmd: entryYmd,
+        paymentIssueDateYmd: entryYmd,
+        paymentMethod: payoutMethod,
+      });
+      const previewDoc: WithholdingCertificateDocument = {
+        id: '_preview_before_pay',
+        ...draftCore,
+        createdByUid: currentUser.id,
+      };
+      const pvErrs = validateWhtCertificateForPreviewPrint(previewDoc, 'COPY_PAYEE_TAX_RETURN');
+      if (pvErrs.length) {
+        toast({ variant: 'destructive', title: 'พิมพ์ตัวอย่างไม่ได้', description: pvErrs.join(' ') });
+        return;
+      }
+      const html = buildWithholdingCertificateDocumentHtml(previewDoc, {
+        copyVariant: 'COPY_PAYEE_TAX_RETURN',
+        official: false,
+        printedByName: actor,
+        printedAtMs: Date.now(),
+        ...mergeWhtCertDisplaySettings(companyProfile),
+      });
+      openWithholdingCertificatePrintWindow(html);
+    } finally {
+      setSubmittedWhtBusy(false);
+    }
+  };
+
+  const printWhtCertificate = async (variant: WithholdingCertificateCopyVariant, official: boolean) => {
+    if (!currentUser || !whtCertificate) return;
+    setWhtPrintBusy(true);
+    try {
+      const actor =
+        currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+      const errs = official
+        ? validateWhtCertificateForOfficialPrint(whtCertificate, variant)
+        : validateWhtCertificateForPreviewPrint(whtCertificate, variant);
+      if (errs.length) {
+        toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
+        return;
+      }
+      const html = buildWithholdingCertificateDocumentHtml(whtCertificate, {
+        copyVariant: variant,
+        official,
+        printedByName: actor,
+        printedAtMs: Date.now(),
+        ...mergeWhtCertDisplaySettings(companyProfile),
+      });
+      openWithholdingCertificatePrintWindow(html);
+      if (official && firestore && whtCertRef && whtCertificate.id) {
+        try {
+          await updateDocumentNonBlocking(whtCertRef, {
+            lastPrintedCopyVariant: variant,
+            updatedAt: Date.now(),
+            updatedByUid: currentUser.id,
+            updatedByName: actor,
+          });
+          const logRef = doc(
+            collection(firestore, 'withholding_certificate_documents', whtCertificate.id, 'audit_logs'),
+          );
+          await setDoc(logRef, {
+            id: logRef.id,
+            ...buildWhtAuditLogEntry({
+              documentId: whtCertificate.id,
+              action: 'PRINT_WHT',
+              actorId: currentUser.id,
+              actorName: actor,
+              payloadSummary: { copyVariant: variant, official: true },
+            }),
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    } finally {
+      setWhtPrintBusy(false);
+    }
+  };
+
+  const handleCreateWhtCertificate = async () => {
     if (
       !firestore ||
+      !billRef ||
       !currentUser ||
       !purchase ||
       !bill ||
       !vendor ||
       !withholdingPreview ||
-      !canPrintWithholdingSummary
+      !canPrintWithholdingSummary ||
+      !payoutCashbook
     ) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้างไม่ได้',
+        description: 'ต้องมีรายการจ่าย (cashbook) และข้อมูลครบหลังบันทึกจ่ายแล้ว',
+      });
       return;
     }
-    setWhtPrintBusy(true);
+    setCreateWhtBusy(true);
     try {
-      const paymentMs = htmlDateValueToTimestampMs(payoutEntryDate) ?? Date.now();
-      const { code } = await generateNextDocumentCode(firestore, 'wht_certificate_50', {
-        actor: currentUser.displayName || currentUser.email || currentUser.id,
-        userId: currentUser.id,
-        date: new Date(paymentMs),
-      });
-      const issueRef = doc(collection(firestore, 'withholding_certificate_issues'));
-      await setDoc(issueRef, {
-        id: issueRef.id,
-        certificateNo: code,
-        purchaseVendorBillId: bill.id,
-        purchaseId: purchase.id,
-        vendorId: vendor.id,
-        purchaseOrderNo: purchase.purchaseNo ?? null,
-        vendorBillReceiptNo: bill.receiptNo ?? null,
-        issuedAt: Date.now(),
-        issuedByUid: currentUser.id,
-        issuedByName: currentUser.displayName || currentUser.email || '',
-      });
-      const issuerDisplayName =
-        currentUser.displayName?.trim() || currentUser.email || currentUser.id;
-      const html = buildWithholdingCertificate50TwHtml({
-        company: companyProfile,
-        vendor,
-        purchase,
+      const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+      const draft = buildWithholdingCertificateDraft({
         bill,
+        purchase,
+        vendor,
+        company: companyProfile ?? undefined,
         milestone: linkedMilestone ?? undefined,
-        baseBeforeVat: withholdingPreview.baseBeforeVat,
-        wht: withholdingPreview.wht,
-        netPaid: withholdingPreview.netPaid,
-        grossInclVat: grossInclVatForBill,
-        whtRatePercent: Number(purchase.supplierWithholdingRatePercent) || 0,
-        paymentDateMs: paymentMs,
-        certificateNo: code,
-        issuerDisplayName,
+        cashbook: payoutCashbook,
+        bank: payoutBankAccount ?? undefined,
+        paymentDateYmd: payoutCashbook.entryDate,
+        paymentIssueDateYmd: payoutCashbook.entryDate,
+        paymentMethod: payoutCashbook.paymentMethod,
+        sourceWithholdingAtSourceItemId: whtAtSourceItem?.id,
       });
-      openWithholdingCertificatePrintWindow(html);
+      draft.createdByUid = currentUser.id;
+      draft.createdByName = actor;
+
+      const certRef = doc(collection(firestore, 'withholding_certificate_documents'));
+      const batch = writeBatch(firestore);
+      batch.set(certRef, stripUndefinedForFirestore({ id: certRef.id, ...draft }));
+      batch.update(billRef, {
+        whtCertificateDocumentId: certRef.id,
+        updatedAt: Date.now(),
+      });
+      const logRef = doc(
+        collection(firestore, 'withholding_certificate_documents', certRef.id, 'audit_logs'),
+      );
+      batch.set(
+        logRef,
+        stripUndefinedForFirestore({
+          id: logRef.id,
+          ...buildWhtAuditLogEntry({
+            documentId: certRef.id,
+            action: 'CREATE_WHT',
+            actorId: currentUser.id,
+            actorName: actor,
+            payloadSummary: { sourceVendorBillId: bill.id },
+          }),
+        }),
+      );
+      await batch.commit();
+      toast({
+        title: 'สร้างหนังสือรับรองแล้ว',
+        description: 'เปิดหน้ารายละเอียดเพื่อตรวจสอบและออกเลขที่',
+      });
     } catch (e) {
       console.error(e);
       toast({
         variant: 'destructive',
-        title: 'ออกเลขที่หรือพิมพ์ไม่สำเร็จ',
+        title: 'สร้างไม่สำเร็จ',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      setWhtPrintBusy(false);
+      setCreateWhtBusy(false);
     }
   };
 
@@ -253,6 +444,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const submitToAccounting = async () => {
     if (!firestore || !billRef || !bill || !purchase || bill.status !== 'DRAFT') {
       toast({ variant: 'destructive', title: 'ส่งไม่ได้', description: 'ต้องเป็นฉบับร่างและมีใบสั่งซื้อ' });
+      return;
+    }
+    if (!purchase.purchaseRequestId) {
+      toast({
+        variant: 'destructive',
+        title: 'PO นี้ไม่อ้าง PR',
+        description: 'รับวางบิลได้เฉพาะใบสั่งซื้อที่อ้างอิง PR ที่อนุมัติแล้ว',
+      });
       return;
     }
     const now = Date.now();
@@ -306,9 +505,24 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       toast({ variant: 'destructive', title: 'ระบุวันที่จ่าย' });
       return;
     }
+    if (!paymentProofFile) {
+      toast({ variant: 'destructive', title: 'แนบหลักฐานการจ่าย (PDF)', description: 'จำเป็นตอนยืนยันจ่าย' });
+      return;
+    }
+    const proofErr = validateVendorBillPaymentProofPdf(paymentProofFile);
+    if (proofErr) {
+      toast({ variant: 'destructive', title: 'ไฟล์ไม่ถูกต้อง', description: proofErr });
+      return;
+    }
     setPaying(true);
     try {
-      const { cashbookEntryNo } = await executeVendorBillPayment({
+      const proof = await uploadVendorBillPaymentProofPdf(
+        firebaseApp,
+        bill.id,
+        currentUser.id,
+        paymentProofFile
+      );
+      const { cashbookEntryNo, createdWhtCertificateId } = await executeVendorBillPayment({
         firestore,
         billRef,
         bill,
@@ -319,18 +533,29 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         paymentMethod: payoutMethod,
         entryDate: payoutEntryDate,
         currentUser,
+        paymentProofUrl: proof.downloadUrl,
+        paymentProofFileName: proof.fileName,
       });
       toast({
         title: 'บันทึกจ่ายแล้ว',
-        description: `Cashbook ${cashbookEntryNo} · หักยอดบัญชีธนาคารแล้ว`,
+        description:
+          createdWhtCertificateId != null
+            ? `Cashbook ${cashbookEntryNo} · หักยอดบัญชีธนาคารแล้ว · สร้างหนังสือรับรองหัก ณ ที่จ่าย (ร่าง) อัตโนมัติแล้ว`
+            : `Cashbook ${cashbookEntryNo} · หักยอดบัญชีธนาคารแล้ว`,
       });
     } catch (e: unknown) {
-      const code = e instanceof Error ? e.message : '';
-      if (code === 'ALREADY_RECORDED') {
+      const msg = e instanceof Error ? e.message : '';
+      const fbCode =
+        e !== null && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';
+      if (msg === 'ALREADY_RECORDED') {
         toast({ variant: 'destructive', title: 'รายการนี้ลง cashbook แล้ว' });
       } else {
         console.error(e);
-        toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: 'ตรวจสิทธิ์บัญชี/ธนาคารหรือลองใหม่' });
+        const permissionHint =
+          fbCode === 'permission-denied'
+            ? 'Firestore ปฏิเสธสิทธิ์ — ผู้ใช้ต้องเป็นผู้ดูแลระบบหรือแผนกบัญชี และฟิลด์ role/accessGroup ในเอกสาร users ต้องสอดคล้องกฎความปลอดภัย (ลองอัปเดตโปรไฟล์เป็น system_admin หรือ deploy rules ล่าสุด)'
+            : msg || 'ตรวจสิทธิ์บัญชี/ธนาคารหรือลองใหม่';
+        toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: permissionHint });
       }
     } finally {
       setPaying(false);
@@ -381,12 +606,151 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
           <Card className="border-green-200 bg-green-50/40">
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-green-900">ลงสมุด cashbook แล้ว</CardTitle>
-              <CardDescription className="text-green-800">
-                เลขที่รายการ: <span className="font-mono font-bold">{bill.cashbookEntryNo}</span>
+              <CardDescription className="space-y-1 text-green-800">
+                <p>
+                  เลขที่รายการ: <span className="font-mono font-bold">{bill.cashbookEntryNo}</span>
+                </p>
+                {bill.paymentProofUrl && (
+                  <p>
+                    หลักฐานการจ่าย:{' '}
+                    <a
+                      href={bill.paymentProofUrl}
+                      className="font-semibold text-primary underline"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {bill.paymentProofFileName || 'เปิด PDF'}
+                    </a>
+                  </p>
+                )}
               </CardDescription>
             </CardHeader>
           </Card>
         )}
+
+        {bill.status === 'PAID' && canPrintWithholdingSummary && purchase && vendor && canWhtAccounting && (
+            <Card className="border-violet-200 bg-violet-50/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-violet-800" />
+                  หนังสือรับรองการหักภาษี ณ ที่จ่าย (มาตรา 50 ทวิ)
+                </CardTitle>
+                <CardDescription className="text-violet-950/85">
+                  สร้างจากข้อมูลจ่ายเงินและใบวางบิลนี้เท่านั้น — ออกเลขที่และพิมพ์สำเนาทางการได้หลังบันทึก ISSUED
+                  ในหน้ารายละเอียด
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!bill.cashbookEntryId ? (
+                  <p className="text-sm text-amber-800">
+                    ใบวางบิลนี้ยังไม่มี <code className="text-xs bg-muted px-1 rounded">cashbookEntryId</code> — ติดต่อผู้ดูแลระบบ
+                  </p>
+                ) : payoutCashbookLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    กำลังโหลดรายการ cashbook…
+                  </div>
+                ) : !payoutCashbook ? (
+                  <p className="text-sm text-destructive">
+                    โหลดรายการ cashbook ไม่สำเร็จ (เลขที่ {bill.cashbookEntryNo || bill.cashbookEntryId})
+                  </p>
+                ) : !bill.whtCertificateDocumentId ? (
+                  <Button
+                    className="font-bold gap-2"
+                    disabled={createWhtBusy}
+                    onClick={() => void handleCreateWhtCertificate()}
+                  >
+                    {createWhtBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                    สร้างหนังสือรับรองหัก ณ ที่จ่าย
+                  </Button>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap gap-2 items-center">
+                      <Button variant="outline" asChild className="gap-2">
+                        <Link href={`/accounting/wht-certificates/${bill.whtCertificateDocumentId}`}>
+                          <ExternalLink className="h-4 w-4" />
+                          ดูเอกสาร / ตรวจสอบ / ออกเลขที่
+                        </Link>
+                      </Button>
+                      <Badge variant={whtCertificate?.documentStatus === 'ISSUED' ? 'default' : 'secondary'}>
+                        {whtCertificate?.documentStatus ?? '—'}
+                      </Badge>
+                    </div>
+                    {whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificate('COPY_PAYEE_TAX_RETURN', false)}
+                        >
+                          Preview ฉบับที่ 1
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificate('COPY_PAYEE_RECORD', false)}
+                        >
+                          Preview ฉบับที่ 2
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificate('COPY_PAYER_RECORD', false)}
+                        >
+                          Preview ผู้หัก
+                        </Button>
+                      </div>
+                    )}
+                    {whtCertificate?.documentStatus === 'ISSUED' && (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-2"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificate('COPY_PAYEE_TAX_RETURN', true)}
+                        >
+                          <Printer className="h-4 w-4" />
+                          พิมพ์ฉบับที่ 1
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-2"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificate('COPY_PAYEE_RECORD', true)}
+                        >
+                          <Printer className="h-4 w-4" />
+                          พิมพ์ฉบับที่ 2
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-2"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificate('COPY_PAYER_RECORD', true)}
+                        >
+                          <Printer className="h-4 w-4" />
+                          พิมพ์สำเนาผู้หัก
+                        </Button>
+                      </div>
+                    )}
+                    {whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' && (
+                      <p className="text-[11px] text-muted-foreground">
+                        ยกเลิกเอกสารหรือเตรียม XML — ใช้ปุ่มในหน้ารายละเอียด (สิทธิ์ผู้จัดการบัญชี)
+                      </p>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
         {bill.status === 'SUBMITTED' && purchase && purchaseRef && (
           <>
@@ -475,6 +839,18 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       </Select>
                     </div>
                   </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>แนบหลักฐานการจ่าย (PDF)</Label>
+                    <Input
+                      type="file"
+                      accept="application/pdf"
+                      className="h-11 cursor-pointer"
+                      onChange={(e) => setPaymentProofFile(e.target.files?.[0] ?? null)}
+                    />
+                    {paymentProofFile && (
+                      <p className="text-xs text-muted-foreground">เลือก: {paymentProofFile.name}</p>
+                    )}
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2 min-w-0">
                       <Label>วันที่ทำรายการ (cashbook)</Label>
@@ -511,31 +887,38 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-col sm:flex-row flex-wrap gap-3 pt-1">
+                  <div className="flex flex-col sm:flex-row gap-3 pt-1">
                     <Button
-                      className="bg-green-600 hover:bg-green-700 font-bold gap-2 sm:flex-1 min-h-11"
+                      className="bg-green-600 hover:bg-green-700 font-bold gap-2 sm:flex-1 min-h-11 order-1"
                       disabled={paying || !payoutBankId}
                       onClick={() => void markPaid()}
                     >
                       {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
                       ยืนยันจ่ายเงิน + ลง cashbook
                     </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="font-bold gap-2 border-primary/30 min-h-11 sm:flex-1"
-                      disabled={!canPrintWithholdingSummary || whtPrintBusy}
-                      onClick={() => void handlePrintWithholding()}
-                      title={
-                        canPrintWithholdingSummary
-                          ? 'ออกเลขที่หนังสือรับรองและพิมพ์ (ปรับ prefix ได้ที่ Admin เลขที่เอกสาร)'
-                          : 'เปิดใช้เมื่อ PO เปิดหัก ณ ที่จ่ายและมียอดหักจากงวดนี้'
-                      }
-                    >
-                      {whtPrintBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                      สร้างใบหัก ณ ที่จ่าย (พิมพ์)
-                    </Button>
+                    {canPrintWithholdingSummary && canWhtAccounting ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="font-bold gap-2 border-primary/40 sm:flex-1 min-h-11 order-2"
+                        disabled={submittedWhtBusy}
+                        onClick={() => void handleSubmittedPreviewWhtCertificate()}
+                        title="เปิดหน้าพิมพ์ตัวอย่างจากข้อมูลในฟอร์ม — เลขที่ทางการหลังบันทึกจ่ายและออกเอกสารในระบบ"
+                      >
+                        {submittedWhtBusy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FileText className="h-4 w-4" />
+                        )}
+                        สร้างใบหัก ณ ที่จ่าย
+                      </Button>
+                    ) : null}
                   </div>
+                  {canPrintWithholdingSummary && canWhtAccounting ? (
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      ปุ่มขวาพิมพ์ตัวอย่างก่อนจ่าย (มีข้อความฉบับร่าง) • เลขที่และสำเนาทางการหลังบันทึกจ่ายจากการ์ด «หนังสือรับรองหัก ณ ที่จ่าย»
+                    </p>
+                  ) : null}
                 </CardContent>
               </Card>
             )}

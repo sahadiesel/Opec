@@ -1,5 +1,6 @@
-import type { Assignment, DeploymentStatus, POLine, Wave } from '@/lib/types';
+import type { Assignment, DeploymentStatus, POLine, Position, PurchaseOrder, Wave } from '@/lib/types';
 import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
+import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 /** Mobilization ที่ยังถือว่าจองโควต้า (ยังไม่ปิด/ถอนกำลัง) */
 const DEPLOYMENT_RELEASED_FROM_QUOTA: DeploymentStatus[] = ['DEMOBILIZED', 'CLOSED'];
@@ -79,4 +80,59 @@ export function aggregateActiveLineTotals(rows: PoLineFulfillmentRow[]): {
       }),
       { required: 0, assigned: 0, openSlots: 0, waveCount: 0 }
     );
+}
+
+/** เฟส C: รวมโควต้าตาม position ข้าม PO สัญญาที่ active ทั้งหมด (นับ PO status=active + สัญญาหลัก active) */
+export interface PoPositionAggregateRow {
+  positionId: string;
+  positionName: string;
+  required: number;
+  assigned: number;
+  vacant: number;
+}
+
+export function buildPositionAggregateAcrossActiveContractPos(
+  activePOs: PurchaseOrder[] | null | undefined,
+  activeMainContractIds: Set<string>,
+  allPOLines: POLine[] | null | undefined,
+  allAssignments: Assignment[] | null | undefined,
+  allWaves: Wave[] | null | undefined,
+  allPositions: Position[] | null | undefined,
+): PoPositionAggregateRow[] {
+  const list = activePOs ?? [];
+  const lines = allPOLines ?? [];
+  const asg = allAssignments ?? [];
+  const wv = allWaves ?? [];
+  const posById = new Map((allPositions ?? []).map((p) => [p.id, p]));
+
+  const byPos = new Map<string, { required: number; assigned: number }>();
+  for (const po of list) {
+    if (po.status !== 'active') continue;
+    if ((po.poType || 'contract') !== 'contract' || !po.contractId) continue;
+    if (!activeMainContractIds.has(po.contractId)) continue;
+    const poLines = lines.filter((l) => l.poId === po.id);
+    if (!poLines.length) continue;
+    const fulfillment = buildPoFulfillmentByLine(poLines, asg, wv, po.id);
+    for (const row of fulfillment) {
+      if (row.lineStatus !== 'active') continue;
+      const cur = byPos.get(row.positionId) ?? { required: 0, assigned: 0 };
+      cur.required += row.requiredQty;
+      cur.assigned += row.assignedCount;
+      byPos.set(row.positionId, cur);
+    }
+  }
+
+  const out: PoPositionAggregateRow[] = [];
+  for (const [positionId, v] of byPos) {
+    const p = posById.get(positionId);
+    out.push({
+      positionId,
+      positionName: p ? positionListPrimaryName(p as PositionDoc) : positionId,
+      required: v.required,
+      assigned: v.assigned,
+      vacant: Math.max(0, v.required - v.assigned),
+    });
+  }
+  out.sort((a, b) => a.positionName.localeCompare(b.positionName, 'th'));
+  return out;
 }

@@ -43,6 +43,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -53,6 +61,7 @@ import {
   Coins,
   Loader2,
   Printer,
+  Search,
   ShieldCheck,
   XCircle,
 } from 'lucide-react';
@@ -73,8 +82,8 @@ const WORKER_D6_STATUSES = new Set([
   'PAID',
   'LOCKED',
 ]);
-const OFFICE_D6_STATUSES = new Set<PayrollRunStatus>([
-  'CALCULATED',
+/** งวด office หลังฝ่ายเงินเดือนกดส่งอนุมัติแล้ว (ไม่รวม CALCULATED — ยังไม่ส่ง) */
+const OFFICE_MANAGER_QUEUE_STATUSES = new Set<PayrollRunStatus>([
   'HR_REVIEW',
   'HR_APPROVED',
   'FINANCE_APPROVED',
@@ -191,15 +200,40 @@ export function PayrollApprovalCenterD6({
   }, [allBatches]);
 
   const officeRuns = useMemo(() => {
-    const list = (allRuns || []).filter((r) => OFFICE_D6_STATUSES.has(r.status));
-    const rank = (s: PayrollRunStatus) => (s === 'HR_REVIEW' ? 0 : s === 'CALCULATED' ? 1 : 2);
+    const list = (allRuns || []).filter((r) => OFFICE_MANAGER_QUEUE_STATUSES.has(r.status));
+    const rank = (s: PayrollRunStatus) => (s === 'HR_REVIEW' ? 0 : 1);
     list.sort((a, b) => {
       const d = rank(a.status) - rank(b.status);
       if (d !== 0) return d;
-      return (b.payrollMonth || '').localeCompare(a.payrollMonth || '');
+      return (b.payrollMonth || '').localeCompare(a.payrollMonth || '') || (b.payrollRunNo || '').localeCompare(a.payrollRunNo || '');
     });
-    return list.slice(0, 40);
+    return list;
   }, [allRuns]);
+
+  const officeMonthOptions = useMemo(() => {
+    const s = new Set(officeRuns.map((r) => r.payrollMonth).filter(Boolean));
+    return [...s].sort().reverse();
+  }, [officeRuns]);
+
+  const [officeSearch, setOfficeSearch] = useState('');
+  const [officeMonthFilter, setOfficeMonthFilter] = useState<string>('all');
+
+  const officeRunsFiltered = useMemo(() => {
+    let list = officeRuns;
+    if (officeMonthFilter && officeMonthFilter !== 'all') {
+      list = list.filter((r) => r.payrollMonth === officeMonthFilter);
+    }
+    const q = officeSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (r) =>
+          (r.payrollRunNo || '').toLowerCase().includes(q) ||
+          (r.payrollMonth || '').toLowerCase().includes(q) ||
+          formatPayrollYearMonthEnAbbrev(r.payrollMonth, '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [officeRuns, officeMonthFilter, officeSearch]);
 
   const [tab, setTab] = useState<'worker' | 'office'>('worker');
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
@@ -217,6 +251,14 @@ export function PayrollApprovalCenterD6({
     () => officeRuns.find((r) => r.id === selectedRunId) || null,
     [officeRuns, selectedRunId]
   );
+
+  useEffect(() => {
+    if (!selectedRunId) return;
+    if (!officeRunsFiltered.some((r) => r.id === selectedRunId)) {
+      setSelectedRunId(null);
+      setOfficeLines(null);
+    }
+  }, [officeRunsFiltered, selectedRunId]);
 
   const loadWorkerLines = useCallback(
     async (batchId: string) => {
@@ -351,32 +393,6 @@ export function PayrollApprovalCenterD6({
       await loadWorkerLines(selectedBatch.id);
     } catch (e) {
       toast({ variant: 'destructive', title: 'ส่งต่อไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleOfficeOfficerSubmit = async () => {
-    if (!firestore || !selectedRun) return;
-    if (officeBlocking) return;
-    if (!isSystemAdmin(currentUser) && !isPayrollOfficer(currentUser)) return;
-    if (!canOfficeEdit) return;
-    if (selectedRun.status !== 'CALCULATED') return;
-    setBusy(true);
-    try {
-      const ref = doc(firestore, 'office_payroll_runs', selectedRun.id);
-      await updateDoc(ref, {
-        status: 'HR_REVIEW' as const,
-        d8LifecycleStatus: runStatusToD8Lifecycle('HR_REVIEW'),
-        submittedForReviewBy: currentUser.displayName,
-        submittedForReviewAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      toast({ title: 'ส่งอนุมัติแล้ว', description: `${selectedRun.payrollRunNo} → HR_REVIEW (รอผู้จัดการ)` });
-      setOfficeLines(null);
-      await loadOfficeLines(selectedRun.id);
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'ส่งอนุมัติไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -750,11 +766,38 @@ export function PayrollApprovalCenterD6({
           ) : (
             <>
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">งวดออฟฟิศที่เกี่ยวข้อง</CardTitle>
-                  <CardDescription>
-                    CALCULATED = ฝ่ายเงินเดือนส่งได้ · HR_REVIEW = รอผู้จัดการ · HR_APPROVED = ส่งต่อการเงิน
-                  </CardDescription>
+                <CardHeader className="pb-2 space-y-3">
+                  <div>
+                    <CardTitle className="text-base">งวดออฟฟิศ — รอ/ผ่านอนุมัติผู้จัดการ</CardTitle>
+                    <CardDescription>
+                      แสดงเฉพาะงวดที่ <strong>ฝ่ายเงินเดือนกดส่งอนุมัติ</strong> แล้ว — HR_REVIEW = รอผู้จัดการ · HR_APPROVED ขึ้นไป = ส่งต่อฝ่ายบัญชี/รอจ่าย (ส่งอนุมัติจาก
+                      /office-payroll)
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="relative w-full sm:max-w-xs">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        className="h-9 pl-9"
+                        placeholder="ค้นหาเลขที่งวด (OPR) หรือเดือน..."
+                        value={officeSearch}
+                        onChange={(e) => setOfficeSearch(e.target.value)}
+                      />
+                    </div>
+                    <Select value={officeMonthFilter} onValueChange={setOfficeMonthFilter}>
+                      <SelectTrigger className="h-9 w-full sm:w-[200px]">
+                        <SelectValue placeholder="กรองเดือน" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">ทุกเดือน</SelectItem>
+                        {officeMonthOptions.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {formatPayrollYearMonthEnAbbrev(m)} ({m})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <Table>
@@ -768,14 +811,16 @@ export function PayrollApprovalCenterD6({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {officeRuns.length === 0 ? (
+                      {officeRunsFiltered.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
-                            ไม่มีงวด office ในขั้น workflow นี้
+                            {officeRuns.length === 0
+                              ? 'ยังไม่มีงวดที่ฝ่ายเงินเดือนส่งอนุมัติ — หรือไม่ตรงตัวกรอง/ค้นหา'
+                              : 'ไม่ตรงตัวกรองหรือคำค้น — ลองเคลียร์การค้นหา/เดือน'}
                           </TableCell>
                         </TableRow>
                       ) : (
-                        officeRuns.map((r) => (
+                        officeRunsFiltered.map((r) => (
                           <TableRow
                             key={r.id}
                             className={cn('cursor-pointer', selectedRunId === r.id && 'bg-muted/50')}
@@ -873,20 +918,13 @@ export function PayrollApprovalCenterD6({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">C. ฝ่ายเงินเดือน &amp; ผู้จัดการ</CardTitle>
+                      <CardDescription className="text-xs">
+                        ฝ่ายเงินเดือนกด <strong>ส่งอนุมัติ</strong> ที่หน้า{' '}
+                        <Link className="underline" href="/office-payroll">รายการงวด</Link> หรือ
+                        มุมมองรวมรายเดือน — หน้านี้ใช้สำหรับผู้จัดการอนุมัติ/ส่งกลับเท่านั้น
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                      <Button
-                        disabled={
-                          busy ||
-                          officeBlocking ||
-                          !canOfficeEdit ||
-                          selectedRun.status !== 'CALCULATED' ||
-                          (!isSystemAdmin(currentUser) && !isPayrollOfficer(currentUser))
-                        }
-                        onClick={() => void handleOfficeOfficerSubmit()}
-                      >
-                        ส่งอนุมัติ (ฝ่ายเงินเดือน)
-                      </Button>
                       <Button
                         disabled={
                           busy ||

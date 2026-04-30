@@ -4,8 +4,15 @@
 
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
-import type { Purchase, PurchasePaymentMilestone, PurchaseVendorBill, Vendor } from '@/lib/types';
+import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
+import type {
+  PaymentMethod,
+  WithholdingCertificateCopyVariant,
+  WithholdingCertificateDocument,
+  WhtTaxCondition,
+} from '@/lib/types';
 
+/** @deprecated ใช้ snapshot จาก {@link WithholdingCertificateDocument} แทน — เก็บไว้ให้โค้ดเก่าอ้างอิงชื่อฟิลด์ */
 export type CompanyProfileForWhtCert = {
   companyNameTh?: string;
   taxId?: string;
@@ -15,6 +22,17 @@ export type CompanyProfileForWhtCert = {
   addressLine2?: string;
 };
 
+export interface WithholdingCertificateDocumentPrintOptions {
+  copyVariant: WithholdingCertificateCopyVariant;
+  /** true = เลขที่จริง (หลัง ISSUED); false = ร่าง/preview */
+  official: boolean;
+  printedByName: string;
+  printedAtMs: number;
+  showSignatureImage: boolean;
+  showCompanyStamp: boolean;
+  showSystemGeneratedNote: boolean;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -23,99 +41,98 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-function datePartsBE(ms: number): { d: string; m: string; y: string } {
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return { d: '____', m: '____', y: '________' };
-  return {
-    d: pad2(d.getDate()),
-    m: pad2(d.getMonth() + 1),
-    y: String(d.getFullYear() + 543),
-  };
-}
-
 function fmtBaht(n: number): string {
   return roundMoney2(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function payerAddress(c: CompanyProfileForWhtCert | null | undefined): string {
-  if (!c) return '';
-  const a = [c.addressLine1, c.addressLine2].filter(Boolean).join(' ');
-  return a.trim();
+function copyVariantBannerTh(v: WithholdingCertificateCopyVariant): string {
+  switch (v) {
+    case 'COPY_PAYEE_TAX_RETURN':
+      return 'ฉบับที่ 1 สำหรับผู้ถูกหักภาษี ณ ที่จ่าย ใช้แนบแบบแสดงรายการภาษี';
+    case 'COPY_PAYEE_RECORD':
+      return 'ฉบับที่ 2 สำหรับผู้ถูกหักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน';
+    case 'COPY_PAYER_RECORD':
+      return 'สำเนาสำหรับผู้หักภาษี ณ ที่จ่าย เก็บไว้เป็นหลักฐาน';
+    default:
+      return '';
+  }
 }
 
-function vendorAddress(v: Vendor): string {
-  return (v.address || '').trim();
+function paymentMethodTh(m: PaymentMethod): string {
+  switch (m) {
+    case 'TRANSFER':
+      return 'โอนเงิน';
+    case 'CASH':
+      return 'เงินสด';
+    case 'CHEQUE':
+      return 'เช็ค';
+    default:
+      return 'อื่น ๆ';
+  }
 }
 
-function incomeTypeLineHtml(purchase: Purchase): string {
-  const isService = purchase.purchaseLineMode === 'SERVICE';
-  return `${isService ? '☐' : '☑'} ค่าจ้างทำของ &nbsp; ${isService ? '☑' : '☐'} ค่าจ้างเหมา / ค่าบริการ`;
+function taxConditionChecks(tc: WhtTaxCondition, otherRemark?: string): string {
+  const oth = (otherRemark || '').trim();
+  const mk = (on: boolean) => (on ? '☑' : '☐');
+  return `
+<div class="checkbox-row">${mk(tc === 'WITHHOLDING')} หัก ณ ที่จ่าย</div>
+<div class="checkbox-row">${mk(tc === 'TAX_PAID_BY_PAYER_FOREVER')} ออกภาษีให้ตลอดไป</div>
+<div class="checkbox-row">${mk(tc === 'TAX_PAID_BY_PAYER_ONE_TIME')} ออกภาษีให้ครั้งเดียว</div>
+<div class="checkbox-row">${mk(tc === 'OTHER')} อื่น ๆ: ${escapeHtml(tc === 'OTHER' && oth ? oth : '_____________________________')}</div>`;
 }
 
-export interface WithholdingCertificate50TwInput {
-  company: CompanyProfileForWhtCert | null | undefined;
-  vendor: Vendor;
-  purchase: Purchase;
-  bill: PurchaseVendorBill;
-  milestone: PurchasePaymentMilestone | null | undefined;
-  baseBeforeVat: number;
-  wht: number;
-  netPaid: number;
-  grossInclVat: number;
-  whtRatePercent: number;
-  paymentDateMs: number;
-  /** เลขที่หนังสือรับรองจากระบบ (number_sequences) */
-  certificateNo: string;
-  /** ผู้กดพิมพ์ */
-  issuerDisplayName: string;
+function incomeTypeCheckboxes(doc: WithholdingCertificateDocument): string {
+  const goods = doc.incomeTypeCode === 'GOODS_MANUFACTURING';
+  const service = doc.incomeTypeCode === 'SERVICE_CONTRACT';
+  const other = doc.incomeTypeCode === 'OTHER';
+  return `${goods ? '☑' : '☐'} ค่าจ้างทำของ &nbsp; ${service ? '☑' : '☐'} ค่าจ้างเหมา / ค่าบริการ${
+    other ? ` &nbsp; ☑ อื่น ๆ (${escapeHtml(doc.incomeTypeDisplayTh)})` : ''
+  }`;
 }
 
-export function buildWithholdingCertificate50TwHtml(input: WithholdingCertificate50TwInput): string {
-  const {
-    company,
-    vendor,
-    purchase,
-    bill,
-    milestone,
-    baseBeforeVat,
-    wht,
-    netPaid,
-    grossInclVat,
-    whtRatePercent,
-    paymentDateMs,
-    certificateNo,
-    issuerDisplayName,
-  } = input;
+function payerTaxpayerTypeTh(t?: string): string {
+  if (t === 'PERSON') return 'บุคคลธรรมดา';
+  if (t === 'OTHER') return 'อื่น ๆ';
+  return 'นิติบุคคล';
+}
 
-  const vatAmount = roundMoney2(grossInclVat - baseBeforeVat);
-  const certParts = datePartsBE(paymentDateMs);
-  const payParts = datePartsBE(paymentDateMs);
+function payeeCategoryTh(c: WithholdingCertificateDocument['payee']['vendorCategory']): string {
+  switch (c) {
+    case 'INDIVIDUAL':
+      return 'บุคคลธรรมดา';
+    case 'FOREIGN':
+      return 'คู่ค้าต่างประเทศ';
+    case 'OTHER':
+      return 'อื่น ๆ';
+    default:
+      return 'นิติบุคคล (ในประเทศ)';
+  }
+}
 
-  const payerName = (company?.companyNameTh || '').trim() || '_______________________________';
-  const payerTax = (company?.taxId || '').trim() || '_______________________';
-  const payerAddr = payerAddress(company) || '________________________________________________';
-  const payerIsHead = company?.branchType !== 'branch';
-  const payerBranchNo = (company?.branchNo || '').trim();
+/**
+ * สร้าง HTML สำหรับพิมพ์จาก snapshot เอกสาร (ข้อมูลเดียวกันทุกฉบับ เปลี่ยนแค่ copyVariant / official)
+ */
+export function buildWithholdingCertificateDocumentHtml(
+  doc: WithholdingCertificateDocument,
+  opts: WithholdingCertificateDocumentPrintOptions,
+): string {
+  const cnRaw = (doc.certificateNo || '').trim();
+  const cn = escapeHtml(
+    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
+  );
 
-  const payeeName = (vendor.vendorName || '').trim() || '—';
-  const payeeTax = (vendor.taxId || '').trim() || '_______________________';
-  const payeeAddr = vendorAddress(vendor) || '________________________________________________';
-  const payeeIsHead = vendor.branchType !== 'branch';
-  const payeeBranchNo = (vendor.branchNo || '').trim();
+  const issueDateDisp = formatYmdLocalThaiBE(doc.paymentIssueDate, '____/____/________');
+  const payDateDisp = formatYmdLocalThaiBE(doc.paymentDate, '____/____/________');
 
-  const billRefNo = (bill.receiptNo || '').trim() || '__________';
-  const workDetailParts = [
-    milestone?.label ? `งวดชำระ: ${milestone.label}` : '',
-    purchase.notes ? `หมายเหตุ PO: ${purchase.notes}` : '',
-    bill.notes ? `ใบวางบิล: ${bill.notes}` : '',
-  ].filter(Boolean);
-  const workDetail = workDetailParts.length ? workDetailParts.join(' · ') : '________________________________________';
+  const payer = doc.payer;
+  const payee = doc.payee;
+  const payerIsHead = payer.branchType === 'HEAD_OFFICE';
+  const payeeIsHead = payee.branchType === 'HEAD_OFFICE';
 
-  const whtWords = amountToThaiBahtText(wht);
+  const whtWords = amountToThaiBahtText(doc.withholdingTaxAmount);
+
+  const sigUrl = opts.showSignatureImage ? (doc.signatureImageUrl || '').trim() : '';
+  const stampUrl = opts.showCompanyStamp ? (doc.companyStampImageUrl || '').trim() : '';
 
   const css = `
     @page { size: A4; margin: 10mm 12mm; }
@@ -125,6 +142,15 @@ export function buildWithholdingCertificate50TwHtml(input: WithholdingCertificat
       line-height: 1.35;
       color: #111;
       margin: 0;
+    }
+    .copy-banner {
+      text-align: center;
+      font-weight: bold;
+      font-size: 11px;
+      border: 1px solid #333;
+      padding: 5px 8px;
+      margin-bottom: 6px;
+      background: #fafafa;
     }
     .doc-top { position: relative; margin-bottom: 8px; min-height: 52px; }
     .doc-title-wrap { text-align: center; padding: 0 175px; }
@@ -137,7 +163,7 @@ export function buildWithholdingCertificate50TwHtml(input: WithholdingCertificat
       text-align: right;
       font-size: 10.5px;
       line-height: 1.45;
-      max-width: 240px;
+      max-width: 260px;
     }
     .doc-meta div { margin-bottom: 3px; }
     .sec {
@@ -149,11 +175,15 @@ export function buildWithholdingCertificate50TwHtml(input: WithholdingCertificat
       font-size: 11.5px;
     }
     .field { margin: 2px 0 3px; font-size: 10.5px; }
+    .muted { color: #444; font-size: 10px; }
     table.amounts { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: 10.5px; }
     table.amounts td { padding: 2px 5px; vertical-align: top; }
     table.amounts td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .checkbox-row { margin: 3px 0; font-size: 10.5px; }
     .certify-block { margin-top: 6px; font-size: 10.5px; }
+    .sign-grid { display: table; width: 100%; margin-top: 10px; }
+    .sign-cell { display: table-cell; width: 50%; vertical-align: top; padding-right: 12px; font-size: 10.5px; }
+    .sign-img { max-height: 56px; max-width: 180px; object-fit: contain; margin-top: 4px; }
     .footer-sys {
       margin-top: 10px;
       padding-top: 6px;
@@ -162,12 +192,20 @@ export function buildWithholdingCertificate50TwHtml(input: WithholdingCertificat
       color: #333;
       text-align: right;
     }
+    .draft-watermark {
+      color: #999;
+      font-size: 10px;
+      text-align: center;
+      margin-bottom: 4px;
+    }
   `;
 
-  const cn = escapeHtml(certificateNo);
+  const banner = escapeHtml(copyVariantBannerTh(opts.copyVariant));
 
   return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองการหักภาษี ณ ที่จ่าย ${cn}</title>
 <style>${css}</style></head><body>
+${!opts.official ? '<div class="draft-watermark">[ ตัวอย่างก่อนออกเอกสาร — ไม่ใช่หลักฐานทางการ ]</div>' : ''}
+<div class="copy-banner">${banner}</div>
 <div class="doc-top">
   <div class="doc-title-wrap">
     <h1>หนังสือรับรองการหักภาษี ณ ที่จ่าย</h1>
@@ -175,54 +213,84 @@ export function buildWithholdingCertificate50TwHtml(input: WithholdingCertificat
   </div>
   <div class="doc-meta">
     <div><strong>เลขที่</strong> ${cn}</div>
-    <div><strong>วันที่ออกหนังสือรับรอง</strong><br/>${certParts.d} / ${certParts.m} / ${certParts.y}</div>
+    <div><strong>วันที่ออกหนังสือรับรอง</strong><br/>${escapeHtml(issueDateDisp)}</div>
+    <div><strong>วันที่จ่ายเงิน</strong><br/>${escapeHtml(payDateDisp)}</div>
   </div>
 </div>
 
 <div class="sec">1. ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>
-<div class="field">ชื่อบริษัท/ห้าง: ${escapeHtml(payerName)}</div>
-<div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payerTax)}</div>
-<div class="field">ที่อยู่: ${escapeHtml(payerAddr)}</div>
-<div class="field">สาขา: ${payerIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payerIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payerIsHead && payerBranchNo ? payerBranchNo : '__________')}</div>
+<div class="field">ชื่อบริษัท/ห้าง: ${escapeHtml(payer.legalNameTh || '—')}</div>
+${payer.legalNameEn ? `<div class="field muted">Name (EN): ${escapeHtml(payer.legalNameEn)}</div>` : ''}
+<div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payer.taxId || '—')}</div>
+<div class="field">ประเภทผู้เสียภาษี: ${escapeHtml(payerTaxpayerTypeTh(payer.taxpayerType))}</div>
+<div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payer.addressTh || '—')}</div>
+${payer.addressEn ? `<div class="field">ที่อยู่ (English): ${escapeHtml(payer.addressEn)}</div>` : ''}
+${payer.phone || payer.email ? `<div class="field">โทรศัพท์ / อีเมล: ${escapeHtml([payer.phone, payer.email].filter(Boolean).join(' · ') || '—')}</div>` : ''}
+<div class="field">สาขา: ${payerIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payerIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payerIsHead && payer.branchNo ? payer.branchNo : '__________')}</div>
 
 <div class="sec">2. ผู้ถูกหักภาษี ณ ที่จ่าย / คู่ค้า / ผู้รับจ้าง</div>
-<div class="field">ชื่อบุคคล/บริษัท/ห้าง: ${escapeHtml(payeeName)}</div>
-<div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payeeTax)}</div>
-<div class="field">ที่อยู่: ${escapeHtml(payeeAddr)}</div>
-<div class="field">สาขา: ${payeeIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payeeIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payeeIsHead && payeeBranchNo ? payeeBranchNo : '__________')}</div>
+<div class="field">ชื่อบุคคล/บริษัท/ห้าง: ${escapeHtml(payee.displayName || '—')}</div>
+<div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payee.taxId || '—')}</div>
+<div class="field">ประเภทคู่ค้า: ${escapeHtml(payeeCategoryTh(payee.vendorCategory))}${payee.countryCode ? ` · รหัสประเทศ ${escapeHtml(payee.countryCode)}` : ''}</div>
+<div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payee.addressTh || '—')}</div>
+${payee.addressEn ? `<div class="field">ที่อยู่ (English): ${escapeHtml(payee.addressEn)}</div>` : ''}
+<div class="field">สาขา: ${payeeIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payeeIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payeeIsHead && payee.branchNo ? payee.branchNo : '__________')}</div>
 
 <div class="sec">3. รายละเอียดการจ่ายเงิน</div>
-<div class="field">ประเภทเงินได้: ${incomeTypeLineHtml(purchase)}</div>
-<div class="field">อ้างอิงเอกสาร: ใบแจ้งหนี้/ใบวางบิล/ใบกำกับภาษี เลขที่ ${escapeHtml(billRefNo)}</div>
-<div class="field">รายละเอียดงาน: ${escapeHtml(workDetail)}</div>
-<div class="field">วันที่จ่ายเงิน: ${payParts.d} / ${payParts.m} / ${payParts.y}</div>
+<div class="field">ประเภทเงินได้: ${incomeTypeCheckboxes(doc)}</div>
+<div class="field muted">รหัสภายในระบบ: ${escapeHtml(doc.incomeTypeCode)}${doc.withholdingIncomeCode ? ` · รหัสรายได้ (เตรียมส่งออก): ${escapeHtml(doc.withholdingIncomeCode)}` : ''} · แบบหัก ณ ที่จ่าย: ${escapeHtml(doc.withholdingFormType)}${doc.formTypeCode ? ` · formTypeCode: ${escapeHtml(doc.formTypeCode)}` : ''}</div>
+<div class="field">อ้างอิงใบวางบิล/ใบแจ้งหนี้ เลขที่ ${escapeHtml(doc.referenceVendorBillNo || '—')}</div>
+${doc.referencePurchaseNo ? `<div class="field">อ้างอิงใบสั่งซื้อ (PO) เลขที่ ${escapeHtml(doc.referencePurchaseNo)}</div>` : ''}
+${doc.referenceTaxInvoiceNo ? `<div class="field">อ้างอิงใบกำกับภาษี เลขที่ ${escapeHtml(doc.referenceTaxInvoiceNo)}</div>` : ''}
+${doc.referencePaymentNo ? `<div class="field">อ้างอิงการจ่ายเงิน (cashbook) เลขที่ ${escapeHtml(doc.referencePaymentNo)}</div>` : ''}
+<div class="field">รายละเอียดงาน / บริการ: ${escapeHtml(doc.jobDescription || '—')}</div>
+<div class="field">วิธีชำระเงิน: ${escapeHtml(paymentMethodTh(doc.paymentMethod))}</div>
+${doc.bankName ? `<div class="field">ธนาคารที่จ่าย: ${escapeHtml(doc.bankName)}${doc.bankAccountLast4 ? ` (เลขบัญชีปลาย 4 หลัก **${escapeHtml(doc.bankAccountLast4)})` : ''}</div>` : ''}
+${doc.sendingBankName && doc.sendingBankName !== doc.bankName ? `<div class="field">ธนาคารผู้โอน (ส่งข้อมูลอิเล็กทรอนิกส์): ${escapeHtml(doc.sendingBankName)}</div>` : ''}
+${doc.paymentReferenceNo ? `<div class="field">เลขที่อ้างอิงการชำระเงิน: ${escapeHtml(doc.paymentReferenceNo)}</div>` : ''}
 
 <table class="amounts" aria-label="ยอดเงิน">
-  <tr><td>จำนวนเงินค่าจ้างก่อน VAT</td><td>${fmtBaht(baseBeforeVat)} บาท</td></tr>
-  <tr><td>VAT 7%</td><td>${fmtBaht(vatAmount)} บาท</td></tr>
-  <tr><td><strong>ยอดรวมตามใบแจ้งหนี้</strong></td><td><strong>${fmtBaht(grossInclVat)} บาท</strong></td></tr>
-  <tr><td>ฐานภาษีหัก ณ ที่จ่าย</td><td>${fmtBaht(baseBeforeVat)} บาท</td></tr>
-  <tr><td>อัตราภาษีหัก ณ ที่จ่าย</td><td>${escapeHtml(String(whtRatePercent))}%</td></tr>
-  <tr><td>จำนวนภาษีที่หักไว้</td><td>${fmtBaht(wht)} บาท</td></tr>
-  <tr><td><strong>ยอดเงินสุทธิที่จ่ายให้คู่ค้า</strong></td><td><strong>${fmtBaht(netPaid)} บาท</strong></td></tr>
+  <tr><td>จำนวนเงินค่าจ้างก่อน VAT</td><td>${fmtBaht(doc.amountBeforeVat)} บาท</td></tr>
+  <tr><td>VAT 7%</td><td>${fmtBaht(doc.vatAmount)} บาท</td></tr>
+  <tr><td><strong>ยอดรวมตามใบแจ้งหนี้ (รวม VAT)</strong></td><td><strong>${fmtBaht(doc.grossAmount)} บาท</strong></td></tr>
+  <tr><td>ฐานภาษีหัก ณ ที่จ่าย</td><td>${fmtBaht(doc.withholdingTaxBase)} บาท</td></tr>
+  <tr><td>อัตราภาษีหัก ณ ที่จ่าย</td><td>${escapeHtml(String(doc.withholdingTaxRatePercent))}%</td></tr>
+  <tr><td>จำนวนภาษีที่หักไว้</td><td>${fmtBaht(doc.withholdingTaxAmount)} บาท</td></tr>
+  <tr><td><strong>ยอดเงินสุทธิที่จ่ายให้คู่ค้า</strong></td><td><strong>${fmtBaht(doc.netPaidAmount)} บาท</strong></td></tr>
 </table>
 
 <div class="field">ตัวอักษรจำนวนภาษีที่หักไว้: ${escapeHtml(whtWords)}</div>
 
 <div class="sec">4. เงื่อนไขการหักภาษี</div>
-<div class="checkbox-row">☑ หัก ณ ที่จ่าย</div>
-<div class="checkbox-row">☐ ออกภาษีให้ตลอดไป</div>
-<div class="checkbox-row">☐ ออกภาษีให้ครั้งเดียว</div>
-<div class="checkbox-row">☐ อื่น ๆ: _____________________________________________</div>
+${taxConditionChecks(doc.taxCondition, doc.taxConditionOtherRemark)}
 
 <div class="sec">5. ผู้จ่ายเงิน / ผู้รับรอง</div>
 <div class="certify-block">ข้าพเจ้าขอรับรองว่า ข้อความและตัวเลขข้างต้นถูกต้องตรงตามความเป็นจริงทุกประการ</div>
+<div class="sign-grid">
+  <div class="sign-cell">
+    <div><strong>ลงชื่อ</strong> ${escapeHtml(doc.authorizedSignerName || '_______________________')}</div>
+    <div>${escapeHtml(doc.signerPosition || 'ตำแหน่ง _______________')}</div>
+    ${sigUrl ? `<img class="sign-img" src="${escapeHtml(sigUrl)}" alt="signature" />` : ''}
+  </div>
+  <div class="sign-cell">
+    ${stampUrl ? `<div><strong>ตราประทับบริษัท</strong></div><img class="sign-img" src="${escapeHtml(stampUrl)}" alt="stamp" />` : '<div class="muted">ตราประทับ (ถ้ามี)</div>'}
+  </div>
+</div>
+<div class="field" style="margin-top:8px;">
+  <strong>ผู้ออกเอกสาร:</strong> ${escapeHtml(doc.issuedByName || '—')} &nbsp;|&nbsp;
+  <strong>ผู้พิมพ์:</strong> ${escapeHtml(opts.printedByName)} &nbsp;|&nbsp;
+  <strong>วันเวลาที่พิมพ์:</strong> ${escapeHtml(formatDateTimeThaiBE(opts.printedAtMs) || '—')}
+</div>
 
-<p class="footer-sys">เอกสารออกจากระบบ OPEC OpsFlow โดย ${escapeHtml(issuerDisplayName)}</p>
+<p class="footer-sys">
+  เอกสารนี้ออกจากระบบ OPEC OpsFlow<br/>
+  ${opts.showSystemGeneratedNote && (!sigUrl || !stampUrl) ? '<span>เอกสารนี้จัดทำโดยระบบอิเล็กทรอนิกส์ หากไม่มีลายเซ็นและตราประทับ ให้ตรวจสอบความถูกต้องจากเลขที่เอกสารอ้างอิง</span><br/>' : ''}
+  สถานะเอกสาร: ${escapeHtml(doc.documentStatus)} · สถานะไฟล์ XML ภายใน: ${escapeHtml(doc.xmlExportStatus || doc.whtElectronicData?.xmlExportStatus || 'NOT_EXPORTED')}
+</p>
 </body></html>`;
 }
 
-/** เปิดหน้าต่างพิมพ์หลังสร้าง HTML และออกเลขที่แล้ว */
+/** เปิดหน้าต่างพิมพ์หลังสร้าง HTML */
 export function openWithholdingCertificatePrintWindow(html: string): void {
   const w = window.open('', '_blank');
   if (!w) return;

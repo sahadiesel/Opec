@@ -941,7 +941,7 @@ export default function Home() {
                 )}
                 {check('vendors', 'view') && <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />}
                 {check('purchases', 'view') && (
-                  <ShortcutLink href="/purchases" label="การสั่งซื้อ" sub="Purchases" />
+                  <ShortcutLink href="/purchases" label="ใบสั่งซื้อ(PO)" sub="Purchase Order" />
                 )}
               </ShortcutGroup>
             )}

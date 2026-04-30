@@ -30,8 +30,8 @@ import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, getDoc } from 'firebase/firestore';
-import { PayrollBatch, PayrollBatchLine, User, PayrollPeriod, Worker } from '@/lib/types';
+import { doc, collection, getDoc, query, where } from 'firebase/firestore';
+import { BankAccount, PayrollBatch, PayrollBatchLine, User, PayrollPeriod, Worker } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -53,6 +53,24 @@ import { PayrollService } from '@/lib/services/payroll-service';
 import { buildWorkerPayrollBankVerificationCsv } from '@/lib/payroll/worker-payroll-bank-csv';
 import { useToast } from '@/hooks/use-toast';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -76,6 +94,8 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
     () => new Map()
   );
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmPaidOpen, setConfirmPaidOpen] = useState(false);
+  const [payoutBankId, setPayoutBankId] = useState('');
   const [payoutActionBusy, setPayoutActionBusy] = useState(false);
   const canEditBatch = payrollPerm('payroll_worker', 'edit_batch');
   const canApproveWorker = payrollPerm('payroll_worker', 'approve');
@@ -106,6 +126,33 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
   const { profile: companyProfile } = useCompanyDocumentProfile();
+
+  const bankAccountsQuery = useMemoFirebase(
+    () => (firestore && canViewBatch ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE')) : null),
+    [firestore, canViewBatch]
+  );
+  const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
+  const activeBanks = useMemo(() => {
+    const list = (bankAccounts || []).slice();
+    list.sort((a, b) => (a.accountCode || '').localeCompare(b.accountCode || 'th-TH', 'th', { numeric: true }));
+    return list;
+  }, [bankAccounts]);
+
+  useEffect(() => {
+    if (batch?.payoutBankAccountId) {
+      setPayoutBankId(batch.payoutBankAccountId);
+    } else {
+      setPayoutBankId('');
+    }
+  }, [batch?.payoutBankAccountId, batch?.id]);
+
+  const payoutAccountLabel = useMemo(() => {
+    if (!batch?.payoutBankAccountId) return null;
+    const b = activeBanks.find((x) => x.id === batch.payoutBankAccountId);
+    return b
+      ? `${b.accountName} — ${b.bankName} (…${(b.accountNumber || '').slice(-4)}) [${b.accountCode}]`
+      : batch.payoutBankAccountId;
+  }, [batch, activeBanks]);
 
   useEffect(() => {
     if (!firestore || !lines?.length) {
@@ -187,11 +234,17 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
 
   const handleConfirmPaid = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
+    const bankId = payoutBankId.trim();
+    if (!bankId) {
+      toast({ variant: 'destructive', title: 'ยังไม่ได้เลือกบัญชี', description: 'กรุณาเลือกบัญชีธนาคารที่ต้องการตัดจ่าย' });
+      return;
+    }
     setConfirmBusy(true);
     try {
       const svc = new PayrollService(firestore);
-      await svc.financeConfirmWorkerBatchPaid(batch.id, currentUser as User);
-      toast({ title: 'ยืนยันจ่ายแล้ว', description: 'บันทึกสถานะ PAID และรายการ cashbook แล้ว' });
+      await svc.financeConfirmWorkerBatchPaid(batch.id, currentUser as User, { payoutBankAccountId: bankId });
+      setConfirmPaidOpen(false);
+      toast({ title: 'ยืนยันจ่ายแล้ว', description: 'บันทึกสถานะ PAID และรายการ cashbook จากบัญชีที่เลือกแล้ว' });
     } catch (e) {
       toast({
         variant: 'destructive',
@@ -201,7 +254,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
     } finally {
       setConfirmBusy(false);
     }
-  }, [firestore, batch, currentUser, toast]);
+  }, [firestore, batch, currentUser, toast, payoutBankId]);
 
   if (userLoading || isBatchLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
@@ -358,38 +411,110 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
             <CardHeader className="pb-2">
               <CardTitle className="text-base">บัญชี · ตรวจโอน payroll</CardTitle>
               <CardDescription>
-                หลังส่งต่อบัญชี (FINANCE_PREPARED) ดาวน์โหลด CSV รายชุดเพื่อตรวจกับธนาคาร — เมื่อโอนจริงแล้วให้บัญชีกดยืนยันจ่ายเพื่อบันทึก cashbook
+                หลังส่งต่อบัญชี (FINANCE_PREPARED) ดาวน์โหลด CSV รายชุดเพื่อตรวจกับธนาคาร — เมื่อโอนจริงแล้วให้บัญชีกด
+                ยืนยันจ่าย (เฉพาะที่หน้านี้) จะขึ้นหน้าต่างให้ <strong>เลือกบัญชีธนาคาร</strong> ก่อน — จึงบันทึก PAID + ตัด cashbook/ยอดบัญชี
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-wrap items-center gap-2">
-              {canBankCheckCsv && lines && lines.length > 0 && (
-                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleDownloadBankCsv}>
-                  <FileSpreadsheet className="h-4 w-4" />
-                  ดาวน์โหลด CSV ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)
-                </Button>
+            <CardContent className="space-y-2">
+              {batch.status === 'PAID' && payoutAccountLabel && (
+                <p className="text-sm text-muted-foreground">
+                  บัญชีที่ตัดจ่าย: <span className="font-medium text-foreground">{payoutAccountLabel}</span>
+                </p>
               )}
-              {showAccountingConfirm && (
-                <Button type="button" size="sm" disabled={confirmBusy} onClick={() => void handleConfirmPaid()}>
-                  {confirmBusy ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" /> กำลังบันทึก…
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      บัญชียืนยันจ่ายแล้ว (PAID + cashbook)
-                    </>
-                  )}
-                </Button>
-              )}
-              {batch.financeCashbookEntryId ? (
-                <span className="text-xs text-muted-foreground font-mono">
-                  Cashbook ref: {batch.financeCashbookEntryId}
-                </span>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {canBankCheckCsv && lines && lines.length > 0 && (
+                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleDownloadBankCsv}>
+                    <FileSpreadsheet className="h-4 w-4" />
+                    ดาวน์โหลด CSV ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)
+                  </Button>
+                )}
+                {showAccountingConfirm && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={confirmBusy}
+                    onClick={() => {
+                      if (!activeBanks.length) {
+                        toast({
+                          variant: 'destructive',
+                          title: 'ยังไม่มีบัญชี',
+                          description: 'ตั้งค่าบัญชีธนาคาร (ACTIVE) ในระบบก่อน',
+                        });
+                        return;
+                      }
+                      setPayoutBankId((prev) => (prev && activeBanks.some((b) => b.id === prev) ? prev : (activeBanks[0]?.id ?? '')));
+                      setConfirmPaidOpen(true);
+                    }}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    บัญชียืนยันจ่ายแล้ว (เลือกบัญชีตัดจ่าย)…
+                  </Button>
+                )}
+                {batch.financeCashbookEntryId ? (
+                  <span className="text-xs text-muted-foreground font-mono">
+                    Cashbook ref: {batch.financeCashbookEntryId}
+                  </span>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         )}
+
+        <AlertDialog open={confirmPaidOpen} onOpenChange={setConfirmPaidOpen}>
+          <AlertDialogContent className="max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>ยืนยันจ่าย — เลือกบัญชีตัดจ่าย</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-sm text-left">
+                  <p>
+                    งวด <span className="font-mono font-semibold">{batch.id}</span> ยอดสุทธิ{' '}
+                    <span className="font-semibold">฿{safeNum(batch.netAmount).toLocaleString()}</span> จะถูกลงรายจ่าย
+                    ใน <strong>สมุดบัญชีเงินสด/ธนาคาร (cashbook)</strong> และลดยอด <strong>current balance</strong> ของบัญชีที่เลือก
+                    ทันที — ตรวจสอบก่อนกดยืนยัน
+                  </p>
+                  {activeBanks.length === 0 ? (
+                    <p className="text-destructive">ไม่พบบัญชีธนาคารสถานะ ACTIVE — ไปตั้งค่าเมนูบัญชี/ธนาคาร</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label>บัญชีสำหรับตัดจ่าย (บังคับเลือก)</Label>
+                      <Select value={payoutBankId} onValueChange={setPayoutBankId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="เลือกบัญชี" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activeBanks.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.accountName} — {b.bankName} (…{String(b.accountNumber || '').slice(-4)}) · ยอดคงเหลือ ฿
+                              {Number(b.currentBalance || 0).toLocaleString()} [รหัส {b.accountCode}]
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <p className="text-xs text-amber-800 dark:text-amber-200/90 border border-amber-200/80 rounded-md p-2 bg-amber-50/80 dark:bg-amber-950/30">
+                    กรณีตัดผิดบัญชี: รายการ cashbook ที่สร้างแล้ว (ref บนหน้านี้) ต้องแก้ทางบัญชีด้วย{' '}
+                    <strong>รายการรับ/จ่ายย้อน</strong> หรือปรับยอดระหว่างบัญชี ระบบยังไม่มี «ยกเลิกอัตโนมัติ» จาก batch —
+                    ติดต่อผู้ดูแล/บัญชีเพื่อเดบิต/เครดิตแก้ไขและสมุดสลากให้สอดคล้อง
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={confirmBusy}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={confirmBusy || !payoutBankId || activeBanks.length === 0}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmPaid();
+                }}
+                className="bg-primary"
+              >
+                {confirmBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} ยืนยันตัดจากบัญชีนี้
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Tabs defaultValue="lines" className="w-full">
           <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50">

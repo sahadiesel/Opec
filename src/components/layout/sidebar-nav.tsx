@@ -40,6 +40,8 @@ import {
   ChevronRight,
   Percent,
   Receipt,
+  FileQuestion,
+  Calculator,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -142,18 +144,51 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
   },
 ];
 
+/** รายการเมนูใต้ «เงินเดือน (บัญชี)» — รองรับโฟลเดอร์ย่อย (เช่น เงินเดือนผู้บริหาร) */
+type AccountingPayrollNavFolder = {
+  kind: 'folder';
+  folderKey: string;
+  title: string;
+  icon: ComponentType<{ className?: string }>;
+  children: NavItem[];
+};
+type AccountingPayrollNavEntry = NavItem | AccountingPayrollNavFolder;
+
+function isAccountingPayrollFolder(e: AccountingPayrollNavEntry): e is AccountingPayrollNavFolder {
+  return 'kind' in e && e.kind === 'folder';
+}
+
 const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
   title: string;
   icon: ComponentType<{ className?: string }>;
-  items: NavItem[];
+  entries: AccountingPayrollNavEntry[];
 }> = [
   {
     title: 'เงินเดือน (บัญชี)',
     icon: Coins,
-    items: [
+    entries: [
       { key: 'office_payroll', title: 'พนักงานออฟฟิศ (ตัดจ่าย)', href: '/office-payroll', icon: Users },
-      { key: 'worker_payroll', title: 'ลูกจ้าง (รอตัดจ่าย · หลังอนุมัติ)', href: '/payroll/batches?payout=1', icon: Banknote },
-      { key: 'executive_payroll', title: 'ผู้บริหาร (ความลับ)', href: '/accounting/executive-payroll', icon: LockKeyhole },
+      { key: 'worker_payroll', title: 'ลูกจ้าง (คิวตัดจ่าย · ส่งถึงบัญชีแล้ว)', href: '/payroll/batches?payout=1', icon: Banknote },
+      {
+        kind: 'folder',
+        folderKey: 'executive_payroll_folder',
+        title: 'เงินเดือนผู้บริหาร',
+        icon: LockKeyhole,
+        children: [
+          {
+            key: 'executive_payroll',
+            title: 'การคำนวณการจ่ายเงิน',
+            href: '/accounting/executive-payroll',
+            icon: Calculator,
+          },
+          {
+            key: 'executive_payroll',
+            title: 'รายชื่อผู้บริหาร',
+            href: '/accounting/executive-payroll/staff',
+            icon: UserSearch,
+          },
+        ],
+      },
     ],
   },
 ];
@@ -162,8 +197,14 @@ function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
   return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
 
-/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า» */
-const OPS_WAREHOUSE_SUB_PATHS = ['/store', '/store/vendor-bills', '/vendors', '/purchases'] as const;
+/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า» — PR ก่อน แล้วค่อย PO (ใบสั่งซื้อสร้างจาก PR) */
+const OPS_WAREHOUSE_SUB_PATHS = [
+  '/store/purchase-requests',
+  '/store',
+  '/store/vendor-bills',
+  '/vendors',
+  '/purchases',
+] as const;
 
 /** แดชบอร์ดเดียว: ฝ่าย HR กด «แดชบอร์ด» ที่ Overview ไป /hr/dashboard (ไม่ซ้ำกับลิงก์ใน HR) */
 function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavGroup[] {
@@ -220,6 +261,12 @@ const navGroups: NavGroup[] = [
       { key: 'assignments', title: UI_LABELS.ASSIGNMENTS, href: '/assignments', icon: UserPlus },
       { key: 'mobilization', title: UI_LABELS.MOBILIZATION, href: '/mobilization', icon: Truck },
       { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
+      {
+        key: 'store_inventory',
+        title: 'การขออนุมัติสั่งซื้อ (PR)',
+        href: '/store/purchase-requests',
+        icon: FileQuestion,
+      },
       { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
       { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
       {
@@ -307,6 +354,12 @@ function navGroupsForUser(user: User): NavGroup[] {
           items: [
             {
               key: 'store_inventory',
+              title: 'การขออนุมัติสั่งซื้อ (PR)',
+              href: '/store/purchase-requests',
+              icon: FileQuestion,
+            },
+            {
+              key: 'store_inventory',
               title: 'รับวางบิล (Vendor billing)',
               href: '/store/vendor-bills',
               icon: FileText,
@@ -375,10 +428,21 @@ export function SidebarNav({
               visibleItems: sub.items.filter(filterNav),
             })).filter((s) => s.visibleItems.length > 0);
 
+            const filterPayrollEntry = (entry: AccountingPayrollNavEntry): AccountingPayrollNavEntry | null => {
+              if (isAccountingPayrollFolder(entry)) {
+                const visibleChildren = entry.children.filter(filterNav);
+                if (visibleChildren.length === 0) return null;
+                return { ...entry, children: visibleChildren };
+              }
+              return filterNav(entry) ? entry : null;
+            };
+
             const payrollSubs = ACCOUNTING_PAYROLL_SUBSECTIONS.map((sub) => ({
               ...sub,
-              visibleItems: sub.items.filter(filterNav),
-            })).filter((s) => s.visibleItems.length > 0);
+              visibleEntries: sub.entries
+                .map(filterPayrollEntry)
+                .filter((e): e is AccountingPayrollNavEntry => e != null),
+            })).filter((s) => s.visibleEntries.length > 0);
 
             if (documentSubs.length === 0 && payrollSubs.length === 0 && !filterNav(ACCOUNTING_DASHBOARD_ITEM)) {
               return null;
@@ -446,7 +510,12 @@ export function SidebarNav({
                       );
                     })}
                     {payrollSubs.map((sub) => {
-                      const isSubActive = sub.visibleItems.some((it) => pathMatches(pathname, it.href));
+                      const isSubActive = sub.visibleEntries.some((entry) => {
+                        if (isAccountingPayrollFolder(entry)) {
+                          return entry.children.some((it) => pathMatches(pathname, it.href));
+                        }
+                        return pathMatches(pathname, entry.href);
+                      });
                       return (
                         <Collapsible key={sub.title} defaultOpen={isSubActive} className="group">
                           <SidebarMenuItem>
@@ -459,7 +528,54 @@ export function SidebarNav({
                             </CollapsibleTrigger>
                             <CollapsibleContent>
                               <SidebarMenuSub>
-                                {sub.visibleItems.map((item) => {
+                                {sub.visibleEntries.map((entry) => {
+                                  if (isAccountingPayrollFolder(entry)) {
+                                    const folderOpen = entry.children.some((it) => pathMatches(pathname, it.href));
+                                    const FolderIcon = entry.icon;
+                                    return (
+                                      <Collapsible
+                                        key={entry.folderKey}
+                                        defaultOpen={folderOpen}
+                                        className="group/subfolder"
+                                      >
+                                        <SidebarMenuSubItem>
+                                          <CollapsibleTrigger asChild>
+                                            <SidebarMenuSubButton
+                                              className="cursor-pointer text-xs font-bold"
+                                              size="sm"
+                                            >
+                                              <FolderIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                                              <span className="truncate">{entry.title}</span>
+                                              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 transition-transform duration-200 group-data-[state=open]/subfolder:rotate-90" />
+                                            </SidebarMenuSubButton>
+                                          </CollapsibleTrigger>
+                                        </SidebarMenuSubItem>
+                                        <CollapsibleContent>
+                                          {entry.children.map((item) => {
+                                            const active = pathMatches(pathname, item.href);
+                                            return (
+                                              <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
+                                                <SidebarMenuSubButton
+                                                  asChild
+                                                  isActive={active}
+                                                  size="sm"
+                                                  className="pl-6"
+                                                >
+                                                  <Link href={item.href}>
+                                                    <item.icon
+                                                      className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
+                                                    />
+                                                    <span>{item.title}</span>
+                                                  </Link>
+                                                </SidebarMenuSubButton>
+                                              </SidebarMenuSubItem>
+                                            );
+                                          })}
+                                        </CollapsibleContent>
+                                      </Collapsible>
+                                    );
+                                  }
+                                  const item = entry;
                                   const active = pathMatches(pathname, item.href);
                                   return (
                                     <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
@@ -688,7 +804,7 @@ export function SidebarNav({
                         <SidebarMenuItem>
                           <CollapsibleTrigger asChild>
                             <SidebarMenuButton
-                              tooltip="คลัง รับวางบิล คู่ค้า และจัดซื้อ"
+                              tooltip="PR (ขออนุมัติ) · คลัง · รับวางบิล · คู่ค้า · ใบสั่งซื้อ (จาก PR)"
                               className="transition-all duration-200"
                             >
                               <Warehouse className="h-4 w-4 text-muted-foreground" />

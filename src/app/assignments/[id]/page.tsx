@@ -4,7 +4,7 @@
 import { useState, use, useEffect, useMemo } from 'react';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessOpsSchedulingModules, hasMinimumLevel } from '@/lib/permission-core';
-import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -31,12 +31,14 @@ import {
   CheckCircle,
   Building2,
   FileText,
+  MapPin,
   Send,
   RotateCcw,
   Loader2
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, getDoc, collection, query, where } from 'firebase/firestore';
+import { doc, collection, query, where, deleteField, updateDoc } from 'firebase/firestore';
+import { Input } from '@/components/ui/input';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
@@ -52,7 +54,8 @@ import {
   Wave,
   ChecklistItemStatus,
   MainContract,
-  ExceptionRequest
+  ExceptionRequest,
+  POLine
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -70,33 +73,28 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const { toast } = useToast();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
   const canViewAssignments = useMatrixGuards ? canAccess(currentUser, 'assignments', 'view') : canView(currentUser, 'assignments');
+  const canEditAssignments = useMemo(
+    () => (useMatrixGuards ? canAccess(currentUser, 'assignments', 'edit') : canEdit(currentUser, 'assignments')),
+    [currentUser, useMatrixGuards],
+  );
 
-  const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchAssignment() {
-      if (!firestore || !canViewAssignments) {
-        setIsLoading(false);
-        return;
-      }
-      try {
-        const mobRef = doc(firestore, 'mobilizations', id);
-        const snap = await getDoc(mobRef);
-        if (snap.exists()) {
-          setAssignment(snap.data() as Assignment);
-        }
-      } catch (err) {
-        console.error('Failed to fetch assignment', err);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchAssignment();
-  }, [firestore, id, canViewAssignments]);
+  const mobRef = useMemoFirebase(
+    () => (firestore && canViewAssignments ? doc(firestore, 'mobilizations', id) : null),
+    [firestore, id, canViewAssignments],
+  );
+  const { data: assignment, isLoading: isMobLoading } = useDoc<Assignment>(mobRef as any);
 
   const workerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'workers', assignment.workerId) : null), [firestore, assignment?.workerId]);
   const { data: worker } = useDoc<Worker>(workerRef as any);
+
+  const poLineRef = useMemoFirebase(
+    () =>
+      firestore && assignment?.poId && assignment?.poLineId
+        ? doc(firestore, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId)
+        : null,
+    [firestore, assignment?.poId, assignment?.poLineId],
+  );
+  const { data: poLine } = useDoc<POLine>(poLineRef as any);
 
   const customerRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'customers', assignment.customerId) : null), [firestore, assignment?.customerId]);
   const { data: customer } = useDoc<Customer>(customerRef as any);
@@ -132,6 +130,73 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     );
   }, [currentUser]);
 
+  const [workLocationDraft, setWorkLocationDraft] = useState('');
+  const [isDemobilizing, setIsDemobilizing] = useState(false);
+
+  useEffect(() => {
+    if (!assignment) return;
+    setWorkLocationDraft(
+      (assignment.workLocation || poLine?.workLocation || '').toString().trim()
+    );
+  }, [assignment?.id, assignment?.workLocation, poLine?.id, poLine?.workLocation]);
+
+  const isDeploymentReleased = useMemo(
+    () =>
+      assignment
+        ? assignment.deploymentStatus === 'DEMOBILIZED' || assignment.deploymentStatus === 'CLOSED'
+        : false,
+    [assignment],
+  );
+
+  const handleSaveWorkLocation = () => {
+    if (!firestore || !currentUser || !canEditAssignments || !assignment) return;
+    const trimmed = workLocationDraft.trim();
+    const mobD = doc(firestore, 'mobilizations', id);
+    if (trimmed) {
+      updateDocumentNonBlocking(mobD, {
+        workLocation: trimmed,
+        workLocationUpdatedAt: Date.now(),
+        workLocationUpdatedByUserId: currentUser.id,
+        updatedAt: Date.now(),
+      });
+    } else {
+      updateDocumentNonBlocking(mobD, {
+        workLocation: deleteField(),
+        workLocationUpdatedAt: deleteField(),
+        workLocationUpdatedByUserId: deleteField(),
+        updatedAt: Date.now(),
+      });
+    }
+    toast({ title: 'บันทึกสถานที่แล้ว' });
+  };
+
+  const handleDemobilize = async () => {
+    if (!firestore || !currentUser || !canEditAssignments || !assignment || isDeploymentReleased) return;
+    if (
+      !window.confirm(
+        'บันทึกจบงาน (DEMOBILIZED) — รายนี้จะหลุดโควต้าและพร้อมมอบหมาย PO/งานอื่น ต้องการดำเนินการ?'
+      )
+    )
+      return;
+    setIsDemobilizing(true);
+    try {
+      await updateDoc(doc(firestore, 'mobilizations', id), {
+        deploymentStatus: 'DEMOBILIZED',
+        mobilizationStatus: 'DEMOBILIZED',
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'บันทึกจบงานแล้ว',
+        description: 'รายนี้ไม่นับโควต้า — พร้อมมอบหมายงานอื่น',
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
+    } finally {
+      setIsDemobilizing(false);
+    }
+  };
+
   const [reviewNote, setReviewNote] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -149,9 +214,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         toast({ title: "ปฏิเสธคำขอสำเร็จ" });
       }
       setReviewNote('');
-      // Reload assignment data
-      const snap = await getDoc(doc(firestore, 'mobilizations', id));
-      if (snap.exists()) setAssignment(snap.data() as Assignment);
     } catch (e: any) {
       toast({ variant: "destructive", title: "Action Failed", description: e.message });
     } finally {
@@ -159,7 +221,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  if (isLoading || userLoading || !currentUser) {
+  if (isMobLoading || userLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
 
@@ -284,9 +346,84 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด:</Label>
                     <p className="font-bold">{formatYmdLocalThaiBE(assignment.endDate)}</p>
                   </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5" /> สถานที่ (ปัจจุบัน)
+                    </Label>
+                    <p className="font-bold mt-0.5">
+                      {(assignment.workLocation || poLine?.workLocation || '—').toString() || '—'}
+                    </p>
+                    {poLine?.workLocation && !assignment?.workLocation ? (
+                      <p className="text-[10px] text-muted-foreground mt-1">ใช้ค่าจาก PO line จนกว่าจะบันทึก override บนรายนี้</p>
+                    ) : null}
+                  </div>
                 </div>
               </CardContent>
             </Card>
+
+            {canEditAssignments && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <MapPin className="h-5 w-5 text-primary" />
+                    แก้สถานที่ปฏิบัติงาน
+                  </CardTitle>
+                  <CardDescription>
+                    ลูกค้าเดิมย้าย site — แก้เฉพาะรายมอบหมายนี้ (ไม่เปลี่ยน PO หลัก)
+                    {poLine?.workLocation ? ` · ฐานจาก PO: ${poLine.workLocation}` : ''}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>สถานที่ (Work location)</Label>
+                    <Input
+                      value={workLocationDraft}
+                      onChange={(e) => setWorkLocationDraft(e.target.value)}
+                      placeholder="เช่น นิคมฯ ระยอง / โรงกลั่น X"
+                      className="font-medium"
+                    />
+                    {typeof assignment.workLocationUpdatedAt === 'number' && assignment.workLocationUpdatedAt > 0 ? (
+                      <p className="text-[10px] text-muted-foreground">
+                        อัปเดตล่าสุด: {formatDateTimeThaiBE(assignment.workLocationUpdatedAt)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button type="button" onClick={handleSaveWorkLocation} className="font-bold">
+                    บันทึกสถานที่
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {canEditAssignments && !isDeploymentReleased && (
+              <Card className="border-amber-200/80">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Truck className="h-5 w-5 text-amber-700" />
+                    จบงาน (Demobilize) เพื่อ re-assign
+                  </CardTitle>
+                  <CardDescription>
+                    ใช้เมื่อรายนี้ต้องหลุดโควต้า / ปลดพนักงานออกจาก mobilization ก่อนมอบหมาย PO หรือลูกค้าใหม่
+                  </CardDescription>
+                </CardHeader>
+                <CardFooter className="flex flex-col items-stretch gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="font-bold"
+                    onClick={handleDemobilize}
+                    disabled={isDemobilizing}
+                  >
+                    {isDemobilizing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                    )}
+                    บันทึกจบงาน (DEMOBILIZED)
+                  </Button>
+                </CardFooter>
+              </Card>
+            )}
           </div>
 
           <div className="space-y-6">

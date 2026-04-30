@@ -1,6 +1,6 @@
 /**
- * 3-tier access model (align with firestore.rules):
- * - admin: system_admin
+ * 3-tier access model — `isAdmin()` ใน firestore.rules รองรับ roleIds / accessGroup admin ให้สอดคล้องกับ isSystemAdmin() ในแอป
+ * - admin: system_admin (+ accessGroup/department เป็น admin ตามกฎ)
  * - accounting: accounting_manager | accounting_officer
  * - internal: any other active internal user (default)
  */

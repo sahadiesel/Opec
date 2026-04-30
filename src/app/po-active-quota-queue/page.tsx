@@ -3,7 +3,11 @@
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
-import { PoQuotaQueueCardShell, usePoQuotaQueueRows } from '@/components/ops/po-quota-queue';
+import {
+  PoPositionAggregateCardShell,
+  PoQuotaQueueCardShell,
+  usePoQuotaQueueRows,
+} from '@/components/ops/po-quota-queue';
 import { useMemo } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Info } from 'lucide-react';
@@ -16,7 +20,7 @@ export default function PoActiveQuotaQueuePage() {
     [currentUser],
   );
 
-  const { queueRows, customers, loading } = usePoQuotaQueueRows(canSee);
+  const { queueRows, positionAggregateRows, customers, loading } = usePoQuotaQueueRows(canSee);
 
   if (userLoading || !currentUser) {
     return null;
@@ -38,11 +42,13 @@ export default function PoActiveQuotaQueuePage() {
           <AlertTitle>ข้อมูลอ่านอย่างเดียว</AlertTitle>
           <AlertDescription className="text-sm">
             สำหรับฝ่ายปฏิบัติการและ HR — ตัวเลขคำนวณจาก PO line, Mobilization และ Wave เหมือนการ์ดสรุปบนหน้า PO
-            (เฉพาะ PO สายสัญญา + สัญญาหลัก active) — เปิด PO / Waves / Assign ต่อได้จากคอลัมน์ดำเนินการ
+            (เฉพาะ PO สายสัญญา + สัญญาหลัก active) — การ์ดล่างรวม<strong className="font-semibold text-foreground"> ข้ามทุก PO</strong> ตามตำแหน่ง
+            (เฟส C)
           </AlertDescription>
         </Alert>
 
         <PoQuotaQueueCardShell queueRows={queueRows} customers={customers} loading={loading} />
+        <PoPositionAggregateCardShell positionRows={positionAggregateRows} loading={loading} />
       </div>
     </AppShell>
   );

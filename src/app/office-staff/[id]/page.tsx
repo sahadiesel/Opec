@@ -667,7 +667,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="OFFICE">พนักงานสำนักงาน (Office payroll)</SelectItem>
-                        <SelectItem value="EXECUTIVE">ผู้บริหาร (Executive — งวดในเมนูบัญชี)</SelectItem>
+                        <SelectItem value="EXECUTIVE">
+                          ผู้บริหาร (งวดจ่ายที่บัญชี — ทะเบียน «รายชื่อผู้บริหาร» แยกจากหน้านี้)
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

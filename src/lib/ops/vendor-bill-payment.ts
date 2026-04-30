@@ -10,9 +10,24 @@ import {
   type Firestore,
   type DocumentReference,
 } from 'firebase/firestore';
-import type { PaymentMethod, Purchase, PurchasePaymentMilestone, PurchaseVendorBill, User } from '@/lib/types';
+import type {
+  BankAccount,
+  CashbookEntry,
+  PaymentMethod,
+  Purchase,
+  PurchasePaymentMilestone,
+  PurchaseVendorBill,
+  User,
+  Vendor,
+} from '@/lib/types';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { syncPurchasePaymentClosure, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
+import {
+  buildWithholdingCertificateDraft,
+  stripUndefinedForFirestore,
+  type CompanyProfileWhtInput,
+} from '@/lib/wht/wht-certificate-build';
+import { buildWhtAuditLogEntry } from '@/lib/wht/wht-certificate-audit';
 
 export async function executeVendorBillPayment(params: {
   firestore: Firestore;
@@ -25,7 +40,9 @@ export async function executeVendorBillPayment(params: {
   paymentMethod: PaymentMethod;
   entryDate: string;
   currentUser: User;
-}): Promise<{ cashbookEntryNo: string }> {
+  paymentProofUrl?: string;
+  paymentProofFileName?: string;
+}): Promise<{ cashbookEntryNo: string; createdWhtCertificateId?: string }> {
   const {
     firestore,
     billRef,
@@ -37,6 +54,8 @@ export async function executeVendorBillPayment(params: {
     paymentMethod,
     entryDate,
     currentUser,
+    paymentProofUrl,
+    paymentProofFileName,
   } = params;
 
   if (bill.status !== 'SUBMITTED') {
@@ -48,13 +67,14 @@ export async function executeVendorBillPayment(params: {
 
   const pid = bill.purchaseId || purchase.id;
   let grossInclVat = Number(bill.billAmount ?? purchase.totalAmount) || 0;
+  let linkedMilestone: PurchasePaymentMilestone | null = null;
 
   if (bill.milestoneId) {
     const mRef = doc(firestore, 'purchases', pid, 'payment_milestones', bill.milestoneId);
     const mSnap = await getDoc(mRef);
     if (mSnap.exists()) {
-      const md = mSnap.data() as PurchasePaymentMilestone;
-      grossInclVat = Number(md.amount) || grossInclVat;
+      linkedMilestone = { id: mSnap.id, ...mSnap.data() } as PurchasePaymentMilestone;
+      grossInclVat = Number(linkedMilestone.amount) || grossInclVat;
     }
   }
 
@@ -75,6 +95,8 @@ export async function executeVendorBillPayment(params: {
 
   const now = Date.now();
   const actor = currentUser.displayName || currentUser.email || '';
+
+  let createdWhtCertificateId: string | undefined;
 
   const { code: entryNo } = await generateNextDocumentCode(firestore, 'cashbook_entry', { actor });
 
@@ -100,7 +122,7 @@ export async function executeVendorBillPayment(params: {
     referenceId: bill.id,
     amount: amountFromBank,
     grossPaymentAmount: grossInclVat,
-    supplierWithholdingAmount: whtBreakdown && whtBreakdown.wht > 0.005 ? whtBreakdown.wht : undefined,
+    ...(whtBreakdown && whtBreakdown.wht > 0.005 ? { supplierWithholdingAmount: whtBreakdown.wht } : {}),
     description,
     paymentMethod,
     createdAt: now,
@@ -119,6 +141,12 @@ export async function executeVendorBillPayment(params: {
     paidByName: actor,
     cashbookEntryId: cbRef.id,
     cashbookEntryNo: entryNo,
+    ...(paymentProofUrl
+      ? {
+          paymentProofUrl,
+          ...(paymentProofFileName?.trim() ? { paymentProofFileName: paymentProofFileName.trim() } : {}),
+        }
+      : {}),
     updatedAt: now,
   });
 
@@ -151,10 +179,10 @@ export async function executeVendorBillPayment(params: {
       vendorId: bill.vendorId,
       vendorName,
       purchaseId: pid,
-      purchaseNo: purchase.purchaseNo,
+      ...(purchase.purchaseNo ? { purchaseNo: purchase.purchaseNo } : {}),
       vendorBillId: bill.id,
       receiptNo: bill.receiptNo,
-      milestoneId: bill.milestoneId,
+      ...(bill.milestoneId ? { milestoneId: bill.milestoneId } : {}),
       grossPaymentAmount: grossInclVat,
       baseBeforeVat: whtBreakdown.baseBeforeVat,
       whtAmount: whtBreakdown.wht,
@@ -166,6 +194,76 @@ export async function executeVendorBillPayment(params: {
       createdAt: now,
       updatedAt: now,
     });
+
+    /** สร้างหนังสือรับรองหัก ณ ที่จ่ายร่างอัตโนมัติ (DRAFT) — พร้อมกับบันทึกจ่าย */
+    if (!bill.whtCertificateDocumentId) {
+      const [vSnap, cSnap, bSnap] = await Promise.all([
+        getDoc(doc(firestore, 'vendors', bill.vendorId)),
+        getDoc(doc(firestore, 'system', 'company_profile')),
+        getDoc(doc(firestore, 'bank_accounts', bankAccountId)),
+      ]);
+      if (vSnap.exists()) {
+        const vendor = { id: vSnap.id, ...vSnap.data() } as Vendor;
+        const company = (cSnap.exists() ? cSnap.data() : {}) as CompanyProfileWhtInput;
+        const bank = bSnap.exists() ? ({ id: bSnap.id, ...bSnap.data() } as BankAccount) : undefined;
+        const certRef = doc(collection(firestore, 'withholding_certificate_documents'));
+        const cashbookEntryShape: CashbookEntry = {
+          id: cbRef.id,
+          entryNo,
+          bankAccountId,
+          entryDate,
+          direction: 'OUT',
+          entryType: 'SUPPLIER_PAYMENT',
+          referenceType: 'PAYMENT',
+          referenceId: bill.id,
+          amount: amountFromBank,
+          grossPaymentAmount: grossInclVat,
+          supplierWithholdingAmount: whtBreakdown.wht,
+          description,
+          paymentMethod,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const draftCore = buildWithholdingCertificateDraft({
+          bill,
+          purchase,
+          vendor,
+          company,
+          milestone: linkedMilestone ?? undefined,
+          cashbook: cashbookEntryShape,
+          bank,
+          paymentDateYmd: entryDate,
+          paymentIssueDateYmd: entryDate,
+          paymentMethod,
+          sourceWithholdingAtSourceItemId: whtRef.id,
+        });
+        draftCore.createdByUid = currentUser.id;
+        draftCore.createdByName = actor.trim() || currentUser.email || currentUser.id;
+
+        batch.set(certRef, stripUndefinedForFirestore({ id: certRef.id, ...draftCore }));
+        batch.update(billRef, {
+          whtCertificateDocumentId: certRef.id,
+          updatedAt: now,
+        });
+        const auditRef = doc(
+          collection(firestore, 'withholding_certificate_documents', certRef.id, 'audit_logs'),
+        );
+        batch.set(
+          auditRef,
+          stripUndefinedForFirestore({
+            id: auditRef.id,
+            ...buildWhtAuditLogEntry({
+              documentId: certRef.id,
+              action: 'CREATE_WHT',
+              actorId: currentUser.id,
+              actorName: actor,
+              payloadSummary: { sourceVendorBillId: bill.id, autoCreatedOnVendorBillPayment: true },
+            }),
+          }),
+        );
+        createdWhtCertificateId = certRef.id;
+      }
+    }
   }
 
   await batch.commit();
@@ -182,5 +280,5 @@ export async function executeVendorBillPayment(params: {
   const latestPurchase = pSnap.exists() ? ({ id: pSnap.id, ...pSnap.data() } as Purchase) : purchase;
   await syncPurchasePaymentClosure(firestore, purchaseRef, latestPurchase, milestones);
 
-  return { cashbookEntryNo: entryNo };
+  return { cashbookEntryNo: entryNo, createdWhtCertificateId };
 }

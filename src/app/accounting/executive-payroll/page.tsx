@@ -43,6 +43,7 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { canView } from '@/lib/permissions';
+import Link from 'next/link';
 
 export default function ExecutivePayrollPage() {
   const router = useRouter();
@@ -145,7 +146,7 @@ export default function ExecutivePayrollPage() {
             <Coins className="h-8 w-8" /> เงินเดือนผู้บริหาร (Executive Payroll)
           </h1>
           <p className="text-muted-foreground text-lg">
-            งวดจ่ายผู้บริหารแยกจากพนักงานสำนักงาน — ใช้เฉพาะพนักงานที่ตั้งค่ากลุ่ม EXECUTIVE ใน Office Staff
+            การคำนวณการจ่ายเงิน — ดึงรายชื่อและฐานเงินเดือนจากเมนูย่อย «รายชื่อผู้บริหาร» (แยกจากงวดพนักงานออฟฟิศ)
           </p>
         </div>
 
@@ -167,12 +168,15 @@ export default function ExecutivePayrollPage() {
         </div>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
+          <div className="flex flex-wrap items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="ค้นหาเลขที่งวด..." className="pl-9 h-11" />
             </div>
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <Button variant="secondary" className="h-11 gap-2 font-semibold" asChild>
+              <Link href="/accounting/executive-payroll/staff">รายชื่อผู้บริหาร</Link>
+            </Button>
           </div>
           
           <Dialog open={isAuthorized && isDialogOpen} onOpenChange={setIsDialogOpen}>

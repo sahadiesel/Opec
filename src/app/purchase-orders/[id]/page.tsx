@@ -224,7 +224,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   /** พร้อมเพิ่ม PO Line / Wave: สายสัญญา = สัญญา active | สายใบเสนอราคา = sent/accepted */
   const isLinkedSourceReady = isContractBasedPO ? isLinkedContractActive : isQuotationAccepted;
 
-  /** ปิด PO ได้เมื่อทุก Wave จบแล้ว (COMPLETED/CLOSED) */
+  /** ปิด PO สายสัญญา: ทุก Wave จบ + ไม่มี Mobilization/assignment ที่นับรวมบรรทัด PO ค้าง */
   const allWavesTerminalForClose = useMemo(() => {
     if (!poWaves?.length) return false;
     return poWaves.every((w) => w.status === 'COMPLETED' || w.status === 'CLOSED');
@@ -349,6 +349,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
           variant: 'destructive',
           title: 'ยังปิด PO ไม่ได้',
           description: 'ทุก Wave ของ PO ต้องเป็นสถานะ COMPLETED หรือ CLOSED ก่อน',
+        });
+        return;
+      }
+      if (fulfillmentTotals.assigned > 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังปิด PO ไม่ได้',
+          description: `ยังมี ${fulfillmentTotals.assigned} รายมอบหมาย (Mobilization) ที่นับในบรรทัด PO — จบงาน/ปิด assignment หรือ demobilize ก่อน`,
         });
         return;
       }
@@ -700,11 +708,22 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง
               </Button>
             )}
-            {isContractBasedPO && po.status === 'active' && allWavesTerminalForClose && canEditPo && (
+            {isContractBasedPO && po.status === 'active' && canEditPo && (
               <Button
                 variant="outline"
                 className="h-10 border-amber-600 text-amber-900"
-                disabled={isClosingPo}
+                disabled={
+                  isClosingPo ||
+                  !allWavesTerminalForClose ||
+                  fulfillmentTotals.assigned > 0
+                }
+                title={
+                  !allWavesTerminalForClose
+                    ? 'ทุก Wave ต้อง COMPLETED/CLOSED ก่อน'
+                    : fulfillmentTotals.assigned > 0
+                      ? `ยังมี ${fulfillmentTotals.assigned} รายมอบหมายนับในบรรทัด PO — ปิด Mobilization ก่อน`
+                      : undefined
+                }
                 onClick={() => void handleClosePo()}
               >
                 {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

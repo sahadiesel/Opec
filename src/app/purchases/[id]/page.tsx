@@ -21,7 +21,7 @@ import {
   PackageCheck,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, query, orderBy, where } from 'firebase/firestore';
+import { doc, collection, updateDoc, query, orderBy, where, deleteField } from 'firebase/firestore';
 import {
   milestonesCoverTotal,
   roundMoney2,
@@ -36,6 +36,7 @@ import { DocumentPrintLocaleToggle } from '@/components/documents/document-print
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
   Purchase,
+  PurchaseRequest,
   PurchaseLine,
   PurchasePaymentMilestone,
   PurchaseVendorBill,
@@ -47,6 +48,7 @@ import {
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -134,6 +136,17 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     [firestore, id, canViewPurchases]
   );
   const { data: purchase, isLoading: isPurchaseLoading } = useDoc<Purchase>(purchaseRef as any);
+
+  const prRef = useMemoFirebase(
+    () =>
+      firestore && canViewPurchases && purchase?.purchaseRequestId
+        ? doc(firestore, 'purchase_requests', purchase.purchaseRequestId)
+        : null,
+    [firestore, canViewPurchases, purchase?.purchaseRequestId]
+  );
+  const { data: linkedPr } = useDoc<PurchaseRequest>(prRef as any);
+
+  const hasPurchaseRequisition = Boolean(purchase?.purchaseRequestId);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && canViewPurchases ? collection(firestore, 'purchases', id, 'lines') : null),
@@ -296,21 +309,64 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     toast({ title: 'ลบรายการสำเร็จ' });
   };
 
-  const submitForApproval = async () => {
-    if (!purchaseRef || !canEditPurchases || !purchase) return;
+  const validateBeforeFinalizePo = (forPrFlow: boolean) => {
     if (!lines?.length) {
-      toast({ variant: 'destructive', title: 'ไม่มีรายการ', description: 'เพิ่มรายการก่อนส่งขออนุมัติ' });
-      return;
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีรายการ',
+        description: forPrFlow ? 'เพิ่มรายการก่อนยืนยัน PO' : 'เพิ่มรายการก่อนส่งขออนุมัติ',
+      });
+      return false;
     }
+    if (!purchase) return false;
     const ms = paymentMilestones || [];
     if (!ms.length || !milestonesCoverTotal(ms, purchase.totalAmount)) {
       toast({
         variant: 'destructive',
         title: 'ยังไม่มีแผนงวดชำระ',
-        description: 'กำหนดแผนงวดให้ครบยอดสุทธิ PO ก่อนส่งขออนุมัติ',
+        description: 'กำหนดแผนงวดให้ครบยอดสุทธิ PO ก่อนดำเนินการ',
+      });
+      return false;
+    }
+    return true;
+  };
+
+  /** PO อ้าง PR: อนุมัติทางธุรกิจอยู่ที่ PR แล้ว — ฝ่ายคลัง/จัดซื้อยืนยันรายละเอียด PO เพื่อพิมพ์/ส่งคู่ค้า (ไม่ส่งรออนุมัติซ้ำ) */
+  const confirmPoFromApprovedPr = async () => {
+    if (!purchaseRef || !canEditPurchases || !purchase) return;
+    if (!hasPurchaseRequisition) return;
+    if (!validateBeforeFinalizePo(true)) return;
+    const name = currentUser?.displayName || currentUser?.email || '';
+    const uid = currentUser?.id;
+    try {
+      await updateDocumentNonBlocking(purchaseRef, {
+        status: 'APPROVED' as PurchaseStatus,
+        approvalDecidedAt: Date.now(),
+        approvalRequestedAt: deleteField(),
+        approvalDecisionByUid: uid,
+        approvalDecisionByName: name,
+        approvalComment: 'อนุมัติทางธุรกิจตาม PR ที่อนุมัติแล้ว — ยืนยันข้อมูล/แผนงวด PO',
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'ยืนยัน PO แล้ว', description: 'สามารถพิมพ์และยืนยันส่งคู่ค้าได้' });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ' });
+    }
+  };
+
+  /** ใช้เฉพาะ PO เก่าหรือกรณีพิเศษที่ไม่อ้าง PR (ไม่กระทบรายการจาก PR) */
+  const submitForApproval = async () => {
+    if (!purchaseRef || !canEditPurchases || !purchase) return;
+    if (hasPurchaseRequisition) {
+      toast({
+        variant: 'destructive',
+        title: 'อนุมัติที่ PR แล้ว',
+        description: 'ใบสั่งซื้อนี้อ้าง PR — ใช้ปุ่ม "ยืนยัน PO (อ้าง PR อนุมัติแล้ว)" แทนการส่งอนุมัติซ้ำ',
       });
       return;
     }
+    if (!validateBeforeFinalizePo(false)) return;
     await updateDocumentNonBlocking(purchaseRef, {
       status: 'PENDING_APPROVAL' as PurchaseStatus,
       approvalRequestedAt: Date.now(),
@@ -364,7 +420,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       toast({
         variant: 'destructive',
         title: 'พิมพ์ไม่ได้',
-        description: 'ต้องได้รับการอนุมัติจากผู้จัดการก่อน (หรือส่ง PO ผ่านขั้นตอนปกติ)',
+        description: hasPurchaseRequisition
+          ? 'ยืนยัน PO (อ้าง PR) ก่อน — หรือรออนุมัติหากเป็น PO แบบไม่อ้าง PR'
+          : 'ต้องได้รับการอนุมัติจากผู้จัดการก่อน หรือยืนยันตามขั้นตอน',
       });
       return;
     }
@@ -823,8 +881,28 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
           <div className="order-1 lg:order-2 lg:col-span-5 flex flex-col gap-6 print:hidden lg:sticky lg:top-4 w-full min-w-0 lg:min-h-[min(78vh,880px)] lg:justify-between">
             <Card className="border shadow-md">
               <CardHeader className="pb-3 border-b bg-muted/30">
-                <CardTitle className="text-base">สถานะการอนุมัติ</CardTitle>
-                <CardDescription>ผู้จัดการปฏิบัติการ (Operations manager)</CardDescription>
+                <CardTitle className="text-base">
+                  {hasPurchaseRequisition ? 'สถานะ PO (อ้าง PR)' : 'สถานะการอนุมัติ PO'}
+                </CardTitle>
+                <CardDescription>
+                  {hasPurchaseRequisition ? (
+                    <span>
+                      อนุมัติเชิงธุรกิจทำที่ PR แล้ว — ฝ่ายคลัง/จัดซื้อยืนยันรายละเอียด PO ก่อนพิมพ์/ส่งคู่ค้า
+                      {linkedPr && purchase.purchaseRequestId && (
+                        <span className="block mt-1">
+                          <Link
+                            href={`/store/purchase-requests/${purchase.purchaseRequestId}`}
+                            className="font-semibold text-primary underline"
+                          >
+                            เปิด PR: {linkedPr.requestNo}
+                          </Link>
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <>ผู้จัดการปฏิบัติการ (กรณี PO ไม่อ้าง PR — รายการเก่า)</>
+                  )}
+                </CardDescription>
               </CardHeader>
               <CardContent className="pt-4 space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -845,7 +923,13 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   </div>
                 )}
 
-                {purchase.status === 'PENDING_APPROVAL' && canApprove ? (
+                {hasPurchaseRequisition && purchase.status === 'PENDING_APPROVAL' && (
+                  <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md p-3">
+                    PO นี้อ้าง PR — ไม่ควรอยู่สถานะ «รออนุมัติ» กรุณาใช้ «ยืนยัน PO (อ้าง PR)» แทน หรือให้ผู้ดูแลแก้สถานะ
+                  </p>
+                )}
+
+                {purchase.status === 'PENDING_APPROVAL' && canApprove && !hasPurchaseRequisition ? (
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="mgr-comment">ความเห็น (ผู้จัดการปฏิบัติการ)</Label>
@@ -870,11 +954,11 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                       </Button>
                     </div>
                   </>
-                ) : purchase.status === 'PENDING_APPROVAL' && !canApprove ? (
+                ) : purchase.status === 'PENDING_APPROVAL' && !canApprove && !hasPurchaseRequisition ? (
                   <p className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-md p-3">
                     รอผู้จัดการปฏิบัติการพิจารณา — คุณดูรายการได้แต่ไม่มีสิทธิ์อนุมัติ
                   </p>
-                ) : (
+                ) : purchase.status === 'PENDING_APPROVAL' && hasPurchaseRequisition ? null : (
                   <>
                     {purchase.approvalComment ? (
                       <div className="space-y-1">
@@ -906,7 +990,18 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
               </CardHeader>
               <CardContent className="pt-6 space-y-3">
                 {(purchase.status === 'DRAFT' || purchase.status === 'RETURNED_FOR_REVISION') &&
-                  canEditPurchases && (
+                  canEditPurchases &&
+                  hasPurchaseRequisition && (
+                    <Button
+                      className="w-full bg-white text-primary hover:bg-slate-100 font-bold"
+                      onClick={() => void confirmPoFromApprovedPr()}
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-2" /> ยืนยัน PO (อ้าง PR อนุมัติแล้ว)
+                    </Button>
+                  )}
+                {(purchase.status === 'DRAFT' || purchase.status === 'RETURNED_FOR_REVISION') &&
+                  canEditPurchases &&
+                  !hasPurchaseRequisition && (
                     <Button
                       className="w-full bg-white text-primary hover:bg-slate-100 font-bold"
                       onClick={submitForApproval}

@@ -1,25 +1,42 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { canView } from '@/lib/permissions';
+import { usePermissions } from '@/hooks/use-permissions';
+import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { useToast } from '@/hooks/use-toast';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
+import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
 import {
   fetchOfficePayrollMonthConsolidation,
   type OfficePayrollLineMonthMerged,
   type OfficePayrollMonthConsolidation,
 } from '@/lib/payroll/office-month-staff-aggregate';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
-import { Building2, ChevronRight, Coins, Calculator, Info, Loader2, TrendingUp, Users, ArrowLeft } from 'lucide-react';
+import {
+  Building2,
+  ChevronRight,
+  Coins,
+  Calculator,
+  Info,
+  Loader2,
+  TrendingUp,
+  Users,
+  ArrowLeft,
+  Search,
+  Send,
+} from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import type { OfficePayrollRun } from '@/lib/types';
@@ -58,11 +75,20 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
+  const { toast } = useToast();
+  const { check } = usePermissions(currentUser);
+  const canEditOffice = useMemo(() => check('office_payroll', 'edit'), [check, currentUser]);
+  const canOfficerSend = useMemo(
+    () => Boolean(currentUser && canEditOffice && (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser))),
+    [currentUser, canEditOffice]
+  );
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
   const [c, setC] = useState<OfficePayrollMonthConsolidation | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sendingAll, setSendingAll] = useState(false);
+  const [lineQuery, setLineQuery] = useState('');
 
   useEffect(() => {
     if (!firestore || !ym) {
@@ -91,6 +117,53 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
     };
   }, [firestore, ym]);
 
+  const monthLabel = useMemo(() => formatPayrollYearMonthEnAbbrev(ym, ''), [ym]);
+  const merged: OfficePayrollLineMonthMerged[] = c?.mergedLines ?? [];
+  const calculableRuns = useMemo(
+    () => (c?.runs || []).filter((r) => r.status === 'CALCULATED'),
+    [c]
+  );
+  const mergedFiltered = useMemo(() => {
+    const q = lineQuery.trim().toLowerCase();
+    if (!q) return merged;
+    return merged.filter(
+      (l) =>
+        l.staffName.toLowerCase().includes(q) ||
+        (l.sourceRunNos || '').toLowerCase().includes(q) ||
+        l.department.toLowerCase().includes(q) ||
+        l.positionTitle.toLowerCase().includes(q)
+    );
+  }, [merged, lineQuery]);
+
+  const handleSendAllForReview = useCallback(async () => {
+    if (!firestore || !currentUser || !c || calculableRuns.length === 0) return;
+    if (!canOfficerSend) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะฝ่ายเงินเดือนหรือผู้ดูแล' });
+      return;
+    }
+    setSendingAll(true);
+    try {
+      for (const r of calculableRuns) {
+        await submitOfficeRunForManagerReview(firestore, r.id, currentUser);
+      }
+      toast({
+        title: 'ส่งขออนุมัติแล้ว',
+        description: `ส่ง ${calculableRuns.length} งวด → รอผู้จัดการ (ศูนย์อนุมัติ Payroll)`,
+      });
+      const next = await fetchOfficePayrollMonthConsolidation(firestore, ym);
+      setC(next);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ส่งไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองอีกครั้ง',
+      });
+    } finally {
+      setSendingAll(false);
+    }
+  }, [firestore, currentUser, c, calculableRuns, canOfficerSend, toast, ym]);
+
   if (userLoading || !currentUser) return null;
 
   if (!isAuthorized) {
@@ -114,9 +187,7 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
     );
   }
 
-  const monthLabel = formatPayrollYearMonthEnAbbrev(ym, '');
   const firstRun: OfficePayrollRun | undefined = c?.runs?.[0];
-  const merged: OfficePayrollLineMonthMerged[] = c?.mergedLines ?? [];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -131,7 +202,19 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
               {monthLabel} <span className="text-xs">({ym})</span> — รวมรายชื่อและยอดสำหรับทุกงวดที่คำนวณแล้ว
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {c && calculableRuns.length > 0 && canOfficerSend && (
+              <Button
+                type="button"
+                size="sm"
+                className="gap-1.5"
+                disabled={sendingAll || loading}
+                onClick={() => void handleSendAllForReview()}
+              >
+                {sendingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                ส่งอนุมัติ ({calculableRuns.length} งวด)
+              </Button>
+            )}
             <Button variant="outline" size="sm" className="gap-1" onClick={() => router.push('/office-payroll')}>
               <ArrowLeft className="h-4 w-4" />
               กลับไปรายการงวด
@@ -143,7 +226,8 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
           <Info className="h-4 w-4" />
           <AlertTitle>นี่คือรายเดือน ไม่ใช่งวดเดี่ยว</AlertTitle>
           <AlertDescription className="text-xs sm:text-sm">
-            อนุมัติ/ตัดจ่ายยังดำเนินการต่องวด (เลขที่ OPR) แยก — ทำได้จาก <Link className="underline font-medium" href="/office-payroll">รายการงวดจ่าย</Link> หรือเปิดแต่ละงวด
+            อนุมัติ/ตัดจ่ายยังดำเนินการต่องวด (เลขที่ OPR) แยก — กด <strong>ส่งอนุมัติ</strong> เพื่อส่งแต่ละงวดไปคิวผู้จัดการ; ฝ่ายเงินเดือนยังส่งทีละงวดจาก{' '}
+            <Link className="underline font-medium" href="/office-payroll">รายการงวดจ่าย</Link> ก็ได้
           </AlertDescription>
         </Alert>
 
@@ -187,11 +271,22 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
             </div>
 
             <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">รายการจ่ายเงินพนักงานบริษัท (Internal Settlement)</CardTitle>
-                <CardDescription>
-                  รวมรายชื่อและยอดทุกงวดในเดือนเดียวกันที่คำนวณแล้ว (แสดงอ้างอิงงวดต้นทางของแต่ละบรรทัด) — หลายรายบนคนเดียวกันจะรวมยอด
-                </CardDescription>
+              <CardHeader className="space-y-3">
+                <div>
+                  <CardTitle className="text-lg">รายการจ่ายเงินพนักงานบริษัท (Internal Settlement)</CardTitle>
+                  <CardDescription>
+                    รวมรายชื่อและยอดทุกงวดในเดือนเดียวกันที่คำนวณแล้ว (แสดงอ้างอิงงวดต้นทางของแต่ละบรรทัด) — หลายรายบนคนเดียวกันจะรวมยอด
+                  </CardDescription>
+                </div>
+                <div className="relative max-w-md">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9 h-9"
+                    placeholder="ค้นหาชื่อ, เลขที่งวด, แผนก..."
+                    value={lineQuery}
+                    onChange={(e) => setLineQuery(e.target.value)}
+                  />
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -218,7 +313,14 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
                         </TableCell>
                       </TableRow>
                     )}
-                    {merged.map((line) => {
+                    {merged.length > 0 && mergedFiltered.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-12 text-muted-foreground text-sm">
+                          ไม่พบรายการตามคำค้น
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {mergedFiltered.map((line) => {
                       if (!firstRun) return null;
                       const slipRun: OfficePayrollRun = {
                         ...firstRun,

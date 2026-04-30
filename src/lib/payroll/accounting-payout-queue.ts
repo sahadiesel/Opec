@@ -14,10 +14,15 @@ export const OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT: PayrollRunStatus[] = [
 ];
 
 /**
- * ชุดจ่ายลูกจ้างที่บัญชีเกี่ยวข้อง — หลัง manager/HR อนุมัติ batch แล้ว
+ * ลูกจ้าง: อนุมัติผู้จัดการ/OPS แล้ว แต่ยังไม่มีใครกด「ส่งต่อบัญชี」→ ยังไม่ใช่งาน **ตัดจ่าย/ทำ bank** ของบัญชี
+ * (ฝ่ายอื่นต้องส่งต่อจนเป็น FINANCE_PREPARED ก่อน)
+ */
+export const WORKER_BATCH_STATUSES_AWAITING_FINANCE_HANDOFF: PayrollBatchStatus[] = ['HR_APPROVED'];
+
+/**
+ * ชุดจ่ายลูกจ้างที่ **บัญชี** ใช้ลงรายการจ่าย/ตรวจ bank — เริ่มต่อเมื่อ **ส่งถึงฝ่ายบัญชีแล้ว (FINANCE_PREPARED+)** ห้ามรวม HR_APPROVED
  */
 export const WORKER_BATCH_STATUSES_FOR_ACCOUNTING_PAYOUT: PayrollBatchStatus[] = [
-  'HR_APPROVED',
   'FINANCE_PREPARED',
   'PAYMENT_EXPORTED',
   'PAID',

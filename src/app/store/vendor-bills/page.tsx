@@ -19,6 +19,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection, query, orderBy, where, getDocs } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Purchase,
   PurchaseVendorBill,
@@ -75,6 +76,7 @@ export default function StoreVendorBillsPage() {
     () => !!currentUser && canView(currentUser, 'store_inventory'),
     [currentUser]
   );
+  const [tab, setTab] = useState<'all' | 'DRAFT' | 'SUBMITTED' | 'PAID'>('DRAFT');
 
   const billsQuery = useMemoFirebase(() => {
     if (!firestore || !ok) return null;
@@ -85,7 +87,10 @@ export default function StoreVendorBillsPage() {
 
   const purchasesQuery = useMemoFirebase(() => {
     if (!firestore || !ok) return null;
-    return query(collection(firestore, 'purchases'), where('status', '==', 'APPROVED'));
+    return query(
+      collection(firestore, 'purchases'),
+      where('status', 'in', ['APPROVED', 'ISSUED', 'COMPLETED'])
+    );
   }, [firestore, ok]);
 
   const { data: approvedPurchases } = useCollection<Purchase>(purchasesQuery as any);
@@ -98,8 +103,17 @@ export default function StoreVendorBillsPage() {
 
   const billPurchaseIds = useMemo(() => new Set((bills || []).map((b) => b.purchaseId)), [bills]);
 
+  const billsFiltered = useMemo(() => {
+    if (!bills) return [];
+    if (tab === 'all') return bills;
+    return bills.filter((b) => b.status === tab);
+  }, [bills, tab]);
+
   const selectablePurchases = useMemo(() => {
-    return (approvedPurchases || []).filter((p) => !billPurchaseIds.has(p.id));
+    return (approvedPurchases || []).filter((p) => {
+      if (billPurchaseIds.has(p.id)) return false;
+      return !!p.purchaseRequestId;
+    });
   }, [approvedPurchases, billPurchaseIds]);
 
   const handleCreate = async () => {
@@ -109,6 +123,14 @@ export default function StoreVendorBillsPage() {
     }
     const p = approvedPurchases?.find((x) => x.id === selectedPurchaseId);
     if (!p) return;
+    if (!p.purchaseRequestId) {
+      toast({
+        variant: 'destructive',
+        title: 'PO นี้ไม่อ้าง PR',
+        description: 'รับวางบิลได้เฉพาะใบสั่งซื้อที่อ้างอิง PR ที่อนุมัติแล้ว',
+      });
+      return;
+    }
     setCreating(true);
     try {
       const milestoneSnap = await getDocs(collection(firestore, 'purchases', selectedPurchaseId, 'payment_milestones'));
@@ -171,7 +193,7 @@ export default function StoreVendorBillsPage() {
               <FileText className="h-8 w-8" /> รับวางบิล (Vendor billing)
             </h1>
             <p className="text-muted-foreground mt-1">
-              บันทึกฉบับร่างได้ — เมื่อกดส่งบัญชี (มียืนยัน) ถือว่าตรวจรับสินค้า/งานตามงวดแล้ว และไปคิว «ตรวจสอบรายจ่าย» / เจ้าหนี้
+              บันทึกฉบับร่างได้ — เมื่อกดส่งบัญชี (มียืนยัน) ถึงจะไปคิว «รอจ่ายเงิน» / ฝ่ายบัญชี — ร่างคนละคิวกับรอจ่าย
             </p>
           </div>
           <div className="flex gap-2">
@@ -233,6 +255,17 @@ export default function StoreVendorBillsPage() {
           </div>
         </div>
 
+        <div className="space-y-2">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+            <TabsList>
+              <TabsTrigger value="all">ทั้งหมด</TabsTrigger>
+              <TabsTrigger value="DRAFT">ฉบับร่าง</TabsTrigger>
+              <TabsTrigger value="SUBMITTED">รอจ่าย (ส่งบัญชีแล้ว)</TabsTrigger>
+              <TabsTrigger value="PAID">จ่ายแล้ว</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">รายการใบรับวางบิล</CardTitle>
@@ -255,7 +288,7 @@ export default function StoreVendorBillsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(bills || []).map((b) => {
+                  {billsFiltered.map((b) => {
                     const v = vendors?.find((x) => x.id === b.vendorId);
                     return (
                       <TableRow
@@ -288,10 +321,10 @@ export default function StoreVendorBillsPage() {
                       </TableRow>
                     );
                   })}
-                  {(!bills || bills.length === 0) && (
+                  {billsFiltered.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-16 text-muted-foreground">
-                        ยังไม่มีใบรับวางบิล
+                        ยังไม่มีรายการในชุดนี้
                       </TableCell>
                     </TableRow>
                   )}

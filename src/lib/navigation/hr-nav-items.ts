@@ -18,6 +18,8 @@ import {
   PackageSearch,
   CalendarCheck,
   HeartPulse,
+  FileQuestion,
+  Banknote,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -94,6 +96,18 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         title: 'อนุมัติใบสั่งซื้อจัดซื้อ (สโตร์)',
         href: '/purchases',
         icon: PackageSearch,
+      },
+      {
+        key: 'store_inventory',
+        title: 'อนุมัติคำขอสั่งซื้อ (PR)',
+        href: '/store/purchase-requests',
+        icon: FileQuestion,
+      },
+      {
+        key: 'operations_petty_cash',
+        title: 'เบิกจ่าย Petty Cash (หน้างาน)',
+        href: '/operations/petty-cash',
+        icon: Banknote,
       },
     ],
   },

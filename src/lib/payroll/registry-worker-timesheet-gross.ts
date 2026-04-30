@@ -87,18 +87,20 @@ export function computeRegistryWorkerTimesheetGross(
   ts: DailyTimesheet,
   input: {
     worker: Worker | undefined;
-    position: Position | null | undefined;
+    /** ตำแหน่งตามบรรทัด timesheet — ใช้ `positionId` บน timesheet ไม่ใช่ `worker.currentPositionId` */
+    linePosition: Position | null | undefined;
     poLine: Record<string, unknown>;
     contractMap: Map<string, MainContract>;
   },
 ): RegistryWorkerTimesheetGrossResult {
+  const mainContract = ts.contractId ? input.contractMap.get(ts.contractId) : undefined;
   const { baseCost, fromPositionModel } = resolveBaseCostForPayrollTimesheet({
     worker: input.worker,
-    position: input.position ?? undefined,
+    linePosition: input.linePosition,
     poLine: input.poLine,
     timesheet: ts,
+    mainContract,
   });
-  const mainContract = ts.contractId ? input.contractMap.get(ts.contractId) : undefined;
   const contractPolicy = resolveContractCostPolicy(ts.contractId, input.contractMap);
   const policy = contractPolicy ?? DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY;
 

@@ -20,10 +20,10 @@ export function computeSingleTimesheetGrossLikeBatch(
 ): number | null {
   const poLine = (ctx.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
   const wk = ctx.workerById.get(ts.workerId);
-  const pos = wk?.currentPositionId ? ctx.posById.get(wk.currentPositionId) : undefined;
+  const linePos = ts.positionId ? ctx.posById.get(ts.positionId) : undefined;
   const r = computeRegistryWorkerTimesheetGross(ts, {
     worker: wk,
-    position: pos,
+    linePosition: linePos,
     poLine,
     contractMap: ctx.contractMap,
   });

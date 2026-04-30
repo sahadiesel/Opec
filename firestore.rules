@@ -79,8 +79,30 @@ service cloud.firestore {
         && !isCustomerPortalData(userData());
     }
 
+    /**
+     * แอดมินระบบ — ต้องสอดคล้องกับ isSystemAdmin() ฝั่งแอป (role / accessGroup / roleIds ฯลฯ)
+     * มิฉะนั้นผู้ใช้ที่ UI แสดง Administrator แต่ effectiveRole ไม่ใช่ system_admin จะถูกปฏิเสธ
+     * ตอนลง cashbook / อัปเดต bank_accounts (canAccessBankAccountsAndCashbook อ้าง isAdmin)
+     */
+    function stringLowerEqAdmin(v) {
+      return v is string && v.size() > 0 && v.lower() == 'admin';
+    }
+
+    function userDocIndicatesSystemAdmin(d) {
+      return d != null && (
+        effectiveRole(d) == 'system_admin'
+        || (
+          'roleIds' in d && d.roleIds is list
+          && (d.roleIds.hasAny(['system_admin']) || d.roleIds.hasAny(['SYSTEM_ADMIN']))
+        )
+        || (('accessGroup' in d) && stringLowerEqAdmin(d.accessGroup))
+        || (('departmentGroup' in d) && stringLowerEqAdmin(d.departmentGroup))
+        || (('department' in d) && stringLowerEqAdmin(d.department))
+      );
+    }
+
     function isAdmin() {
-      return isInternalUser() && effectiveRole(userData()) == 'system_admin';
+      return isInternalUser() && userDocIndicatesSystemAdmin(userData());
     }
 
     function isAccounting() {
@@ -94,7 +116,7 @@ service cloud.firestore {
     }
 
     function isOperationsManagerRole() {
-      return isInternalUser() && effectiveRole(userData()) == 'operations_manager';
+      return (isInternalUser() || isInternalStaffDoc()) && effectiveRole(userData()) == 'operations_manager';
     }
 
     /** บัญชี: master data — ผู้จัดการปฏิบัติการบันทึก Petty Cash / โอน (อัปเดตยอด) ได้ */
@@ -604,6 +626,11 @@ service cloud.firestore {
       allow read, write: if isAccountingOrAdmin();
     }
 
+    /** รายชื่อผู้บริหาร + ฐานเงินเดือน — ใช้เฉพาะงวด executive payroll (เมนูบัญชี) */
+    match /executive_payroll_staff/{id} {
+      allow read, write: if isAccountingOrAdmin();
+    }
+
     // ---------- System docs (read widened where app needs) ----------
     match /system/{docId} {
       allow read: if isAdmin()
@@ -781,6 +808,29 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    /**
+     * หนังสือรับรองหัก ณ ที่จ่าย (snapshot + สถานะ) — ควบคุมการแก้ไขหลักในแอป (ISSUED ห้ามแก้ตัวเลข)
+     * กฎระดับนี้ยอมให้เจ้าหน้าที่บัญชีสร้าง/อัปเดตได้; รายละเอียด immutable ตรวจที่ client/server เพิ่มเติม
+     */
+    match /withholding_certificate_documents/{id} {
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow create: if isAccountingOrAdmin();
+      allow update: if isAccountingOrAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /withholding_certificate_documents/{docId}/audit_logs/{logId} {
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow create: if isAccountingOrAdmin();
+      allow update, delete: if false;
+    }
+
+    match /withholding_certificate_documents/{docId}/xml_export_logs/{logId} {
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow create: if isAccountingOrAdmin();
+      allow update, delete: if false;
+    }
+
     match /payroll_runs/{id} {
       allow read, write: if isInternalUser();
     }
@@ -823,6 +873,22 @@ service cloud.firestore {
 
     match /wave_month_timesheet_reviews/{id} {
       allow read: if isInternalUser() || isInternalStaffDoc() || portalWaveMonthTimesheetReviewReadable();
+      allow write: if isInternalUser() || isInternalStaffDoc();
+    }
+
+    function portalPoLocationMonthTimesheetReadable() {
+      return portalCustomerIdOk()
+        && resource != null
+        && resource.data.keys().hasAll(['poId'])
+        && resource.data.poId is string
+        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.poId))
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.keys().hasAll(['customerId'])
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.customerId == userData().customerId;
+    }
+
+    /** หัวงวด timesheet ราย PO+เดือน+สถานที่ (จาก po_lines) — เฟส B */
+    match /po_location_month_timesheets/{id} {
+      allow read: if isInternalUser() || isInternalStaffDoc() || portalPoLocationMonthTimesheetReadable();
       allow write: if isInternalUser() || isInternalStaffDoc();
     }
 
@@ -879,11 +945,17 @@ service cloud.firestore {
       allow read, write: if isInternalUser();
     }
 
+    // PR: ฝ่ายคลัง + ผู้จัดการอนุมัติ — อนุญาต isInternalStaffDoc เหมือน po_month_timesheet_reviews (บัญชียัง pending / activation ยังไม่ครบ)
+    match /purchase_requests/{id} {
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
+    }
+
+    // รายการซื้อ/ใบสั่งซื้อ: ฝ่ายคลัง + ผจก.ฝ่ายอนุมัติ — รองรับ isInternalStaffDoc (บัญชี internal ยัง pending activation)
     match /purchases/{purchaseId} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
     match /purchases/{purchaseId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_items/{id} {

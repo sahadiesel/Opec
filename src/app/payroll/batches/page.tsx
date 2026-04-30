@@ -260,7 +260,9 @@ function PayrollBatchesPageContent() {
             </p>
             {accountingPayoutQueueOnly && (
               <p className="text-sm text-blue-800 bg-blue-50/80 border border-blue-200 rounded-md px-3 py-2 max-w-3xl">
-                มุมบัญชี: แสดงเฉพาะชุดจ่ายที่ <strong>ผู้จัดการ/ฝ่าย HR อนุมัติแล้ว</strong> (HR_APPROVED ขึ้นไป) เพื่อเตรียมตัดจ่าย/บันทึกบัญชี
+                <strong>มุมมองบัญชี (เฉพาะทำจ่าย):</strong> แสดงเฉพาะงวดที่ <strong>ส่งถึงฝ่ายบัญชีแล้ว (FINANCE_PREPARED ขึ้นไป)</strong> —
+                หลังผู้จัดการปฏิบัติการ/OPS อนุมัติแล้ว ฝ่ายอื่นต้องกด「ส่งต่อบัญชี」หรือขั้น equivalent ก่อน งวดจะไม่ปรากฏที่นี่
+                ถ้ายังเป็น <span className="font-mono">HR_APPROVED</span> อย่างเดียว แปลว่ารอส่งมาคิวบัญชี ยังไม่ใช่รายการที่ควรตัดเงิน
               </p>
             )}
           </div>
@@ -367,12 +369,12 @@ function PayrollBatchesPageContent() {
           )}
         </div>
 
-        <PageGuidance 
+        <PageGuidance
           title="นโยบายการเบิกจ่าย (Disbursement Policy)"
           tips={[
             "รายการที่เข้า Payroll Batch ต้องเป็น daily timesheet ที่ระบบตั้ง readyForPayroll แล้ว — โดยปกติหลังผู้จัดการ Ops/HR อนุมัติงวดเดือน (wave month review) ซึ่งจะเปิดให้ลูกค้าเห็นสรุปใน portal และสร้าง Draft Invoice ได้ตามลำดับงาน",
-            "ลำดับการอนุมัติภายใน: HR เตรียมงวด → HR Manager / ผู้จัดการที่เกี่ยวข้องอนุมัติ batch → บัญชีเตรียมจ่ายเงิน (Finance Prep)",
-            "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน"
+            "ลำดับการอนุมัติภายใน: HR เตรียมงวด → HR Manager / ผู้จัดการที่เกี่ยวข้องอนุมัติ batch → บัญชีเตรียมจ่ายเงิน (FINANCE_PREPARED) → บัญชีกด «ยืนยันจ่าย» ในหน้ารายละเอียด batch (ไม่ใช่จากตารางนี้) พร้อมเลือกบัญชีธนาคารตัดจ่าย — จึงจะมีสถานะ PAID + ลง cashbook",
+            "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน",
           ]}
         />
 
