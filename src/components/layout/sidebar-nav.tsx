@@ -167,7 +167,7 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
     title: 'เงินเดือน (บัญชี)',
     icon: Coins,
     entries: [
-      { key: 'office_payroll', title: 'พนักงานออฟฟิศ (ตัดจ่าย)', href: '/office-payroll', icon: Users },
+      { key: 'office_payroll', title: 'พนักงานออฟฟิศ (ตัดจ่าย)', href: '/accounting/office-payroll', icon: Users },
       { key: 'worker_payroll', title: 'ลูกจ้าง (คิวตัดจ่าย · ส่งถึงบัญชีแล้ว)', href: '/payroll/batches?payout=1', icon: Banknote },
       {
         kind: 'folder',

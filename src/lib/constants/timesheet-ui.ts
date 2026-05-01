@@ -45,6 +45,44 @@ export function resolveContractDailyHoursForWaveBoard(
   return fallback;
 }
 
+/** ชั่วโมงปกติต่อวันจากบรรทัด PO ของ assignment (ไม่ผูก Wave) */
+export function resolveContractDailyHoursForAssignmentLine(
+  poLineId: string | undefined,
+  poLines: POLine[] | undefined,
+  positionRates: PositionRate[] | undefined,
+): number {
+  const fallback = DEFAULT_CONTRACT_DAILY_HOURS;
+
+  const fromLineSnapshot = (line: POLine | undefined): number | undefined => {
+    const h = line?.normalWorkHoursSnapshot;
+    return h === 8 || h === 12 ? h : undefined;
+  };
+
+  const fromRate = (r: PositionRate | undefined): number | undefined => {
+    const h = r?.normalWorkHours;
+    return h === 8 || h === 12 ? h : undefined;
+  };
+
+  if (poLineId) {
+    const match = poLines?.find((l) => l.id === poLineId);
+    const h = fromLineSnapshot(match);
+    if (h != null) return h;
+  }
+
+  for (const line of poLines ?? []) {
+    const h = fromLineSnapshot(line);
+    if (h != null) return h;
+  }
+
+  for (const r of positionRates ?? []) {
+    if (r.active === false) continue;
+    const h = fromRate(r);
+    if (h != null) return h;
+  }
+
+  return fallback;
+}
+
 /**
  * รอบเดือนของ Wave จากช่วง startDate–endDate (เช่น Feb หรือ Feb–Mar)
  * ใช้บนศูนย์ลงเวลาและ dropdown Wave Board

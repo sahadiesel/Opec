@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus } from 'lucide-react';
 import type { PositionRate, Position } from '@/lib/types';
+import { legacySellRateMirror } from '@/lib/commercial/position-rate-sell';
 import { PositionRateFormFields } from './position-rate-form-fields';
 
 interface ContractAddRateDialogProps {
@@ -72,7 +73,7 @@ export function ContractAddRateDialog({
             disabled={
               !newRate.positionId ||
               (!canEditSellSide && !canEditCostSide) ||
-              (canEditSellSide && !newRate.sellRate)
+              (canEditSellSide && legacySellRateMirror(newRate) <= 0)
             }
           >
             บันทึกอัตราราคา

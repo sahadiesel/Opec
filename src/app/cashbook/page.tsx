@@ -84,6 +84,16 @@ export default function CashbookPage() {
     [entries, bankAccounts],
   );
 
+  /** เรียงซ้ำตามวันเดียวกันให้คงที่ + กัน toLocaleString พังเมื่อ amount ไม่ใช่ตัวเลข */
+  const sortedEntries = useMemo(() => {
+    if (!entries?.length) return entries;
+    return [...entries].sort((a, b) => {
+      const c = String(b.entryDate || '').localeCompare(String(a.entryDate || ''));
+      if (c !== 0) return c;
+      return String(b.entryNo || '').localeCompare(String(a.entryNo || ''), undefined, { numeric: true });
+    });
+  }, [entries]);
+
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     if (!newEntry.bankAccountId || !newEntry.amount || !newEntry.description) {
@@ -278,8 +288,16 @@ export default function CashbookPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {entries?.map((entry) => {
+                  {sortedEntries?.map((entry) => {
                     const bankAccount = bankAccounts?.find(b => b.id === entry.bankAccountId);
+                    const amt = Number(entry.amount);
+                    const safeAmt = Number.isFinite(amt) ? amt : 0;
+                    const payrollBankHint =
+                      entry.entryType === 'PAYROLL' &&
+                      bankAccount?.accountCode &&
+                      !(entry.description || '').includes('ตัดจากบัญชี')
+                        ? ` · ตัดจากบัญชี ${bankAccount.accountCode}`
+                        : '';
                     return (
                       <TableRow key={entry.id} className="hover:bg-muted/20">
                         <TableCell className="py-4 pl-6 font-medium text-xs">
@@ -292,7 +310,10 @@ export default function CashbookPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{entry.description}</span>
+                            <span className="font-bold text-sm text-primary">
+                              {entry.description}
+                              {payrollBankHint}
+                            </span>
                             <span className="text-[10px] text-muted-foreground uppercase">{entry.entryType} {entry.referenceId ? `| Ref: ${entry.referenceId.substring(0,8)}` : ''}</span>
                           </div>
                         </TableCell>
@@ -307,12 +328,12 @@ export default function CashbookPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           {entry.direction === 'IN' ? (
-                            <span className="font-black text-green-700">฿ {entry.amount.toLocaleString()}</span>
+                            <span className="font-black text-green-700">฿ {safeAmt.toLocaleString()}</span>
                           ) : '-'}
                         </TableCell>
                         <TableCell className="text-right">
                           {entry.direction === 'OUT' ? (
-                            <span className="font-black text-red-600">฿ {entry.amount.toLocaleString()}</span>
+                            <span className="font-black text-red-600">฿ {safeAmt.toLocaleString()}</span>
                           ) : '-'}
                         </TableCell>
                         <TableCell className="text-right pr-6">
@@ -321,7 +342,7 @@ export default function CashbookPage() {
                       </TableRow>
                     );
                   })}
-                  {(!entries || entries.length === 0) && !isLoading && (
+                  {(!sortedEntries || sortedEntries.length === 0) && !isLoading && (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีประวัติรายการทางการเงิน</TableCell>
                     </TableRow>

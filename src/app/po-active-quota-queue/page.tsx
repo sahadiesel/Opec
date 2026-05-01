@@ -3,11 +3,7 @@
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
-import {
-  PoPositionAggregateCardShell,
-  PoQuotaQueueCardShell,
-  usePoQuotaQueueRows,
-} from '@/components/ops/po-quota-queue';
+import { PoQuotaQueueCardShell, usePoQuotaQueueRows } from '@/components/ops/po-quota-queue';
 import { useMemo } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Info } from 'lucide-react';
@@ -20,7 +16,7 @@ export default function PoActiveQuotaQueuePage() {
     [currentUser],
   );
 
-  const { queueRows, positionAggregateRows, customers, loading } = usePoQuotaQueueRows(canSee);
+  const { queueRows, customers, allPositions, loading } = usePoQuotaQueueRows(canSee);
 
   if (userLoading || !currentUser) {
     return null;
@@ -39,16 +35,19 @@ export default function PoActiveQuotaQueuePage() {
       <div className="space-y-6 p-4 md:p-6 max-w-[100rem] mx-auto">
         <Alert>
           <Info className="h-4 w-4" />
-          <AlertTitle>ข้อมูลอ่านอย่างเดียว</AlertTitle>
+          <AlertTitle>คิวมอบหมายจาก PO Active</AlertTitle>
           <AlertDescription className="text-sm">
-            สำหรับฝ่ายปฏิบัติการและ HR — ตัวเลขคำนวณจาก PO line, Mobilization และ Wave เหมือนการ์ดสรุปบนหน้า PO
-            (เฉพาะ PO สายสัญญา + สัญญาหลัก active) — การ์ดล่างรวม<strong className="font-semibold text-foreground"> ข้ามทุก PO</strong> ตามตำแหน่ง
-            (เฟส C)
+            ตัวเลขจากบรรทัด PO และ Mobilization (assignment) — PO สายสัญญาที่สัญญาหลักยัง active และยังมีช่องว่าง
+            มอบหมายได้จากปุ่ม Assign ต่อบรรทัด โดยไม่ต้องสร้าง Wave
           </AlertDescription>
         </Alert>
 
-        <PoQuotaQueueCardShell queueRows={queueRows} customers={customers} loading={loading} />
-        <PoPositionAggregateCardShell positionRows={positionAggregateRows} loading={loading} />
+        <PoQuotaQueueCardShell
+          queueRows={queueRows}
+          customers={customers}
+          allPositions={allPositions}
+          loading={loading}
+        />
       </div>
     </AppShell>
   );

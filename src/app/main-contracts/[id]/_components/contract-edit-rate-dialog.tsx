@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import type { PositionRate, Position, MainContract } from '@/lib/types';
 import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
 import { OVERTIME_RULE_OPTIONS, parseOvertimeRuleKeyFromSnapshot } from '@/lib/contract-position-rate-extras';
+import { effectiveSellOnshore, effectiveSellOffshore, legacySellRateMirror } from '@/lib/commercial/position-rate-sell';
 import { PositionRateFormFields } from './position-rate-form-fields';
 
 type RatePolicy = NonNullable<MainContract['rateMultiplierPolicy']>;
@@ -31,6 +32,8 @@ function rateToFormState(rate: PositionRate): Partial<PositionRate> {
   return {
     positionId: rate.positionId,
     sellRate: rate.sellRate,
+    sellRateOnshore: effectiveSellOnshore(rate),
+    sellRateOffshore: effectiveSellOffshore(rate),
     billingUnit: rate.billingUnit,
     normalWorkHours: rate.normalWorkHours ?? 8,
     overtimeRuleKey: otKey,
@@ -73,11 +76,8 @@ export function ContractEditRateDialog({
     const policySell = effectiveRatePolicy.sell || {};
     const policyCost = effectiveRatePolicy.cost || {};
 
-    const normalizedSellRate = canEditSellSide ? Number(form.sellRate) || 0 : rate.sellRate;
-
-    onSave(rate.id, {
+    const payload: Record<string, unknown> = {
       positionId: rate.positionId,
-      sellRate: normalizedSellRate,
       costBaseline: deleteField(),
       billingUnit: form.billingUnit || rate.billingUnit,
       normalWorkHours: form.normalWorkHours || rate.normalWorkHours || 8,
@@ -100,14 +100,32 @@ export function ContractEditRateDialog({
       notes: form.notes ?? rate.notes ?? '',
       active: form.active ?? rate.active,
       updatedAt: Date.now(),
-    });
+    };
+
+    if (canEditSellSide) {
+      const on = Number(form.sellRateOnshore);
+      const off = Number(form.sellRateOffshore);
+      const onV = Number.isFinite(on) && on > 0 ? on : undefined;
+      const offV = Number.isFinite(off) && off > 0 ? off : undefined;
+      payload.sellRateOnshore = onV != null ? onV : deleteField();
+      payload.sellRateOffshore = offV != null ? offV : deleteField();
+      payload.sellRate = legacySellRateMirror({
+        sellRate: rate.sellRate,
+        sellRateOnshore: onV,
+        sellRateOffshore: offV,
+      });
+    } else {
+      payload.sellRate = rate.sellRate;
+    }
+
+    onSave(rate.id, payload);
     onOpenChange(false);
   };
 
   const saveDisabled =
     !rate ||
     (!canEditSellSide && !canEditCostSide) ||
-    (canEditSellSide && !form.sellRate);
+    (canEditSellSide && legacySellRateMirror(form) <= 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

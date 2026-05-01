@@ -48,11 +48,11 @@ export function LaborCostPositionSection({
           <Wallet className="h-5 w-5 text-amber-800" />
           <CardTitle className="text-lg text-amber-900">ต้นทุนค่าแรง (OPEC ฝั่งจ่าย)</CardTitle>
           <Badge variant="outline" className="text-[10px] border-amber-700/30 text-amber-900">
-            ไม่อ้าง main contract / สัญญา
+            ฐานทั่วไป — ดูตารางต่อสัญญาด้านล่าง
           </Badge>
         </div>
         <CardDescription className="text-amber-900/80">
-          ฐานมาตรฐานต่อวันตามโหมดงาน (onshore / offshore) — รายคนที่ใช้ default ตำแหน่งจะยึดสองค่านี้
+          ฐานมาตรฐานต่อวันเมื่อไม่มีราคาเฉพาะสัญญาในแถวตารางด้านล่าง — payroll จับคู่ timesheet กับสัญญาแล้วใช้ทะเบียนต่อสัญญาก่อน จากนั้นจึง fallback มาที่สองช่องนี้
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-2 gap-6">

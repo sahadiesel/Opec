@@ -696,7 +696,11 @@ export default function OfficePayrollPage() {
                     <TableRow 
                       key={run.id} 
                       className="cursor-pointer hover:bg-muted/30 group transition-all" 
-                      onClick={() => router.push(`/office-payroll/${run.id}`)}
+                      onClick={() =>
+                        router.push(
+                          accountingPayoutQueueOnly ? `/accounting/office-payroll/${run.id}` : `/office-payroll/${run.id}`,
+                        )
+                      }
                     >
                       <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
                       <TableCell className="font-medium">
@@ -760,7 +764,13 @@ export default function OfficePayrollPage() {
                             variant="ghost"
                             size="icon"
                             className="group-hover:text-primary"
-                            onClick={() => router.push(`/office-payroll/${run.id}`)}
+                            onClick={() =>
+                              router.push(
+                                accountingPayoutQueueOnly
+                                  ? `/accounting/office-payroll/${run.id}`
+                                  : `/office-payroll/${run.id}`,
+                              )
+                            }
                           >
                             <ChevronRight className="h-5 w-5" />
                           </Button>

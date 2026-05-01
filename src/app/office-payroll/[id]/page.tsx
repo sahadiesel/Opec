@@ -32,8 +32,7 @@ import {
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection } from 'firebase/firestore';
-import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { doc, collection, updateDoc, type DocumentData } from 'firebase/firestore';
 import { 
   OfficePayrollRun, 
   OfficePayrollLine, 
@@ -57,7 +56,6 @@ import {
   applyStandardOfficeRunLines,
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
-import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -110,41 +108,17 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
       updateData.managerApprovedAt = Date.now();
       updateData.hrApprovedBy = currentUser.displayName;
     }
-    if (newStatus === 'FINANCE_APPROVED') {
-      updateData.financeApprovedBy = currentUser.displayName;
-      if (!run.financeCashbookEntryId) {
-        try {
-          const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
-            firestore,
-            currentUser,
-            {
-              runId: id,
-              netAmount: run.netAmount,
-              payrollRunNo: run.payrollRunNo,
-              payrollMonthLabel: run.payrollMonth,
-              payoutBankAccountId: run.payoutBankAccountId,
-              kind: 'OFFICE_STAFF',
-            }
-          );
-          updateData.financeCashbookEntryId = cashbookEntryId;
-          updateData.payoutBankAccountId = bankAccountId;
-        } catch (e) {
-          console.error(e);
-          toast({
-            variant: 'destructive',
-            title: 'บันทึกตัดจ่ายไม่สำเร็จ',
-            description: e instanceof Error ? e.message : 'ตรวจสอบบัญชีธนาคาร ACTIVE',
-          });
-          return;
-        }
-      }
+    try {
+      await updateDoc(runRef, updateData as DocumentData);
+      toast({ title: 'อัปเดตสถานะสำเร็จ', description: `เปลี่ยนสถานะงวดเป็น ${newStatus}` });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกสถานะงวดไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองใหม่หรือตรวจสิทธิ์ Firestore',
+      });
     }
-    if (newStatus === 'LOCKED') {
-      updateData.lockedAt = Date.now();
-    }
-
-    updateDocumentNonBlocking(runRef, updateData);
-    toast({ title: 'อัปเดตสถานะสำเร็จ', description: `เปลี่ยนสถานะงวดเป็น ${newStatus}` });
   };
 
   const handleCalculate = async () => {
@@ -447,7 +421,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           </TabsContent>
 
           <TabsContent value="approvals" className="mt-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               <Card className={run.status === 'CALCULATED' || run.status === 'HR_REVIEW' ? 'border-blue-500 bg-blue-50/20' : ''}>
                 <CardHeader>
                   <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2">
@@ -510,46 +484,41 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                 </CardContent>
               </Card>
 
-              <Card className={run.status === 'HR_APPROVED' || run.status === 'FINANCE_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''}>
+              <Card className={run.status === 'HR_APPROVED' || run.status === 'FINANCE_APPROVED' || isLocked ? 'border-blue-500 bg-blue-50/20' : ''}>
                 <CardHeader>
                   <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2">
-                    <Coins className="h-4 w-4" /> 3. การเงิน (จ่าย)
+                    <Coins className="h-4 w-4" /> 3. ฝ่ายบัญชี (ตัดจ่าย · cashbook · ล็อก)
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    {run.financeApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{run.financeApprovedBy ? `อนุมัติ/จ่าย ${run.financeApprovedBy}` : 'รอการเงินอนุมัติจ่าย'}</span>
+                  <p className="text-sm text-muted-foreground">
+                    ขั้นตอนการเงินไม่อยู่ในหน้า HR อีกต่อไป — หลังผู้จัดการอนุมัติแล้ว ฝ่ายบัญชีเปิดเมนู{' '}
+                    <b>บัญชี → พนักงานออฟฟิศ (ตัดจ่าย)</b> เลือกบัญชีตัดยอด บันทึก cashbook และล็อกงวด
+                  </p>
+                  <div className="text-sm space-y-1">
+                    <p>
+                      สถานะการเงิน:{' '}
+                      {run.financeApprovedBy ? (
+                        <span className="font-medium text-foreground">อนุมัติ/จ่าย {run.financeApprovedBy}</span>
+                      ) : (
+                        <span>รอฝ่ายบัญชีดำเนินการ</span>
+                      )}
+                    </p>
+                    {isLocked ? (
+                      <p className="text-xs text-muted-foreground">ล็อกงวดแล้ว — {formatDateThaiBE(run.lockedAt!)}</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">ล็อกงวด: ทำที่หน้าบัญชีหลังจ่ายแล้ว</p>
+                    )}
                   </div>
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    disabled={!canMutate || run.status !== 'HR_APPROVED'}
-                    onClick={() => void handleUpdateStatus('FINANCE_APPROVED')}
-                  >
-                    อนุมัติการเบิกจ่าย (Finance — cashbook + บัญชีธนาคาร)
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card className={run.status === 'FINANCE_APPROVED' || isLocked ? 'border-primary bg-primary/5' : ''}>
-                <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase flex items-center gap-2">
-                    <Lock className="h-4 w-4" /> 4. ล็อกงวด
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    {isLocked ? <Lock className="text-primary h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{isLocked ? `ล็อกเมื่อ ${formatDateThaiBE(run.lockedAt!)}` : 'รอล็อกงวดถาวร'}</span>
-                  </div>
-                  <Button
-                    className="w-full bg-primary"
-                    disabled={!canMutate || run.status !== 'FINANCE_APPROVED'}
-                    onClick={() => void handleUpdateStatus('LOCKED')}
-                  >
-                    ล็อกงวดการจ่ายเงิน (Lock)
-                  </Button>
+                  {['HR_APPROVED', 'FINANCE_APPROVED', 'LOCKED', 'PAID'].includes(run.status) ? (
+                    <Button className="w-full" variant="default" asChild>
+                      <Link href={`/accounting/office-payroll/${id}`}>เปิดหน้าทำจ่าย (บัญชี)</Link>
+                    </Button>
+                  ) : (
+                    <Button className="w-full" variant="outline" disabled>
+                      เปิดหน้าทำจ่าย (บัญชี) — หลังผู้จัดการอนุมัติ
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -625,8 +594,10 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                 {run.status === 'DRAFT' && "ขั้นตอนถัดไป: ฝ่ายเงินเดือนกดคำนวณเงินเดือนจากฐานข้อมูล Office Staff"}
                 {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: ฝ่ายเงินเดือนกด «ส่งอนุมัติ» เพื่อส่งคิวให้ผู้จัดการ (หรือศูนย์อนุมัติ)"}
                 {run.status === 'HR_REVIEW' && "ขั้นตอนถัดไป: ผู้จัดการ (Ops/HR) อนุมัติรายการ หรือกดอนุมัติในศูนย์อนุมัติ"}
-                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: การเงินอนุมัติเบิกจ่ายและโอนเงิน"}
-                {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชีรายเดือน"}
+                {run.status === 'HR_APPROVED' &&
+                  'ขั้นตอนถัดไป: ฝ่ายบัญชีทำจ่ายที่เมนู «พนักงานออฟฟิศ (ตัดจ่าย)» — เลือกบัญชีตัดยอดและลง cashbook'}
+                {run.status === 'FINANCE_APPROVED' &&
+                  'ขั้นตอนถัดไป: ฝ่ายบัญชีล็อกงวดที่หน้าทำจ่าย (Accounting · Office payroll)'}
                 {isLocked && "สถานะสิ้นสุด: ข้อมูลถูกล็อกและบันทึก Snapshot ไว้เรียบร้อยแล้ว"}
               </p>
             </div>

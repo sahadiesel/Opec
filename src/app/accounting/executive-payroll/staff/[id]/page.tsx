@@ -287,8 +287,11 @@ export default function ExecutivePayrollStaffEditorPage({
                 <Label>ประเภทการจ้าง</Label>
                 <Select
                   value={form.employmentType}
-                  onValueChange={(v: ExecutivePayrollStaff['employmentType']) =>
-                    setForm({ ...form, employmentType: v })
+                  onValueChange={(v) =>
+                    setForm({
+                      ...form,
+                      employmentType: v as ExecutivePayrollStaff['employmentType'],
+                    })
                   }
                 >
                   <SelectTrigger>
@@ -305,8 +308,8 @@ export default function ExecutivePayrollStaffEditorPage({
                 <Label>ประเภทค่าจ้าง</Label>
                 <Select
                   value={form.salaryType}
-                  onValueChange={(v: ExecutivePayrollStaff['salaryType']) =>
-                    setForm({ ...form, salaryType: v })
+                  onValueChange={(v) =>
+                    setForm({ ...form, salaryType: v as ExecutivePayrollStaff['salaryType'] })
                   }
                 >
                   <SelectTrigger>

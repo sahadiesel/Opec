@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Waves } from 'lucide-react';
+import { CalendarDays } from 'lucide-react';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useSearchParams } from 'next/navigation';
@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import Link from 'next/link';
 import { OPEN_WAVE_STATUSES_FOR_TIMESHEET } from '@/lib/constants/timesheet-wave';
+import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -29,19 +30,12 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-function chunkIds<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
-async function hasDailyTimesheetsForDate(db: Firestore, date: string, waveIds: string[]): Promise<boolean> {
-  if (waveIds.length === 0) return false;
-  for (const chunk of chunkIds(waveIds, 10)) {
+async function hasDailyTimesheetsForPoDate(db: Firestore, date: string, poIds: string[]): Promise<boolean> {
+  for (const poId of poIds) {
     const q = query(
       collection(db, 'daily_timesheets'),
+      where('purchaseOrderId', '==', poId),
       where('date', '==', date),
-      where('waveId', 'in', chunk),
     );
     const snap = await getDocs(q);
     if (!snap.empty) return true;
@@ -111,6 +105,14 @@ function WaveTimesheetBoardContent() {
     return sortedWaves.filter((w) => w.poId === filterPoId);
   }, [sortedWaves, filterPoId]);
 
+  const boardPoIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const w of sortedWavesForBoard) ids.add(w.poId);
+    const list = filterPoId ? (pos ?? []).filter((p) => p.id === filterPoId) : (pos ?? []);
+    for (const p of list) ids.add(p.id);
+    return [...ids];
+  }, [sortedWavesForBoard, pos, filterPoId]);
+
   const posOrderedForBoard = useMemo(() => {
     const m = new Map<string, { po: PurchaseOrder; waves: Wave[] }>();
     for (const w of sortedWavesForBoard) {
@@ -120,8 +122,12 @@ function WaveTimesheetBoardContent() {
       cur.waves.push(w);
       m.set(w.poId, cur);
     }
+    const list = filterPoId ? (pos ?? []).filter((p) => p.id === filterPoId) : (pos ?? []);
+    for (const p of list) {
+      if (!m.has(p.id)) m.set(p.id, { po: p, waves: [] as Wave[] });
+    }
     return [...m.values()].sort((a, b) => a.po.poCode.localeCompare(b.po.poCode, 'th'));
-  }, [sortedWavesForBoard, pos]);
+  }, [sortedWavesForBoard, pos, filterPoId]);
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewTimesheets ? collection(firestore, 'workers') : null),
@@ -144,16 +150,17 @@ function WaveTimesheetBoardContent() {
 
   const notifyMonthReviewIfLocked = useCallback(
     async (htmlDate: string) => {
-      if (!firestore || sortedWavesForBoard.length === 0) return;
+      if (!firestore || boardPoIds.length === 0) return;
       const ym = htmlDate.slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) return;
       const snap = await getDocs(
         query(collection(firestore, 'wave_month_timesheet_reviews'), where('yearMonth', '==', ym)),
       );
       const waveIdSet = new Set(sortedWavesForBoard.map((w) => w.id));
+      const scopeIdSet = new Set(boardPoIds.map((id) => poTimesheetScopeId(id)));
       for (const d of snap.docs) {
         const r = d.data() as WaveMonthTimesheetReview;
-        if (!waveIdSet.has(r.waveId)) continue;
+        if (!waveIdSet.has(r.waveId) && !scopeIdSet.has(r.waveId)) continue;
         if (r.status === 'pending_manager_review' || r.status === 'approved') {
           toast({
             variant: 'destructive',
@@ -164,7 +171,7 @@ function WaveTimesheetBoardContent() {
         }
       }
     },
-    [firestore, sortedWavesForBoard, toast],
+    [firestore, sortedWavesForBoard, boardPoIds, toast],
   );
 
   const applyBoardDate = useCallback(
@@ -181,12 +188,11 @@ function WaveTimesheetBoardContent() {
       const next = timestampToHtmlDateValue(ms);
       if (next === targetDate) return;
       void (async () => {
-        if (!firestore || sortedWavesForBoard.length === 0) {
+        if (!firestore || boardPoIds.length === 0) {
           await applyBoardDate(ms);
           return;
         }
-        const waveIds = sortedWavesForBoard.map((w) => w.id);
-        const hasSaved = await hasDailyTimesheetsForDate(firestore, next, waveIds);
+        const hasSaved = await hasDailyTimesheetsForPoDate(firestore, next, boardPoIds);
         if (hasSaved) {
           setPendingDateChangeMs(ms);
           setDateConfirmOpen(true);
@@ -195,7 +201,7 @@ function WaveTimesheetBoardContent() {
         await applyBoardDate(ms);
       })();
     },
-    [applyBoardDate, firestore, sortedWavesForBoard, targetDate],
+    [applyBoardDate, firestore, boardPoIds, targetDate],
   );
 
   const loading = posLoading || wavesLoading;
@@ -218,17 +224,12 @@ function WaveTimesheetBoardContent() {
             <Link href="/timesheets">← กลับไปศูนย์ลงเวลา (งวดรายเดือน)</Link>
           </Button>
           <h1 className="text-3xl font-bold tracking-tight text-primary">
-            <Waves className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
-            คีย์ลงเวลาแบบกลุ่ม (PO / งวด timesheet รายเดือน)
+            <CalendarDays className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
+            คีย์ลงเวลาแบบกลุ่ม (PO + assignment)
           </h1>
           <p className="text-muted-foreground text-lg max-w-4xl">
-            แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แต่ละแถวแสดง <strong>Wave ที่ assignment นั้นอยู่</strong> (รอบลงงานต่างกันได้) — บันทึกร่าง DRAFT
-            ที่นี่; รอบส่งตรวจ/ใบกำกับ: สรุปราย wave ได้ที่{' '}
-            <Link href="/timesheets/wave-month" className="text-primary font-semibold underline">
-              สรุปลงเวลารายเดือน (wave)
-            </Link>
-            {', '}
-            หรือ**งวดเดียวรวมทุก wave ใต้ PO** สำหรับเชิงการเรียกเก็บที่{' '}
+            แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถวมาจาก mobilization ที่ช่วงเริ่ม–สิ้นสุดครอบคลุมวันที่เลือก — บันทึกร่าง DRAFT ที่นี่
+            ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
             <Link href="/timesheets/po-month" className="text-primary font-semibold underline">
               เอกสาร timesheet ราย PO+เดือน
             </Link>
@@ -239,23 +240,24 @@ function WaveTimesheetBoardContent() {
         <PageGuidance
           title="วิธีใช้"
           tips={[
-            'PO = คำสั่งจ้าง/โควต้า; **Wave = กลุ่ม mobilize ตามรอบ** — คนลงสนามไม่พร้อมกันทั้ง PO; แถวลงเวลาสะท้อน wave ราย assignment',
-            '**วางบิลรอบเดือนใต้ PO ที่มีหลาย wave ในเดือนนั้น** ให้ยึด **เอกสาร PO+เดือน** หลังอนุมัติ (รวม timesheet ทุก wave) ไม่ใช่ “เลือกอ้าง wave ใด wave หนึ่ง” แทนเดือน',
-            'รายคน = 1 assignment — ย้าย wave แล้ว demob รายเก่า รายนั้นไม่นับซ้ำในราย active',
+            'PO = คำสั่งจ้าง; แถวลงเวลามาจาก mobilization ที่วันที่เลือกอยู่ในช่วง start–end ของ assignment',
+            'วางบิล / payroll รอบเดือนให้ยึดเอกสาร PO+เดือนหลังอนุมัติ',
+            'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
             'ตัวกรอง URL: ?month=2026-04&poId=… — กำหนดวันที่ 1 ของงวดและ/หรือ PO',
-            'แถวที่ lock ตาม wave_month_timesheet_reviews ของ wave นั้น — แก้เวลาไม่ได้',
+            'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
           ]}
         />
 
         <p className="text-sm text-muted-foreground">
-          {posOrderedForBoard.length} การ์ด (PO) · รวม {sortedWavesForBoard.length} wave
+          {posOrderedForBoard.length} การ์ด (PO)
+          {sortedWavesForBoard.length > 0 ? ` · มี wave เก่าในชุดนี้ ${sortedWavesForBoard.length} รายการ` : ''}
         </p>
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
         ) : posOrderedForBoard.length === 0 ? (
           <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
-            ไม่มี Wave/PO สำหรับแสดง — ตรวจสถานะ PO / Wave
+            ไม่มี PO สำหรับแสดง — ตรวจสถานะ PO (pending/active)
           </p>
         ) : (
           <div className="space-y-8">

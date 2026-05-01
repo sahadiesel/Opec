@@ -4,11 +4,12 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Waves, Save, Loader2, Zap, Info, ChevronRight, Lock, UserMinus } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Info, ChevronRight, Lock, UserMinus } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { htmlDateValueToTimestampMs } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
+import { parseISO, isWithinInterval } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, doc, getDoc, getDocs, query, where, writeBatch, increment, type Firestore } from 'firebase/firestore';
@@ -32,10 +33,10 @@ import { TimesheetService } from '@/lib/services/timesheet-service';
 import Link from 'next/link';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import {
-  resolveContractDailyHoursForWaveBoard,
+  resolveContractDailyHoursForAssignmentLine,
   assignmentReadyForWaveTimesheet,
-  waveRoundMonthLabel,
 } from '@/lib/constants/timesheet-ui';
+import { poTimesheetScopeId, isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import {
   AlertDialog,
@@ -95,7 +96,7 @@ export type PoDailyBoardCardProps = {
 };
 
 /**
- * กระดานลงเวลารายวันต่อ PO — รวมทุก wave ใต้ PO; แต่ละแถวบอกรหัส wave
+ * กระดานลงเวลารายวันต่อ PO — แถวจาก mobilization ที่ช่วง start–end ครอบคลุมวันที่เลือก
  */
 export function PoDailyBoardCard({
   po,
@@ -121,16 +122,24 @@ export function PoDailyBoardCard({
 
   const monthYm = targetDate.slice(0, 7);
   const waveById = useMemo(() => new Map(waves.map((w) => [w.id, w])), [waves]);
-  const waveIdSet = useMemo(() => new Set(waves.map((w) => w.id)), [waves]);
+  const poScopeId = useMemo(() => poTimesheetScopeId(po.id), [po.id]);
 
   useEffect(() => {
-    if (!firestore || !/^\d{4}-\d{2}$/.test(monthYm) || waves.length === 0) {
+    if (!firestore || !/^\d{4}-\d{2}$/.test(monthYm)) {
       setReviewByWaveId(new Map());
       return;
     }
     let cancelled = false;
     void (async () => {
       const m = new Map<string, WaveMonthTimesheetReview | null>();
+      const scopeRef = doc(firestore, 'wave_month_timesheet_reviews', `${poScopeId}_${monthYm}`);
+      const scopeSnap = await getDoc(scopeRef);
+      m.set(
+        poScopeId,
+        scopeSnap.exists()
+          ? ({ id: scopeSnap.id, ...(scopeSnap.data() as object) } as WaveMonthTimesheetReview)
+          : null,
+      );
       await Promise.all(
         waves.map(async (w) => {
           const ref = doc(firestore, 'wave_month_timesheet_reviews', `${w.id}_${monthYm}`);
@@ -146,7 +155,7 @@ export function PoDailyBoardCard({
     return () => {
       cancelled = true;
     };
-  }, [firestore, monthYm, waves]);
+  }, [firestore, monthYm, waves, poScopeId]);
 
   const poLinesQuery = useMemoFirebase(
     () => (firestore && po.id ? collection(firestore, 'purchase_orders', po.id, 'po_lines') : null),
@@ -161,17 +170,6 @@ export function PoDailyBoardCard({
   );
   const { data: contractPositionRates } = useCollection<PositionRate>(contractRatesQuery as any);
 
-  const defaultHoursByWave = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const w of waves) {
-      m.set(
-        w.id,
-        resolveContractDailyHoursForWaveBoard(w, poLines ?? undefined, contractPositionRates ?? undefined),
-      );
-    }
-    return m;
-  }, [waves, poLines, contractPositionRates]);
-
   const mobsByPoQuery = useMemoFirebase(
     () => (firestore && po.id ? query(collection(firestore, 'mobilizations'), where('poId', '==', po.id)) : null),
     [firestore, po.id],
@@ -180,32 +178,56 @@ export function PoDailyBoardCard({
 
   const assignmentRows = useMemo(() => {
     if (!mobsForPo) return [] as Assignment[];
-    const inScope = mobsForPo.filter(
-      (a) => waveIdSet.has(a.waveId) && WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as any),
-    );
-    const out: Assignment[] = [];
-    for (const w of waves) {
-      const raw = inScope.filter((a) => a.waveId === w.id);
-      out.push(...pickRosterLinePerWorker(raw).filter((a) => assignmentReadyForWaveTimesheet(a)));
+    let target: Date;
+    try {
+      target = parseISO(targetDate);
+      if (Number.isNaN(target.getTime())) return [];
+    } catch {
+      return [];
     }
-    return out.sort((a, b) => {
-      const wa = waveById.get(a.waveId)?.waveCode ?? '';
-      const wb = waveById.get(b.waveId)?.waveCode ?? '';
-      if (wa !== wb) return wa.localeCompare(wb, 'th');
+    const inScope = mobsForPo.filter((a) => {
+      if (!WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as any)) return false;
+      if (!assignmentReadyForWaveTimesheet(a)) return false;
+      try {
+        const start = parseISO(a.startDate);
+        const end = parseISO(a.endDate);
+        return isWithinInterval(target, { start, end });
+      } catch {
+        return false;
+      }
+    });
+    const roster = pickRosterLinePerWorker(inScope).filter((a) => assignmentReadyForWaveTimesheet(a));
+    return roster.sort((a, b) => {
       const wn = (id: string) => {
         const w = workers?.find((x) => x.id === id);
         return w ? `${w.firstName} ${w.lastName}` : id;
       };
       return wn(a.workerId).localeCompare(wn(b.workerId), 'th');
     });
-  }, [mobsForPo, waveIdSet, waves, waveById, workers]);
+  }, [mobsForPo, targetDate, workers]);
+
+  const defaultHoursByAssignmentId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const asgn of assignmentRows) {
+      m.set(
+        asgn.id,
+        resolveContractDailyHoursForAssignmentLine(
+          asgn.poLineId,
+          poLines ?? undefined,
+          contractPositionRates ?? undefined,
+        ),
+      );
+    }
+    return m;
+  }, [assignmentRows, poLines, contractPositionRates]);
 
   const anyMonthLocked = useMemo(() => {
+    if (isMonthReviewLocked(reviewByWaveId.get(poScopeId) ?? null)) return true;
     for (const w of waves) {
       if (isMonthReviewLocked(reviewByWaveId.get(w.id) ?? null)) return true;
     }
     return false;
-  }, [reviewByWaveId, waves]);
+  }, [reviewByWaveId, waves, poScopeId]);
 
   const loadRoster = useCallback(async () => {
     if (!firestore || !targetDate || assignmentRows.length === 0) {
@@ -213,22 +235,20 @@ export function PoDailyBoardCard({
       return;
     }
     const existing: Record<string, DailyTimesheet> = {};
-    for (const w of waves) {
-      const q = query(
-        collection(firestore, 'daily_timesheets'),
-        where('waveId', '==', w.id),
-        where('date', '==', targetDate),
-      );
-      const snap = await getDocs(q);
-      snap.docs.forEach((d) => {
-        const data = d.data() as DailyTimesheet;
-        existing[data.assignmentId] = data;
-      });
-    }
+    const q = query(
+      collection(firestore, 'daily_timesheets'),
+      where('purchaseOrderId', '==', po.id),
+      where('date', '==', targetDate),
+    );
+    const snap = await getDocs(q);
+    snap.docs.forEach((d) => {
+      const data = d.data() as DailyTimesheet;
+      existing[data.assignmentId] = data;
+    });
     const next: Record<string, Partial<DailyTimesheet>> = {};
     const persisted = new Set<string>();
     for (const asgn of assignmentRows) {
-      const dft = defaultHoursByWave.get(asgn.waveId) ?? 12;
+      const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
       if (existing[asgn.id]) {
         persisted.add(asgn.id);
         const ex = existing[asgn.id];
@@ -248,7 +268,7 @@ export function PoDailyBoardCard({
     }
     setPersistedAssignmentIds(persisted);
     setRosterData(next);
-  }, [firestore, targetDate, assignmentRows, waves, defaultHoursByWave]);
+  }, [firestore, targetDate, assignmentRows, po.id, defaultHoursByAssignmentId]);
 
   useEffect(() => {
     void loadRoster();
@@ -256,7 +276,11 @@ export function PoDailyBoardCard({
 
   const applyBulk = (field: keyof DailyTimesheet, value: unknown) => {
     if (anyMonthLocked) {
-      toast({ variant: 'destructive', title: 'งวดนี้ปิดแล้ว', description: 'มี wave ใต้ PO นี้ถูกล็อกงวด / รออนุมัติ' });
+      toast({
+        variant: 'destructive',
+        title: 'งวดนี้ปิดแล้ว',
+        description: 'งวด PO หรือ wave (ข้อมูลเก่า) ถูกล็อก / รออนุมัติ',
+      });
       return;
     }
     if (!firestore) return;
@@ -293,13 +317,13 @@ export function PoDailyBoardCard({
         if (!ts?.workerId) continue;
         if (ts.status && service.isFinalized(ts.status as DailyTimesheetStatus)) continue;
 
+        if (isMonthReviewLocked(reviewByWaveId.get(poScopeId) ?? null)) continue;
         const wv = waveById.get(asgn.waveId);
-        if (!wv) continue;
-        if (isMonthReviewLocked(reviewByWaveId.get(wv.id) ?? null)) continue;
+        if (wv && isMonthReviewLocked(reviewByWaveId.get(wv.id) ?? null)) continue;
 
         const worker = workers?.find((w) => w.id === asgn.workerId);
         const contractId = (asgn.contractId || po.contractId || '').trim();
-        const poLineId = (asgn.poLineId || wv.poLineId || '').trim();
+        const poLineId = (asgn.poLineId || wv?.poLineId || '').trim();
         const positionId = (asgn.positionId || '').trim();
         if (!contractId || !poLineId || !positionId) {
           toast({
@@ -317,12 +341,13 @@ export function PoDailyBoardCard({
           normalHours: isUnpaid ? 0 : (ts.normalHours ?? 0),
           ot15Hours: 0,
           workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
-          waveId: wv.id,
-          siteId: wv.id,
+          waveId: poScopeId,
+          siteId: poScopeId,
           purchaseOrderId: asgn.poId || poId,
+          poActiveBundleId: po.poActiveBundleId,
           poLineId,
           contractId,
-          customerId: wv.customerId || '',
+          customerId: po.customerId || '',
           positionId,
           workMode: asgn.workMode ?? 'OFFSHORE',
           shiftType: 'DAY',
@@ -371,7 +396,7 @@ export function PoDailyBoardCard({
         updatedBy: currentUser.id,
       });
       const wId = (asgn.waveId || '').trim();
-      if (wId) {
+      if (wId && !isPoTimesheetScopeId(wId)) {
         batch.update(doc(firestore, 'waves', wId), {
           assignedWorkers: increment(-1),
           updatedAt: Date.now(),
@@ -379,7 +404,7 @@ export function PoDailyBoardCard({
       }
       await batch.commit();
       setDemobTarget(null);
-      toast({ title: 'จบงวด (Demob) แล้ว', description: 'รายการนี้จะหยุดลงเวลาจาก wave นี้' });
+      toast({ title: 'จบงวด (Demob) แล้ว', description: 'รายการนี้จะไม่ถูกนับในกระดานตามช่วงมอบหมายอีกต่อไป' });
     } catch (e: unknown) {
       toast({ variant: 'destructive', title: 'อัปเดตไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -401,7 +426,7 @@ export function PoDailyBoardCard({
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-lg flex flex-wrap items-center gap-2">
-                <Waves className="h-5 w-5 shrink-0" />
+                <CalendarDays className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
                 <span className="font-mono">{po.poCode}</span>
                 <span className="opacity-80">· งวด {formatThaiYearMonthLabel(monthYm, 'th-TH')}</span>
                 <span className="text-xs font-normal opacity-90">({monthYm})</span>
@@ -414,12 +439,7 @@ export function PoDailyBoardCard({
             <div className="flex flex-col gap-1.5 sm:items-end shrink-0">
               <Button variant="secondary" size="sm" asChild>
                 <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}&highlightPo=${encodeURIComponent(po.id)}`}>
-                  เอกสาร PO+เดือน (วางบิล · รวมทุก wave) →
-                </Link>
-              </Button>
-              <Button variant="outline" size="sm" className="bg-primary-foreground/10 border-primary-foreground/30" asChild>
-                <Link href={`/timesheets/wave-month?month=${encodeURIComponent(monthYm)}`}>
-                  สรุปรอบเดือนต่อ wave (ส่งตรวจ) →
+                  เอกสาร PO+เดือน (วางบิล / payroll) →
                 </Link>
               </Button>
             </div>
@@ -428,20 +448,9 @@ export function PoDailyBoardCard({
         <CardContent className="p-0 space-y-4">
           {anyMonthLocked ? (
             <Alert className="rounded-none border-x-0 border-t-0">
-              <AlertTitle>งวด {monthYm} ถูกล็อกใน wave บางตัวใต้ PO นี้</AlertTitle>
+              <AlertTitle>งวด {monthYm} ถูกล็อกสำหรับ PO นี้ (หรือ wave ข้อมูลเก่า)</AlertTitle>
               <AlertDescription>
-                มีรอบ wave ที่ entry_locked / รออนุมัติ / อนุมัติ — ราย wave นั้นแก้เวลาไม่ได้
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          {waves.length > 1 ? (
-            <Alert className="rounded-none border-x-0 border-t-0 border-amber-200 bg-amber-50 text-amber-900">
-              <AlertTitle>งวดนี้ PO เดียวกันมี {waves.length} wave</AlertTitle>
-              <AlertDescription>
-                ลูกจ้างอาจ mobilize ต่างรอบ — ชั่วโมงและบรรทัด timesheet ยึด**ราย wave + รายวัน**; งาน**เรียกเก็บลูกค้าในเดือนนี้
-                ให้ยึด<strong>เอกสาร timesheet ราย PO+เดือน</strong> หลัง manager อนุมัติ (รวม timesheet ทุก wave ใต้ PO) แทนการ “เลือก
-                อ้างอิง wave ใด wave หนึ่ง” มาแทนเดือน (ใบเก่าในช่วง wave เดียวในงวดอาจอ้าง wave ได้; **ห้ามแก้**
-                ใบที่ออก/ลูกค้า approve แล้ว หากต้องรวมแบบ PO+เดือน ให้ใช้ DRAFT ใหม่ตาม runbook บัญชี/OPS)
+                สถานะ entry_locked / รออนุมัติ / อนุมัติ — แก้เวลาในกระดานนี้ไม่ได้จนกว่าจะปลดล็อกตามกระบวนการ
               </AlertDescription>
             </Alert>
           ) : null}
@@ -504,7 +513,7 @@ export function PoDailyBoardCard({
                   {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                   บันทึก
                 </Button>
-                <span className="text-[10px] text-muted-foreground">บันทึกทุก row ตาม wave ของราย</span>
+                <span className="text-[10px] text-muted-foreground">บันทึกทุกแถวตาม PO + assignment</span>
               </div>
             </div>
           </div>
@@ -517,7 +526,7 @@ export function PoDailyBoardCard({
               <TableHeader className="bg-muted/50">
                 <TableRow>
                   <TableHead className="pl-6 py-4 font-bold min-w-[9rem]">พนักงาน (Worker)</TableHead>
-                  <TableHead className="font-bold w-[6.5rem] min-w-[6rem]">Wave</TableHead>
+                  <TableHead className="font-bold w-[8.5rem] min-w-[7rem]">ช่วงมอบหมาย</TableHead>
                   <TableHead className="font-bold min-w-[5rem] max-w-[8rem]">ตำแหน่ง</TableHead>
                   <TableHead className="font-bold w-[148px] max-w-[160px] shrink-0">ประเภทวัน</TableHead>
                   <TableHead className="font-bold text-center w-[5.5rem] shrink-0">ชั่วโมงปกติ</TableHead>
@@ -529,8 +538,13 @@ export function PoDailyBoardCard({
               <TableBody>
                 {assignmentRows.map((asgn) => {
                   const wv = waveById.get(asgn.waveId);
-                  const rowLocked = wv && isMonthReviewLocked(reviewByWaveId.get(wv.id) ?? null);
-                  const dft = defaultHoursByWave.get(asgn.waveId) ?? 12;
+                  const scopeLocked = isMonthReviewLocked(reviewByWaveId.get(poScopeId) ?? null);
+                  const waveLocked =
+                    wv && !isPoTimesheetScopeId(asgn.waveId)
+                      ? isMonthReviewLocked(reviewByWaveId.get(wv.id) ?? null)
+                      : false;
+                  const rowLocked = scopeLocked || waveLocked;
+                  const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
                   const raw = rosterData[asgn.id];
                   const worker = workers?.find((x) => x.id === asgn.workerId);
                   const et = raw?.eventType ?? 'work_day';
@@ -558,13 +572,8 @@ export function PoDailyBoardCard({
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="align-top text-xs font-mono text-primary/90 py-4">
-                        <div className="flex flex-col gap-0.5 leading-tight">
-                          <span className="break-all">{wv?.waveCode ?? asgn.waveId}</span>
-                          <span className="text-[10px] text-muted-foreground font-normal">
-                            ({waveRoundMonthLabel(wv as Wave)})
-                          </span>
-                        </div>
+                      <TableCell className="align-top text-xs py-4 text-foreground/90">
+                        <span className="leading-tight">{formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}</span>
                       </TableCell>
                       <TableCell className="text-sm align-top py-4 max-w-[8rem]">
                         <span className="line-clamp-2" title={positionLabel(asgn.positionId)}>

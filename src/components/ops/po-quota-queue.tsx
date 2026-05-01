@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import Link from 'next/link';
 import { collection, collectionGroup, query, where } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -8,27 +8,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, ShoppingCart, ChevronRight, ClipboardList, Layers } from 'lucide-react';
+import { Loader2, ShoppingCart, ChevronRight, ClipboardList } from 'lucide-react';
 import type { Assignment, Customer, MainContract, PurchaseOrder, POLine, Wave, Position } from '@/lib/types';
 import {
   aggregateActiveLineTotals,
   buildPoFulfillmentByLine,
-  buildPositionAggregateAcrossActiveContractPos,
-  type PoPositionAggregateRow,
+  type PoLineFulfillmentRow,
 } from '@/lib/ops/po-fulfillment-read-model';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 export type PoQuotaQueueRow = {
   po: PurchaseOrder;
   totals: ReturnType<typeof aggregateActiveLineTotals>;
-  topLines: { label: string; req: number; asg: number; rem: number }[];
-  moreLineCount: number;
+  fulfillmentRows: PoLineFulfillmentRow[];
 };
 
 export function usePoQuotaQueueRows(enabled: boolean): {
   queueRows: PoQuotaQueueRow[];
-  positionAggregateRows: PoPositionAggregateRow[];
   customers: Customer[] | undefined;
+  allPositions: Position[] | undefined;
   loading: boolean;
 } {
   const firestore = useFirestore();
@@ -90,19 +88,6 @@ export function usePoQuotaQueueRows(enabled: boolean): {
     return new Set((activeContracts ?? []).map((c) => c.id).filter(Boolean));
   }, [activeContracts]);
 
-  const positionAggregateRows = useMemo((): PoPositionAggregateRow[] => {
-    if (!activePOs?.length || !allPOLines || activeContracts === undefined) return [];
-    if (activeMainContractIdSet.size === 0) return [];
-    return buildPositionAggregateAcrossActiveContractPos(
-      activePOs,
-      activeMainContractIdSet,
-      allPOLines,
-      allMobs ?? [],
-      allWaves ?? [],
-      allPositions ?? null,
-    );
-  }, [activePOs, allPOLines, activeMainContractIdSet, allMobs, allWaves, allPositions, activeContracts]);
-
   const queueRows = useMemo((): PoQuotaQueueRow[] => {
     if (!activePOs?.length || !allPOLines || activeContracts === undefined) return [];
     if (activeMainContractIdSet.size === 0) return [];
@@ -123,22 +108,10 @@ export function usePoQuotaQueueRows(enabled: boolean): {
       const totals = aggregateActiveLineTotals(fulfillment);
       if (totals.required <= 0 || totals.openSlots <= 0) continue;
 
-      const activeRows = fulfillment.filter((r) => r.lineStatus === 'active');
-      const topLines = activeRows.slice(0, 4).map((r) => {
-        const pos = allPositions?.find((p) => p.id === r.positionId);
-        return {
-          label: pos ? positionListPrimaryName(pos as PositionDoc) : r.positionId,
-          req: r.requiredQty,
-          asg: r.assignedCount,
-          rem: r.remainingSlots,
-        };
-      });
-
       rows.push({
         po,
         totals,
-        topLines,
-        moreLineCount: Math.max(0, activeRows.length - topLines.length),
+        fulfillmentRows: fulfillment,
       });
     }
 
@@ -149,17 +122,19 @@ export function usePoQuotaQueueRows(enabled: boolean): {
   const loading =
     loadingPOs || loadingLines || loadingWaves || loadingMobs || loadingContracts;
 
-  return { queueRows, positionAggregateRows, customers: customers ?? undefined, loading };
+  return { queueRows, customers: customers ?? undefined, allPositions: allPositions ?? undefined, loading };
 }
 
 export function PoQuotaQueueTable({
   queueRows,
   customers,
+  allPositions,
   loading,
   emptyMessage,
 }: {
   queueRows: PoQuotaQueueRow[];
   customers: Customer[] | undefined;
+  allPositions: Position[] | null | undefined;
   loading: boolean;
   emptyMessage?: string;
 }) {
@@ -191,66 +166,99 @@ export function PoQuotaQueueTable({
           <TableHead className="text-center font-bold">โควต้า</TableHead>
           <TableHead className="text-center font-bold">มอบหมาย</TableHead>
           <TableHead className="text-center font-bold">ว่าง</TableHead>
-          <TableHead className="text-center font-bold hidden sm:table-cell">Waves</TableHead>
           <TableHead className="text-right pr-6 font-bold">ดำเนินการ</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {queueRows.map(({ po, totals, topLines, moreLineCount }) => {
+        {queueRows.map(({ po, totals, fulfillmentRows }) => {
           const cust = customers?.find((c) => c.id === po.customerId);
           const q = encodeURIComponent(po.id);
+          const lineRows = fulfillmentRows.filter((r) => r.lineStatus === 'active');
           return (
-            <TableRow key={po.id} className="align-top">
-              <TableCell className="pl-6 py-4">
-                <div className="flex flex-col gap-1 min-w-0">
-                  <span className="font-mono text-xs font-bold text-primary">{po.poCode}</span>
-                  <span className="font-semibold text-sm leading-snug">{po.title || po.projectName}</span>
-                  <div className="flex flex-wrap gap-1 pt-1">
-                    {topLines.map((line) => (
-                      <Badge
-                        key={`${po.id}-${line.label}`}
-                        variant="outline"
-                        className="text-[10px] font-normal max-w-[200px] truncate"
-                        title={`${line.label}: ต้องการ ${line.req} · มอบหมาย ${line.asg} · เหลือ ${line.rem}`}
-                      >
-                        {line.label}: เหลือ {line.rem}
-                      </Badge>
-                    ))}
-                    {moreLineCount > 0 ? (
-                      <Badge variant="secondary" className="text-[10px]">
-                        +{moreLineCount} บรรทัด
-                      </Badge>
-                    ) : null}
+            <Fragment key={po.id}>
+              <TableRow className="align-top">
+                <TableCell className="pl-6 py-4">
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <span className="font-mono text-xs font-bold text-primary">{po.poCode}</span>
+                    <span className="font-semibold text-sm leading-snug">{po.title || po.projectName}</span>
+                    <p className="text-[10px] text-muted-foreground pt-0.5">
+                      {lineRows.length} บรรทัด PO — รายละเอียดด้านล่าง
+                    </p>
                   </div>
-                </div>
-              </TableCell>
-              <TableCell className="hidden md:table-cell text-sm text-muted-foreground max-w-[180px]">
-                {cust?.name ?? '—'}
-              </TableCell>
-              <TableCell className="text-center font-semibold">{totals.required}</TableCell>
-              <TableCell className="text-center">{totals.assigned}</TableCell>
-              <TableCell className="text-center">
-                <Badge className="bg-amber-100 text-amber-900 border-amber-200 font-bold">{totals.openSlots}</Badge>
-              </TableCell>
-              <TableCell className="text-center hidden sm:table-cell">{totals.waveCount}</TableCell>
-              <TableCell className="text-right pr-6 py-4">
-                <div className="flex flex-col items-end gap-1">
-                  <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
-                    <Link href={`/purchase-orders/${po.id}`}>
-                      เปิด PO <ChevronRight className="h-3 w-3 ml-0.5" />
-                    </Link>
-                  </Button>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" asChild>
-                      <Link href={`/waves?poId=${q}`}>Waves</Link>
+                </TableCell>
+                <TableCell className="hidden md:table-cell text-sm text-muted-foreground max-w-[180px]">
+                  {cust?.name ?? '—'}
+                </TableCell>
+                <TableCell className="text-center font-semibold">{totals.required}</TableCell>
+                <TableCell className="text-center">{totals.assigned}</TableCell>
+                <TableCell className="text-center">
+                  <Badge className="bg-amber-100 text-amber-900 border-amber-200 font-bold">{totals.openSlots}</Badge>
+                </TableCell>
+                <TableCell className="text-right pr-6 py-4">
+                  <div className="flex flex-col items-end gap-1">
+                    <Button size="sm" className="h-8 text-xs font-semibold" asChild>
+                      <Link href={`/assignments?poId=${q}&openDialog=1`}>
+                        มอบหมาย (Assign) <ChevronRight className="h-3 w-3 ml-0.5" />
+                      </Link>
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" asChild>
-                      <Link href={`/assignments?poId=${q}`}>Assign</Link>
+                    <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                      <Link href={`/purchase-orders/${po.id}`}>
+                        เปิด PO <ChevronRight className="h-3 w-3 ml-0.5" />
+                      </Link>
                     </Button>
                   </div>
-                </div>
-              </TableCell>
-            </TableRow>
+                </TableCell>
+              </TableRow>
+              <TableRow key={`${po.id}-lines`} className="border-b-2">
+                <TableCell colSpan={6} className="p-0 bg-muted/15">
+                  <div className="px-4 py-3 md:pl-10">
+                    <Table>
+                      <TableHeader className="bg-transparent">
+                        <TableRow className="hover:bg-transparent border-0">
+                          <TableHead className="text-[11px] h-8">ตำแหน่ง</TableHead>
+                          <TableHead className="text-[11px] h-8 hidden sm:table-cell">สถานที่</TableHead>
+                          <TableHead className="text-[11px] h-8 text-center">โควต้า</TableHead>
+                          <TableHead className="text-[11px] h-8 text-center">มอบหมาย</TableHead>
+                          <TableHead className="text-[11px] h-8 text-center">ว่าง</TableHead>
+                          <TableHead className="text-[11px] h-8 text-right pr-2">ดำเนินการ</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {lineRows.map((row) => {
+                          const pos = allPositions?.find((p) => p.id === row.positionId);
+                          const label = pos ? positionListPrimaryName(pos as PositionDoc) : row.positionId;
+                          const assignHref = `/assignments?poId=${q}&poLineId=${encodeURIComponent(row.lineId)}&openDialog=1`;
+                          return (
+                            <TableRow key={row.lineId} className="border-muted/40">
+                              <TableCell className="py-2 text-sm font-medium">{label}</TableCell>
+                              <TableCell className="py-2 text-xs text-muted-foreground max-w-[140px] hidden sm:table-cell">
+                                {(row.workLocation || '').trim() || '—'}
+                              </TableCell>
+                              <TableCell className="py-2 text-center text-sm">{row.requiredQty}</TableCell>
+                              <TableCell className="py-2 text-center text-sm">{row.assignedCount}</TableCell>
+                              <TableCell className="py-2 text-center">
+                                {row.remainingSlots > 0 ? (
+                                  <Badge variant="outline" className="text-[10px] bg-amber-50 border-amber-200">
+                                    {row.remainingSlots}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">0</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="py-2 text-right pr-2">
+                                <Button variant="secondary" size="sm" className="h-7 text-[10px] px-2" asChild>
+                                  <Link href={assignHref}>Assign</Link>
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </TableCell>
+              </TableRow>
+            </Fragment>
           );
         })}
       </TableBody>
@@ -261,11 +269,13 @@ export function PoQuotaQueueTable({
 export function PoQuotaQueueCardShell({
   queueRows,
   customers,
+  allPositions,
   loading,
   className,
 }: {
   queueRows: PoQuotaQueueRow[];
   customers: Customer[] | undefined;
+  allPositions: Position[] | null | undefined;
   loading: boolean;
   className?: string;
 }) {
@@ -279,8 +289,9 @@ export function PoQuotaQueueCardShell({
               คิวเติมโควต้า (PO Active)
             </CardTitle>
             <CardDescription className="text-xs max-w-3xl leading-relaxed">
-              แสดงเฉพาะ Customer PO ตาม<strong className="font-semibold text-foreground">สัญญาหลักที่ active</strong>
-              และยังมีช่องว่างตาม PO line — ข้อมูลอ่านอย่างเดียว (ลำดับที่ 1) ตัวเลขสอดคล้องกับการ์ดสรุปบนหน้า PO
+              Customer PO สายสัญญาที่<strong className="font-semibold text-foreground">สัญญาหลัก active</strong>
+              และยังมีช่องว่าง — แสดง<strong className="font-semibold text-foreground">บรรทัด PO</strong> ต่อใบด้านล่างแต่ละแถว
+              กด <strong className="font-semibold text-foreground">Assign</strong> เพื่อมอบหมายตามบรรทัด (ไม่ผ่าน Wave)
             </CardDescription>
           </div>
           <Badge variant="secondary" className="shrink-0 w-fit">
@@ -289,82 +300,12 @@ export function PoQuotaQueueCardShell({
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <PoQuotaQueueTable queueRows={queueRows} customers={customers} loading={loading} />
-      </CardContent>
-    </Card>
-  );
-}
-
-export function PoPositionAggregateCardShell({
-  positionRows,
-  loading,
-  className,
-}: {
-  positionRows: PoPositionAggregateRow[];
-  loading: boolean;
-  className?: string;
-}) {
-  return (
-    <Card className={`border-emerald-700/20 shadow-md overflow-hidden ${className ?? ''}`}>
-      <CardHeader className="border-b bg-emerald-50/40 dark:bg-emerald-950/20 pb-4">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Layers className="h-5 w-5 text-emerald-800 dark:text-emerald-400 shrink-0" />
-              รวมโควต้าตามตำแหน่ง (PO สัญญา active ทั้งหมด) — เฟส C
-            </CardTitle>
-            <CardDescription className="text-xs max-w-3xl leading-relaxed">
-              รวมบรรทัด <strong>active</strong> ข้าม PO ทุกฉบับที่สัญญาหลักยัง <strong>active</strong> — สอดคล้องกระบวนการคุย PO line
-              รวม (เช่น ช่างเชื่อม 3+2 = 5) แยกจากคอลัมน์ Wave ราย PO ด้านบน
-            </CardDescription>
-          </div>
-          <Badge variant="secondary" className="shrink-0 w-fit">
-            {positionRows.length} ตำแหน่ง
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground text-sm">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            กำลังรวมโควต้า…
-          </div>
-        ) : positionRows.length === 0 ? (
-          <div className="py-12 px-6 text-center text-muted-foreground text-sm">
-            ยังไม่มีบรรทัด PO ที่ active สำหรับสัญญาหลักที่ active
-          </div>
-        ) : (
-          <Table>
-            <TableHeader className="bg-muted/40">
-              <TableRow>
-                <TableHead className="pl-6 font-bold">ตำแหน่ง</TableHead>
-                <TableHead className="text-center font-bold">โควต้ารวม</TableHead>
-                <TableHead className="text-center font-bold">มอบหมาย</TableHead>
-                <TableHead className="text-center font-bold pr-6">ว่าง</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {positionRows.map((r) => (
-                <TableRow key={r.positionId}>
-                  <TableCell className="pl-6 font-medium text-sm">{r.positionName}</TableCell>
-                  <TableCell className="text-center font-semibold">{r.required}</TableCell>
-                  <TableCell className="text-center">{r.assigned}</TableCell>
-                  <TableCell className="text-center pr-6">
-                    <Badge
-                      className={
-                        r.vacant > 0
-                          ? 'bg-amber-100 text-amber-900 border-amber-200 font-bold'
-                          : 'bg-muted text-foreground'
-                      }
-                    >
-                      {r.vacant}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+        <PoQuotaQueueTable
+          queueRows={queueRows}
+          customers={customers}
+          allPositions={allPositions}
+          loading={loading}
+        />
       </CardContent>
     </Card>
   );

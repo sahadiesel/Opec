@@ -181,6 +181,7 @@ export async function recordInterBankTransfer(
   const inRef = doc(collection(db, 'cashbook_entries'));
 
   const baseMemo = params.memo?.trim() || 'โอนระหว่างบัญชี';
+  const route = `${fromCode} → ${toCode}`;
 
   const batch = writeBatch(db);
 
@@ -193,7 +194,7 @@ export async function recordInterBankTransfer(
     referenceType: 'TRANSFER',
     referenceId: pairId,
     amount: amt,
-    description: `${baseMemo} — โอนไป ${toCode}`,
+    description: `${baseMemo}: ${route} · จ่ายออกจากบัญชีนี้ (${fromCode})`,
     paymentMethod: 'TRANSFER',
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -208,7 +209,7 @@ export async function recordInterBankTransfer(
     referenceType: 'TRANSFER',
     referenceId: pairId,
     amount: amt,
-    description: `${baseMemo} — รับจาก ${fromCode}`,
+    description: `${baseMemo}: ${route} · เงินเข้าบัญชีนี้ (${toCode})`,
     paymentMethod: 'TRANSFER',
     createdAt: Date.now(),
     updatedAt: Date.now(),

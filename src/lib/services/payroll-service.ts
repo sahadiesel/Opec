@@ -31,6 +31,7 @@ import {
   OfficePayrollLine,
   OfficePayrollRun,
   OfficePayrollLineHrAdjustments,
+  OfficePayrollPitMode,
 } from '@/lib/types';
 import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
@@ -38,9 +39,21 @@ import {
   assertPayrollPermission,
   canApprovePayroll,
   canConfirmWorkerPayrollPaid,
+  canEdit,
   canHandoffWorkerPayrollToAccounting,
   canPreparePayroll,
 } from '@/lib/permissions';
+
+/** Input สำหรับปรับยอดรายคนงวดออฟฟิศ / ผู้บริหาร */
+export type ApplyOfficeLineHrAdjustmentsInput = {
+  allowanceItems: Array<{ label: string; amount: number }>;
+  deductionItems: Array<{ label: string; amount: number }>;
+  notes?: string;
+  deductSocialSecurity?: boolean;
+  pitMode?: OfficePayrollPitMode;
+  pitManualPercent?: number | null;
+  pitManualAmountBaht?: number | null;
+};
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { writeAuditLog } from './audit-service';
 import {
@@ -1013,19 +1026,58 @@ export class PayrollService {
     runId: string,
     lineId: string,
     user: User,
-    input: {
-      allowanceItems: Array<{ label: string; amount: number }>;
-      deductionItems: Array<{ label: string; amount: number }>;
-      notes?: string;
-    },
+    input: ApplyOfficeLineHrAdjustmentsInput,
   ): Promise<void> {
     assertPayrollPermission(user, 'payroll_office', 'edit_batch');
-    const runRef = doc(this.db, 'office_payroll_runs', runId);
-    const lineRef = doc(this.db, 'office_payroll_runs', runId, 'lines', lineId);
+    await this.applyPayrollRunLineHrAdjustmentsInternal(
+      'office_payroll_runs',
+      runId,
+      lineId,
+      user,
+      input,
+      'OfficePayrollLine',
+      'office',
+    );
+  }
+
+  /**
+   * บัญชีปรับรายรับเพิ่ม / หักเพิ่มรายคนงวดผู้บริหาร — สูตร D8 เดียวกับพนักงานออฟฟิศ
+   */
+  async applyExecutiveLineHrAdjustments(
+    runId: string,
+    lineId: string,
+    user: User,
+    input: ApplyOfficeLineHrAdjustmentsInput,
+  ): Promise<void> {
+    if (!canEdit(user, 'executive_payroll')) {
+      throw new Error('ไม่มีสิทธิ์แก้ไขงวดเงินเดือนผู้บริหาร');
+    }
+    await this.applyPayrollRunLineHrAdjustmentsInternal(
+      'executive_payroll_runs',
+      runId,
+      lineId,
+      user,
+      input,
+      'ExecutivePayrollLine',
+      'accounting',
+    );
+  }
+
+  private async applyPayrollRunLineHrAdjustmentsInternal(
+    runCollection: 'office_payroll_runs' | 'executive_payroll_runs',
+    runId: string,
+    lineId: string,
+    user: User,
+    input: ApplyOfficeLineHrAdjustmentsInput,
+    auditEntityType: string,
+    auditSourceModule: string,
+  ): Promise<void> {
+    const runRef = doc(this.db, runCollection, runId);
+    const lineRef = doc(this.db, runCollection, runId, 'lines', lineId);
 
     const [runSnap, lineSnap] = await Promise.all([getDoc(runRef), getDoc(lineRef)]);
-    if (!runSnap.exists()) throw new Error('ไม่พบ office payroll run');
-    if (!lineSnap.exists()) throw new Error('ไม่พบบรรทัดพนักงานออฟฟิศในงวดนี้');
+    if (!runSnap.exists()) throw new Error('ไม่พบงวดเงินเดือน');
+    if (!lineSnap.exists()) throw new Error('ไม่พบบรรทัดจ่ายในงวดนี้');
 
     const run = runSnap.data() as OfficePayrollRun;
     const line = lineSnap.data() as OfficePayrollLine;
@@ -1039,6 +1091,9 @@ export class PayrollService {
     const policies = await loadPayrollPoliciesFromFirestore(this.db);
     const resolved = resolvePayrollPoliciesForDate(asOf, policies, 'office');
 
+    const pitMode: OfficePayrollPitMode = input.pitMode ?? 'SYSTEM';
+    const deductSocialSecurity = input.deductSocialSecurity !== false;
+
     const d8 = computeOfficePayrollLineD8({
       asOfDate: asOf,
       policies: resolved,
@@ -1049,6 +1104,10 @@ export class PayrollService {
       otherIncome: line.otherIncome ?? 0,
       hrAllowanceItems: input.allowanceItems,
       hrDeductionItems: input.deductionItems,
+      deductSocialSecurity,
+      pitMode,
+      pitManualPercent: pitMode === 'MANUAL_PERCENT' ? Number(input.pitManualPercent) || 0 : undefined,
+      pitManualAmountBaht: pitMode === 'MANUAL_AMOUNT' ? Number(input.pitManualAmountBaht) || 0 : undefined,
     });
 
     const trimmedNotes = input.notes?.trim();
@@ -1056,6 +1115,12 @@ export class PayrollService {
       allowanceItems: input.allowanceItems,
       deductionItems: input.deductionItems,
       notes: trimmedNotes ? trimmedNotes : null,
+      deductSocialSecurity,
+      pitMode,
+      pitManualPercent:
+        pitMode === 'MANUAL_PERCENT' ? Math.max(0, Math.min(100, Number(input.pitManualPercent) || 0)) : null,
+      pitManualAmountBaht:
+        pitMode === 'MANUAL_AMOUNT' ? Math.max(0, Number(input.pitManualAmountBaht) || 0) : null,
       updatedAt: Date.now(),
       updatedBy: user.displayName || user.email || user.id,
     };
@@ -1071,15 +1136,15 @@ export class PayrollService {
       updatedAt: Date.now(),
     });
 
-    await this.recalculateOfficeRunTotalsFromLines(runId, user);
+    await this.recalculatePayrollRunTotalsFromLines(runCollection, runId, user);
 
     const hrExtra = input.allowanceItems.reduce((s, x) => s + (Number(x.amount) || 0), 0);
     await writeAuditLog(this.db, user, {
       actionType: 'UPDATE',
-      entityType: 'OfficePayrollLine',
+      entityType: auditEntityType,
       entityId: lineId,
-      sourceModule: 'hr',
-      afterSummary: `HR adjustments office run ${runId} line ${lineId} (extra income +${hrExtra.toFixed(2)})`,
+      sourceModule: auditSourceModule,
+      afterSummary: `HR adjustments ${runCollection} ${runId} line ${lineId} (extra income +${hrExtra.toFixed(2)})`,
     });
   }
 
@@ -1108,8 +1173,12 @@ export class PayrollService {
     });
   }
 
-  private async recalculateOfficeRunTotalsFromLines(runId: string, user: User): Promise<void> {
-    const linesSnap = await getDocs(collection(this.db, 'office_payroll_runs', runId, 'lines'));
+  private async recalculatePayrollRunTotalsFromLines(
+    runCollection: 'office_payroll_runs' | 'executive_payroll_runs',
+    runId: string,
+    user: User,
+  ): Promise<void> {
+    const linesSnap = await getDocs(collection(this.db, runCollection, runId, 'lines'));
     let grossAmount = 0;
     let netAmount = 0;
     let totalDeductions = 0;
@@ -1125,12 +1194,14 @@ export class PayrollService {
       );
       totalAllowances += (Number(pl.allowance) || 0) + (Number(pl.bonus) || 0) + hrAllow;
     }
-    await updateDoc(doc(this.db, 'office_payroll_runs', runId), {
+    await updateDoc(doc(this.db, runCollection, runId), {
       grossAmount: Math.round(grossAmount * 100) / 100,
       netAmount: Math.round(netAmount * 100) / 100,
       totalDeductions: Math.round(totalDeductions * 100) / 100,
       totalAllowances: Math.round(totalAllowances * 100) / 100,
       updatedAt: Date.now(),
+      updatedBy: user.displayName || user.email || user.id,
     });
   }
+
 }

@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -36,24 +37,24 @@ import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { collection, query, where, limit, doc } from 'firebase/firestore';
-import { OfficePayrollLine, OfficePayrollPitMode, OfficePayrollRun, User } from '@/lib/types';
+import {
+  ExecutivePayrollLine,
+  ExecutivePayrollRun,
+  OfficePayrollPitMode,
+  User,
+} from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canEdit, canView } from '@/lib/permissions';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
-import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollService } from '@/lib/services/payroll-service';
 
-function hrAllowanceTotal(line: OfficePayrollLine): number {
+function hrAllowanceTotal(line: ExecutivePayrollLine): number {
   return (line.hrLineAdjustments?.allowanceItems ?? []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
 }
 
-function snapshotDeductionLabel(
-  key: string,
-  line: OfficePayrollLine,
-): string {
+function snapshotDeductionLabel(key: string, line: ExecutivePayrollLine): string {
   if (key === 'social_security') return 'ประกันสังคม';
   if (key === 'pit_withholding') return 'ภาษี ณ ที่จ่าย (ภงด.)';
   const m = /^manual_ded_(\d+)$/.exec(key);
@@ -66,7 +67,7 @@ function snapshotDeductionLabel(
   return key.replace(/_/g, ' ');
 }
 
-export default function OfficePayrollStaffLinePage({
+export default function ExecutivePayrollRunStaffLinePage({
   params,
 }: {
   params: Promise<{ id: string; staffId: string }>;
@@ -76,30 +77,29 @@ export default function OfficePayrollStaffLinePage({
   const router = useRouter();
   const { toast } = useToast();
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const { payroll } = usePermissions(currentUser);
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
 
-  const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+  const isAuthorized = useMemo(() => canView(currentUser, 'executive_payroll'), [currentUser]);
 
   const runRef = useMemoFirebase(
-    () => (firestore && isAuthorized ? doc(firestore, 'office_payroll_runs', runId) : null),
+    () => (firestore && isAuthorized ? doc(firestore, 'executive_payroll_runs', runId) : null),
     [firestore, runId, isAuthorized],
   );
-  const { data: run, isLoading: runLoading } = useDoc<OfficePayrollRun>(runRef as any);
+  const { data: run, isLoading: runLoading } = useDoc<ExecutivePayrollRun>(runRef as any);
 
   const lineQuery = useMemoFirebase(
     () =>
       firestore && isAuthorized
         ? query(
-            collection(firestore, 'office_payroll_runs', runId, 'lines'),
+            collection(firestore, 'executive_payroll_runs', runId, 'lines'),
             where('staffId', '==', staffId),
             limit(1),
           )
         : null,
     [firestore, isAuthorized, runId, staffId],
   );
-  const { data: lineRows, isLoading: lineLoading } = useCollection<OfficePayrollLine>(lineQuery as any);
+  const { data: lineRows, isLoading: lineLoading } = useCollection<ExecutivePayrollLine>(lineQuery as any);
   const line = lineRows?.[0] ?? null;
 
   const [allowanceRows, setAllowanceRows] = useState<Array<{ label: string; amount: string }>>([
@@ -152,7 +152,7 @@ export default function OfficePayrollStaffLinePage({
     run != null && ['LOCKED', 'PAID', 'CANCELLED', 'FINANCE_APPROVED'].includes(run.status);
 
   const canSaveAdjustments =
-    Boolean(firestore && currentUser && line && run && payroll('payroll_office', 'edit_batch')) &&
+    Boolean(firestore && currentUser && line && run && canEdit(currentUser, 'executive_payroll')) &&
     !runBlockedForHrEditBool;
 
   const handleSave = useCallback(async () => {
@@ -167,7 +167,7 @@ export default function OfficePayrollStaffLinePage({
         .map((r) => ({ label: r.label.trim(), amount: Number(r.amount) }));
 
       const svc = new PayrollService(firestore);
-      await svc.applyOfficeLineHrAdjustments(runId, line.id, currentUser as User, {
+      await svc.applyExecutiveLineHrAdjustments(runId, line.id, currentUser as User, {
         allowanceItems,
         deductionItems,
         notes: adjNotes.trim() ? adjNotes.trim() : undefined,
@@ -240,7 +240,7 @@ export default function OfficePayrollStaffLinePage({
       <AppShell user={currentUser} onLogout={() => {}}>
         <p className="text-center text-muted-foreground py-20">ไม่พบงวดเงินเดือน</p>
         <div className="text-center">
-          <Button variant="outline" onClick={() => router.push('/office-payroll')}>
+          <Button variant="outline" onClick={() => router.push('/accounting/executive-payroll')}>
             กลับรายการ
           </Button>
         </div>
@@ -254,9 +254,11 @@ export default function OfficePayrollStaffLinePage({
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="max-w-lg mx-auto space-y-4 py-12 text-center">
-          <p className="text-muted-foreground">ไม่พบรายการจ่ายของพนักงานนี้ในงวดนี้ หรือรหัสพนักงานไม่ตรง</p>
+          <p className="text-muted-foreground">
+            ไม่พบรายการจ่ายของผู้บริหารท่านนี้ในงวดนี้ หรือรหัสไม่ตรง
+          </p>
           <Button asChild>
-            <Link href={`/office-payroll/${runId}`}>
+            <Link href={`/accounting/executive-payroll/${runId}`}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               กลับงวดเงินเดือน
             </Link>
@@ -275,12 +277,14 @@ export default function OfficePayrollStaffLinePage({
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex flex-wrap items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/office-payroll/${runId}`)}>
+          <Button variant="ghost" size="icon" onClick={() => router.push(`/accounting/executive-payroll/${runId}`)}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <PayrollScopeTag scope="office" showHint={false} />
-            <h1 className="text-xl font-bold">รายละเอียดจ่ายเงินพนักงาน (รายคน)</h1>
+            <Badge className="mb-1 border-0 bg-primary text-[10px] font-bold uppercase tracking-wide text-primary-foreground">
+              Executive Payroll
+            </Badge>
+            <h1 className="text-xl font-bold">รายละเอียดจ่ายเงินผู้บริหาร (รายคน)</h1>
             <p className="text-sm text-muted-foreground font-mono">
               {run.payrollRunNo} · {formatDateThaiBE(run.payrollMonth + '-01')}
             </p>
@@ -291,7 +295,9 @@ export default function OfficePayrollStaffLinePage({
           <Alert>
             <Lock className="h-4 w-4" />
             <AlertTitle>งวดนี้ถูกล็อก</AlertTitle>
-            <AlertDescription>แก้ไขรายเดิมผ่านคำขอแก้ไขพิเศษ (ถ้าเปิดใช้) — หน้านี้แสดง snapshot ตอนล็อก</AlertDescription>
+            <AlertDescription>
+              แก้ไขรายเดิมผ่านคำขอแก้ไขพิเศษ (ถ้าเปิดใช้) — หน้านี้แสดง snapshot ตอนล็อก
+            </AlertDescription>
           </Alert>
         )}
 
@@ -300,7 +306,7 @@ export default function OfficePayrollStaffLinePage({
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <UserIcon className="h-4 w-4" />
-                ข้อมูลพนักงาน
+                ข้อมูลผู้บริหาร
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
@@ -313,9 +319,9 @@ export default function OfficePayrollStaffLinePage({
               </p>
               <p className="text-xs font-mono text-muted-foreground">staffId: {line.staffId}</p>
               <Button variant="outline" size="sm" className="mt-2 gap-1" asChild>
-                <Link href={`/office-staff/${line.staffId}`}>
+                <Link href={`/accounting/executive-payroll/staff/${line.staffId}`}>
                   <ExternalLink className="h-3.5 w-3.5" />
-                  ข้อมูลพนักงาน (Office Staff)
+                  ทะเบียนผู้บริหาร
                 </Link>
               </Button>
             </CardContent>
@@ -427,18 +433,17 @@ export default function OfficePayrollStaffLinePage({
         )}
 
         <p className="text-xs text-muted-foreground text-center">
-          ลูกจ้างภาคสนาม: ใช้หน้า{' '}
-          <Link className="text-primary underline" href="/payroll/batches">
-            งวดจ่ายลูกจ้าง
-          </Link>{' '}
-          แล้วกดรายคนจากตาราง
+          งวดพนักงานออฟฟิศใช้เมนู{' '}
+          <Link className="text-primary underline" href="/office-payroll">
+            งวดจ่ายพนักงานออฟฟิศ
+          </Link>
         </p>
 
         <Card>
           <CardHeader>
             <CardTitle>ปรับยอด (รายรับเพิ่ม / หักเพิ่มเติม)</CardTitle>
             <CardDescription>
-              เหมือนงวดลูกจ้าง: รายรับเพิ่มรวมใน gross — ภงด. และประกันสังคมคำนวณจาก gross ใหม่ — หักเพิ่มเป็นรายการแยกจาก SS / ภงด. อัตโนมัติ
+              รายรับเพิ่มรวมใน gross — ภงด. และประกันสังคมคำนวณจาก gross ใหม่ — หักเพิ่มเป็นรายการแยกจาก SS / ภงด. อัตโนมัติ
               {runBlockedForHrEditBool ? (
                 <span className="block mt-1 text-amber-700 dark:text-amber-500">
                   งวดนี้ไม่เปิดให้แก้ไขการปรับยอด (ล็อก / จ่ายแล้ว / ยกเลิก / การเงินอนุมัติแล้ว)

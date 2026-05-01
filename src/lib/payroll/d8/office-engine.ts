@@ -1,7 +1,7 @@
 import { D8_ENGINE_VERSION } from './constants';
 import { fixedDeductionsFromPolicy, pitFromPolicy, socialSecurityFromPolicy } from './deductions-from-policy';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
-import type { PayrollLineD8Snapshot } from '@/lib/types';
+import type { OfficePayrollPitMode, PayrollLineD8Snapshot } from '@/lib/types';
 
 export type OfficePayrollD8Input = {
   asOfDate: string;
@@ -15,6 +15,11 @@ export type OfficePayrollD8Input = {
   hrAllowanceItems?: Array<{ label: string; amount: number }>;
   /** หักเพิ่ม — ลงเป็น manual_ded_i ใน snapshot */
   hrDeductionItems?: Array<{ label: string; amount: number }>;
+  /** false = ไม่หักประกันสังคมในงวดนี้ */
+  deductSocialSecurity?: boolean;
+  pitMode?: OfficePayrollPitMode;
+  pitManualPercent?: number | null;
+  pitManualAmountBaht?: number | null;
 };
 
 /**
@@ -37,8 +42,20 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
   );
   const grossPay = Math.max(0, input.baseSalary + input.allowance + input.bonus + ot + other + hrAllowanceSum);
 
-  const ss = socialSecurityFromPolicy(grossPay, input.policies.sso);
-  const pit = pitFromPolicy(grossPay, input.policies.tax);
+  const deductSs = input.deductSocialSecurity !== false;
+  const ss = deductSs ? socialSecurityFromPolicy(grossPay, input.policies.sso) : 0;
+
+  const pitMode = input.pitMode ?? 'SYSTEM';
+  let pit: number;
+  if (pitMode === 'MANUAL_PERCENT') {
+    const p = Math.max(0, Math.min(100, Number(input.pitManualPercent) || 0));
+    pit = Math.round(((grossPay * p) / 100) * 100) / 100;
+  } else if (pitMode === 'MANUAL_AMOUNT') {
+    pit = Math.max(0, Math.round((Number(input.pitManualAmountBaht) || 0) * 100) / 100);
+    if (pit > grossPay) pit = Math.round(grossPay * 100) / 100;
+  } else {
+    pit = pitFromPolicy(grossPay, input.policies.tax);
+  }
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
   const deductionsMap: Record<string, number> = {

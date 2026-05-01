@@ -52,6 +52,8 @@ import {
   STORE_ITEM_CATEGORIES,
   storeItemIsPpeCatalog,
   formatStoreItemLabel,
+  MainContract,
+  Customer,
 } from '@/lib/types';
 
 const TOOL_STORE_CATEGORIES = STORE_ITEM_CATEGORIES.filter((c) => c !== 'PPE');
@@ -64,6 +66,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete } from '@/lib/permissions';
 import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '@/lib/payroll/labor-cost-model';
 import { LaborCostPositionSection } from '@/components/hr/labor-cost-position-section';
+import { LaborCostByContractSection } from '@/components/hr/labor-cost-by-contract-section';
 
 export default function PositionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -85,6 +88,32 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   );
   const { data: position, isLoading: isPosLoading } = useDoc<Position>(posRef as any);
 
+  const mainContractsQuery = useMemoFirebase(
+    () => (firestore && canViewPositions ? collection(firestore, 'main_contracts') : null),
+    [firestore, canViewPositions],
+  );
+  const { data: allMainContracts } = useCollection<MainContract>(mainContractsQuery as any);
+
+  const customersQuery = useMemoFirebase(
+    () => (firestore && canViewPositions ? collection(firestore, 'customers') : null),
+    [firestore, canViewPositions],
+  );
+  const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
+
+  const customerNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    (allCustomers ?? []).forEach((c) => m.set(c.id, c.name || c.id));
+    return m;
+  }, [allCustomers]);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedPos, setEditedPos] = useState<Partial<Position>>({});
+
+  const laborCostByContractRows = useMemo(
+    () => editedPos.laborCostByContract ?? position?.laborCostByContract ?? [],
+    [editedPos.laborCostByContract, position?.laborCostByContract],
+  );
+
   const certsQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'positions', id, 'certificate_requirements') : null), [firestore, id, canViewPositions]);
   const { data: certs } = useCollection<PositionCertificateRequirement>(certsQuery as any);
 
@@ -97,9 +126,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const { data: storeItems } = useCollection<StoreItem>(storeItemsQuery as any);
   const workerDocCatalogQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'worker_document_catalog') : null), [firestore, canViewPositions]);
   const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
-
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedPos, setEditedPos] = useState<Partial<Position>>({});
 
   const [isAddCertOpen, setIsAddCertOpen] = useState(false);
   const [isAddPPEOpen, setIsAddPPEOpen] = useState(false);
@@ -198,6 +224,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     if (!canViewLabor) {
       delete base.defaultLaborCostOnshore;
       delete base.defaultLaborCostOffshore;
+      delete base.laborCostByContract;
     }
     updateDocumentNonBlocking(posRef, base);
     setIsEditing(false);
@@ -538,6 +565,15 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
               onPatch={(p) => setEditedPos((prev) => ({ ...prev, ...p }))}
               canView={canViewLabor}
               canEdit={canEditLabor}
+            />
+            <LaborCostByContractSection
+              rows={laborCostByContractRows}
+              isEditing={isEditing}
+              canView={canViewLabor}
+              canEdit={canEditLabor}
+              contracts={allMainContracts ?? undefined}
+              customerNameById={customerNameById}
+              onChange={(next) => setEditedPos((prev) => ({ ...prev, laborCostByContract: next }))}
             />
           </TabsContent>
 

@@ -945,13 +945,13 @@ export function PayrollApprovalCenterD6({
                       </Button>
                       {selectedRun.status === 'HR_APPROVED' ? (
                         <Button variant="outline" asChild>
-                          <Link href={`/office-payroll/${selectedRun.id}#approvals`}>
-                            ล็อก / ส่งต่อบัญชี (เปิดขั้นตอนการเงิน)
+                          <Link href={`/accounting/office-payroll/${selectedRun.id}`}>
+                            ฝ่ายบัญชี · ทำจ่าย / cashbook
                           </Link>
                         </Button>
                       ) : (
                         <Button variant="outline" disabled>
-                          ล็อก / ส่งต่อบัญชี (เปิดขั้นตอนการเงิน)
+                          ฝ่ายบัญชี · ทำจ่าย / cashbook
                         </Button>
                       )}
                     </CardContent>

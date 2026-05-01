@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -33,9 +33,9 @@ import {
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection } from 'firebase/firestore';
-import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { doc, collection, updateDoc, query, where, type DocumentData } from 'firebase/firestore';
 import {
+  BankAccount,
   OfficePayrollRun,
   OfficePayrollLine,
   User as AppUser,
@@ -52,7 +52,7 @@ import { canView } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
-import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
+import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate, runStatusToD8Lifecycle } from '@/lib/payroll/d8';
 import { pitFromPolicy, socialSecurityFromPolicy } from '@/lib/payroll/d8/deductions-from-policy';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import {
@@ -72,6 +72,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 export default function ExecutivePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -107,21 +114,77 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
   const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
+  const [payoutBankId, setPayoutBankId] = useState('');
+  const [statusBusy, setStatusBusy] = useState(false);
+
+  const bankAccountsQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE')) : null),
+    [firestore, isAuthorized],
+  );
+  const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
+  const activeBanks = useMemo(() => {
+    const list = (bankAccounts || []).slice();
+    list.sort((a, b) => (a.accountCode || '').localeCompare(b.accountCode || '', 'th', { numeric: true }));
+    return list;
+  }, [bankAccounts]);
+
+  useEffect(() => {
+    if (run?.payoutBankAccountId) {
+      setPayoutBankId(run.payoutBankAccountId);
+    } else {
+      setPayoutBankId('');
+    }
+  }, [run?.payoutBankAccountId, run?.id]);
+
+  const payoutAccountLabel = useMemo(() => {
+    if (!run?.payoutBankAccountId) return null;
+    const b = activeBanks.find((x) => x.id === run.payoutBankAccountId);
+    return b
+      ? `${b.bankName} · ${b.accountName} [${b.accountCode}]`
+      : run.payoutBankAccountId;
+  }, [run?.payoutBankAccountId, activeBanks]);
+
+  const persistPayoutBankChoice = useCallback(
+    async (bankId: string) => {
+      if (!runRef || !firestore || !canMutate || !run) return;
+      if (['FINANCE_APPROVED', 'LOCKED', 'PAID', 'CANCELLED'].includes(run.status)) return;
+      setPayoutBankId(bankId);
+      try {
+        await updateDoc(runRef, { payoutBankAccountId: bankId, updatedAt: Date.now() });
+      } catch (e) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกบัญชีตัดจ่ายไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+    [runRef, firestore, canMutate, run, toast],
+  );
 
   const handleUpdateStatus = async (newStatus: PayrollRunStatus) => {
     if (!firestore || !run || !runRef || !currentUser) return;
+    setStatusBusy(true);
     const updateData: Record<string, unknown> = {
       status: newStatus,
+      d8LifecycleStatus: runStatusToD8Lifecycle(newStatus),
       updatedAt: Date.now(),
     };
 
-    if (newStatus === 'HR_APPROVED') {
-      updateData.hrApprovedBy = currentUser.displayName;
-    }
-    if (newStatus === 'FINANCE_APPROVED') {
-      updateData.financeApprovedBy = currentUser.displayName;
-      if (!run.financeCashbookEntryId) {
-        try {
+    try {
+      if (newStatus === 'FINANCE_APPROVED') {
+        updateData.financeApprovedBy = currentUser.displayName;
+        const bankForPayout = (payoutBankId || run.payoutBankAccountId || '').trim();
+        if (!run.financeCashbookEntryId) {
+          if (!bankForPayout) {
+            toast({
+              variant: 'destructive',
+              title: 'ยังไม่ได้เลือกบัญชีตัดจ่าย',
+              description: 'เลือกบัญชีธนาคารที่ต้องการหักยอดก่อนกดอนุมัติการเบิกจ่าย — ระบบจะสร้างรายการ cashbook จากบัญชีนี้',
+            });
+            setStatusBusy(false);
+            return;
+          }
           const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
             firestore,
             currentUser,
@@ -130,29 +193,30 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
               netAmount: run.netAmount,
               payrollRunNo: run.payrollRunNo,
               payrollMonthLabel: run.payrollMonth,
-              payoutBankAccountId: run.payoutBankAccountId,
+              payoutBankAccountId: bankForPayout,
               kind: 'EXECUTIVE',
-            }
+            },
           );
           updateData.financeCashbookEntryId = cashbookEntryId;
           updateData.payoutBankAccountId = bankAccountId;
-        } catch (e) {
-          console.error(e);
-          toast({
-            variant: 'destructive',
-            title: 'บันทึกตัดจ่ายไม่สำเร็จ',
-            description: e instanceof Error ? e.message : 'ตรวจสอบบัญชีธนาคาร ACTIVE',
-          });
-          return;
         }
       }
-    }
-    if (newStatus === 'LOCKED') {
-      updateData.lockedAt = Date.now();
-    }
+      if (newStatus === 'LOCKED') {
+        updateData.lockedAt = Date.now();
+      }
 
-    updateDocumentNonBlocking(runRef, updateData);
-    toast({ title: 'อัปเดตสถานะสำเร็จ', description: `เปลี่ยนสถานะงวดเป็น ${newStatus}` });
+      await updateDoc(runRef, updateData as DocumentData);
+      toast({ title: 'อัปเดตสถานะสำเร็จ', description: `เปลี่ยนสถานะงวดเป็น ${newStatus}` });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: newStatus === 'FINANCE_APPROVED' ? 'บันทึกตัดจ่ายหรืองวดไม่สำเร็จ' : 'บันทึกสถานะงวดไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ตรวจสอบสิทธิ์และบัญชีธนาคาร',
+      });
+    } finally {
+      setStatusBusy(false);
+    }
   };
 
   const handleCalculate = async () => {
@@ -289,7 +353,8 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           <ShieldAlert className="h-5 w-5 text-blue-600" />
           <AlertTitle className="font-bold">งวดเงินเดือนผู้บริหาร (Executive — ไม่แสดงในเมนู HR)</AlertTitle>
           <AlertDescription className="text-sm">
-            งวดนี้ดึงรายชื่อจากเมนู <b>รายชื่อผู้บริหาร</b> (ทะเบียนบัญชี) — สูตรภาษี/ประกันสังคมใช้ชุดเดียวกับพนักงานออฟฟิศตามการตั้งค่า HR
+            ดึงรายชื่อจากเมนู <b>รายชื่อผู้บริหาร</b> — สูตรภาษี/ประกันสังคมเทียบเท่าพนักงานออฟฟิศ — หลังคำนวณแล้วไปแท็บ{' '}
+            <b>ทำจ่าย · ล็อก</b> เพื่อเลือกบัญชีตัดจ่ายและลง cashbook (ไม่ต้องรอ HR อนุมัติ)
           </AlertDescription>
         </Alert>
         {!canMutate && (
@@ -311,7 +376,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           <TabsList className="grid grid-cols-5 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="lines" className="gap-2 py-2 px-6">รายการเงินเดือน</TabsTrigger>
             <TabsTrigger value="summary" className="gap-2 py-2 px-6">สรุปยอด</TabsTrigger>
-            <TabsTrigger value="approvals" className="gap-2 py-2 px-6">การอนุมัติ</TabsTrigger>
+            <TabsTrigger value="approvals" className="gap-2 py-2 px-6">ทำจ่าย · ล็อก</TabsTrigger>
             <TabsTrigger value="details" className="gap-2 py-2 px-6">ข้อมูลงวด</TabsTrigger>
             <TabsTrigger value="history" className="gap-2 py-2 px-6">ประวัติ</TabsTrigger>
           </TabsList>
@@ -375,8 +440,10 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                               <PayslipDialog model={slipModel} />
                             </TableCell>
                             <TableCell className="text-right">
-                              <Button variant="ghost" size="icon" asChild title="รายละเอียดผู้บริหาร">
-                                <Link href={`/accounting/executive-payroll/staff/${encodeURIComponent(line.staffId)}`}>
+                              <Button variant="ghost" size="icon" asChild title="รายละเอียดจ่าย (รายคน)">
+                                <Link
+                                  href={`/accounting/executive-payroll/${encodeURIComponent(id)}/staff/${encodeURIComponent(line.staffId)}`}
+                                >
                                   <ChevronRight className="h-4 w-4" />
                                 </Link>
                               </Button>
@@ -432,60 +499,118 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           </TabsContent>
 
           <TabsContent value="approvals" className="mt-6 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card className={run.status === 'CALCULATED' ? 'border-blue-500 bg-blue-50/20' : ''}>
-                <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> 1. HR Review (Preparation)</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    {run.hrApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{run.hrApprovedBy ? `Prepared/Approved by ${run.hrApprovedBy}` : 'รอ HR ตรวจสอบ'}</span>
-                  </div>
-                  <Button 
-                    className="w-full bg-primary" 
-                    disabled={!canMutate || run.status !== 'CALCULATED'} 
-                    onClick={() => void handleUpdateStatus('HR_APPROVED')}
-                  >
-                    ยืนยันรายการ (HR Approval)
-                  </Button>
-                </CardContent>
-              </Card>
+            <Alert className="border-primary/30 bg-muted/30">
+              <Info className="h-4 w-4" />
+              <AlertTitle>งวดผู้บริหาร — ฝ่ายบัญชีเป็นผู้ดำเนินการเอง</AlertTitle>
+              <AlertDescription className="text-sm">
+                ไม่มีขั้นตอน «ส่งให้ HR/ผู้จัดการอนุมัติ» เหมือนงวดพนักงานออฟฟิศ — หลังคำนวณแล้วเลือกบัญชีตัดจ่าย กดอนุมัติการเงิน (ลง cashbook)
+                แล้วล็อกงวดได้เลย (โครงเดียวกับหน้า «พนักงานออฟฟิศ · ทำจ่าย»)
+              </AlertDescription>
+            </Alert>
 
-              <Card className={run.status === 'HR_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card
+                className={
+                  run.status === 'CALCULATED' || run.status === 'HR_APPROVED' ? 'border-blue-500 bg-blue-50/20' : ''
+                }
+              >
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2"><Coins className="h-4 w-4" /> 2. Finance Approval (Payment)</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase text-primary flex items-center gap-2">
+                    <Coins className="h-4 w-4" /> ตัดจ่าย · Cashbook
+                  </CardTitle>
+                  <CardDescription>
+                    เลือกบัญชีที่หักยอด — กดอนุมัติเมื่อโอนจริงแล้ว ระบบจะลงรายการ{' '}
+                    <Link href="/cashbook" className="font-medium text-primary underline">
+                      cashbook
+                    </Link>{' '}
+                    (PAYROLL) และลดยอดบัญชีที่เลือก (คำอธิบายจะมีข้อความ «ตัดจากบัญชี …»)
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
-                    {run.financeApprovedBy ? <CheckCircle2 className="text-green-600 h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
-                    <span className="text-sm">{run.financeApprovedBy ? `Approved/Paid by ${run.financeApprovedBy}` : 'รอการเงินอนุมัติจ่าย'}</span>
+                    {run.financeApprovedBy ? (
+                      <CheckCircle2 className="text-green-600 h-4 w-4" />
+                    ) : (
+                      <Clock className="text-muted-foreground h-4 w-4" />
+                    )}
+                    <span className="text-sm">
+                      {run.financeApprovedBy ? `อนุมัติ/จ่ายโดย ${run.financeApprovedBy}` : 'ยังไม่อนุมัติการเงิน'}
+                    </span>
                   </div>
-                  <Button 
-                    className="w-full" 
-                    variant="outline" 
-                    disabled={!canMutate || run.status !== 'HR_APPROVED'}
+                  {(run.status === 'CALCULATED' || run.status === 'HR_APPROVED') && !run.financeCashbookEntryId ? (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold">บัญชีตัดจ่าย (บังคับเลือก)</Label>
+                      {activeBanks.length === 0 ? (
+                        <p className="text-xs text-destructive">ไม่พบบัญชี ACTIVE — ตั้งค่าที่เมนูบัญชีธนาคารก่อน</p>
+                      ) : (
+                        <Select
+                          value={payoutBankId || undefined}
+                          onValueChange={(v) => void persistPayoutBankChoice(v)}
+                          disabled={!canMutate || statusBusy}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="เลือกบัญชีที่หักยอด…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeBanks.map((b) => (
+                              <SelectItem key={b.id} value={b.id}>
+                                [{b.accountCode}] {b.bankName} — {b.accountName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  ) : null}
+                  {run.financeCashbookEntryId ? (
+                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs space-y-1">
+                      <p>
+                        <span className="text-muted-foreground">บัญชีที่ตัดจ่าย:</span>{' '}
+                        <span className="font-medium">{payoutAccountLabel ?? run.payoutBankAccountId ?? '—'}</span>
+                      </p>
+                      <p className="font-mono text-muted-foreground">
+                        Cashbook doc: {run.financeCashbookEntryId}{' '}
+                        <Link href="/cashbook" className="text-primary underline">
+                          เปิดสมุดรายรับรายจ่าย
+                        </Link>
+                      </p>
+                    </div>
+                  ) : null}
+                  <Button
+                    className="w-full"
+                    variant="default"
+                    disabled={
+                      !canMutate ||
+                      statusBusy ||
+                      !!run.financeCashbookEntryId ||
+                      !['CALCULATED', 'HR_APPROVED'].includes(run.status)
+                    }
                     onClick={() => void handleUpdateStatus('FINANCE_APPROVED')}
                   >
-                    อนุมัติการเบิกจ่าย (Finance — สร้างรายการ cashbook + ตัดบัญชีธนาคาร)
+                    {statusBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    อนุมัติการเบิกจ่าย (cashbook + ตัดบัญชี)
                   </Button>
                 </CardContent>
               </Card>
 
               <Card className={run.status === 'FINANCE_APPROVED' ? 'border-primary bg-primary/5' : ''}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-bold uppercase flex items-center gap-2"><Lock className="h-4 w-4" /> 3. Final Lock</CardTitle>
+                  <CardTitle className="text-sm font-bold uppercase flex items-center gap-2">
+                    <Lock className="h-4 w-4" /> ล็อกงวด
+                  </CardTitle>
+                  <CardDescription>หลังจ่ายและตรวจสอบแล้ว — ปิดงวดถาวร</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-2">
                     {isLocked ? <Lock className="text-primary h-4 w-4" /> : <Clock className="text-muted-foreground h-4 w-4" />}
                     <span className="text-sm">{isLocked ? `ล็อกเมื่อ ${formatDateThaiBE(run.lockedAt!)}` : 'รอล็อกงวดถาวร'}</span>
                   </div>
-                  <Button 
-                    className="w-full bg-primary" 
-                    disabled={!canMutate || run.status !== 'FINANCE_APPROVED'}
+                  <Button
+                    className="w-full bg-primary"
+                    disabled={!canMutate || run.status !== 'FINANCE_APPROVED' || statusBusy}
                     onClick={() => void handleUpdateStatus('LOCKED')}
                   >
+                    {statusBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                     ล็อกงวดการจ่ายเงิน (Lock)
                   </Button>
                 </CardContent>
@@ -558,8 +683,10 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
               <p className="font-bold text-primary flex items-center gap-2">คำแนะนำขั้นตอนถัดไป (Workflow Process)</p>
               <p className="text-sm text-muted-foreground">
                 {run.status === 'DRAFT' && 'ขั้นตอนถัดไป: กดคำนวณจากทะเบียนรายชื่อผู้บริหาร — ตรวจสอบเมนู «รายชื่อผู้บริหาร» ว่ามีผู้ ACTIVE'}
-                {run.status === 'CALCULATED' && "ขั้นตอนถัดไป: HR Manager ตรวจสอบความถูกต้องและยืนยันรายการ"}
-                {run.status === 'HR_APPROVED' && "ขั้นตอนถัดไป: Finance Officer อนุมัติเบิกจ่ายและโอนเงิน"}
+                {run.status === 'CALCULATED' &&
+                  'ขั้นตอนถัดไป: แท็บ «ทำจ่าย · ล็อก» — เลือกบัญชีตัดจ่ายแล้วกดอนุมัติการเงิน (cashbook)'}
+                {run.status === 'HR_APPROVED' &&
+                  'ขั้นตอนถัดไป: แท็บ «ทำจ่าย · ล็อก» — เลือกบัญชีและอนุมัติการเงิน (งวดเก่าอาจข้ามขั้นตอน HR ไว้)'}
                 {run.status === 'FINANCE_APPROVED' && "ขั้นตอนถัดไป: ล็อกงวดการจ่ายเงินเพื่อปิดบัญชีรายเดือน"}
                 {isLocked && "สถานะสิ้นสุด: ข้อมูลถูกล็อกและบันทึก Snapshot ไว้เรียบร้อยแล้ว"}
               </p>

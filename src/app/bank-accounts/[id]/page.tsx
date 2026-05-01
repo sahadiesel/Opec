@@ -196,6 +196,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
   );
 
   const movementRows = useMemo(() => {
+    const acctCode = String(accData?.accountCode ?? formData.accountCode ?? '').trim();
     const list: Array<{
       key: string;
       entryDate: string;
@@ -208,11 +209,17 @@ function BankAccountDetailContent({ id }: { id: string }) {
       paymentMethod?: string;
     }> = [];
     for (const e of cashbookRows ?? []) {
+      const payrollHint =
+        e.entryType === 'PAYROLL' &&
+        acctCode &&
+        !(e.description || '').includes('ตัดจากบัญชี')
+          ? ` · ตัดจากบัญชี ${acctCode}`
+          : '';
       list.push({
         key: `cb-${e.id}`,
         entryDate: e.entryDate,
         entryNo: e.entryNo,
-        description: e.description,
+        description: `${e.description ?? ''}${payrollHint}`,
         direction: e.direction,
         amount: e.amount,
         source: 'cashbook',
@@ -236,7 +243,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
       }
     }
     return list;
-  }, [cashbookRows, pettyRows, isPettyAccount]);
+  }, [cashbookRows, pettyRows, isPettyAccount, accData?.accountCode, formData.accountCode]);
 
   const movementRowsChronological = useMemo(
     () => [...movementRows].sort(compareMovement),

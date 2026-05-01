@@ -1,5 +1,6 @@
 import type { Assignment, DeploymentStatus, POLine, Position, PurchaseOrder, Wave } from '@/lib/types';
 import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
+import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 /** Mobilization ที่ยังถือว่าจองโควต้า (ยังไม่ปิด/ถอนกำลัง) */
@@ -27,7 +28,8 @@ export function buildPoFulfillmentByLine(
   waves: Wave[] | null | undefined,
   poId: string
 ): PoLineFulfillmentRow[] {
-  const list = lines || [];
+  /** ต้องจำกัดเฉพาะบรรทัดของ PO นี้ — ผู้เรียกบางที่ส่ง collectionGroup ทั้งระบบมาได้ */
+  const list = (lines || []).filter((line) => line.poId === poId);
   const asg = assignments || [];
   const wv = waves || [];
 
@@ -39,7 +41,10 @@ export function buildPoFulfillmentByLine(
         assignmentCountsTowardQuota(a.deploymentStatus)
     ).length;
     const lineWaves = wv.filter(
-      (w) => w.poId === poId && plannedOnWaveForPoLine(w, line.id) > 0
+      (w) =>
+        w.poId === poId &&
+        !isPoRosterWaveId(w.id) &&
+        plannedOnWaveForPoLine(w, line.id) > 0
     );
     const plannedWorkersInWaves = lineWaves.reduce(
       (s, w) => s + plannedOnWaveForPoLine(w, line.id),

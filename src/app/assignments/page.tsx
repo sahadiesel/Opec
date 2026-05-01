@@ -16,7 +16,6 @@ import {
   ChevronRight, 
   Building2, 
   Calendar,
-  Waves,
   AlertTriangle,
   Info,
   Loader2,
@@ -33,7 +32,7 @@ import {
   timestampToHtmlDateValue,
   formatStoredDateRangeThaiBE,
 } from '@/lib/date-thai';
-import { Assignment, Worker, POLine, User, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
+import { Assignment, Worker, POLine, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -42,7 +41,6 @@ import {
   collection,
   doc,
   increment,
-  updateDoc,
   collectionGroup,
   getDocs,
   writeBatch,
@@ -82,29 +80,33 @@ import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/servic
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
-import {
-  normalizeWaveAllocations,
-  plannedOnWaveForPoLine,
-  totalPlannedWorkersOnWave,
-} from '@/lib/ops/wave-allocation';
-import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
+import { assignmentCountsTowardQuota, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
 import { dedupeAssignmentsByWorkerAndWave } from '@/lib/ops/assignment-roster';
 import { MOBILIZATION_FULFILLMENT_SUBCOLLECTION } from '@/lib/store/mobilization-fulfillment';
 import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
+import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
+import { isPoTimesheetScopeId, poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { addMonths } from 'date-fns';
 
-function waveRequiredPositionLabel(
-  wave: Wave,
-  polines: POLine[] | null | undefined,
-  positions: Position[] | null | undefined
-): string {
-  const labels: string[] = [];
-  for (const a of normalizeWaveAllocations(wave)) {
-    const line = polines?.find((l) => l.id === a.poLineId && l.poId === wave.poId);
-    if (!line?.positionId) continue;
-    const pos = positions?.find((p) => p.id === line.positionId);
-    labels.push(pos ? positionListPrimaryName(pos as PositionDoc) : line.positionId);
-  }
-  return labels.join(' · ');
+/** คีย์รวมใน dialog: poId + lineId — ไม่ต้องเลือก PO แยกเมื่อดึงบรรทัดจากทุก PO */
+const DIALOG_LINE_KEY_SEP = '###';
+
+function encodeDialogLinePickKey(poId: string, lineId: string): string {
+  return `${poId}${DIALOG_LINE_KEY_SEP}${lineId}`;
+}
+
+function parseDialogLinePickKey(key: string): { poId: string; lineId: string } | null {
+  const i = key.indexOf(DIALOG_LINE_KEY_SEP);
+  if (i <= 0 || i + DIALOG_LINE_KEY_SEP.length >= key.length) return null;
+  return { poId: key.slice(0, i), lineId: key.slice(i + DIALOG_LINE_KEY_SEP.length) };
+}
+
+/** วันเริ่ม = วันมอบหมาย (วันนี้) · วันจบ = +1 เดือน — เก็บเป็น yyyy-mm-dd */
+function defaultAssignmentScheduleRange(): { start: string; end: string } {
+  const now = Date.now();
+  const start = timestampToHtmlDateValue(now);
+  const end = timestampToHtmlDateValue(addMonths(new Date(now), 1).getTime());
+  return { start, end };
 }
 
 function AssignmentsPageContent() {
@@ -194,16 +196,15 @@ function AssignmentsPageContent() {
   const [assignmentPendingDelete, setAssignmentPendingDelete] = useState<Assignment | null>(null);
   const [isDeletingAssignment, setIsDeletingAssignment] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
-  const [selectedWaveId, setSelectedWaveId] = useState('');
-  /** เมื่อเวฟมีหลาย PO line — เลือกบรรทัดก่อนมอบหมาย */
-  const [selectedPoLineId, setSelectedPoLineId] = useState('');
+  /** บรรทัดที่เลือก: `poId###lineId` — PO อนุมาติจากบรรทัด (ไม่ต้องเลือก PO ก่อน) */
+  const [dialogLinePickKey, setDialogLinePickKey] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
   const [assignmentTableSearch, setAssignmentTableSearch] = useState('');
 
   const filterPoId = (searchParams.get('poId') || '').trim() || null;
-  const filterWaveId = (searchParams.get('waveId') || '').trim() || null;
+  const filterPoLineId = (searchParams.get('poLineId') || '').trim() || null;
   const openDialogFromUrl = searchParams.get('openDialog') === '1';
   const openDialogKeyRef = useRef<string>('');
   const filterPO = useMemo(
@@ -211,48 +212,72 @@ function AssignmentsPageContent() {
     [filterPoId, allPOs]
   );
 
-  const contextWave = useMemo(
-    () => (filterWaveId && allWaves?.length ? allWaves.find((w) => w.id === filterWaveId) : undefined),
-    [filterWaveId, allWaves]
+  const contractActivePOs = useMemo(
+    () => (allPOs || []).filter((p) => p.status === 'active' && (p.poType || 'contract') === 'contract'),
+    [allPOs],
   );
 
-  const waveContextFromUrl = useMemo(() => {
-    if (!contextWave) return null;
-    const w = contextWave;
-    const allocs = normalizeWaveAllocations(w);
-    const raw = dedupeAssignmentsByWorkerAndWave(assignments || []);
-    const forWave = raw.filter((a) => a.waveId === w.id);
-    const assigned = forWave.filter((a) => assignmentCountsTowardQuota(a.deploymentStatus)).length;
-    const total = totalPlannedWorkersOnWave(w);
-    const lines = allocs.map((slot) => {
-      const used = forWave.filter(
-        (a) => a.poLineId === slot.poLineId && assignmentCountsTowardQuota(a.deploymentStatus)
-      ).length;
-      const line = allPOLines?.find((l) => l.id === slot.poLineId && l.poId === w.poId);
-      const pos = line?.positionId ? allPositions?.find((p) => p.id === line.positionId) : undefined;
-      const label = pos
-        ? positionListPrimaryName(pos as PositionDoc)
-        : (line?.positionId || slot.poLineId);
-      return {
-        label,
-        used,
-        plan: slot.plannedWorkers,
-        rem: Math.max(0, slot.plannedWorkers - used),
-      };
-    });
-    return { wave: w, total, assigned, lines };
-  }, [contextWave, assignments, allPOLines, allPositions]);
+  const dialogPoLineFulfillmentFiltered = useMemo(() => {
+    if (!filterPoId) return [];
+    return buildPoFulfillmentByLine(allPOLines, assignments, allWaves, filterPoId);
+  }, [filterPoId, allPOLines, assignments, allWaves]);
 
-  const wavesForDialog = useMemo(() => {
-    const list = (allWaves || []).filter((w) => w.status !== 'CLOSED');
-    if (!filterPoId) return list;
-    return list.filter((w) => w.poId === filterPoId);
-  }, [allWaves, filterPoId]);
+  const poLinesForDialogPickFiltered = useMemo(
+    () => dialogPoLineFulfillmentFiltered.filter((r) => r.lineStatus === 'active'),
+    [dialogPoLineFulfillmentFiltered],
+  );
+
+  /** บรรทัด PO active ทุกตัวจากทุก PO สายสัญญา — ใช้เมื่อไม่ได้กรอง poId */
+  const allFlatPoLinesForDialog = useMemo(() => {
+    const poById = new Map(contractActivePOs.map((p) => [p.id, p]));
+    const out: Array<{
+      poId: string;
+      poCode: string;
+      lineId: string;
+      positionLabel: string;
+      assignedCount: number;
+      requiredQty: number;
+      remainingSlots: number;
+    }> = [];
+    for (const po of contractActivePOs) {
+      const rows = buildPoFulfillmentByLine(allPOLines, assignments, allWaves, po.id);
+      const p = poById.get(po.id);
+      for (const r of rows) {
+        if (r.lineStatus !== 'active') continue;
+        const pos = r.positionId ? allPositions?.find((x) => x.id === r.positionId) : undefined;
+        const positionLabel = pos
+          ? positionListPrimaryName(pos as PositionDoc)
+          : r.positionId || r.lineId;
+        out.push({
+          poId: po.id,
+          poCode: p?.poCode ?? po.id.slice(0, 8),
+          lineId: r.lineId,
+          positionLabel,
+          assignedCount: r.assignedCount,
+          requiredQty: r.requiredQty,
+          remainingSlots: r.remainingSlots,
+        });
+      }
+    }
+    out.sort((a, b) => {
+      const c = a.poCode.localeCompare(b.poCode, 'th', { numeric: true });
+      if (c !== 0) return c;
+      return a.positionLabel.localeCompare(b.positionLabel, 'th');
+    });
+    return out;
+  }, [contractActivePOs, allPOLines, assignments, allWaves, allPositions]);
+
+  const parsedDialogLinePick = useMemo(
+    () => parseDialogLinePickKey(dialogLinePickKey),
+    [dialogLinePickKey],
+  );
+
+  const effectiveDialogPoId = filterPoId || parsedDialogLinePick?.poId || '';
+  const effectiveDialogLineId = parsedDialogLinePick?.lineId || '';
 
   const displayedAssignments = useMemo(() => {
     let list = assignments || [];
     if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
-    if (filterWaveId) list = list.filter((a) => a.waveId === filterWaveId);
     list = dedupeAssignmentsByWorkerAndWave(list);
     const q = assignmentTableSearch.trim().toLowerCase();
     if (!q) return list;
@@ -268,7 +293,7 @@ function AssignmentsPageContent() {
         (allPOs?.find((p) => p.id === a.poId)?.poCode || '').toLowerCase().includes(q)
       );
     });
-  }, [assignments, filterPoId, filterWaveId, assignmentTableSearch, allWorkers, allWaves, allPOs]);
+  }, [assignments, filterPoId, assignmentTableSearch, allWorkers, allWaves, allPOs]);
 
   /** ใช้เฉพาะตอนยังไม่มีช่วงวันที่ — fallback */
   const occupiedWorkerIds = useMemo(
@@ -276,40 +301,19 @@ function AssignmentsPageContent() {
     [assignments],
   );
 
-  const selectedWave = useMemo(
-    () => (selectedWaveId ? allWaves?.find((w) => w.id === selectedWaveId) : undefined),
-    [allWaves, selectedWaveId],
-  );
-
-  const dedupedAssignmentsOnSelectedWave = useMemo(() => {
-    if (!selectedWave) return [] as Assignment[];
-    return dedupeAssignmentsByWorkerAndWave(assignments || []).filter(
-      (a) => a.waveId === selectedWave.id
-    );
-  }, [selectedWave, assignments]);
-
-  const selectedWaveAllocations = useMemo(
-    () => (selectedWave ? normalizeWaveAllocations(selectedWave) : []),
-    [selectedWave],
-  );
-
-  const needPickPoLineForAssign = selectedWaveAllocations.length > 1;
-
-  const targetPositionIdForSelectedWave = useMemo(() => {
-    if (!selectedWave || !allPOLines?.length || !selectedPoLineId) return '';
-    const line = allPOLines.find(
-      (l) => l.id === selectedPoLineId && l.poId === selectedWave.poId
-    );
+  const targetPositionIdForDialogLine = useMemo(() => {
+    if (!effectiveDialogPoId || !effectiveDialogLineId || !allPOLines?.length) return '';
+    const line = allPOLines.find((l) => l.id === effectiveDialogLineId && l.poId === effectiveDialogPoId);
     return line?.positionId || '';
-  }, [selectedWave, allPOLines, selectedPoLineId]);
+  }, [effectiveDialogPoId, effectiveDialogLineId, allPOLines]);
 
   const availableWorkers = useMemo(() => {
-    if (!selectedWaveId || !targetPositionIdForSelectedWave) return [];
-    const rangeStart = (startDate && startDate.trim()) || selectedWave?.startDate || '';
-    const rangeEnd = (endDate && endDate.trim()) || selectedWave?.endDate || '';
+    if (!effectiveDialogPoId || !effectiveDialogLineId || !targetPositionIdForDialogLine) return [];
+    const rangeStart = (startDate && startDate.trim()) || '';
+    const rangeEnd = (endDate && endDate.trim()) || '';
     return (allWorkers || []).filter((w) => {
       if (w.readinessStatus !== 'READY') return false;
-      if (w.currentPositionId !== targetPositionIdForSelectedWave) return false;
+      if (w.currentPositionId !== targetPositionIdForDialogLine) return false;
       if (rangeStart && rangeEnd) {
         const { hasOverlap } = checkWorkerAssignmentOverlap(
           assignments || [],
@@ -324,18 +328,18 @@ function AssignmentsPageContent() {
     });
   }, [
     allWorkers,
-    selectedWaveId,
-    targetPositionIdForSelectedWave,
+    effectiveDialogPoId,
+    effectiveDialogLineId,
+    targetPositionIdForDialogLine,
     startDate,
     endDate,
-    selectedWave,
     assignments,
     occupiedWorkerIds,
   ]);
 
   useEffect(() => {
     setSelectedWorkerId('');
-  }, [selectedWaveId]);
+  }, [dialogLinePickKey]);
 
   useEffect(() => {
     if (!openDialogFromUrl) {
@@ -343,87 +347,89 @@ function AssignmentsPageContent() {
     }
   }, [openDialogFromUrl]);
 
+  /** เปิด dialog จาก PO อย่างเดียว */
   useEffect(() => {
-    if (!openDialogFromUrl || !filterWaveId) return;
-    if (!allWaves?.length) return;
-    if (!allWaves.some((w) => w.id === filterWaveId)) return;
-    const key = `open|${filterWaveId}`;
+    if (!openDialogFromUrl || !filterPoId) return;
+    const key = `open|po|${filterPoId}`;
     if (openDialogKeyRef.current === key) return;
     openDialogKeyRef.current = key;
-    setSelectedWaveId(filterWaveId);
     setIsDialogOpen(true);
-  }, [openDialogFromUrl, filterWaveId, allWaves]);
+  }, [openDialogFromUrl, filterPoId]);
 
-  /** จาก URL — เปิด dialog เอง แต่ URL ยังระบุ wave: ล็อกเวฟ */
+  /** กรอง PO เดียว: ถ้ามี poLineId ใน URL ให้เลือกบรรทัดนั้น — ไม่เช่นนั้นเลือกบรรทัดว่างอัตโนมัติ */
   useEffect(() => {
-    if (!isDialogOpen || !filterWaveId) return;
-    if (allWaves?.some((w) => w.id === filterWaveId)) {
-      setSelectedWaveId(filterWaveId);
-    }
-  }, [isDialogOpen, filterWaveId, allWaves]);
-
-  useEffect(() => {
-    if (!selectedWave) {
-      setSelectedPoLineId('');
-      return;
-    }
-    const allocs = normalizeWaveAllocations(selectedWave);
-    if (allocs.length === 0) {
-      setSelectedPoLineId('');
-      return;
-    }
-    const forWave = dedupeAssignmentsByWorkerAndWave(assignments || []).filter(
-      (a) => a.waveId === selectedWave.id
-    );
-    setSelectedPoLineId((cur) => {
-      const inAlloc = (id: string) => allocs.some((a) => a.poLineId === id);
-      const usedOnLine = (poLineId: string) =>
-        forWave.filter(
-          (x) => x.poLineId === poLineId && assignmentCountsTowardQuota(x.deploymentStatus)
-        ).length;
-      if (allocs.length === 1) {
-        return allocs[0].poLineId;
+    if (!filterPoId) return;
+    const fulfillment = buildPoFulfillmentByLine(allPOLines || [], assignments, allWaves, filterPoId);
+    if (filterPoLineId) {
+      const picked = fulfillment.find((r) => r.lineId === filterPoLineId && r.lineStatus === 'active');
+      if (picked) {
+        setDialogLinePickKey(encodeDialogLinePickKey(filterPoId, filterPoLineId));
+        return;
       }
-      const curAlloc = cur && inAlloc(cur) ? allocs.find((a) => a.poLineId === cur) : undefined;
-      if (curAlloc) {
-        const u = usedOnLine(cur!);
-        if (u < curAlloc.plannedWorkers) return cur!;
+    }
+    setDialogLinePickKey((cur) => {
+      const parsed = parseDialogLinePickKey(cur);
+      if (parsed?.poId === filterPoId && parsed.lineId) {
+        const curRow = fulfillment.find((r) => r.lineId === parsed.lineId && r.lineStatus === 'active');
+        if (curRow && curRow.remainingSlots > 0) return cur;
       }
-      const withGap = allocs.find((a) => usedOnLine(a.poLineId) < a.plannedWorkers);
-      return (withGap || allocs[0]).poLineId;
+      const gap = fulfillment.find((r) => r.lineStatus === 'active' && r.remainingSlots > 0);
+      const fallback = fulfillment.find((r) => r.lineStatus === 'active');
+      const lineId = gap?.lineId || fallback?.lineId || '';
+      return lineId ? encodeDialogLinePickKey(filterPoId, lineId) : '';
     });
-  }, [selectedWave, assignments]);
+  }, [filterPoId, filterPoLineId, assignments, allPOLines, allWaves]);
 
-  /** ช่วงมอบหมาย default ตามเวฟ — ให้ตรงกับการเช็คทับช่วงวันที่ (ลง wef 2 หลังปิด wef 1 ใน data ได้) */
+  /** ไม่กรอง PO: เลือกบรรทัดว่างแรกจากทุก PO */
   useEffect(() => {
-    if (!selectedWave) return;
-    setStartDate(selectedWave.startDate);
-    setEndDate(selectedWave.endDate);
-  }, [selectedWaveId, selectedWave]);
+    if (filterPoId) return;
+    setDialogLinePickKey((cur) => {
+      const parsed = parseDialogLinePickKey(cur);
+      if (parsed) {
+        const still = allFlatPoLinesForDialog.some(
+          (o) =>
+            o.poId === parsed.poId &&
+            o.lineId === parsed.lineId &&
+            o.remainingSlots > 0,
+        );
+        if (still) return cur;
+      }
+      const gap = allFlatPoLinesForDialog.find((o) => o.remainingSlots > 0);
+      const anyLine = allFlatPoLinesForDialog[0];
+      const pick = gap || anyLine;
+      return pick ? encodeDialogLinePickKey(pick.poId, pick.lineId) : '';
+    });
+  }, [filterPoId, allFlatPoLinesForDialog]);
+
+  /** เมื่อเปิด dialog: default วันเริ่ม = วันมอบหมาย · วันจบ = +1 เดือน */
+  useEffect(() => {
+    if (!isDialogOpen) return;
+    const { start, end } = defaultAssignmentScheduleRange();
+    setStartDate(start);
+    setEndDate(end);
+  }, [isDialogOpen]);
 
   const handleCreateAssignment = async () => {
     if (!canCreateAssignments) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างการมอบหมายงาน' });
       return;
     }
-    if (!firestore || !currentUser || !selectedWorkerId || !selectedWaveId || !startDate || !endDate) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุข้อมูลที่จำเป็นให้ครบถ้วน" });
+    const parsedPick = parseDialogLinePickKey(dialogLinePickKey);
+    const dialogPoIdResolved = (filterPoId || parsedPick?.poId || '').trim();
+    const dialogPoLineIdResolved = (parsedPick?.lineId || '').trim();
+
+    if (!firestore || !currentUser || !selectedWorkerId || !dialogPoIdResolved || !dialogPoLineIdResolved || !startDate || !endDate) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาเลือกบรรทัด PO / ตำแหน่ง / คนงาน และช่วงวันที่ให้ครบ',
+      });
       return;
     }
 
     const worker = allWorkers?.find(w => w.id === selectedWorkerId);
-    const wave = allWaves?.find(w => w.id === selectedWaveId);
-    if (!worker || !wave) return;
-
-    const waveAllocsCheck = normalizeWaveAllocations(wave);
-    if (waveAllocsCheck.length > 1 && !selectedPoLineId.trim()) {
-      toast({
-        variant: 'destructive',
-        title: 'เลือกบรรทัด PO / ตำแหน่ง',
-        description: 'เวฟนี้มีหลายโควต้า — เลือกว่าจะมอบหมายเข้าบรรทัดใด',
-      });
-      return;
-    }
+    const po = allPOs?.find((p) => p.id === dialogPoIdResolved);
+    if (!worker || !po) return;
 
     // --- SUITABILITY VALIDATIONS ---
     
@@ -469,59 +475,30 @@ function AssignmentsPageContent() {
     }
 
     // Resolve Context from PO, PO Line and Position Matrix
-    const po = allPOs?.find(p => p.id === wave.poId);
     if (po && (po.poType || 'contract') === 'quotation') {
       toast({
         variant: 'destructive',
         title: 'ไม่สามารถมอบหมายจาก PO สายใบเสนอราคา',
         description:
-          'PO แบบใบเสนอราคาใช้สำหรับขายสินค้า/บริการครั้งเดียวจบ ไม่ผูก Wave/มอบหมายคนงาน — ใช้สายใบวางบิลหลังส่งมอบแทน',
-      });
-      return;
-    }
-    const waveAllocs = normalizeWaveAllocations(wave);
-    const effectivePoLineId =
-      waveAllocs.length === 1 ? waveAllocs[0].poLineId : selectedPoLineId.trim();
-    if (!effectivePoLineId) {
-      toast({
-        variant: 'destructive',
-        title: 'ไม่พบบรรทัด PO',
-        description: 'เวฟนี้ยังไม่มีโควต้าที่ใช้มอบหมายได้ — ตรวจการตั้งค่าเวฟ',
-      });
-      return;
-    }
-    const slot = waveAllocs.find((a) => a.poLineId === effectivePoLineId);
-    if (!slot || slot.plannedWorkers < 1) {
-      toast({
-        variant: 'destructive',
-        title: 'บรรทัดไม่อยู่ในแผนเวฟ',
-        description: 'เลือกบรรทัดที่มีโควต้าในเวฟนี้เท่านั้น',
-      });
-      return;
-    }
-    const cap = plannedOnWaveForPoLine(wave, effectivePoLineId);
-    const assignedOnSlot = (assignments || []).filter(
-      (a) =>
-        a.waveId === wave.id &&
-        a.poLineId === effectivePoLineId &&
-        assignmentCountsTowardQuota(a.deploymentStatus)
-    ).length;
-    if (assignedOnSlot >= cap) {
-      toast({
-        variant: 'destructive',
-        title: 'ครบโควต้าบรรทัดนี้ในเวฟแล้ว',
-        description: `วางแผน ${cap} คนสำหรับบรรทัดนี้ — เพิ่มแผนในเวฟหรือเลือกบรรทัดอื่น`,
+          'PO แบบใบเสนอราคาใช้สำหรับขายสินค้า/บริการครั้งเดียวจบ ไม่มอบหมายคนงานแบบสัญญา — ใช้สายใบวางบิลหลังส่งมอบแทน',
       });
       return;
     }
 
-    const poLine = resolvePoLineForWave(allPOLines, wave.poId, effectivePoLineId);
+    const effectivePoLineId = dialogPoLineIdResolved;
+    const assignedOnLine = (assignments || []).filter(
+      (a) =>
+        a.poId === dialogPoIdResolved &&
+        a.poLineId === effectivePoLineId &&
+        assignmentCountsTowardQuota(a.deploymentStatus),
+    ).length;
+
+    const poLine = resolvePoLineForWave(allPOLines, dialogPoIdResolved, effectivePoLineId);
     if (!poLine) {
       toast({
         variant: 'destructive',
-        title: 'PO Line ไม่ตรงกับเวฟ',
-        description:
-          'ไม่พบบรรทัด PO ที่ผูกกับเวฟนี้และ PO เดียวกัน หรือบรรทัดไม่ active — ตรวจข้อมูลเวฟและ PO',
+        title: 'ไม่พบบรรทัด PO',
+        description: 'บรรทัดไม่ตรงกับ PO ที่เลือก หรือไม่ active — ตรวจ Customer PO',
       });
       return;
     }
@@ -533,6 +510,16 @@ function AssignmentsPageContent() {
       });
       return;
     }
+    const qtyCap = Math.max(0, Math.floor(Number(poLine.quantity) || 0));
+    if (qtyCap > 0 && assignedOnLine >= qtyCap) {
+      toast({
+        variant: 'destructive',
+        title: 'ครบโควต้าบรรทัด PO แล้ว',
+        description: `บรรทัดนี้กำหนด ${qtyCap} คน — เพิ่ม quantity ที่ PO หรือเลือกบรรทัดอื่น`,
+      });
+      return;
+    }
+
     const targetPositionId = poLine.positionId;
     const position = allPositions?.find(p => p.id === targetPositionId);
     const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
@@ -554,6 +541,8 @@ function AssignmentsPageContent() {
 
     setIsCreating(true);
     try {
+      const tsScopeId = poTimesheetScopeId(po.id);
+
       // Atomic Number Generation
       const { code: finalNo } = await generateNextDocumentCode(firestore, 'assignment', { 
         actor: currentUser.displayName 
@@ -571,12 +560,12 @@ function AssignmentsPageContent() {
         workerId: selectedWorkerId,
         workerName: workerDisplayName,
         poLineId: effectivePoLineId,
-        poId: wave.poId,
+        poId: dialogPoIdResolved,
         contractId: po?.contractId || '',
-        waveId: selectedWaveId,
+        waveId: tsScopeId,
         positionId: position?.id || poLine?.positionId || '', 
-        customerId: wave.customerId,
-        projectName: wave.projectName,
+        customerId: po.customerId,
+        projectName: po.projectName || po.title,
         workLocation: locFromLine || undefined,
         workLocationUpdatedAt: locFromLine ? Date.now() : undefined,
         workLocationUpdatedByUserId: locFromLine ? currentUser.id : undefined,
@@ -603,10 +592,6 @@ function AssignmentsPageContent() {
       };
 
       setDocumentNonBlocking(newMobRef, newAssignment, { merge: true });
-      
-      // Update wave assigned workers count
-      const waveRef = doc(firestore, 'waves', selectedWaveId);
-      updateDoc(waveRef, { assignedWorkers: increment(1), updatedAt: Date.now() });
 
       toast({ title: "มอบหมายงานสำเร็จ", description: `รหัสการมอบหมาย: ${finalNo}` });
       setIsDialogOpen(false);
@@ -632,7 +617,7 @@ function AssignmentsPageContent() {
         batch.delete(d.ref);
       }
       batch.delete(doc(firestore, 'mobilizations', id));
-      if (waveId) {
+      if (waveId && !isPoTimesheetScopeId(waveId)) {
         batch.update(doc(firestore, 'waves', waveId), {
           assignedWorkers: increment(-1),
           updatedAt: Date.now(),
@@ -653,6 +638,18 @@ function AssignmentsPageContent() {
       });
     } finally {
       setIsDeletingAssignment(false);
+    }
+  };
+
+  const handleAssignmentDialogChange = (open: boolean) => {
+    setIsDialogOpen(open);
+    if (!open) {
+      setSelectedWorkerId('');
+      setNotes('');
+      openDialogKeyRef.current = '';
+      if (!filterPoId) {
+        setDialogLinePickKey('');
+      }
     }
   };
 
@@ -677,7 +674,7 @@ function AssignmentsPageContent() {
             <UserPlus className="h-8 w-8" /> การมอบหมายลูกจ้าง (Worker Assignments)
           </h1>
           <p className="text-muted-foreground text-lg">
-            กำหนดรายชื่อ <b>ลูกจ้างหน้างาน (Field Workers)</b> เข้าสู่โครงการและรอบการทำงาน (Wave)
+            กำหนดรายชื่อ <b>ลูกจ้างหน้างาน</b> ให้ชัดเจนต่อ <b>บรรทัดคำสั่งจ้าง (PO line)</b> ภายใต้สัญญา — ช่วงเริ่ม–สิ้นสุดอยู่ที่การมอบหมาย; ค่าแรงขาย/ต้นทุนสำหรับ payroll ยึดตามสัญญาและอัตราที่ลงในสัญญา (operations_manager / HR / Admin)
           </p>
         </div>
 
@@ -693,9 +690,9 @@ function AssignmentsPageContent() {
               <ShieldAlert className="h-5 w-5 text-amber-600" />
               <AlertTitle className="font-bold">นโยบายความเหมาะสม (Suitability Policy)</AlertTitle>
               <AlertDescription className="text-sm">
-                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b>, <b>สถานะความพร้อม (Readiness)</b> และ <b>การซ้อนงาน (Overlap)</b> โดยอัตโนมัติ — ห้ามมอบหมายคนงานที่ไม่พร้อม ตำแหน่งไม่ตรง หรือกำลังปฏิบัติงานในเวฟอื่นอยู่
+                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b>, <b>สถานะความพร้อม (Readiness)</b> และ <b>การซ้อนงาน (Overlap)</b> โดยอัตโนมัติ — ห้ามมอบหมายคนงานที่ไม่พร้อม ตำแหน่งไม่ตรง หรือช่วงวันที่ชนกับ assignment อื่น
                 <span className="block mt-2 text-amber-900/90">
-                  ตารางนี้แสดง <b>1 แถวต่อคน + ต่อ wave</b> — ราย demob ก่อนมอบหมายช่วงใหม่จะไม่ซ้อนแยก หากยังมอบหมาย active ใน wave นี้อยู่
+                  ตารางนี้แสดง <b>1 แถวต่อคน</b> (โควต้าตามบรรทัด PO) — demob/ปิดก่อนมอบหมายช่วงใหม่จะไม่ซ้อน หากยัง active อยู่
                 </span>
               </AlertDescription>
             </Alert>
@@ -707,43 +704,12 @@ function AssignmentsPageContent() {
               moduleLabel="Assignments"
             />
 
-            {waveContextFromUrl && (
-              <Alert className="border-blue-200 bg-blue-50/80 text-blue-950 shadow-sm">
-                <Waves className="h-5 w-5 text-blue-700" />
-                <AlertTitle>กำลังเติมเวฟ {waveContextFromUrl.wave.waveCode}</AlertTitle>
-                <AlertDescription className="text-sm">
-                  แผน {waveContextFromUrl.total} คน — มอบหมายตามรายละเอียดเวฟ {waveContextFromUrl.assigned} คน
-                  {waveContextFromUrl.assigned < waveContextFromUrl.total
-                    ? ` (ขาดอีก ${waveContextFromUrl.total - waveContextFromUrl.assigned} ตำแหน่งตามแผนเวฟ)`
-                    : ' (เต็มตามแผนเวฟ)'}
-                  <ul className="list-disc pl-4 mt-2 space-y-0.5 text-blue-900/90">
-                    {waveContextFromUrl.lines.map((ln, i) => (
-                      <li key={`${ln.label}-${i}`}>
-                        {ln.label} — มอบหมาย {ln.used}/{ln.plan}
-                        {ln.rem > 0 ? ` · ยังว่าง ${ln.rem}` : ' · เต็ม'}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="text-xs text-blue-900/80 mt-1">
-                    เลือก <strong>เวฟ</strong> แล้ว <strong>บรรทัด/โควต้า</strong> (กรณีเวฟมีหลายบรรทัด) จากนั้นระบบจะแนะนำ <strong>คนงาน READY</strong> ที่
-                    ตำแหน่งตรงกับบรรทัด — เงื่อนไขไม่ทับ assignment อื่นในช่วงวันที่
-                  </p>
-                  <Link
-                    className="inline-block mt-2 text-primary font-semibold underline"
-                    href={`/waves/${waveContextFromUrl.wave.id}`}
-                  >
-                    กลับหน้าเวฟ
-                  </Link>
-                </AlertDescription>
-              </Alert>
-            )}
-
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
                 <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="ค้นหาตามลูกจ้าง, Wave หรือรหัส PO..."
+                    placeholder="ค้นหาตามลูกจ้าง หรือรหัส PO..."
                     className="pl-9 h-11"
                     value={assignmentTableSearch}
                     onChange={(e) => setAssignmentTableSearch(e.target.value)}
@@ -752,7 +718,7 @@ function AssignmentsPageContent() {
                 <Button variant="outline" className="gap-2 h-11"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
               </div>
               {canCreateAssignments && (
-                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <Dialog open={isDialogOpen} onOpenChange={handleAssignmentDialogChange}>
                   <DialogTrigger asChild>
                     <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold">
                       <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (Field Assignment)
@@ -762,40 +728,139 @@ function AssignmentsPageContent() {
                   <DialogHeader>
                     <DialogTitle>มอบหมายงาน (Field Crew Assignment)</DialogTitle>
                     <DialogDescription>
-                      เลือกคนงานหน้างานและเชื่อมต่อเข้ากับรอบการทำงาน (Wave) ของโครงการ
-                      {filterWaveId ? (
-                        <span className="block mt-1 text-amber-800/90">
-                          กำลังเติมเวฟจากรายละเอียด Wave — ไม่สามารถสลับไป wave อื่นได้จาก dialog นี้ ใช้เมนู
-                          &quot;การมอบหมาย&quot; แบบเต็มรายการถ้าจะกระจายงานหลายเวฟ
-                        </span>
-                      ) : null}
+                      {filterPoId ? (
+                        <>
+                          เลือก <strong>บรรทัด PO / ตำแหน่ง</strong> ด้านล่าง — แสดงชัดเจนว่าตำแหน่งไหนว่างหรือเต็มตามโควต้า PO และตั้งช่วงวันที่มอบหมาย (ลงเวลาอิง PO + assignment)
+                        </>
+                      ) : (
+                        <>
+                          ด้านบนแสดง <strong>Customer PO ที่ Active</strong> ทั้งหมด (ดูอย่างเดียว) — เลือกมอบหมายที่ช่อง{' '}
+                          <strong>บรรทัด PO</strong> เดียวด้านล่าง (รวมทุก PO · ระบุรหัส PO ในแต่ละบรรทัด)
+                        </>
+                      )}
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
                     <div className="space-y-2 md:col-span-2">
-                      <Label className="font-bold">เลือกรอบการทำงาน (Active Wave)</Label>
-                      <Select
-                        value={selectedWaveId || undefined}
-                        onValueChange={setSelectedWaveId}
-                        disabled={!!filterWaveId}
-                      >
-                        <SelectTrigger className="h-11">
-                          <SelectValue placeholder="เลือก Wave ที่เปิดให้มอบหมาย..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {wavesForDialog.length === 0 ? (
-                            <div className="px-3 py-4 text-sm text-muted-foreground text-center">
-                              {filterPoId
-                                ? 'ยังไม่มี Wave ที่เปิดอยู่สำหรับ PO นี้ — สร้าง Wave จากเมนู Waves ก่อน'
-                                : 'ยังไม่มี Wave ที่เปิดอยู่'}
+                      {filterPoId ? (
+                        <>
+                          <Label className="font-bold">Customer PO</Label>
+                          {filterPO ? (
+                            <div className="flex items-start gap-3 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+                              <Building2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                              <div className="min-w-0 space-y-0.5">
+                                <p className="font-mono text-base font-bold text-primary">{filterPO.poCode}</p>
+                                <p className="font-medium leading-snug text-foreground">
+                                  {filterPO.projectName || filterPO.title}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  เลือกตำแหน่ง/โควต้าที่ช่อง &quot;บรรทัด PO&quot; ด้านล่าง — ไม่ต้องเลือก PO ซ้ำ
+                                </p>
+                              </div>
                             </div>
                           ) : (
-                            wavesForDialog.map((wave) => {
-                              const posLbl = waveRequiredPositionLabel(wave, allPOLines, allPositions);
+                            <div className="rounded-lg border border-dashed px-4 py-3 text-sm text-muted-foreground">
+                              กำลังโหลดข้อมูล PO…
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <Label className="font-bold">Customer PO ที่ Active (สายสัญญา)</Label>
+                          <div className="max-h-40 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                            {contractActivePOs.length === 0 ? (
+                              <p className="py-2 text-center text-xs text-muted-foreground">
+                                ไม่มี PO สายสัญญาที่ Active — อนุมัติ PO ที่เมนู Customer PO ก่อน
+                              </p>
+                            ) : (
+                              contractActivePOs.map((p) => (
+                                <div
+                                  key={p.id}
+                                  className="flex flex-wrap gap-x-2 gap-y-0.5 border-b border-border/50 py-2 text-xs last:border-0 last:pb-0"
+                                >
+                                  <span className="font-mono font-semibold text-primary">{p.poCode}</span>
+                                  <span className="text-muted-foreground">·</span>
+                                  <span className="text-foreground/90">{p.projectName || p.title}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">
+                            ไม่ต้องเลือก PO ที่นี่ — ไปเลือกบรรทัด/ตำแหน่งในช่องด้านล่าง (ครอบคลุมทุก PO)
+                          </p>
+                        </>
+                      )}
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label className="font-bold">
+                        {filterPoId
+                          ? 'เลือกบรรทัด PO / ตำแหน่ง (โควต้าตาม PO ที่กรอง)'
+                          : 'เลือกบรรทัด PO / ตำแหน่ง (ทุก PO · ตามโควต้าใน PO)'}
+                      </Label>
+                      <Select
+                        value={dialogLinePickKey || undefined}
+                        onValueChange={setDialogLinePickKey}
+                        disabled={
+                          filterPoId
+                            ? poLinesForDialogPickFiltered.length === 0
+                            : allFlatPoLinesForDialog.length === 0
+                        }
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue
+                            placeholder={
+                              filterPoId
+                                ? 'เลือกบรรทัดที่ยังว่าง...'
+                                : contractActivePOs.length === 0
+                                  ? 'ไม่มี PO Active'
+                                  : 'เลือกบรรทัด / ตำแหน่ง...'
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[min(70vh,380px)]">
+                          {filterPoId ? (
+                            poLinesForDialogPickFiltered.length === 0 ? (
+                              <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                                ไม่มีบรรทัด Active หรือครบโควต้าทุกบรรทัดแล้ว — ตรวจจำนวนใน PO
+                              </div>
+                            ) : (
+                              poLinesForDialogPickFiltered.map((row) => {
+                                const pos = row.positionId
+                                  ? allPositions?.find((p) => p.id === row.positionId)
+                                  : undefined;
+                                const name = pos
+                                  ? positionListPrimaryName(pos as PositionDoc)
+                                  : row.positionId || row.lineId;
+                                const pk = encodeDialogLinePickKey(filterPoId, row.lineId);
+                                return (
+                                  <SelectItem
+                                    key={pk}
+                                    value={pk}
+                                    disabled={row.remainingSlots <= 0}
+                                  >
+                                    {name} · มอบหมายแล้ว {row.assignedCount}/{row.requiredQty}
+                                    {row.remainingSlots > 0 ? ` · ว่าง ${row.remainingSlots}` : ' · เต็ม'}
+                                  </SelectItem>
+                                );
+                              })
+                            )
+                          ) : allFlatPoLinesForDialog.length === 0 ? (
+                            <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                              ไม่มีบรรทัด Active ในทุก PO — ตรวจ Customer PO / บรรทัดโควต้า
+                            </div>
+                          ) : (
+                            allFlatPoLinesForDialog.map((row) => {
+                              const pk = encodeDialogLinePickKey(row.poId, row.lineId);
                               return (
-                                <SelectItem key={wave.id} value={wave.id}>
-                                  {wave.waveCode} | {posLbl ? `${posLbl} · ` : ''}
-                                  {wave.projectName}
+                                <SelectItem
+                                  key={pk}
+                                  value={pk}
+                                  disabled={row.remainingSlots <= 0}
+                                >
+                                  <span className="font-mono font-semibold text-primary">{row.poCode}</span>
+                                  {' · '}
+                                  {row.positionLabel} · มอบหมายแล้ว {row.assignedCount}/{row.requiredQty}
+                                  {row.remainingSlots > 0 ? ` · ว่าง ${row.remainingSlots}` : ' · เต็ม'}
                                 </SelectItem>
                               );
                             })
@@ -803,62 +868,25 @@ function AssignmentsPageContent() {
                         </SelectContent>
                       </Select>
                     </div>
-                    {selectedWave && needPickPoLineForAssign ? (
-                      <div className="space-y-2 md:col-span-2">
-                        <Label className="font-bold">เลือกโควต้า / บรรทัด PO (ในเวฟนี้)</Label>
-                        <Select value={selectedPoLineId || undefined} onValueChange={setSelectedPoLineId}>
-                          <SelectTrigger className="h-11">
-                            <SelectValue placeholder="เลือกตำแหน่งที่จะมอบหมาย..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {selectedWaveAllocations.map((a) => {
-                              const line = allPOLines?.find(
-                                (l) => l.id === a.poLineId && l.poId === selectedWave.poId
-                              );
-                              const pos = line?.positionId
-                                ? allPositions?.find((p) => p.id === line.positionId)
-                                : undefined;
-                              const name = pos
-                                ? positionListPrimaryName(pos as PositionDoc)
-                                : line?.positionId || a.poLineId;
-                              const used = dedupedAssignmentsOnSelectedWave.filter(
-                                (x) =>
-                                  x.poLineId === a.poLineId &&
-                                  assignmentCountsTowardQuota(x.deploymentStatus)
-                              ).length;
-                              const rem = Math.max(0, a.plannedWorkers - used);
-                              return (
-                                <SelectItem key={a.poLineId} value={a.poLineId}>
-                                  {name} · แผน {a.plannedWorkers} · มอบหมายแล้ว {used}
-                                  {rem > 0 ? ` · ว่าง ${rem}` : ''}
-                                </SelectItem>
-                              );
-                            })}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : null}
                     <div className="space-y-2 md:col-span-2">
                       <Label className="font-bold">เลือกคนงานหน้างาน (Select Field Worker)</Label>
                       <Select
                         value={selectedWorkerId || undefined}
                         onValueChange={setSelectedWorkerId}
                         disabled={
-                          !selectedWaveId ||
-                          !targetPositionIdForSelectedWave ||
-                          (needPickPoLineForAssign && !selectedPoLineId)
+                          !effectiveDialogPoId ||
+                          !effectiveDialogLineId ||
+                          !targetPositionIdForDialogLine
                         }
                       >
                         <SelectTrigger className="h-11">
                           <SelectValue
                             placeholder={
-                              !selectedWaveId
-                                ? 'เลือก Wave ก่อน'
-                                : needPickPoLineForAssign && !selectedPoLineId
-                                  ? 'เลือกบรรทัด PO ในเวฟก่อน'
-                                  : !targetPositionIdForSelectedWave
-                                    ? 'Wave นี้ไม่มีตำแหน่งจาก PO line'
-                                    : 'เลือกคนงานตำแหน่งเดียวกับ Wave และสถานะ READY'
+                              !effectiveDialogLineId
+                                ? 'เลือกบรรทัด PO ก่อน'
+                                : !targetPositionIdForDialogLine
+                                  ? 'บรรทัดนี้ไม่มีตำแหน่ง'
+                                  : 'เลือกคนงานตำแหน่งตรงกับบรรทัด · READY'
                             }
                           />
                         </SelectTrigger>
@@ -875,9 +903,7 @@ function AssignmentsPageContent() {
                         </SelectContent>
                       </Select>
                       <p className="text-[10px] text-muted-foreground italic">
-                        * แสดงเฉพาะตำแหน่งตรงกับเวฟ + READY ที่{' '}
-                        <strong>ไม่มี assignment ทับช่วงวันที่</strong> ข้างล่าง (ใช้ default ตามเวฟจนกว่าคุณจะแก้)
-                        — คนที่กลับฝั่งแล้ว: ย่อ <strong>วันสิ้นสุด</strong> หรือ Demobilize assignment เดิม ให้ไม่ทับ wave ถัดไป
+                        * แสดงเฉพาะตำแหน่งตรงบรรทัด PO + READY ที่ <strong>ไม่มี assignment ทับช่วงวันที่</strong> — Demobilize หรือปิดรายการเดิมก่อนมอบหมายซ้อน
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -902,10 +928,7 @@ function AssignmentsPageContent() {
                       <Button
                         onClick={handleCreateAssignment}
                         className="bg-primary font-bold"
-                        disabled={
-                          isCreating ||
-                          (needPickPoLineForAssign && !!selectedWaveId && !selectedPoLineId)
-                        }
+                        disabled={isCreating || !dialogLinePickKey.trim()}
                       >
                         {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                         ยืนยันการมอบหมาย (Confirm)
@@ -926,7 +949,7 @@ function AssignmentsPageContent() {
                     <TableHeader className="bg-muted/50">
                       <TableRow>
                         <TableHead className="font-bold py-4 pl-6">เลขที่ / ลูกจ้างหน้างาน</TableHead>
-                        <TableHead className="font-bold">Wave & โครงการ</TableHead>
+                        <TableHead className="font-bold min-w-[11rem]">คำสั่งจ้าง / บรรทัด PO</TableHead>
                         <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
                         <TableHead className="font-bold">สถานที่</TableHead>
                         <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
@@ -938,9 +961,25 @@ function AssignmentsPageContent() {
                       {displayedAssignments.map((asgn) => {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
                         const wave = allWaves?.find(w => w.id === asgn.waveId);
+                        const poRow = allPOs?.find((p) => p.id === asgn.poId);
+                        const timesheetScope = isPoTimesheetScopeId(asgn.waveId);
+                        const legacyRoster = isPoRosterWaveId(asgn.waveId);
                         const lineForAsgn = allPOLines?.find(
                           (l) => l.id === asgn.poLineId && l.poId === asgn.poId
                         );
+                        const linePosId = (lineForAsgn?.positionId || asgn.positionId || '').trim();
+                        const posForLine = linePosId
+                          ? allPositions?.find((p) => p.id === linePosId)
+                          : undefined;
+                        const poLinePositionLabel = posForLine
+                          ? positionListPrimaryName(posForLine as PositionDoc)
+                          : linePosId || '—';
+                        const legacyRoutingNote =
+                          !timesheetScope && !legacyRoster && wave?.waveCode
+                            ? `อ้างอิงสายเก่า (Wave): ${wave.waveCode}`
+                            : legacyRoster
+                              ? 'บันทึกโควต้าแบบเก่า — ยังผูกบรรทัด PO ตามปกติ'
+                              : null;
                         const workLocationLabel =
                           (asgn.workLocation || lineForAsgn?.workLocation || '').toString().trim() || '—';
                         
@@ -954,9 +993,49 @@ function AssignmentsPageContent() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-bold text-sm text-primary flex items-center gap-1"><Waves className="h-3.5 w-3.5" /> {wave?.waveCode || 'N/A'}</span>
-                                <span className="text-[10px] text-muted-foreground font-mono uppercase truncate max-w-[150px]">{asgn.projectName}</span>
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-mono font-semibold text-muted-foreground">
+                                  {poRow?.poCode ?? '—'}
+                                </span>
+                                <span className="font-bold text-sm text-primary leading-snug flex items-start gap-1.5">
+                                  <Briefcase className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
+                                  <span>
+                                    {lineForAsgn ? (
+                                      <>
+                                        <span className="block">{poLinePositionLabel}</span>
+                                        <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                                          บรรทัด PO · {asgn.poLineId}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="block text-amber-800">ไม่พบบรรทัด PO ในระบบ</span>
+                                        <span className="text-[10px] font-mono font-normal text-muted-foreground">
+                                          poLineId · {asgn.poLineId || '—'}
+                                        </span>
+                                      </>
+                                    )}
+                                  </span>
+                                </span>
+                                <span className="text-[10px] text-muted-foreground leading-snug max-w-[22rem]">
+                                  {asgn.projectName}
+                                  {poRow?.contractId ? (
+                                    <span className="block mt-0.5">
+                                      <Link
+                                        href={`/main-contracts/${poRow.contractId}`}
+                                        className="text-[9px] font-mono text-primary hover:underline"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        สัญญาหลัก (ต้นทุน/อัตราขาย) →
+                                      </Link>
+                                    </span>
+                                  ) : null}
+                                </span>
+                                {legacyRoutingNote ? (
+                                  <span className="text-[9px] text-amber-800/90 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 w-fit max-w-full">
+                                    {legacyRoutingNote}
+                                  </span>
+                                ) : null}
                               </div>
                             </TableCell>
                             <TableCell>
@@ -1074,7 +1153,7 @@ function AssignmentsPageContent() {
                   <AlertDialogTitle>ลบการมอบหมายนี้?</AlertDialogTitle>
                   <AlertDialogDescription>
                     {assignmentPendingDelete
-                      ? `จะลบรายการ ${assignmentPendingDelete.assignmentNo || assignmentPendingDelete.id} และปรับจำนวนคนใน Wave ให้สอดคล้อง — การกระทำนี้ไม่สามารถยกเลิกได้`
+                      ? `จะลบรายการ ${assignmentPendingDelete.assignmentNo || assignmentPendingDelete.id} — หากผูก Wave แบบเก่าระบบจะปรับจำนวนคนใน Wave ให้สอดคล้อง — การกระทำนี้ไม่สามารถยกเลิกได้`
                       : null}
                   </AlertDialogDescription>
                 </AlertDialogHeader>

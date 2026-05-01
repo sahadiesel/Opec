@@ -191,7 +191,9 @@ export type LaborCostSourceKind =
   | 'position_default'
   | 'worker_custom'
   /** ฐานต้นทุนต่อตำแหน่งที่กำหนดบน main_contracts (เฟส A — ต่างกันระหว่างสัญญา) */
-  | 'contract_position_baseline';
+  | 'contract_position_baseline'
+  /** ทะเบียนต้นทุนต่อสัญญา+ลูกค้า บน Position (`laborCostByContract`) */
+  | 'position_contract_registry';
 
 /**
  * Snapshot ตอน generate รอบเงิน — ฐานต้นทุน/อัตราแรง (ยึด worker + ตำแหน่ง/แหล่งอ้างอิง; `contract_position_baseline` อ่านค่าเดิมบนสนาม batch line)
@@ -356,6 +358,16 @@ export interface Position {
    */
   defaultLaborCostOnshore?: number;
   defaultLaborCostOffshore?: number;
+  /**
+   * ทะเบียนต้นทุนค่าแรงต่อสัญญา (และลูกค้า) — payroll ใช้คู่กับ timesheet.contractId
+   */
+  laborCostByContract?: {
+    contractId: string;
+    customerId?: string;
+    contractLabel?: string;
+    onshore?: number;
+    offshore?: number;
+  }[];
   createdAt: number;
   updatedAt: number;
 }
@@ -751,6 +763,10 @@ export interface PositionRate {
   id: string;
   positionId: string;
   sellRate: number;
+  /** ราคาขาย Onshore — ถ้าไม่มีให้ใช้ `sellRate` */
+  sellRateOnshore?: number;
+  /** ราคาขาย Offshore — ถ้าไม่มีให้ใช้ `sellRate` */
+  sellRateOffshore?: number;
   /** @deprecated ฝั่งสัญญาไม่เขียน field นี้แล้ว; อาจยังอ่านได้ถ้าเอกสารยังไม่รัน migrate เฟส 5 */
   costBaseline?: number;
   billingUnit: 'daily' | 'monthly' | 'hourly';
@@ -804,8 +820,21 @@ export interface PurchaseOrder {
   startDate: number;
   endDate: number;
   status: 'pending' | 'active' | 'closed';
+  /** โหมดงานของ PO — รวมกลุ่ม PO Active / timesheet (default Offshore สำหรับเอกสารเก่า) */
+  poWorkMode?: JobMode;
+  /** อ้างอิง `po_active_bundles` — sync อัตโนมัติเมื่อ PO Active */
+  poActiveBundleId?: string;
   notes?: string;
   createdAt: number;
+  updatedAt: number;
+}
+
+/** กลุ่ม PO Active ต่อลูกค้า + Onshore/Offshore */
+export interface PoActiveBundle {
+  id: string;
+  customerId: string;
+  workMode: JobMode;
+  poIds: string[];
   updatedAt: number;
 }
 
@@ -827,6 +856,9 @@ export interface POLine {
   startDate: number;
   endDate: number;
   sellRateSnapshot: number;
+  /** Snapshot ราคาขายแยกโหมด — ถ้าไม่มีให้ใช้ `sellRateSnapshot` */
+  sellRateSnapshotOnshore?: number;
+  sellRateSnapshotOffshore?: number;
   costBaselineSnapshot: number;
   billingUnitSnapshot: string;
   overtimeRuleSnapshot: string;
@@ -1005,6 +1037,8 @@ export interface DailyTimesheet {
   /** Optional link to labor cost contract term for payroll costing */
   laborCostContractTermId?: string;
   purchaseOrderId: string;
+  /** กลุ่ม PO Active (ลูกค้า + on/off) — สำหรับรายงาน / invoice / payroll */
+  poActiveBundleId?: string;
   poLineId: string;
   siteId: string;
   positionId: string;
@@ -1571,6 +1605,9 @@ export type CashbookEntryType =
   | 'OTHER';
 export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CHEQUE' | 'OTHER';
 
+/** โหมดภาษีหัก ณ ที่จ่ายรายบรรทัดงวดออฟฟิศ/ผู้บริหาร */
+export type OfficePayrollPitMode = 'SYSTEM' | 'MANUAL_PERCENT' | 'MANUAL_AMOUNT';
+
 /** ปรับยอดรายคนงวดพนักงานออฟฟิศ — รายรับเพิ่ม / หักเพิ่ม (คู่กับ D8 manual_ded_*) */
 export interface OfficePayrollLineHrAdjustments {
   allowanceItems: Array<{ label: string; amount: number }>;
@@ -1578,6 +1615,12 @@ export interface OfficePayrollLineHrAdjustments {
   notes?: string | null;
   updatedAt?: number;
   updatedBy?: string;
+  /** ถ้า false = ไม่หักประกันสังคมในงวดนี้ (เช่น หักที่บริษัทอื่นแล้ว) — ค่าเริ่มต้นถือว่า true */
+  deductSocialSecurity?: boolean;
+  /** ค่าเริ่มต้น SYSTEM = คำนวณจากนโยบาย HR */
+  pitMode?: OfficePayrollPitMode;
+  pitManualPercent?: number | null;
+  pitManualAmountBaht?: number | null;
 }
 
 export interface OfficePayrollRun {

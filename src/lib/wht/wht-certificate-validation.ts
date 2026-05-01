@@ -161,3 +161,15 @@ export function validateWhtCertificateForOfficialPrint(
   errors.push(...validateWhtCertificateForOfficialIssue(doc, options));
   return errors;
 }
+
+/** พิมพ์ฉบับที่ 1 + 2 (ผู้ถูกหัก) ในไฟล์เดียว — เงื่อนไขเดียวกับพิมพ์ฉบับที่ 1 */
+export function validateWhtCertificateForPayeeCopies12Print(
+  doc: WithholdingCertificateDocument,
+  official: boolean,
+  options?: { requireCashbookReference?: boolean },
+): string[] {
+  if (official) {
+    return validateWhtCertificateForOfficialPrint(doc, 'COPY_PAYEE_TAX_RETURN', options);
+  }
+  return validateWhtCertificateForPreviewPrint(doc, 'COPY_PAYEE_TAX_RETURN');
+}

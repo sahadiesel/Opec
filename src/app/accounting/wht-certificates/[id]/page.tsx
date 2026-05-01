@@ -2,7 +2,14 @@
 
 import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { collection, doc, setDoc, updateDoc, type Firestore } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  setDoc,
+  updateDoc,
+  type DocumentData,
+  type Firestore,
+} from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -31,7 +38,12 @@ import { ArrowLeft, FileCode, Loader2, Printer, ShieldCheck, Stamp } from 'lucid
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
-import type { User, WithholdingCertificateDocument, WhtTaxCondition } from '@/lib/types';
+import type {
+  User,
+  WithholdingCertificateCopyVariant,
+  WithholdingCertificateDocument,
+  WhtTaxCondition,
+} from '@/lib/types';
 import {
   canCancelWhtCertificate,
   canCreateVerifyPrintWhtCertificate,
@@ -43,11 +55,13 @@ import {
 } from '@/lib/permissions';
 import {
   buildWithholdingCertificateDocumentHtml,
+  buildWithholdingCertificatePayeeCopies12Html,
   openWithholdingCertificatePrintWindow,
 } from '@/lib/documents/withholding-certificate-50-tw-print';
 import {
   validateWhtCertificateForOfficialIssue,
   validateWhtCertificateForOfficialPrint,
+  validateWhtCertificateForPayeeCopies12Print,
   validateWhtCertificateForPreviewPrint,
 } from '@/lib/wht/wht-certificate-validation';
 import { buildWhtElectronicDataFromDocument, stripUndefinedForFirestore } from '@/lib/wht/wht-certificate-build';
@@ -165,6 +179,45 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
             actorId: currentUser.id,
             actorName,
             payloadSummary: { copyVariant: variant, official: true },
+          }),
+        });
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runPrintPayeeCopies12 = async (official: boolean) => {
+    if (!firestore || !currentUser || !wht || !certRef) return;
+    const mode = official ? 'official' : 'preview';
+    const errs = validateWhtCertificateForPayeeCopies12Print(wht, official);
+    if (errs.length) {
+      toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
+      return;
+    }
+    setBusy(`print-payee12-${mode}`);
+    try {
+      const html = buildWithholdingCertificatePayeeCopies12Html(wht, {
+        official,
+        printedByName: actorName,
+        printedAtMs: Date.now(),
+        ...displayOpts,
+      });
+      openWithholdingCertificatePrintWindow(html);
+      if (official) {
+        await updateDoc(certRef, {
+          lastPrintedCopyVariant: 'COPY_PAYEE_TAX_RETURN',
+          updatedAt: Date.now(),
+          updatedByUid: currentUser.id,
+          updatedByName: actorName,
+        });
+        await appendAudit(firestore, wht.id, {
+          ...buildWhtAuditLogEntry({
+            documentId: wht.id,
+            action: 'PRINT_WHT',
+            actorId: currentUser.id,
+            actorName,
+            payloadSummary: { payeeCopies12Bundle: true, official: true },
           }),
         });
       }
@@ -319,7 +372,7 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
         patch.payeeTaxIdMissingOverride = has;
         patch.payeeTaxIdMissingReason = has ? overrideReason.trim() : null;
       }
-      await updateDoc(certRef, patch);
+      await updateDoc(certRef, patch as DocumentData);
       toast({ title: 'บันทึกแล้ว' });
     } finally {
       setBusy(null);
@@ -548,6 +601,9 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
                 <Button variant="outline" disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_RECORD', false)}>
                   Preview PDF (ฉบับที่ 2)
                 </Button>
+                <Button variant="secondary" disabled={!!busy} onClick={() => void runPrintPayeeCopies12(false)}>
+                  Preview ฉบับที่ 1+2 (ไฟล์เดียว)
+                </Button>
                 <Button variant="outline" disabled={!!busy} onClick={() => void runPrint('COPY_PAYER_RECORD', false)}>
                   Preview PDF (ผู้หัก)
                 </Button>
@@ -561,6 +617,10 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
                 </Button>
                 <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_RECORD', true)}>
                   พิมพ์ฉบับที่ 2
+                </Button>
+                <Button className="font-semibold" disabled={!!busy} onClick={() => void runPrintPayeeCopies12(true)}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  พิมพ์ฉบับที่ 1+2 (ไฟล์เดียว / PDF)
                 </Button>
                 <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYER_RECORD', true)}>
                   พิมพ์สำเนาผู้หัก

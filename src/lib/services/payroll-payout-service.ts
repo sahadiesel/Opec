@@ -1,16 +1,6 @@
 'use client';
 
-import {
-  Firestore,
-  collection,
-  doc,
-  getDocs,
-  increment,
-  limit,
-  query,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
+import { Firestore, collection, doc, getDoc, increment, writeBatch } from 'firebase/firestore';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import type { User } from '@/lib/types';
 
@@ -44,18 +34,15 @@ export async function recordPayrollFinanceApprovalPayout(
     throw new Error('ยอดจ่ายสุทธิไม่ถูกต้อง');
   }
 
-  let bankAccountId = params.payoutBankAccountId?.trim();
+  const bankAccountId = params.payoutBankAccountId?.trim();
   if (!bankAccountId) {
-    /** งวดลูกจ้าง: ห้ามเดาเลขบัญชี — ต้องระบุในหน้า batch ก่อนยืนยันจ่าย */
-    if (params.kind === 'WORKER') {
-      throw new Error(
-        'กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่าย (หน้ารายละเอียดงวด > บัญชี · ยืนยันจ่าย) — ระบบจะไม่เลือกบัญชีแทนอัตโนมัติ'
-      );
-    }
-    const bankQ = query(collection(db, 'bank_accounts'), where('status', '==', 'ACTIVE'), limit(1));
-    const snap = await getDocs(bankQ);
-    if (snap.empty) throw new Error('ไม่พบบัญชีธนาคาร ACTIVE — กรุณาตั้งค่าบัญชีหรือระบุบัญชีตัดจ่ายในงวด');
-    bankAccountId = snap.docs[0].id;
+    const msg: Record<PayrollPayoutKind, string> = {
+      WORKER:
+        'กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่าย (หน้ารายละเอียดงวดลูกจ้าง > บัญชียืนยันจ่าย) — ระบบจะไม่เลือกบัญชีแทนอัตโนมัติ',
+      EXECUTIVE: 'กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่ายในงวดผู้บริหารก่อนอนุมัติการเงิน',
+      OFFICE_STAFF: 'กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่ายในหน้าบัญชี (พนักงานออฟฟิศ · ทำจ่าย) ก่อนอนุมัติ',
+    };
+    throw new Error(msg[params.kind]);
   }
 
   const { code: entryNo } = await generateNextDocumentCode(db, 'cashbook_entry', {
@@ -69,7 +56,13 @@ export async function recordPayrollFinanceApprovalPayout(
       : params.kind === 'WORKER'
         ? 'ลูกจ้างคนงาน'
         : 'พนักงานสำนักงาน';
-  const description = `จ่ายเงินเดือน ${kindLabel} ${params.payrollRunNo} งวด ${params.payrollMonthLabel}`;
+
+  const bankSnap = await getDoc(doc(db, 'bank_accounts', bankAccountId));
+  const bankCode = bankSnap.exists()
+    ? String(bankSnap.data()?.accountCode ?? '').trim() || bankAccountId
+    : bankAccountId;
+
+  const description = `จ่ายเงินเดือน ${kindLabel} ${params.payrollRunNo} งวด ${params.payrollMonthLabel} · ตัดจากบัญชี ${bankCode}`;
 
   const cashbookRef = doc(collection(db, 'cashbook_entries'));
   const bankRef = doc(db, 'bank_accounts', bankAccountId);

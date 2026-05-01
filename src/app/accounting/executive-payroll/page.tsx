@@ -245,10 +245,10 @@ export default function ExecutivePayrollPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <Coins className="h-8 w-8" /> เงินเดือนผู้บริหาร (Executive Payroll)
+            <Coins className="h-8 w-8" /> เงินเดือนผู้บริหาร · บัญชี (Executive Payroll)
           </h1>
           <p className="text-muted-foreground text-lg">
-            การคำนวณการจ่ายเงิน — ดึงรายชื่อและฐานเงินเดือนจากเมนูย่อย «รายชื่อผู้บริหาร» (แยกจากงวดพนักงานออฟฟิศ)
+            สร้างงวดและคำนวณจากทะเบียน «รายชื่อผู้บริหาร» — หลังคำนวณแล้วเปิดงวดเพื่อเลือกบัญชีตัดจ่าย ลง cashbook และล็อก (ไม่มีขั้นตอนส่ง HR อนุมัติ)
           </p>
         </div>
 
@@ -257,7 +257,7 @@ export default function ExecutivePayrollPage() {
             <Info className="h-5 w-5 text-blue-600" />
             <AlertTitle className="font-bold">ความลับ (Confidential)</AlertTitle>
             <AlertDescription className="text-xs">
-              ข้อมูลนี้ไม่แสดงในเมนู HR — ใช้ workflow เดียวกับเงินเดือนพนักงาน (คำนวณ → อนุมัติ → การเงินลงบัญชี)
+              ข้อมูลนี้ไม่แสดงในเมนู HR — โฟลว์บัญชีคล้าย «พนักงานออฟฟิศ · ทำจ่าย» แต่ไม่มีขั้นตอนอนุมัติจาก HR/ผู้จัดการ (บัญชีทำจ่ายเอง)
             </AlertDescription>
           </Alert>
           <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
@@ -364,7 +364,7 @@ export default function ExecutivePayrollPage() {
                     <TableHead className="font-bold text-center">จำนวนคน</TableHead>
                     <TableHead className="font-bold text-right">ยอดสุทธิ (Net)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                    <TableHead className="text-right pr-6">เปิดงวด</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

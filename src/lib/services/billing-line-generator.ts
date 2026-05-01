@@ -19,6 +19,7 @@ import type {
   RateConditionEventType,
   MainContract,
 } from '@/lib/types';
+import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
 import { derivePackageNormalHourlyRate, PACKAGE_OT_TIER_MULT } from '@/lib/commercial/package-hourly-rate';
 import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
 import { resolveSellRestDay, type SellRestDayResolution } from '@/lib/commercial/sell-rest-day';
@@ -109,7 +110,7 @@ function workDayFromPackageBilling(
   map: Map<string, LineAcc>,
   warnings: string[],
 ) {
-  const sellRate = Number(poLine.sellRateSnapshot || 0);
+  const sellRate = Number(sellSnapshotForWorkMode(poLine, ts.workMode) || 0);
   if (sellRate <= 0) return;
 
   const sellOtMult =
@@ -303,7 +304,7 @@ function billingNonWorkDayFromPoAndContract(
   map: Map<string, LineAcc>,
   warnings: string[],
 ) {
-  const sellRate = poLine.sellRateSnapshot;
+  const sellRate = sellSnapshotForWorkMode(poLine, ts.workMode);
   const otRules: OtRulesSnapshot = poLine.sellOtRulesSnapshot || {};
   const wid = ts.workerId;
   const pos = ts.positionId;
@@ -392,7 +393,7 @@ function descriptionForLine(acc: LineAcc, positionTitle: string): string {
 /**
  * สร้างบรรทัดวางบิลจาก timesheet ที่อนุมัติแล้ว
  *
- * - **ฐานราคา:** `sellRateSnapshot` / กฎ OT จาก **PO line** (สะท้อนสัญญาที่ผูกกับ PO แล้ว)
+ * - **ฐานราคา:** `sellRateSnapshotOnshore` / `sellRateSnapshotOffshore` (fallback `sellRateSnapshot`) ตาม `workMode` ของ timesheet — กฎ OT จาก **PO line**
  * - **ตัวคูณวันทำงาน/วันหยุด/OT:** `MainContract.rateMultiplierPolicy.sell` + ปฏิทินวันหยุดฝั่งขายของสัญญา
  * - **ไม่ใช้** `sales_contract_terms` และ **ไม่ query** `rate_conditions` — ไม่ฟ้องเรื่อง “ไม่พบเงื่อนไขขาย” จาก sales term
  */
@@ -480,7 +481,7 @@ export async function generateBillingLines(
     }
 
     if (ts.eventType === 'work_day') {
-      if (Number(poLine.sellRateSnapshot || 0) <= 0) {
+      if (Number(sellSnapshotForWorkMode(poLine, ts.workMode) || 0) <= 0) {
         warnings.push(`ข้าม work_day ${ts.date} — ราคาขายใน PO line เป็น 0`);
         continue;
       }

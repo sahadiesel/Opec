@@ -467,7 +467,7 @@ export function isOperationsPillarExecutive(user: User | null): boolean {
  */
 export function canEditMasterContractCostBaseline(user: User | null): boolean {
   if (!user) return false;
-  if (isSystemAdmin(user)) return true;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
   if (isHrManager(user)) return true;
   if (isOperationManager(user)) return true;
   const rk = getPrimaryLegacyRole(user);

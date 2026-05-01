@@ -25,7 +25,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where, addDoc, orderBy, getDocs } from 'firebase/firestore';
+import { doc, collection, query, where, addDoc, orderBy, getDocs, deleteField } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User } from '@/lib/types';
 import Link from 'next/link';
@@ -37,13 +37,6 @@ import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
-import { defaultLaborDailyFromPosition } from '@/lib/payroll/timesheet-labor-base-cost';
-
-function formatTempLaborRef(v: number | undefined): string {
-  const n = v == null ? NaN : Number(v);
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  return n.toLocaleString();
-}
 
 import { ContractPoTab } from './_components/contract-po-tab';
 import { ContractLogsTab } from './_components/contract-logs-tab';
@@ -59,6 +52,11 @@ import {
 import type { CalendarHolidayEntry, OvertimeRuleKey, WeeklyRestPattern } from '@/lib/contract-position-rate-extras';
 import { ContractHolidayScheduleSection } from './_components/contract-holiday-schedule-section';
 import {
+  effectiveSellOnshore,
+  effectiveSellOffshore,
+  legacySellRateMirror,
+} from '@/lib/commercial/position-rate-sell';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -68,6 +66,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+/** ต้นทุนที่ใช้จริงต่อวัน — ทับในสัญญาก่อน แล้วจึงฐานจากตำแหน่ง */
+function effectiveLaborOnshore(pos: Position, contract: MainContract, positionId: string): number {
+  const raw = contract.laborCostBaselinesByPositionId?.[positionId]?.onshore;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return Number(pos.defaultLaborCostOnshore) || 0;
+}
+
+function effectiveLaborOffshore(pos: Position, contract: MainContract, positionId: string): number {
+  const raw = contract.laborCostBaselinesByPositionId?.[positionId]?.offshore;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return Number(pos.defaultLaborCostOffshore) || 0;
+}
 
 const DEFAULT_OT_KEY: OvertimeRuleKey = 'MULT_1_5';
 const DEFAULT_OT_LABEL = OVERTIME_RULE_OPTIONS.find((o) => o.key === DEFAULT_OT_KEY)!;
@@ -602,7 +615,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     }
     const otKey = (newRate.overtimeRuleKey || DEFAULT_OT_KEY) as OvertimeRuleKey;
 
-    const normalizedSellRate = canEditSellSide ? Number(newRate.sellRate) || 0 : 0;
+    const onSell =
+      canEditSellSide && Number.isFinite(Number(newRate.sellRateOnshore)) && Number(newRate.sellRateOnshore) > 0
+        ? Number(newRate.sellRateOnshore)
+        : undefined;
+    const offSell =
+      canEditSellSide && Number.isFinite(Number(newRate.sellRateOffshore)) && Number(newRate.sellRateOffshore) > 0
+        ? Number(newRate.sellRateOffshore)
+        : undefined;
+    const normalizedSellRate = canEditSellSide ? legacySellRateMirror({ ...newRate, sellRateOnshore: onSell, sellRateOffshore: offSell }) : 0;
     const { costBaseline: _dropCost, ...newRateFields } = newRate;
     const policySell = effectiveRatePolicy.sell || {};
     const policyCost = effectiveRatePolicy.cost || {};
@@ -612,6 +633,8 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       ...newRateFields,
       positionId: newRate.positionId || '',
       sellRate: normalizedSellRate,
+      ...(onSell != null ? { sellRateOnshore: onSell } : {}),
+      ...(offSell != null ? { sellRateOffshore: offSell } : {}),
       billingUnit: newRate.billingUnit || 'daily',
       normalWorkHours: newRate.normalWorkHours || 8,
       overtimeRuleKey: otKey,
@@ -671,6 +694,45 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     toast({ title: 'บันทึกอัตราราคาแล้ว' });
   };
 
+  const commitSellRateSide = (rate: PositionRate, field: 'onshore' | 'offshore', raw: string) => {
+    if (!firestore || !canModify || !contract) return;
+    const canMutateRates =
+      contract.status === 'pending' ||
+      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
+    if (!canMutateRates || !canEditSellSide) return;
+
+    const v = parseFloat(raw.trim());
+    let nextOn = rate.sellRateOnshore;
+    let nextOff = rate.sellRateOffshore;
+    const payload: Record<string, unknown> = { updatedAt: Date.now() };
+
+    if (field === 'onshore') {
+      if (!Number.isFinite(v) || v <= 0) {
+        payload.sellRateOnshore = deleteField();
+        nextOn = undefined;
+      } else {
+        payload.sellRateOnshore = v;
+        nextOn = v;
+      }
+    } else {
+      if (!Number.isFinite(v) || v <= 0) {
+        payload.sellRateOffshore = deleteField();
+        nextOff = undefined;
+      } else {
+        payload.sellRateOffshore = v;
+        nextOff = v;
+      }
+    }
+
+    payload.sellRate = legacySellRateMirror({
+      sellRate: rate.sellRate,
+      sellRateOnshore: nextOn,
+      sellRateOffshore: nextOff,
+    });
+
+    updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rate.id), payload);
+  };
+
   const deleteRate = (rateId: string) => {
     if (!firestore || !canModify || !contract) return;
     const canMutateRates =
@@ -728,6 +790,25 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       beforeSummary: `${positionId}:${field}`,
       afterSummary: JSON.stringify(row),
     });
+  };
+
+  /** บันทึกต้นทุนสัญญา — ว่างหรือเท่าฐานตำแหน่ง = ล้างทับ (ใช้ค่า Position) */
+  const commitLaborBaseline = (
+    positionId: string,
+    field: 'onshore' | 'offshore',
+    raw: string,
+    positionDefault: number,
+  ) => {
+    const v = parseFloat(raw.trim());
+    if (!Number.isFinite(v) || v <= 0) {
+      handleLaborBaselineBlur(positionId, field, '');
+      return;
+    }
+    if (positionDefault > 0 && Math.abs(v - positionDefault) < 1e-9) {
+      handleLaborBaselineBlur(positionId, field, '');
+      return;
+    }
+    handleLaborBaselineBlur(positionId, field, String(v));
   };
 
   const handleDeleteDraftContract = async () => {
@@ -1233,12 +1314,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 <div>
                   <CardTitle>อัตราราคาตามตำแหน่ง (Position Rates Management)</CardTitle>
                   <CardDescription>
-                    ราคา<strong>ขาย</strong>ต่อตำแหน่งเป็นของสัญญา (A กับ B อาจต่าง) — ฐานต้นทุนค่าแรงมาตรฐานกำหนดที่{' '}
+                    ราคา<strong>ขาย</strong>ต่อตำแหน่งเป็นของสัญญา — <strong>ต้นทุนค่าแรง</strong> แสดงเป็นตัวเลข Onshore / Offshore ต่อวัน (ทับในสัญญาได้;
+                    ถ้าไม่ทับใช้ฐานจาก{' '}
                     <Link href="/positions" className="font-medium text-primary underline">
-                      ตำแหน่งงาน (Positions)
+                      ตำแหน่งงาน
                     </Link>
-                    คอลัมน์ <strong>ต้นทุน</strong> แสดงฐานมาตรฐาน; สามารถ <strong>ทับรายสัญญา</strong> ได้ต่อตำแหน่ง (ใช้คำนวณ payroll เมื่องานผูก
-                    สัญญานี้) — สร้าง PO ยัง snapshot ฐานจาก PO line/ตำแหน่งตามเดิม
+                    ) — Operations / HR / Admin แก้ต้นทุนตามสิทธิ์
                     {masterActiveRatesLocked && (
                       <span className="block mt-1 text-amber-800 font-medium">
                         สัญญาหลัก Active: ล็อกจำนวนตำแหน่งและราคา — เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น (วันหยุด/กฎตัวคูณแก้ที่แท็บข้อมูลสัญญาหลัก)
@@ -1246,7 +1327,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     )}
                     {contract.commercialTermsOwner === 'sales' && (
                       <span className="block mt-1 text-amber-700 font-medium">
-                        สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายต่อตำแหน่งได้ที่นี่ — ฐานต้นทุน OPEC: ฝ่าย operations/HR กำหนดที่ตำแหน่ง (ไม่อยู่ในสัญญา)
+                        สัญญานี้เริ่มจากฝ่ายขาย: ลงราคาขายต่อตำแหน่งได้ที่นี่ — ต้นทุนค่าแรงฝั่ง Operations/HR แก้ในคอลัมน์ต้นทุน (หรือฐานที่ตำแหน่ง)
                       </span>
                     )}
                   </CardDescription>
@@ -1311,19 +1392,17 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   <TableHeader>
                     <TableRow>
                       <TableHead>ตำแหน่งงาน</TableHead>
-                      <TableHead>ราคาขาย (Sell)</TableHead>
+                      <TableHead className="min-w-[10rem]">
+                        <span className="flex flex-col gap-0.5">
+                          <span>ราคาขาย (Sell)</span>
+                          <span className="text-[10px] font-normal text-muted-foreground">Onshore · Offshore</span>
+                        </span>
+                      </TableHead>
                       {canViewCostFields && (
-                        <TableHead className="min-w-[9rem] bg-amber-50/80">
+                        <TableHead className="min-w-[10rem]">
                           <span className="flex flex-col gap-0.5">
-                            <span className="flex items-center gap-1.5">
-                              ต้นทุน (ชั่วคราว)
-                              <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-600/40 text-amber-900">
-                                อ้างอิง
-                              </Badge>
-                            </span>
-                            <span className="text-[10px] font-normal text-muted-foreground leading-tight">
-                              ฐาน Position + ราคาเดิมบนสัญญา (ถ้ามี) — ลบคอลัมน์นี้ได้เมื่อกรอกใน /positions ครบ
-                            </span>
+                            <span>ต้นทุนค่าแรง</span>
+                            <span className="text-[10px] font-normal text-muted-foreground">Onshore · Offshore</span>
                           </span>
                         </TableHead>
                       )}
@@ -1343,124 +1422,138 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                               <span>{(pos?.positionName || pos?.positionNameTh) || r.positionId}</span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-green-600 font-bold">
+                          <TableCell className="align-top text-green-600 font-bold">
                             {canMutatePositionRates && canEditSellSide && firestore ? (
-                              <div className="flex items-center gap-1">
-                                <span className="text-xs text-muted-foreground">{contract.currency}</span>
-                                <Input
-                                  type="number"
-                                  className="h-8 w-24 font-bold text-green-600"
-                                  defaultValue={r.sellRate}
-                                  key={`${r.id}-sell-${r.sellRate}`}
-                                  disabled={isSupplementalContract}
-                                  onBlur={(e) => {
-                                    const v = Number(e.target.value) || 0;
-                                    if (v === Number(r.sellRate)) return;
-                                    updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', r.id), {
-                                      sellRate: v,
-                                      updatedAt: Date.now(),
-                                    });
-                                  }}
-                                />
+                              <div className="flex flex-col gap-1.5">
+                                {(() => {
+                                  const onEff = effectiveSellOnshore(r);
+                                  const offEff = effectiveSellOffshore(r);
+                                  return (
+                                    <>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
+                                        <Input
+                                          type="number"
+                                          className="h-8 w-28 font-bold text-green-600"
+                                          min={0}
+                                          step="any"
+                                          defaultValue={onEff > 0 ? onEff : ''}
+                                          key={`sell-on-${r.id}-${String(r.sellRate)}-${String(r.sellRateOnshore)}`}
+                                          disabled={isSupplementalContract}
+                                          onBlur={(e) => commitSellRateSide(r, 'onshore', e.target.value)}
+                                        />
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
+                                        <Input
+                                          type="number"
+                                          className="h-8 w-28 font-bold text-green-600"
+                                          min={0}
+                                          step="any"
+                                          defaultValue={offEff > 0 ? offEff : ''}
+                                          key={`sell-off-${r.id}-${String(r.sellRate)}-${String(r.sellRateOffshore)}`}
+                                          disabled={isSupplementalContract}
+                                          onBlur={(e) => commitSellRateSide(r, 'offshore', e.target.value)}
+                                        />
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             ) : (
-                              <>{contract.currency} {r.sellRate.toLocaleString()}</>
+                              <div className="flex flex-col gap-1.5">
+                                <span>
+                                  {effectiveSellOnshore(r) > 0 ? (
+                                    <>
+                                      <span className="text-xs text-muted-foreground font-normal">{contract.currency} </span>
+                                      {effectiveSellOnshore(r).toLocaleString()}
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </span>
+                                <span>
+                                  {effectiveSellOffshore(r) > 0 ? (
+                                    <>
+                                      <span className="text-xs text-muted-foreground font-normal">{contract.currency} </span>
+                                      {effectiveSellOffshore(r).toLocaleString()}
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </span>
+                              </div>
                             )}
                           </TableCell>
                           {canViewCostFields && (
-                            <TableCell className="align-top bg-amber-50/40 text-xs">
-                              {pos && (
-                                <div className="space-y-1 text-[11px] text-amber-950">
-                                  <div>
-                                    <span className="text-muted-foreground">ON</span> {formatTempLaborRef(pos.defaultLaborCostOnshore)}
-                                  </div>
-                                  <div>
-                                    <span className="text-muted-foreground">OFF</span> {formatTempLaborRef(pos.defaultLaborCostOffshore)}
-                                  </div>
-                                  <div className="text-[10px] text-amber-800/90 border-t border-amber-200/60 pt-1">
-                                    ใช้ default รวม:{' '}
-                                    <span className="font-mono font-semibold">
-                                      {formatTempLaborRef(
-                                        defaultLaborDailyFromPosition(pos) || undefined,
-                                      )}
-                                    </span>
-                                    {contract.currency ? ` ${contract.currency}` : ''} / วัน
-                                  </div>
-                                  {canViewCostFields && (
-                                    <div className="text-[10px] border-t border-amber-200/60 pt-1.5 mt-1 space-y-1">
-                                      <p className="font-medium text-amber-900">ทับฐานฝั่ง OPEC สำหรับสัญญานี้ (payroll)</p>
-                                      {canEditCostSide && firestore ? (
-                                        <div className="grid grid-cols-2 gap-1.5">
-                                          <div className="space-y-0.5">
-                                            <span className="text-[9px] text-muted-foreground">ON สัญญา</span>
+                            <TableCell className="align-top">
+                              {pos ? (
+                                <div className="flex flex-col gap-1.5">
+                                  {(() => {
+                                    const onEff = effectiveLaborOnshore(pos, contract, r.positionId);
+                                    const offEff = effectiveLaborOffshore(pos, contract, r.positionId);
+                                    const posOn = Number(pos.defaultLaborCostOnshore) || 0;
+                                    const posOff = Number(pos.defaultLaborCostOffshore) || 0;
+                                    return (
+                                      <>
+                                        <div className="flex items-center gap-1 text-amber-700 font-bold">
+                                          <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
+                                          {canEditCostSide && firestore ? (
                                             <Input
-                                              className="h-7 text-[11px] font-mono"
                                               type="number"
+                                              className="h-8 w-28 font-bold text-amber-700"
                                               min={0}
                                               step="any"
-                                              key={`lbon-${r.id}-${contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore ?? 'e'}`}
-                                              defaultValue={
-                                                contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore ?? ''
-                                              }
+                                              defaultValue={onEff > 0 ? onEff : ''}
+                                              key={`lbon-${r.id}-${String(contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore)}-${pos.defaultLaborCostOnshore}`}
                                               onBlur={(e) =>
-                                                handleLaborBaselineBlur(
-                                                  r.positionId,
-                                                  'onshore',
-                                                  e.target.value,
-                                                )
+                                                commitLaborBaseline(r.positionId, 'onshore', e.target.value, posOn)
                                               }
                                             />
-                                          </div>
-                                          <div className="space-y-0.5">
-                                            <span className="text-[9px] text-muted-foreground">OFF สัญญา</span>
-                                            <Input
-                                              className="h-7 text-[11px] font-mono"
-                                              type="number"
-                                              min={0}
-                                              step="any"
-                                              key={`lboff-${r.id}-${contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore ?? 'e'}`}
-                                              defaultValue={
-                                                contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore ?? ''
-                                              }
-                                              onBlur={(e) =>
-                                                handleLaborBaselineBlur(
-                                                  r.positionId,
-                                                  'offshore',
-                                                  e.target.value,
-                                                )
-                                              }
-                                            />
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <p className="text-[10px]">
-                                          ON:{' '}
-                                          {formatTempLaborRef(
-                                            contract.laborCostBaselinesByPositionId?.[r.positionId]?.onshore,
-                                          )}{' '}
-                                          / OFF:{' '}
-                                          {formatTempLaborRef(
-                                            contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore,
+                                          ) : (
+                                            <span>
+                                              {onEff > 0 ? (
+                                                <>
+                                                  {contract.currency} {onEff.toLocaleString()}
+                                                </>
+                                              ) : (
+                                                '—'
+                                              )}
+                                            </span>
                                           )}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
+                                        </div>
+                                        <div className="flex items-center gap-1 text-amber-700 font-bold">
+                                          <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
+                                          {canEditCostSide && firestore ? (
+                                            <Input
+                                              type="number"
+                                              className="h-8 w-28 font-bold text-amber-700"
+                                              min={0}
+                                              step="any"
+                                              defaultValue={offEff > 0 ? offEff : ''}
+                                              key={`lboff-${r.id}-${String(contract.laborCostBaselinesByPositionId?.[r.positionId]?.offshore)}-${pos.defaultLaborCostOffshore}`}
+                                              onBlur={(e) =>
+                                                commitLaborBaseline(r.positionId, 'offshore', e.target.value, posOff)
+                                              }
+                                            />
+                                          ) : (
+                                            <span>
+                                              {offEff > 0 ? (
+                                                <>
+                                                  {contract.currency} {offEff.toLocaleString()}
+                                                </>
+                                              ) : (
+                                                '—'
+                                              )}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
                                 </div>
-                              )}
-                              {!pos && <span className="text-muted-foreground">—</span>}
-                              {Number(r.costBaseline) > 0 && (
-                                <p className="text-[10px] text-muted-foreground mt-1.5">
-                                  ในเอกสาร rate (เดิม): <span className="font-mono">{Number(r.costBaseline).toLocaleString()}</span>
-                                </p>
-                              )}
-                              {pos && (
-                                <Link
-                                  href={`/positions/${r.positionId}`}
-                                  className="inline-block mt-1.5 text-[10px] text-primary font-medium hover:underline"
-                                >
-                                  แก้ฐานมาตรฐานที่ตำแหน่ง →
-                                </Link>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
                               )}
                             </TableCell>
                           )}

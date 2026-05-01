@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/componen
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter, Loader2, Pencil, CheckCircle2, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { PurchaseOrder, User, Customer, MainContract, Quotation } from '@/lib/types';
+import { PurchaseOrder, User, Customer, MainContract, Quotation, JobMode } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -33,6 +33,7 @@ import {
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, doc, updateDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { rebuildAllPoActiveBundlesForCustomer } from '@/lib/ops/po-active-bundle';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { formatDateRangeThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
@@ -103,6 +104,7 @@ function CustomerPOsPageContent() {
     projectName: '',
     description: '',
     status: 'pending',
+    poWorkMode: 'OFFSHORE' as JobMode,
     notes: ''
   });
 
@@ -221,6 +223,7 @@ function CustomerPOsPageContent() {
         startDate,
         endDate,
         customerPoIssueDate: newPO.customerPoIssueDate,
+        poWorkMode: newPO.poType === 'contract' ? (newPO.poWorkMode ?? 'OFFSHORE') : undefined,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -244,12 +247,17 @@ function CustomerPOsPageContent() {
     setListActionId(po.id);
     try {
       await updateDoc(doc(firestore, 'purchase_orders', po.id), { status: 'active', updatedAt: Date.now() });
+      try {
+        await rebuildAllPoActiveBundlesForCustomer(firestore, po.customerId);
+      } catch (e) {
+        console.warn(e);
+      }
       toast({
         title: 'อนุมัติ PO แล้ว',
         description:
           po.poType === 'quotation'
             ? 'สถานะ Active — ออกใบวางบิล / ใบกำกับภาษีได้ (ไม่มี Wave / Timesheet)'
-            : 'สถานะ Active — สร้าง Wave ได้',
+            : 'สถานะ Active — มอบหมายจาก PO / PO Active ได้',
       });
     } catch (e) {
       console.error(e);
@@ -377,14 +385,17 @@ function CustomerPOsPageContent() {
                 <div className="grid gap-2">
                   <Label>แหล่งที่มาเอกสาร (PO Source)</Label>
                   <Select
-                    onValueChange={(v: 'contract' | 'quotation') => setNewPO({
-                      ...newPO,
-                      poType: v,
-                      contractId: '',
-                      quotationId: '',
-                      customerId: '',
-                      serviceAgreementNo: '',
-                    })}
+                    onValueChange={(v: 'contract' | 'quotation') =>
+                      setNewPO({
+                        ...newPO,
+                        poType: v,
+                        contractId: '',
+                        quotationId: '',
+                        customerId: '',
+                        serviceAgreementNo: '',
+                        poWorkMode: v === 'contract' ? (newPO.poWorkMode ?? 'OFFSHORE') : undefined,
+                      })
+                    }
                     value={(newPO.poType as any) || 'contract'}
                   >
                     <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
@@ -420,6 +431,26 @@ function CustomerPOsPageContent() {
                     </>
                   )}
                 </div>
+                {newPO.poType === 'contract' && (
+                  <div className="grid gap-2 col-span-2">
+                    <Label>โหมดงาน PO (Onshore / Offshore)</Label>
+                    <Select
+                      value={newPO.poWorkMode ?? 'OFFSHORE'}
+                      onValueChange={(v) => setNewPO({ ...newPO, poWorkMode: v as JobMode })}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="OFFSHORE">Offshore (ค่าเริ่มต้น)</SelectItem>
+                        <SelectItem value="ONSHORE">Onshore</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      ใช้รวมกลุ่มเอกสาร PO Active ต่อลูกค้า — เอกสารเก่าในระบบถือเป็น Offshore
+                    </p>
+                  </div>
+                )}
                 <div className="grid gap-2">
                   <Label>อ้างอิงใบเสนอราคา</Label>
                   <Select

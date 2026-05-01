@@ -33,6 +33,12 @@ export interface WithholdingCertificateDocumentPrintOptions {
   showSystemGeneratedNote: boolean;
 }
 
+/** ตัวเลือกพิมพ์เมื่อสร้างหลายฉบับในไฟล์เดียว — ไม่มี copyVariant */
+export type WithholdingCertificateDocumentPrintBaseOptions = Omit<
+  WithholdingCertificateDocumentPrintOptions,
+  'copyVariant'
+>;
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -109,32 +115,8 @@ function payeeCategoryTh(c: WithholdingCertificateDocument['payee']['vendorCateg
   }
 }
 
-/**
- * สร้าง HTML สำหรับพิมพ์จาก snapshot เอกสาร (ข้อมูลเดียวกันทุกฉบับ เปลี่ยนแค่ copyVariant / official)
- */
-export function buildWithholdingCertificateDocumentHtml(
-  doc: WithholdingCertificateDocument,
-  opts: WithholdingCertificateDocumentPrintOptions,
-): string {
-  const cnRaw = (doc.certificateNo || '').trim();
-  const cn = escapeHtml(
-    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
-  );
-
-  const issueDateDisp = formatYmdLocalThaiBE(doc.paymentIssueDate, '____/____/________');
-  const payDateDisp = formatYmdLocalThaiBE(doc.paymentDate, '____/____/________');
-
-  const payer = doc.payer;
-  const payee = doc.payee;
-  const payerIsHead = payer.branchType === 'HEAD_OFFICE';
-  const payeeIsHead = payee.branchType === 'HEAD_OFFICE';
-
-  const whtWords = amountToThaiBahtText(doc.withholdingTaxAmount);
-
-  const sigUrl = opts.showSignatureImage ? (doc.signatureImageUrl || '').trim() : '';
-  const stampUrl = opts.showCompanyStamp ? (doc.companyStampImageUrl || '').trim() : '';
-
-  const css = `
+function withholdingCertificatePrintCss(extra = ''): string {
+  return `
     @page { size: A4; margin: 10mm 12mm; }
     body {
       font-family: 'Sarabun', 'TH Sarabun New', 'Tahoma', sans-serif;
@@ -152,7 +134,7 @@ export function buildWithholdingCertificateDocumentHtml(
       margin-bottom: 6px;
       background: #fafafa;
     }
-    .doc-top { position: relative; margin-bottom: 8px; min-height: 52px; }
+    .doc-top { position: relative; margin-bottom: 20px; min-height: 96px; }
     .doc-title-wrap { text-align: center; padding: 0 175px; }
     h1 { font-size: 14px; margin: 0 0 2px; font-weight: bold; }
     .sub { font-size: 11px; margin: 0; color: #222; }
@@ -164,10 +146,14 @@ export function buildWithholdingCertificateDocumentHtml(
       font-size: 10.5px;
       line-height: 1.45;
       max-width: 260px;
+      padding-bottom: 12px;
     }
-    .doc-meta div { margin-bottom: 3px; }
+    .doc-meta div { margin-bottom: 5px; }
+    .doc-top + .sec {
+      margin-top: 14px;
+    }
     .sec {
-      margin-top: 7px;
+      margin-top: 10px;
       font-weight: bold;
       border-bottom: 1px solid #333;
       padding-bottom: 1px;
@@ -198,12 +184,46 @@ export function buildWithholdingCertificateDocumentHtml(
       text-align: center;
       margin-bottom: 4px;
     }
+    .wht-print-page {
+      page-break-after: always;
+      break-after: page;
+    }
+    .wht-print-page:last-of-type {
+      page-break-after: auto;
+      break-after: auto;
+    }
+    ${extra}
   `;
+}
+
+/**
+ * เนื้อหาเอกสารหนึ่งหน้า (ฉบับเดียว) — ใช้ร่วมกับหลายหน้าในไฟล์เดียว
+ */
+function buildWithholdingCertificateBodyHtml(
+  doc: WithholdingCertificateDocument,
+  opts: WithholdingCertificateDocumentPrintOptions,
+): string {
+  const cnRaw = (doc.certificateNo || '').trim();
+  const cn = escapeHtml(
+    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
+  );
+
+  const issueDateDisp = formatYmdLocalThaiBE(doc.paymentIssueDate, '____/____/________');
+  const payDateDisp = formatYmdLocalThaiBE(doc.paymentDate, '____/____/________');
+
+  const payer = doc.payer;
+  const payee = doc.payee;
+  const payerIsHead = payer.branchType === 'HEAD_OFFICE';
+  const payeeIsHead = payee.branchType === 'HEAD_OFFICE';
+
+  const whtWords = amountToThaiBahtText(doc.withholdingTaxAmount);
+
+  const sigUrl = opts.showSignatureImage ? (doc.signatureImageUrl || '').trim() : '';
+  const stampUrl = opts.showCompanyStamp ? (doc.companyStampImageUrl || '').trim() : '';
 
   const banner = escapeHtml(copyVariantBannerTh(opts.copyVariant));
 
-  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองการหักภาษี ณ ที่จ่าย ${cn}</title>
-<style>${css}</style></head><body>
+  return `
 ${!opts.official ? '<div class="draft-watermark">[ ตัวอย่างก่อนออกเอกสาร — ไม่ใช่หลักฐานทางการ ]</div>' : ''}
 <div class="copy-banner">${banner}</div>
 <div class="doc-top">
@@ -286,7 +306,47 @@ ${taxConditionChecks(doc.taxCondition, doc.taxConditionOtherRemark)}
   เอกสารนี้ออกจากระบบ OPEC OpsFlow<br/>
   ${opts.showSystemGeneratedNote && (!sigUrl || !stampUrl) ? '<span>เอกสารนี้จัดทำโดยระบบอิเล็กทรอนิกส์ หากไม่มีลายเซ็นและตราประทับ ให้ตรวจสอบความถูกต้องจากเลขที่เอกสารอ้างอิง</span><br/>' : ''}
   สถานะเอกสาร: ${escapeHtml(doc.documentStatus)} · สถานะไฟล์ XML ภายใน: ${escapeHtml(doc.xmlExportStatus || doc.whtElectronicData?.xmlExportStatus || 'NOT_EXPORTED')}
-</p>
+</p>`;
+}
+
+/**
+ * สร้าง HTML สำหรับพิมพ์จาก snapshot เอกสาร (ข้อมูลเดียวกันทุกฉบับ เปลี่ยนแค่ copyVariant / official)
+ */
+export function buildWithholdingCertificateDocumentHtml(
+  doc: WithholdingCertificateDocument,
+  opts: WithholdingCertificateDocumentPrintOptions,
+): string {
+  const cnRaw = (doc.certificateNo || '').trim();
+  const cn = escapeHtml(
+    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
+  );
+  const css = withholdingCertificatePrintCss();
+  const inner = buildWithholdingCertificateBodyHtml(doc, opts);
+
+  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองการหักภาษี ณ ที่จ่าย ${cn}</title>
+<style>${css}</style></head><body>${inner}
+</body></html>`;
+}
+
+/**
+ * ฉบับที่ 1 + ฉบับที่ 2 (ผู้ถูกหัก) ในไฟล์เดียว — สำหรับพิมพ์หรือบันทึก PDF ให้ลูกค้า
+ */
+export function buildWithholdingCertificatePayeeCopies12Html(
+  doc: WithholdingCertificateDocument,
+  opts: WithholdingCertificateDocumentPrintBaseOptions,
+): string {
+  const cnRaw = (doc.certificateNo || '').trim();
+  const cn = escapeHtml(
+    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
+  );
+  const css = withholdingCertificatePrintCss();
+  const inner1 = buildWithholdingCertificateBodyHtml(doc, { ...opts, copyVariant: 'COPY_PAYEE_TAX_RETURN' });
+  const inner2 = buildWithholdingCertificateBodyHtml(doc, { ...opts, copyVariant: 'COPY_PAYEE_RECORD' });
+
+  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองการหักภาษี ณ ที่จ่าย (ฉบับที่ 1 และ 2) ${cn}</title>
+<style>${css}</style></head><body>
+<div class="wht-print-page">${inner1}</div>
+<div class="wht-print-page">${inner2}</div>
 </body></html>`;
 }
 

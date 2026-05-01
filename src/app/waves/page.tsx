@@ -70,6 +70,7 @@ import {
 } from '@/lib/ops/wave-allocation';
 import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
 import { isAssignmentActiveOnWaveRoster, pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
+import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 
 /** จำนวนคนที่ยังวางแผนในเวฟได้เพิ่มสำหรับ PO line นี้ (หรือแก้ไขเวฟเดิมเมื่อส่ง excludeWaveId) */
 function remainingQuotaForPoLine(
@@ -645,7 +646,7 @@ function WavesPageContent() {
   }, [allMobilizations, waves]);
 
   const displayedWaves = useMemo(() => {
-    let list = waves || [];
+    let list = (waves || []).filter((w) => !isPoRosterWaveId(w.id));
     if (filterPoId) list = list.filter((w) => w.poId === filterPoId);
     const q = waveTableSearch.trim().toLowerCase();
     if (!q) return list;

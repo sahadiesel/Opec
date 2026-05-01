@@ -35,6 +35,7 @@ import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
 import { supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
 import {
   buildWithholdingCertificateDocumentHtml,
+  buildWithholdingCertificatePayeeCopies12Html,
   openWithholdingCertificatePrintWindow,
 } from '@/lib/documents/withholding-certificate-50-tw-print';
 import {
@@ -45,6 +46,7 @@ import {
 import { buildWhtAuditLogEntry } from '@/lib/wht/wht-certificate-audit';
 import {
   validateWhtCertificateForOfficialPrint,
+  validateWhtCertificateForPayeeCopies12Print,
   validateWhtCertificateForPreviewPrint,
 } from '@/lib/wht/wht-certificate-validation';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -341,6 +343,54 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               actorId: currentUser.id,
               actorName: actor,
               payloadSummary: { copyVariant: variant, official: true },
+            }),
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    } finally {
+      setWhtPrintBusy(false);
+    }
+  };
+
+  /** ฉบับที่ 1 + 2 ในไฟล์เดียว (ให้ลูกค้า / PDF) */
+  const printWhtCertificatePayeeCopies12 = async (official: boolean) => {
+    if (!currentUser || !whtCertificate) return;
+    setWhtPrintBusy(true);
+    try {
+      const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+      const errs = validateWhtCertificateForPayeeCopies12Print(whtCertificate, official);
+      if (errs.length) {
+        toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
+        return;
+      }
+      const html = buildWithholdingCertificatePayeeCopies12Html(whtCertificate, {
+        official,
+        printedByName: actor,
+        printedAtMs: Date.now(),
+        ...mergeWhtCertDisplaySettings(companyProfile),
+      });
+      openWithholdingCertificatePrintWindow(html);
+      if (official && firestore && whtCertRef && whtCertificate.id) {
+        try {
+          await updateDocumentNonBlocking(whtCertRef, {
+            lastPrintedCopyVariant: 'COPY_PAYEE_TAX_RETURN',
+            updatedAt: Date.now(),
+            updatedByUid: currentUser.id,
+            updatedByName: actor,
+          });
+          const logRef = doc(
+            collection(firestore, 'withholding_certificate_documents', whtCertificate.id, 'audit_logs'),
+          );
+          await setDoc(logRef, {
+            id: logRef.id,
+            ...buildWhtAuditLogEntry({
+              documentId: whtCertificate.id,
+              action: 'PRINT_WHT',
+              actorId: currentUser.id,
+              actorName: actor,
+              payloadSummary: { payeeCopies12Bundle: true, official: true },
             }),
           });
         } catch (e) {
@@ -698,6 +748,15 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         </Button>
                         <Button
                           type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificatePayeeCopies12(false)}
+                        >
+                          Preview ฉบับที่ 1+2 (ไฟล์เดียว)
+                        </Button>
+                        <Button
+                          type="button"
                           variant="outline"
                           size="sm"
                           disabled={whtPrintBusy}
@@ -728,6 +787,16 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         >
                           <Printer className="h-4 w-4" />
                           พิมพ์ฉบับที่ 2
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-2 font-semibold"
+                          disabled={whtPrintBusy}
+                          onClick={() => void printWhtCertificatePayeeCopies12(true)}
+                        >
+                          <Printer className="h-4 w-4" />
+                          พิมพ์ฉบับที่ 1+2 (ไฟล์เดียว / PDF)
                         </Button>
                         <Button
                           type="button"

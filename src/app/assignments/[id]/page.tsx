@@ -34,14 +34,29 @@ import {
   MapPin,
   Send,
   RotateCcw,
-  Loader2
+  Loader2,
+  Pencil,
+  Save,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { doc, collection, query, where, deleteField, updateDoc } from 'firebase/firestore';
+import {
+  doc,
+  collection,
+  query,
+  where,
+  deleteField,
+  updateDoc,
+  type DocumentData,
+} from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
-import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
+import {
+  formatDateTimeThaiBE,
+  formatYmdLocalThaiBE,
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+} from '@/lib/date-thai';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { 
   Assignment, 
   Worker, 
@@ -131,14 +146,18 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   }, [currentUser]);
 
   const [workLocationDraft, setWorkLocationDraft] = useState('');
+  const [startDateDraft, setStartDateDraft] = useState('');
+  const [endDateDraft, setEndDateDraft] = useState('');
+  const [deploymentEditing, setDeploymentEditing] = useState(false);
+  const [isSavingDeployment, setIsSavingDeployment] = useState(false);
   const [isDemobilizing, setIsDemobilizing] = useState(false);
 
   useEffect(() => {
-    if (!assignment) return;
+    if (!assignment || deploymentEditing) return;
     setWorkLocationDraft(
-      (assignment.workLocation || poLine?.workLocation || '').toString().trim()
+      (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
-  }, [assignment?.id, assignment?.workLocation, poLine?.id, poLine?.workLocation]);
+  }, [assignment?.id, assignment?.workLocation, poLine?.id, poLine?.workLocation, deploymentEditing]);
 
   const isDeploymentReleased = useMemo(
     () =>
@@ -148,26 +167,74 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     [assignment],
   );
 
-  const handleSaveWorkLocation = () => {
-    if (!firestore || !currentUser || !canEditAssignments || !assignment) return;
+  const beginDeploymentEdit = () => {
+    if (!assignment || isDeploymentReleased) return;
+    setStartDateDraft(assignment.startDate || '');
+    setEndDateDraft(assignment.endDate || '');
+    setWorkLocationDraft(
+      (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
+    );
+    setDeploymentEditing(true);
+  };
+
+  const cancelDeploymentEdit = () => {
+    if (!assignment) return;
+    setDeploymentEditing(false);
+    setStartDateDraft(assignment.startDate || '');
+    setEndDateDraft(assignment.endDate || '');
+    setWorkLocationDraft(
+      (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
+    );
+  };
+
+  const handleSaveDeploymentSummary = async () => {
+    if (!firestore || !currentUser || !canEditAssignments || !assignment || isDeploymentReleased) return;
+    const s = startDateDraft.trim();
+    const e = endDateDraft.trim();
+    if (!s || !e) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาระบุวันเริ่มและวันสิ้นสุด',
+      });
+      return;
+    }
+    if (s > e) {
+      toast({
+        variant: 'destructive',
+        title: 'ช่วงวันที่ไม่ถูกต้อง',
+        description: 'วันเริ่มต้องไม่หลังวันสิ้นสุด',
+      });
+      return;
+    }
+
     const trimmed = workLocationDraft.trim();
     const mobD = doc(firestore, 'mobilizations', id);
-    if (trimmed) {
-      updateDocumentNonBlocking(mobD, {
-        workLocation: trimmed,
-        workLocationUpdatedAt: Date.now(),
-        workLocationUpdatedByUserId: currentUser.id,
+    setIsSavingDeployment(true);
+    try {
+      const patch: Record<string, unknown> = {
+        startDate: s,
+        endDate: e,
         updatedAt: Date.now(),
-      });
-    } else {
-      updateDocumentNonBlocking(mobD, {
-        workLocation: deleteField(),
-        workLocationUpdatedAt: deleteField(),
-        workLocationUpdatedByUserId: deleteField(),
-        updatedAt: Date.now(),
-      });
+      };
+      if (trimmed) {
+        patch.workLocation = trimmed;
+        patch.workLocationUpdatedAt = Date.now();
+        patch.workLocationUpdatedByUserId = currentUser.id;
+      } else {
+        patch.workLocation = deleteField();
+        patch.workLocationUpdatedAt = deleteField();
+        patch.workLocationUpdatedByUserId = deleteField();
+      }
+      await updateDoc(mobD, patch as DocumentData);
+      toast({ title: 'บันทึกข้อมูลแล้ว', description: 'วันที่และสถานที่ปฏิบัติงานอัปเดตแล้ว' });
+      setDeploymentEditing(false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
+    } finally {
+      setIsSavingDeployment(false);
     }
-    toast({ title: 'บันทึกสถานที่แล้ว' });
   };
 
   const handleDemobilize = async () => {
@@ -267,6 +334,32 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
+            <Card className="border-primary/35 bg-gradient-to-br from-primary/[0.06] via-background to-background shadow-md">
+              <CardHeader className="space-y-1 pb-2">
+                <CardTitle className="text-lg flex flex-wrap items-center gap-2">
+                  <Truck className="h-5 w-5 text-primary shrink-0" aria-hidden />
+                  เตรียมส่งตัว (Mobilization)
+                </CardTitle>
+                <CardDescription className="text-sm leading-relaxed">
+                  ทำงานต่อจากการมอบหมาย: ตรวจความพร้อม เอกสาร PPE/เครื่องมือ และสถานะ MOB ของรายนี้ได้ทันที — ไม่ต้องกลับเมนูหลักแล้วหา Mobilization ใหม่
+                </CardDescription>
+              </CardHeader>
+              <CardFooter className="flex flex-wrap items-center gap-3 pt-0 pb-5">
+                <Button asChild size="lg" className="font-bold gap-2 shadow-sm">
+                  <Link href={`/mobilization/${id}`}>
+                    ไป Mobilization Command Center
+                    <ChevronRight className="h-4 w-4" aria-hidden />
+                  </Link>
+                </Button>
+                {assignment.mobilizationStatus ? (
+                  <span className="text-xs text-muted-foreground">
+                    สถานะ MOB ปัจจุบัน:{' '}
+                    <span className="font-semibold text-foreground">{assignment.mobilizationStatus}</span>
+                  </span>
+                ) : null}
+              </CardFooter>
+            </Card>
+
             {/* Exception Review Card */}
             {pendingRequests && pendingRequests.length > 0 && (
               <Card className="border-amber-500 bg-amber-50/20 shadow-lg">
@@ -327,7 +420,52 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             )}
 
             <Card>
-              <CardHeader><CardTitle className="text-lg">Deployment Summary</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0 pb-4">
+                <div className="space-y-1">
+                  <CardTitle className="text-lg">Deployment Summary</CardTitle>
+                  <CardDescription className="text-xs">
+                    ลูกค้าเดิมย้าย site — แก้วันที่/สถานที่เฉพาะรายมอบหมายนี้ (ไม่เปลี่ยน PO หลัก)
+                    {poLine?.workLocation ? ` · ฐานจาก PO line: ${poLine.workLocation}` : ''}
+                  </CardDescription>
+                </div>
+                {canEditAssignments && !isDeploymentReleased ? (
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    {!deploymentEditing ? (
+                      <Button type="button" variant="outline" size="sm" className="font-bold" onClick={beginDeploymentEdit}>
+                        <Pencil className="mr-1.5 h-4 w-4" />
+                        แก้ไข
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="font-bold"
+                          onClick={cancelDeploymentEdit}
+                          disabled={isSavingDeployment}
+                        >
+                          ยกเลิก
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="font-bold"
+                          onClick={() => void handleSaveDeploymentSummary()}
+                          disabled={isSavingDeployment}
+                        >
+                          {isSavingDeployment ? (
+                            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="mr-1.5 h-4 w-4" />
+                          )}
+                          บันทึก
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
+              </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
@@ -338,62 +476,74 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     <Label className="text-xs uppercase text-muted-foreground">โครงการ (Project):</Label>
                     <p className="font-bold">{assignment.projectName}</p>
                   </div>
-                  <div>
-                    <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน:</Label>
-                    <p className="font-bold">{formatYmdLocalThaiBE(assignment.startDate)}</p>
-                  </div>
-                  <div>
-                    <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด:</Label>
-                    <p className="font-bold">{formatYmdLocalThaiBE(assignment.endDate)}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">
-                      <MapPin className="h-3.5 w-3.5" /> สถานที่ (ปัจจุบัน)
-                    </Label>
-                    <p className="font-bold mt-0.5">
-                      {(assignment.workLocation || poLine?.workLocation || '—').toString() || '—'}
-                    </p>
-                    {poLine?.workLocation && !assignment?.workLocation ? (
-                      <p className="text-[10px] text-muted-foreground mt-1">ใช้ค่าจาก PO line จนกว่าจะบันทึก override บนรายนี้</p>
-                    ) : null}
-                  </div>
+                  {!deploymentEditing ? (
+                    <>
+                      <div>
+                        <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน:</Label>
+                        <p className="font-bold">{formatYmdLocalThaiBE(assignment.startDate)}</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด:</Label>
+                        <p className="font-bold">{formatYmdLocalThaiBE(assignment.endDate)}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">
+                          <MapPin className="h-3.5 w-3.5" /> สถานที่ (ปัจจุบัน)
+                        </Label>
+                        <p className="font-bold mt-0.5">
+                          {(assignment.workLocation || poLine?.workLocation || '—').toString() || '—'}
+                        </p>
+                        {poLine?.workLocation && !assignment?.workLocation ? (
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            ใช้ค่าจาก PO line จนกว่าจะบันทึก override บนรายนี้
+                          </p>
+                        ) : null}
+                        {typeof assignment.workLocationUpdatedAt === 'number' && assignment.workLocationUpdatedAt > 0 ? (
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            อัปเดตสถานที่ล่าสุด: {formatDateTimeThaiBE(assignment.workLocationUpdatedAt)}
+                          </p>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน</Label>
+                        <DatePickerThaiBE
+                          className="h-10"
+                          value={htmlDateValueToTimestampMs(startDateDraft)}
+                          onChange={(ms) => setStartDateDraft(timestampToHtmlDateValue(ms))}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด</Label>
+                        <DatePickerThaiBE
+                          className="h-10"
+                          value={htmlDateValueToTimestampMs(endDateDraft)}
+                          onChange={(ms) => setEndDateDraft(timestampToHtmlDateValue(ms))}
+                        />
+                      </div>
+                      <div className="col-span-2 space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">
+                          <MapPin className="h-3.5 w-3.5" /> สถานที่ปฏิบัติงาน
+                        </Label>
+                        <Input
+                          value={workLocationDraft}
+                          onChange={(e) => setWorkLocationDraft(e.target.value)}
+                          placeholder="เช่น HXL / นิคมฯ ระยอง — ว่างได้เพื่อใช้ค่าจาก PO line"
+                          className="font-medium"
+                        />
+                        {poLine?.workLocation ? (
+                          <p className="text-[10px] text-muted-foreground">
+                            PO line กำหนด: {poLine.workLocation} — บันทึกค่าที่นี่เพื่อ override เฉพาะรายนี้
+                          </p>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>
-
-            {canEditAssignments && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <MapPin className="h-5 w-5 text-primary" />
-                    แก้สถานที่ปฏิบัติงาน
-                  </CardTitle>
-                  <CardDescription>
-                    ลูกค้าเดิมย้าย site — แก้เฉพาะรายมอบหมายนี้ (ไม่เปลี่ยน PO หลัก)
-                    {poLine?.workLocation ? ` · ฐานจาก PO: ${poLine.workLocation}` : ''}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-2">
-                    <Label>สถานที่ (Work location)</Label>
-                    <Input
-                      value={workLocationDraft}
-                      onChange={(e) => setWorkLocationDraft(e.target.value)}
-                      placeholder="เช่น นิคมฯ ระยอง / โรงกลั่น X"
-                      className="font-medium"
-                    />
-                    {typeof assignment.workLocationUpdatedAt === 'number' && assignment.workLocationUpdatedAt > 0 ? (
-                      <p className="text-[10px] text-muted-foreground">
-                        อัปเดตล่าสุด: {formatDateTimeThaiBE(assignment.workLocationUpdatedAt)}
-                      </p>
-                    ) : null}
-                  </div>
-                  <Button type="button" onClick={handleSaveWorkLocation} className="font-bold">
-                    บันทึกสถานที่
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
 
             {canEditAssignments && !isDeploymentReleased && (
               <Card className="border-amber-200/80">

@@ -63,6 +63,20 @@ export function resolveLaborCostBaselineFromMainContract(
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** ทะเบียนต้นทุนต่อสัญญา บน Position — จับคู่ `timesheet.contractId` */
+function resolveLaborCostFromPositionRegistry(
+  pos: Position | null | undefined,
+  contractId: string | undefined,
+  mode: LaborCostWorkMode,
+): number {
+  if (!pos?.laborCostByContract?.length || !(contractId || '').trim()) return 0;
+  const row = pos.laborCostByContract.find((r) => r.contractId === contractId);
+  if (!row) return 0;
+  const v = mode === 'onshore' ? row.onshore : row.offshore;
+  const n = v !== undefined && v !== null ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /**
  * ฐานก่อน snapshot PO — ใช้ `linePosition` = ตำแหน่งตามบรรทัด timesheet/งาน ไม่ใช่ `worker.currentPositionId`
  */
@@ -82,6 +96,7 @@ function resolvePayrollLaborBaseCore(input: {
   const linePos = input.linePosition;
   const main = input.mainContract;
   const contractB = resolveLaborCostBaselineFromMainContract(main, posId, mode);
+  const registryB = resolveLaborCostFromPositionRegistry(linePos, input.timesheet.contractId, mode);
 
   if (w) {
     const usePos = w.laborCostUsePositionDefault !== false;
@@ -93,6 +108,13 @@ function resolvePayrollLaborBaseCore(input: {
           baseCost: n,
           fromPositionModel: true,
           resolution: { rate: n, source: 'worker_custom', workMode: mode },
+        };
+      }
+      if (registryB > 0) {
+        return {
+          baseCost: registryB,
+          fromPositionModel: true,
+          resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
         };
       }
       if (contractB > 0) {
@@ -113,6 +135,13 @@ function resolvePayrollLaborBaseCore(input: {
       return { baseCost: 0, fromPositionModel: true, resolution: null };
     }
 
+    if (registryB > 0) {
+      return {
+        baseCost: registryB,
+        fromPositionModel: true,
+        resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
+      };
+    }
     if (contractB > 0) {
       return {
         baseCost: contractB,
@@ -131,6 +160,13 @@ function resolvePayrollLaborBaseCore(input: {
     return { baseCost: 0, fromPositionModel: true, resolution: null };
   }
 
+  if (registryB > 0) {
+    return {
+      baseCost: registryB,
+      fromPositionModel: true,
+      resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
+    };
+  }
   if (contractB > 0) {
     return {
       baseCost: contractB,
