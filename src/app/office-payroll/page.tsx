@@ -80,9 +80,16 @@ import {
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
 import { fetchOfficePayrollMonthConsolidation, type OfficePayrollMonthConsolidation } from '@/lib/payroll/office-month-staff-aggregate';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+
+/** YYYY-MM ตามปฏิทินเครื่องผู้ใช้ — ใช้เป็นค่าเริ่มต้นตัวกรองเดือน */
+function currentPayrollMonthYm(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
 function initNewRunState(): Partial<OfficePayrollRun> {
-  const m = new Date().toISOString().slice(0, 7);
+  const m = currentPayrollMonthYm();
   const b = getPayrollMonthPeriodBounds(m);
   return {
     payrollRunNo: getPreviewPattern('office_payroll_run'),
@@ -151,6 +158,8 @@ export default function OfficePayrollPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [sendingReviewId, setSendingReviewId] = useState<string | null>(null);
   const [runSearch, setRunSearch] = useState('');
+  const [monthFilterYm, setMonthFilterYm] = useState<string>(() => currentPayrollMonthYm());
+  const [monthFilterShowAll, setMonthFilterShowAll] = useState(false);
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -167,39 +176,48 @@ export default function OfficePayrollPage() {
     return runs;
   }, [runs, accountingPayoutQueueOnly]);
 
-  const displayRuns = useMemo(() => {
+  const runsAfterMonthFilter = useMemo(() => {
     if (!visibleRuns) return undefined;
+    if (monthFilterShowAll) return visibleRuns;
+    return visibleRuns.filter((r) => r.payrollMonth === monthFilterYm);
+  }, [visibleRuns, monthFilterShowAll, monthFilterYm]);
+
+  const displayRuns = useMemo(() => {
+    if (!runsAfterMonthFilter) return undefined;
     const q = runSearch.trim().toLowerCase();
-    if (!q) return visibleRuns;
-    return visibleRuns.filter(
+    if (!q) return runsAfterMonthFilter;
+    return runsAfterMonthFilter.filter(
       (r) =>
         (r.payrollRunNo || '').toLowerCase().includes(q) ||
         (r.payrollMonth || '').toLowerCase().includes(q) ||
         formatPayrollYearMonthEnAbbrev(r.payrollMonth, '').toLowerCase().includes(q) ||
         (r.notes || '').toLowerCase().includes(q)
     );
-  }, [visibleRuns, runSearch]);
+  }, [runsAfterMonthFilter, runSearch]);
 
-  const distinctPayrollMonths = useMemo(() => {
-    if (!visibleRuns?.length) return [] as string[];
-    return [...new Set(visibleRuns.map((r) => r.payrollMonth))].sort().reverse();
-  }, [visibleRuns]);
+  /** เดือนที่ใช้แสดงการ์ดสรุปด้านล่าง — ตามตัวกรอง */
+  const summaryMonths = useMemo(() => {
+    if (monthFilterShowAll) {
+      if (!visibleRuns?.length) return [] as string[];
+      return [...new Set(visibleRuns.map((r) => r.payrollMonth))].sort().reverse();
+    }
+    return [monthFilterYm];
+  }, [visibleRuns, monthFilterShowAll, monthFilterYm]);
 
   const [monthlyByYm, setMonthlyByYm] = useState<Record<string, OfficePayrollMonthConsolidation>>({});
   const [monthlySummaryLoading, setMonthlySummaryLoading] = useState(false);
 
   useEffect(() => {
-    if (!firestore || !visibleRuns?.length) {
+    if (!firestore || summaryMonths.length === 0) {
       setMonthlyByYm({});
       setMonthlySummaryLoading(false);
       return;
     }
-    const months = [...new Set(visibleRuns.map((r) => r.payrollMonth))].sort().reverse();
     let cancel = false;
     setMonthlySummaryLoading(true);
     void (async () => {
       const out: Record<string, OfficePayrollMonthConsolidation> = {};
-      for (const ym of months) {
+      for (const ym of summaryMonths) {
         try {
           out[ym] = await fetchOfficePayrollMonthConsolidation(firestore, ym);
         } catch (e) {
@@ -215,7 +233,7 @@ export default function OfficePayrollPage() {
     return () => {
       cancel = true;
     };
-  }, [firestore, visibleRuns]);
+  }, [firestore, summaryMonths]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -511,7 +529,67 @@ export default function OfficePayrollPage() {
                 onChange={(e) => setRunSearch(e.target.value)}
               />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="outline" className="h-11 gap-2 shrink-0">
+                  <Filter className="h-4 w-4" />
+                  ตัวกรอง
+                  {monthFilterShowAll ? (
+                    <Badge variant="outline" className="font-normal text-[10px]">
+                      ทุกเดือน
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="font-normal text-[10px] tabular-nums">
+                      {formatPayrollYearMonthEnAbbrev(monthFilterYm)}
+                    </Badge>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="start">
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">กรองตามเดือนประจำงวด</Label>
+                    <Input
+                      type="month"
+                      className="h-10"
+                      value={monthFilterYm}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!v) return;
+                        setMonthFilterYm(v);
+                        setMonthFilterShowAll(false);
+                      }}
+                    />
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      ค่าเริ่มต้นเมื่อเข้าหน้า: เดือนปัจจุบัน ({formatPayrollYearMonthEnAbbrev(currentPayrollMonthYm())})
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      type="button"
+                      variant={monthFilterShowAll ? 'default' : 'outline'}
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setMonthFilterShowAll(true)}
+                    >
+                      แสดงทุกเดือน
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setMonthFilterYm(currentPayrollMonthYm());
+                        setMonthFilterShowAll(false);
+                      }}
+                    >
+                      ใช้เดือนปัจจุบัน
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
           
           <Dialog
@@ -783,9 +861,14 @@ export default function OfficePayrollPage() {
                       <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
                         {visibleRuns && visibleRuns.length > 0 && runSearch.trim()
                           ? 'ไม่พบรายการตามคำค้น'
-                          : accountingPayoutQueueOnly
-                            ? 'ยังไม่มีงวดที่อนุมัติแล้ว (รอ HR/Manager) — หรือยังไม่ถึงขั้นตัดจ่าย'
-                            : 'ไม่มีงวดการจ่ายเงินในขณะนี้'}
+                          : visibleRuns &&
+                              visibleRuns.length > 0 &&
+                              !monthFilterShowAll &&
+                              runsAfterMonthFilter?.length === 0
+                            ? `ไม่มีงวดในเดือน ${formatPayrollYearMonthEnAbbrev(monthFilterYm)} — ลองเปลี่ยนเดือนในตัวกรองหรือกด «แสดงทุกเดือน»`
+                            : accountingPayoutQueueOnly
+                              ? 'ยังไม่มีงวดที่อนุมัติแล้ว (รอ HR/Manager) — หรือยังไม่ถึงขั้นตัดจ่าย'
+                              : 'ไม่มีงวดการจ่ายเงินในขณะนี้'}
                       </TableCell>
                     </TableRow>
                   )}
@@ -795,9 +878,13 @@ export default function OfficePayrollPage() {
           </CardContent>
         </Card>
 
-        {distinctPayrollMonths.length > 0 && (
+        {summaryMonths.length > 0 && (
           <div className="space-y-3">
-            <h2 className="text-sm font-semibold text-muted-foreground">สรุปรวมรายเดือน (ทุกงวดที่คำนวณแล้ว)</h2>
+            <h2 className="text-sm font-semibold text-muted-foreground">
+              {monthFilterShowAll
+                ? 'สรุปรวมรายเดือน (ทุกงวดที่คำนวณแล้ว)'
+                : `สรุปรวมรายเดือน — ${formatPayrollYearMonthEnAbbrev(monthFilterYm)}`}
+            </h2>
             {monthlySummaryLoading && Object.keys(monthlyByYm).length === 0 && (
               <p className="text-xs text-muted-foreground flex items-center gap-2">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -805,7 +892,7 @@ export default function OfficePayrollPage() {
               </p>
             )}
             <div className="grid gap-2">
-              {distinctPayrollMonths.map((ym) => {
+              {summaryMonths.map((ym) => {
                 const s = monthlyByYm[ym];
                 return (
                   <Card key={ym} className="border-dashed border-primary/25 bg-muted/10">
