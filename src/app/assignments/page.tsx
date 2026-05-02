@@ -870,6 +870,7 @@ function AssignmentsPageContent() {
             <PoAssignmentBundleLandingPanel
               rows={assignmentLandingRows}
               customers={landingCustomers ?? undefined}
+              assignments={assignments ?? undefined}
               loading={assignmentLandingLoading}
             />
           </>

@@ -52,9 +52,39 @@ export function timesheetEventAbbrev(et: RateConditionEventType | string | undef
   return map[et || ''] || (et ? String(et).slice(0, 2).toUpperCase() : '—');
 }
 
+/**
+ * ชม.ปกติที่นับเป็น “ชั่วโมงทำงาน” ในสรุปรายเดือน — เฉพาะประเภทวันทำงาน (ไม่รวม standby / travel / mob ฯลฯ)
+ */
+export function normalHoursCountedAsWork(
+  ts: Pick<DailyTimesheet, 'eventType' | 'normalHours'> | undefined,
+): number {
+  if (!ts || ts.eventType !== 'work_day') return 0;
+  return Math.max(0, Number(ts.normalHours) || 0);
+}
+
+/**
+ * จับคู่เซลล์รายเดือนกับ daily_timesheet — รองรับกรณี waveId ในเอกสารไม่ตรงกับแถว (เช่น บันทึกจาก wave อื่น/ข้อมูลเก่า)
+ * ลำดับ: ตรงกุญแจ wave|คน ก่อน แล้วจึงค้นตาม worker + วันที่ + assignment ของแถว
+ */
+export function resolveTimesheetForWaveMonthCell(
+  waveId: string,
+  workerId: string,
+  date: string,
+  rosterAssignmentId: string,
+  sheetsByWaveWorker: Map<string, DailyTimesheet[]>,
+  flatMonthSheets: readonly DailyTimesheet[],
+): DailyTimesheet | undefined {
+  const keyed = sheetsByWaveWorker.get(`${waveId}|${workerId}`);
+  const direct = keyed?.find((t) => t.date === date);
+  if (direct) return direct;
+  return flatMonthSheets.find(
+    (t) => t.workerId === workerId && t.date === date && t.assignmentId === rosterAssignmentId,
+  );
+}
+
 export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {
   if (!ts) return '';
-  const h = ts.normalHours ?? 0;
+  const h = normalHoursCountedAsWork(ts);
   const a = timesheetEventAbbrev(ts.eventType);
   return `${h}${a}`;
 }

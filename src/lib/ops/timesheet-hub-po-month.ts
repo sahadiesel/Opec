@@ -1,4 +1,5 @@
-import type { Assignment, PurchaseOrder, Wave } from '@/lib/types';
+import type { Assignment, PoMonthTimesheetReview, PurchaseOrder, Wave } from '@/lib/types';
+import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-bridge';
 
 /** รายเดือน yyyy-MM ที่ช่วงวันที่ [start,end] ครอบคลุม */
 export function yearMonthsTouchingDateRange(startYmd: string | undefined, endYmd: string | undefined): string[] {
@@ -111,4 +112,71 @@ export function formatThaiYearMonthLabel(yearMonth: string, locale: string = 'th
   const [y, m] = yearMonth.split('-').map(Number);
   const d = new Date(y, m - 1, 15);
   return d.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+}
+
+/** สถานะงวด PO+เดือนที่แสดงในศูนย์ลงเวลา (ไม่รวมการจ่ายเงิน — ดู Payroll) */
+export type TimesheetHubPoMonthPhase = 'recording' | 'pending_manager' | 'approved';
+
+export function aggregateTimesheetHubPoMonthPhase(
+  poIds: readonly string[],
+  yearMonth: string,
+  reviewByDocId: Map<string, PoMonthTimesheetReview>,
+): TimesheetHubPoMonthPhase {
+  if (!poIds.length || !/^\d{4}-\d{2}$/.test(yearMonth)) return 'recording';
+  const pending = poIds.some(
+    (pid) => reviewByDocId.get(poMonthTimesheetReviewDocId(pid, yearMonth))?.status === 'pending_manager_review',
+  );
+  if (pending) return 'pending_manager';
+  const allApproved = poIds.every(
+    (pid) => reviewByDocId.get(poMonthTimesheetReviewDocId(pid, yearMonth))?.status === 'approved',
+  );
+  if (allApproved) return 'approved';
+  return 'recording';
+}
+
+/** มีเอกสาร PO+เดือนแล้ว (ล็อก/ส่งตรวจ/อนุมัติ/ถูกปฏิเสธ) — ไม่ควรโชว์ปุ่มแนว “ปิดงวด” เป็นครั้งแรกอีก */
+export function anyPoMonthTimesheetDocStarted(
+  poIds: readonly string[],
+  yearMonth: string,
+  reviewByDocId: Map<string, PoMonthTimesheetReview>,
+): boolean {
+  const started: PoMonthTimesheetReview['status'][] = [
+    'entry_locked',
+    'pending_manager_review',
+    'approved',
+    'rejected',
+  ];
+  return poIds.some((pid) => {
+    const s = reviewByDocId.get(poMonthTimesheetReviewDocId(pid, yearMonth))?.status;
+    return !!s && started.includes(s);
+  });
+}
+
+export function timesheetHubPoMonthPhaseUi(phase: TimesheetHubPoMonthPhase): {
+  title: string;
+  subtitle?: string;
+  badgeClassName: string;
+  badgeVariant: 'default' | 'outline' | 'secondary';
+} {
+  switch (phase) {
+    case 'approved':
+      return {
+        title: 'อนุมัติแล้ว',
+        badgeClassName: 'bg-emerald-700 hover:bg-emerald-700 text-white border-transparent shadow-none',
+        badgeVariant: 'default',
+      };
+    case 'pending_manager':
+      return {
+        title: 'รอผู้จัดการอนุมัติ',
+        badgeClassName: 'bg-amber-600 hover:bg-amber-600 text-white border-transparent shadow-none',
+        badgeVariant: 'default',
+      };
+    default:
+      return {
+        title: 'ระหว่างลงเวลา',
+        subtitle: 'Active',
+        badgeClassName: '',
+        badgeVariant: 'outline',
+      };
+  }
 }

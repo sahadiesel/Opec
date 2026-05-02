@@ -11,8 +11,18 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { CalendarDays, ChevronRight, Info, FileText, MapPin, Users, Layers } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, collectionGroup, query, where } from 'firebase/firestore';
-import type { Assignment, Customer, JobMode, MainContract, POLine, PurchaseOrder, User, Wave } from '@/lib/types';
+import { collection, collectionGroup, limit, query, where } from 'firebase/firestore';
+import type {
+  Assignment,
+  Customer,
+  JobMode,
+  MainContract,
+  POLine,
+  PoMonthTimesheetReview,
+  PurchaseOrder,
+  User,
+  Wave,
+} from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { assignmentReadyForWaveTimesheet } from '@/lib/constants/timesheet-ui';
@@ -20,10 +30,14 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { aggregateActiveLineTotals, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
 import {
+  aggregateTimesheetHubPoMonthPhase,
+  anyPoMonthTimesheetDocStarted,
   assignmentOverlapsYearMonth,
   formatBundleMonthTimesheetDocLabel,
   formatPoMonthTimesheetDocLabel,
   formatThaiYearMonthLabel,
+  timesheetHubPoMonthPhaseUi,
+  type TimesheetHubPoMonthPhase,
   yearMonthsForBundleAssignments,
   yearMonthsForPoAssignments,
 } from '@/lib/ops/timesheet-hub-po-month';
@@ -47,6 +61,40 @@ function workModeBadgeLabel(mode: JobMode | undefined): string {
   if (mode === 'ONSHORE') return 'Onshore';
   if (mode === 'OFFSHORE') return 'Offshore';
   return 'Offshore';
+}
+
+function PoMonthHubDocLink({
+  phase,
+  docHref,
+  docStarted,
+}: {
+  phase: TimesheetHubPoMonthPhase;
+  docHref: string;
+  docStarted: boolean;
+}) {
+  if (phase === 'approved') {
+    return (
+      <span className="text-xs text-muted-foreground text-right inline-block max-w-[220px]">
+        งวดอนุมัติแล้ว —{' '}
+        <Link href={docHref} className="text-primary font-medium underline">
+          ดูเอกสาร
+        </Link>
+      </span>
+    );
+  }
+  if (phase === 'pending_manager') {
+    return (
+      <Button size="sm" variant="outline" className="gap-1 shrink-0" asChild>
+        <Link href={docHref}>ดูเอกสาร (รอผู้จัดการ)</Link>
+      </Button>
+    );
+  }
+  const label = docStarted ? 'เอกสาร Timesheet' : 'ปิดงวด / เอกสาร Timesheet';
+  return (
+    <Button size="sm" variant="outline" className="gap-1 shrink-0" asChild>
+      <Link href={docHref}>{label}</Link>
+    </Button>
+  );
 }
 
 function TimesheetHubContent() {
@@ -101,6 +149,25 @@ function TimesheetHubContent() {
   );
   const { data: allPOLines, isLoading: polinesLoading } = useCollection<POLine>(poLinesQuery as any);
 
+  const poMonthReviewsQuery = useMemoFirebase(
+    () =>
+      firestore && canViewTimesheets
+        ? query(collection(firestore, 'po_month_timesheet_reviews'), limit(2500))
+        : null,
+    [firestore, canViewTimesheets],
+  );
+  const { data: poMonthReviews, isLoading: poMonthReviewsLoading } = useCollection<PoMonthTimesheetReview>(
+    poMonthReviewsQuery as any,
+  );
+
+  const poMonthReviewByDocId = useMemo(() => {
+    const m = new Map<string, PoMonthTimesheetReview>();
+    for (const r of poMonthReviews ?? []) {
+      if (r?.id) m.set(r.id, r);
+    }
+    return m;
+  }, [poMonthReviews]);
+
   const landingMainContractIdSet = useMemo(
     () => new Set((activeContracts ?? []).map((c) => c.id).filter(Boolean)),
     [activeContracts],
@@ -120,7 +187,7 @@ function TimesheetHubContent() {
     [pos, allPOLines, allMobs, allWaves, landingMainContractIdSet, contractsLoading],
   );
 
-  const loadingLegacy = userLoading || poLoading || mobLoading || polinesLoading;
+  const loadingLegacy = userLoading || poLoading || mobLoading || polinesLoading || poMonthReviewsLoading;
   const loadingBundle = loadingLegacy || contractsLoading || customersLoading || wavesLoading;
 
   if (userLoading || !currentUser) return null;
@@ -208,6 +275,9 @@ function TimesheetHubContent() {
               <strong>1.</strong> Assignment → <strong>2.</strong> Mobilization → <strong>3.</strong>{' '}
               <strong>เปิดกระดานลงเวลา</strong> ในงวดเดือน → ปิดงวดจากเอกสาร Timesheet รายเดือน
             </p>
+            <p className="text-muted-foreground">
+              คอลัมน์ &quot;สถานะงวด Timesheet&quot; มาจากเอกสาร PO+เดือน — การจ่ายเงินหรือสถานะ Payroll ดูที่เมนู Payroll
+            </p>
           </AlertDescription>
         </Alert>
 
@@ -252,7 +322,12 @@ function TimesheetHubContent() {
                               รอบเดือน
                             </TableHead>
                             <TableHead>สถานที่</TableHead>
-                            <TableHead className="text-center">สถานะ deployment</TableHead>
+                            <TableHead
+                              className="text-center"
+                              title="จากเอกสาร PO+เดือน — การจ่ายเงินดูที่ Payroll"
+                            >
+                              สถานะงวด Timesheet
+                            </TableHead>
                             <TableHead className="text-center">มอบหมาย / โควต้า</TableHead>
                             <TableHead
                               className="text-center max-w-[120px]"
@@ -280,7 +355,10 @@ function TimesheetHubContent() {
                                   .filter(Boolean),
                               ),
                             ];
-                            const statusSet = [...new Set(activeInMonth.map((m) => m.deploymentStatus))];
+                            const phase = aggregateTimesheetHubPoMonthPhase([po.id], ym, poMonthReviewByDocId);
+                            const docStarted = anyPoMonthTimesheetDocStarted([po.id], ym, poMonthReviewByDocId);
+                            const phaseUi = timesheetHubPoMonthPhaseUi(phase);
+                            const docHref = `/timesheets/po-month?month=${encodeURIComponent(ym)}&highlightPo=${encodeURIComponent(po.id)}`;
 
                             return (
                               <TableRow key={`${po.id}-${ym}`}>
@@ -302,16 +380,15 @@ function TimesheetHubContent() {
                                     {sites.length > 0 ? (sites.length > 1 ? sites.join(' · ') : sites[0]) : '—'}
                                   </span>
                                 </TableCell>
-                                <TableCell className="text-center text-xs max-w-[140px]">
-                                  {statusSet.length === 0 ? (
-                                    <span className="text-muted-foreground">—</span>
-                                  ) : (
-                                    statusSet.map((st) => (
-                                      <Badge key={st} variant="outline" className="m-0.5">
-                                        {st}
-                                      </Badge>
-                                    ))
-                                  )}
+                                <TableCell className="text-center text-xs max-w-[160px]">
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <Badge variant={phaseUi.badgeVariant} className={phaseUi.badgeClassName}>
+                                      {phaseUi.title}
+                                    </Badge>
+                                    {phaseUi.subtitle ? (
+                                      <span className="text-[10px] text-muted-foreground">{phaseUi.subtitle}</span>
+                                    ) : null}
+                                  </div>
                                 </TableCell>
                                 <TableCell className="text-center" title="จำนวนมอบหมายที่นับโควต้า / โควต้าบรรทัดคำสั่งจ้าง (สายสัญญา)">
                                   <span className="inline-flex items-center justify-center gap-1">
@@ -333,13 +410,7 @@ function TimesheetHubContent() {
                                         <ChevronRight className="h-4 w-4" aria-hidden />
                                       </Link>
                                     </Button>
-                                    <Button size="sm" variant="outline" className="gap-1" asChild>
-                                      <Link
-                                        href={`/timesheets/po-month?month=${encodeURIComponent(ym)}&highlightPo=${encodeURIComponent(po.id)}`}
-                                      >
-                                        ปิดงวด / เอกสาร Timesheet
-                                      </Link>
-                                    </Button>
+                                    <PoMonthHubDocLink phase={phase} docHref={docHref} docStarted={docStarted} />
                                   </div>
                                 </TableCell>
                               </TableRow>
@@ -405,7 +476,12 @@ function TimesheetHubContent() {
                           <TableHead>เลขที่ / งวด</TableHead>
                           <TableHead className="whitespace-nowrap">รอบเดือน</TableHead>
                           <TableHead>สถานที่</TableHead>
-                          <TableHead className="text-center">สถานะ deployment</TableHead>
+                          <TableHead
+                            className="text-center"
+                            title="จากเอกสาร PO+เดือน — การจ่ายเงินดูที่ Payroll"
+                          >
+                            สถานะงวด Timesheet
+                          </TableHead>
                           <TableHead className="text-center">มอบหมาย / โควต้า (รวมชุด)</TableHead>
                           <TableHead className="text-center max-w-[120px]">พร้อมลงเวลา</TableHead>
                           <TableHead className="text-center max-w-[120px]">ยังไม่ขึ้นกระดาน</TableHead>
@@ -426,7 +502,9 @@ function TimesheetHubContent() {
                                 .filter(Boolean),
                             ),
                           ];
-                          const statusSet = [...new Set(activeInMonth.map((m) => m.deploymentStatus))];
+                          const phase = aggregateTimesheetHubPoMonthPhase(poIds, ym, poMonthReviewByDocId);
+                          const docStarted = anyPoMonthTimesheetDocStarted(poIds, ym, poMonthReviewByDocId);
+                          const phaseUi = timesheetHubPoMonthPhaseUi(phase);
 
                           return (
                             <TableRow key={`${row.bundleKey}-${ym}`}>
@@ -448,16 +526,15 @@ function TimesheetHubContent() {
                                   {sites.length > 0 ? (sites.length > 1 ? sites.join(' · ') : sites[0]) : '—'}
                                 </span>
                               </TableCell>
-                              <TableCell className="text-center text-xs max-w-[140px]">
-                                {statusSet.length === 0 ? (
-                                  <span className="text-muted-foreground">—</span>
-                                ) : (
-                                  statusSet.map((st) => (
-                                    <Badge key={st} variant="outline" className="m-0.5">
-                                      {st}
-                                    </Badge>
-                                  ))
-                                )}
+                              <TableCell className="text-center text-xs max-w-[160px]">
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <Badge variant={phaseUi.badgeVariant} className={phaseUi.badgeClassName}>
+                                    {phaseUi.title}
+                                  </Badge>
+                                  {phaseUi.subtitle ? (
+                                    <span className="text-[10px] text-muted-foreground">{phaseUi.subtitle}</span>
+                                  ) : null}
+                                </div>
                               </TableCell>
                               <TableCell className="text-center">
                                 <span className="inline-flex items-center justify-center gap-1">
@@ -477,9 +554,11 @@ function TimesheetHubContent() {
                                       <ChevronRight className="h-4 w-4" aria-hidden />
                                     </Link>
                                   </Button>
-                                  <Button size="sm" variant="outline" className="gap-1" asChild>
-                                    <Link href={bundleHrefPoMonth(ym)}>ปิดงวด / เอกสาร Timesheet</Link>
-                                  </Button>
+                                  <PoMonthHubDocLink
+                                    phase={phase}
+                                    docHref={bundleHrefPoMonth(ym)}
+                                    docStarted={docStarted}
+                                  />
                                 </div>
                               </TableCell>
                             </TableRow>

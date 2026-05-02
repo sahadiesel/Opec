@@ -30,10 +30,14 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
+import { assignmentReadyForWaveTimesheet, waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
+import { assignmentOverlapsYearMonth } from '@/lib/ops/timesheet-hub-po-month';
+import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import {
   lastDayOfCalendarMonth,
   listDaysInMonth,
+  normalHoursCountedAsWork,
+  resolveTimesheetForWaveMonthCell,
   timesheetCellSummary,
   timesheetEventCellBadgeClasses,
 } from '@/lib/timesheet/wave-month-utils';
@@ -61,11 +65,37 @@ function ymNow(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/** แถวสรุปรายเดือน = เฉพาะ mobilization ที่พร้อมลงเวลา (เดียวกับ Wave Board) และทับเดือนที่เลือก */
+function mobilizationsEligibleForWaveMonthGrid(mobs: Assignment[], monthYm: string): Assignment[] {
+  const eligible = mobs.filter(
+    (m) => assignmentReadyForWaveTimesheet(m) && assignmentOverlapsYearMonth(m, monthYm),
+  );
+  return pickRosterLinePerWorker(eligible);
+}
+
+function deploymentShortLabel(s: string | undefined): string {
+  switch (s) {
+    case 'ACTIVE':
+      return 'Active';
+    case 'MOBILIZING':
+      return 'Mob';
+    case 'READY_TO_MOB':
+      return 'Ready';
+    case 'CONFIRMED':
+      return 'Confirmed';
+    default:
+      return s || '—';
+  }
+}
+
 function chunkIds<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
+
+/** Firestore `in` — ใช้ช่วงที่ปลอดภัยสำหรับ mobilizations.poId */
+const FIRESTORE_IN_CHUNK_PO = 30;
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -129,12 +159,15 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [monthYm, setMonthYm] = useState(ymNow);
   const [mobAssignments, setMobAssignments] = useState<Assignment[]>([]);
   const [mobLoading, setMobLoading] = useState(false);
+  const [extraWaves, setExtraWaves] = useState<Wave[]>([]);
   const [cellEdit, setCellEdit] = useState<CellEditContext | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editEvent, setEditEvent] = useState<RateConditionEventType>('work_day');
   const [editHours, setEditHours] = useState(12);
   const [editRemark, setEditRemark] = useState('');
   const [savingCell, setSavingCell] = useState(false);
+  /** ยืนยันใน Dialog เดียว — ไม่ใช้ AlertDialog ซ้อน (กันค้าง overlay/focus) */
+  const [cellSaveAwaitingConfirm, setCellSaveAwaitingConfirm] = useState(false);
   const payrollAutoHealRef = useRef<Set<string>>(new Set());
   const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
   const [monthlyDocLoading, setMonthlyDocLoading] = useState(false);
@@ -145,6 +178,7 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   useEffect(() => {
     if (!cellEdit) return;
+    setCellSaveAwaitingConfirm(false);
     const ts = cellEdit.timesheet;
     setEditDate(ts?.date ?? cellEdit.cellDate);
     setEditEvent((ts?.eventType as RateConditionEventType) ?? 'work_day');
@@ -187,7 +221,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     });
   }, [allOpenWaves, openPoIdSet, pos]);
 
-  const openWaveIdSet = useMemo(() => new Set(sortedWaves.map((w) => w.id)), [sortedWaves]);
+  const sortedWaveIdSet = useMemo(() => new Set(sortedWaves.map((w) => w.id)), [sortedWaves]);
 
   const monthStart = `${monthYm}-01`;
   const monthEnd = lastDayOfCalendarMonth(monthYm);
@@ -229,10 +263,11 @@ export default function WaveMonthTimesheetSummaryPage() {
     return () => unsub();
   }, [tsQuery]);
 
-  const monthSheetsForOpenWaves = useMemo(() => {
-    if (!allMonthSheetsRaw?.length || openWaveIdSet.size === 0) return [];
-    return allMonthSheetsRaw.filter((t) => openWaveIdSet.has(t.waveId));
-  }, [allMonthSheetsRaw, openWaveIdSet]);
+  /** สอดคล้อง Wave Board (โหลดตาม PO): รวมรายการที่ wave ปิดแล้วแต่ยังอยู่ใน PO ที่เปิด */
+  const monthSheetsForOpenPos = useMemo(() => {
+    if (!allMonthSheetsRaw?.length || openPoIdSet.size === 0) return [];
+    return allMonthSheetsRaw.filter((t) => openPoIdSet.has(t.purchaseOrderId));
+  }, [allMonthSheetsRaw, openPoIdSet]);
 
   const reviewsQuery = useMemoFirebase(
     () =>
@@ -332,8 +367,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   }, [firestore, currentUser, monthReviewRows, toast]);
 
   useEffect(() => {
-    const ids = sortedWaves.map((w) => w.id);
-    if (!firestore || !canViewTs || ids.length === 0) {
+    const poIdsList = [...openPoIdSet];
+    if (!firestore || !canViewTs || poIdsList.length === 0) {
       setMobAssignments([]);
       setMobLoading(false);
       return;
@@ -342,10 +377,10 @@ export default function WaveMonthTimesheetSummaryPage() {
     setMobLoading(true);
     void (async () => {
       try {
-        const chunks = chunkIds(ids, 10);
+        const chunks = chunkIds(poIdsList, FIRESTORE_IN_CHUNK_PO);
         const snaps = await Promise.all(
           chunks.map((ids) =>
-            getDocs(query(collection(firestore, 'mobilizations'), where('waveId', 'in', ids))),
+            getDocs(query(collection(firestore, 'mobilizations'), where('poId', 'in', ids))),
           ),
         );
         if (cancelled) return;
@@ -369,7 +404,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, canViewTs, sortedWaves]);
+  }, [firestore, canViewTs, openPoIdSet]);
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewTs ? collection(firestore, 'workers') : null),
@@ -379,34 +414,144 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
 
+  const waveIdsWithEligibleMobInMonth = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of mobAssignments) {
+      if (assignmentReadyForWaveTimesheet(m) && assignmentOverlapsYearMonth(m, monthYm)) {
+        s.add(m.waveId);
+      }
+    }
+    return s;
+  }, [mobAssignments, monthYm]);
+
+  const missingWaveIdsForMonth = useMemo(
+    () => [...waveIdsWithEligibleMobInMonth].filter((id) => !sortedWaveIdSet.has(id)).sort(),
+    [waveIdsWithEligibleMobInMonth, sortedWaveIdSet],
+  );
+
+  const missingWaveIdsKey = missingWaveIdsForMonth.join(',');
+
+  useEffect(() => {
+    if (!firestore || !canViewTs || missingWaveIdsForMonth.length === 0) {
+      setExtraWaves([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const waves: Wave[] = [];
+        await Promise.all(
+          missingWaveIdsForMonth.map(async (wid) => {
+            const snap = await getDoc(doc(firestore, 'waves', wid));
+            if (snap.exists()) waves.push({ id: snap.id, ...(snap.data() as object) } as Wave);
+          }),
+        );
+        if (!cancelled) setExtraWaves(waves);
+      } catch (e) {
+        console.error('[wave-month] fetch extra waves', e);
+        if (!cancelled) setExtraWaves([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, canViewTs, missingWaveIdsKey]);
+
+  const displayWaves = useMemo(() => {
+    const byId = new Map<string, Wave>();
+    for (const w of sortedWaves) byId.set(w.id, w);
+    for (const w of extraWaves) {
+      if (!byId.has(w.id)) byId.set(w.id, w);
+    }
+    for (const wid of missingWaveIdsForMonth) {
+      if (byId.has(wid)) continue;
+      const m = mobAssignments.find((x) => x.waveId === wid);
+      if (!m) continue;
+      byId.set(wid, {
+        id: wid,
+        waveCode: `…${wid.slice(-8)}`,
+        poId: m.poId,
+        poLineId: m.poLineId ?? '',
+        customerId: m.customerId ?? '',
+        projectName: m.projectName ?? '',
+        siteLocation: '',
+        startDate: '',
+        endDate: '',
+        status: 'CLOSED',
+        plannedWorkers: 0,
+        assignedWorkers: 0,
+        rotationPattern: '',
+        createdAt: 0,
+        updatedAt: 0,
+      });
+    }
+    const list = [...byId.values()];
+    list.sort((a, b) => {
+      const pa = poById.get(a.poId)?.poCode ?? '';
+      const pb = poById.get(b.poId)?.poCode ?? '';
+      if (pa !== pb) return pa.localeCompare(pb, 'th');
+      return (a.waveCode || '').localeCompare(b.waveCode || '', 'th');
+    });
+    return list;
+  }, [sortedWaves, extraWaves, poById, missingWaveIdsForMonth, mobAssignments]);
+
   const sheetsByWaveWorker = useMemo(() => {
     const m = new Map<string, DailyTimesheet[]>();
-    for (const t of monthSheetsForOpenWaves) {
+    for (const t of monthSheetsForOpenPos) {
       const k = `${t.waveId}|${t.workerId}`;
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(t);
     }
     return m;
-  }, [monthSheetsForOpenWaves]);
+  }, [monthSheetsForOpenPos]);
+
+  /** รวมชม.ทำงาน (เฉพาะ work_day) ของพนักงานในเดือน — ทุก wave / ทุก timesheet */
+  const workerWorkHoursMonthTotal = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of monthSheetsForOpenPos) {
+      const add = normalHoursCountedAsWork(t);
+      if (add === 0) continue;
+      const id = t.workerId;
+      m.set(id, (m.get(id) ?? 0) + add);
+    }
+    return m;
+  }, [monthSheetsForOpenPos]);
+
+  const eligibleMobsByWaveId = useMemo(() => {
+    const map = new Map<string, Assignment[]>();
+    for (const wave of displayWaves) {
+      const waveMobsAll = mobAssignments.filter((m) => m.waveId === wave.id);
+      map.set(wave.id, mobilizationsEligibleForWaveMonthGrid(waveMobsAll, monthYm));
+    }
+    return map;
+  }, [displayWaves, mobAssignments, monthYm]);
 
   const tableRows = useMemo(() => {
-    const out: { wave: Wave; po: PurchaseOrder | undefined; rw: { workerId: string; name: string } }[] = [];
-    for (const wave of sortedWaves) {
+    const out: {
+      wave: Wave;
+      po: PurchaseOrder | undefined;
+      rw: { workerId: string; name: string };
+      rosterAssignment: Assignment;
+    }[] = [];
+    for (const wave of displayWaves) {
       const po = poById.get(wave.poId);
-      const waveMobs = mobAssignments.filter((m) => m.waveId === wave.id);
-      const rosterWorkers = [...new Set(waveMobs.map((x) => x.workerId).filter(Boolean))]
-        .map((wid) => {
-          const w = allWorkers?.find((x) => x.id === wid);
-          const name = w ? `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.workerCode : wid;
-          return { workerId: wid, name };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name, 'th'));
-      for (const rw of rosterWorkers) {
-        out.push({ wave, po, rw });
+      let roster = [...(eligibleMobsByWaveId.get(wave.id) ?? [])];
+      roster.sort((a, b) => {
+        const wa = allWorkers?.find((x) => x.id === a.workerId);
+        const wb = allWorkers?.find((x) => x.id === b.workerId);
+        const na = wa ? `${wa.firstName || ''} ${wa.lastName || ''}`.trim() || wa.workerCode : a.workerId;
+        const nb = wb ? `${wb.firstName || ''} ${wb.lastName || ''}`.trim() || wb.workerCode : b.workerId;
+        return na.localeCompare(nb, 'th');
+      });
+      for (const asgn of roster) {
+        const wid = asgn.workerId;
+        const w = allWorkers?.find((x) => x.id === wid);
+        const name = w ? `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.workerCode : wid;
+        out.push({ wave, po, rw: { workerId: wid, name }, rosterAssignment: asgn });
       }
     }
     return out;
-  }, [sortedWaves, mobAssignments, allWorkers, poById]);
+  }, [displayWaves, eligibleMobsByWaveId, allWorkers, poById]);
 
   const openCellEdit = useCallback(
     (
@@ -466,9 +611,9 @@ export default function WaveMonthTimesheetSummaryPage() {
     [canEditTs, toast, poMonthByPoId],
   );
 
-  const handleSaveCellEdit = useCallback(async () => {
+  const performSaveCellEdit = useCallback(async () => {
     if (!firestore || !currentUser || !cellEdit) return;
-    const { wave, po, monthReview, workerId, workerName, assignment, timesheet: existingTs } = cellEdit;
+    const { wave, po, monthReview, workerId, workerName, assignment, timesheet: openedTs } = cellEdit;
     if (!canEditTs || isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
       toast({
         variant: 'destructive',
@@ -478,10 +623,6 @@ export default function WaveMonthTimesheetSummaryPage() {
       return;
     }
     const service = new TimesheetService(firestore);
-    if (existingTs && service.isFinalized(existingTs.status as DailyTimesheetStatus)) {
-      toast({ variant: 'destructive', title: 'รายการถูกล็อก', description: 'แก้ไขไม่ได้' });
-      return;
-    }
 
     const contractId = (assignment.contractId || po?.contractId || '').trim();
     const poLineId = (assignment.poLineId || wave.poLineId || '').trim();
@@ -496,23 +637,24 @@ export default function WaveMonthTimesheetSummaryPage() {
     }
 
     const newId = service.getTimesheetId(workerId, assignment.id, editDate);
-    if (newId !== existingTs?.id) {
-      const destSnap = await getDoc(doc(firestore, 'daily_timesheets', newId));
-      if (destSnap.exists()) {
-        toast({
-          variant: 'destructive',
-          title: 'วันนี้มีรายการแล้ว',
-          description:
-            'มี daily_timesheet สำหรับคน/มอบหมายเดียวกันในวันนี้อยู่แล้ว — เลือกวันอื่น หรือแก้ใน Wave Board',
-        });
-        return;
+    const snapAtNewId = await getDoc(doc(firestore, 'daily_timesheets', newId));
+    let baseTs: DailyTimesheet | undefined = openedTs;
+    if (snapAtNewId.exists()) {
+      const loaded = { id: snapAtNewId.id, ...(snapAtNewId.data() as object) } as DailyTimesheet;
+      if (!baseTs || baseTs.id !== loaded.id) {
+        baseTs = loaded;
       }
+    }
+
+    if (baseTs && service.isFinalized(baseTs.status as DailyTimesheetStatus)) {
+      toast({ variant: 'destructive', title: 'รายการถูกล็อก', description: 'แก้ไขไม่ได้' });
+      return;
     }
 
     setSavingCell(true);
     try {
-      if (existingTs && newId !== existingTs.id) {
-        await deleteDoc(doc(firestore, 'daily_timesheets', existingTs.id));
+      if (openedTs && newId !== openedTs.id) {
+        await deleteDoc(doc(firestore, 'daily_timesheets', openedTs.id));
       }
 
       const worker = allWorkers?.find((w) => w.id === workerId);
@@ -523,7 +665,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       const nHours = isUnpaid ? 0 : Math.min(24, Math.max(0, Number(editHours) || 0));
 
       const payload: Partial<DailyTimesheet> = {
-        ...(existingTs ? { ...existingTs, id: undefined } : {}),
+        ...(baseTs ? { ...baseTs, id: undefined } : {}),
         workerId,
         assignmentId: assignment.id,
         date: editDate,
@@ -543,10 +685,10 @@ export default function WaveMonthTimesheetSummaryPage() {
         workerNameSnapshot: nameSnap,
       };
 
-      if (!existingTs) {
+      if (!baseTs) {
         payload.status = 'DRAFT';
-      } else if (existingTs.status && service.canEdit(existingTs.status as DailyTimesheetStatus)) {
-        payload.status = existingTs.status;
+      } else if (baseTs.status && service.canEdit(baseTs.status as DailyTimesheetStatus)) {
+        payload.status = baseTs.status;
       } else {
         payload.status = 'DRAFT';
       }
@@ -555,6 +697,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       toast({ title: 'บันทึกแล้ว', description: 'อัปเดตลงเวลารายวันเรียบร้อย' });
       setCellEdit(null);
     } catch (e: unknown) {
+      setCellSaveAwaitingConfirm(false);
       toast({
         variant: 'destructive',
         title: 'บันทึกไม่สำเร็จ',
@@ -588,7 +731,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       document.getElementById(`wave-month-wave-${w}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 450);
     return () => clearTimeout(t);
-  }, [monthYm, loading, sortedWaves.length]);
+  }, [monthYm, loading, displayWaves.length]);
 
   if (userLoading || !currentUser) return null;
   if (!canViewTs) {
@@ -641,13 +784,17 @@ export default function WaveMonthTimesheetSummaryPage() {
             'ปิดงวด / ส่งตรวจ / แนบรูป—PDF / ออกเอกสาร (invoice+payroll): ทำที่เมนู «เอกสาร timesheet ราย PO+เดือน» ไม่อ้างอิง Wave',
             'เลือกเดือน — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; ตารางด้านล่าง = รวมทุก wave เพื่อแก้รายวันจนกว่า PO+งวดจะถูกล็อก',
             'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
+            'ตัวเลขในเซลล์ = ชม.ที่นับเป็นทำงาน (เฉพาะวันทำงาน) — standby แสดง 0SB; คอลัมน์รวม = สะสมทุก wave ของคนนั้นในเดือน',
+            'เซลล์จับคู่กับบันทึกรายวันตามการมอบหมายของแถว (แม้ waveId ในเอกสารจะไม่ตรงแถว) — บันทึกจากหน้านี้จะยืนยันก่อน แล้วอัปเดตทับข้อมูลเดิมถ้ามี',
           ]}
         />
 
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-base">ตัวกรอง</CardTitle>
-            <CardDescription>กรองตามเดือนเท่านั้น — แสดงทุก PO / Wave ที่ยังเปิดอยู่</CardDescription>
+            <CardDescription>
+              กรองตามเดือนเท่านั้น — แสดงทุก PO ที่ยัง pending/active และ Wave ที่เกี่ยวข้อง (รวม Wave ปิดแล้วถ้ายังมีคนพร้อมลงเวลาทับเดือนนี้)
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-4">
             <div className="space-y-2">
@@ -655,7 +802,7 @@ export default function WaveMonthTimesheetSummaryPage() {
               <Input type="month" value={monthYm} onChange={(e) => setMonthYm(e.target.value)} className="h-10 w-[200px]" />
             </div>
             <p className="text-sm text-muted-foreground pb-1">
-              พบ {sortedWaves.length} Wave ที่ยังไม่ปิด
+              พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
               {pos != null ? ` · ${pos.length} PO (pending/active)` : ''}
             </p>
           </CardContent>
@@ -663,9 +810,9 @@ export default function WaveMonthTimesheetSummaryPage() {
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
-        ) : sortedWaves.length === 0 ? (
+        ) : displayWaves.length === 0 ? (
           <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
-            ไม่มี Wave ที่ยังไม่ปิดสำหรับ PO ที่เปิดอยู่ — หรือยังไม่มีข้อมูล Wave
+            ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
           </p>
         ) : (
           <div className="space-y-6">
@@ -691,12 +838,16 @@ export default function WaveMonthTimesheetSummaryPage() {
                 <CardTitle className="text-base">สรุปลงเวลา — ทุกคนทุก Wave</CardTitle>
                 <CardDescription>
                   เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
-                  · คอลัมน์แรก = รอบ (Wave) · ตามด้วยชื่อพนักงาน
+                  · คอลัมน์ Wave / พนักงาน · <strong>สถานะ MOB</strong> = ผ่านเกณฑ์ขึ้นตารางลงเวลาแล้ว ·{' '}
+                  แถวเฉพาะคนที่ mobilization ครบและช่วงมอบหมายทับเดือนนี้ — โหลดจาก PO ที่เปิด (สอดคล้อง Wave Board) รวม Wave ที่ปิดแล้วถ้ายังมีคนในเงื่อนไขนี้ ·{' '}
+                  <strong>รวมชม.</strong> = ชม.ทำงาน (วันทำงานเท่านั้น ไม่รวม standby) สะสมจากทุก wave ของพนักงานในเดือนนี้
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
                 {tableRows.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-10 px-4">ยังไม่มีแถวในงวดนี้ (ไม่พบการมอบหมาย)</p>
+                  <p className="text-center text-muted-foreground py-10 px-4">
+                    ยังไม่มีแถวในงวดนี้ — ไม่พบ mobilization ที่ผ่านเกณฑ์ลงเวลาและครอบคลุมเดือนนี้ (หรือยังไม่มี Wave ที่เกี่ยวข้อง)
+                  </p>
                 ) : (
                   <>
                     <Table className="min-w-max text-xs">
@@ -708,26 +859,31 @@ export default function WaveMonthTimesheetSummaryPage() {
                           <TableHead className="sticky z-20 min-w-[140px] left-[100px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
                             พนักงาน
                           </TableHead>
+                          <TableHead className="text-center font-bold min-w-[88px] max-w-[100px] text-[10px] leading-tight px-1">
+                            สถานะ MOB
+                          </TableHead>
                           {days.map((d) => (
                             <TableHead key={d} className="px-1 text-center w-10 font-mono" title={d}>
                               {d.slice(8, 10)}
                             </TableHead>
                           ))}
-                          <TableHead className="text-center font-bold min-w-[56px]">รวมชม.</TableHead>
+                          <TableHead
+                            className="text-center font-bold min-w-[72px] max-w-[88px] text-[10px] leading-tight px-1"
+                            title="ชม.ทำงาน (เฉพาะวันทำงาน) รวมทุก wave ของพนักงานในเดือนนี้ — ไม่รวม standby"
+                          >
+                            รวมชม.
+                            <br />
+                            <span className="font-normal text-muted-foreground">(ทำงาน·ทุก Wave)</span>
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {tableRows.map((tr, rowIdx) => {
-                          const { wave, po, rw } = tr;
+                          const { wave, po, rw, rosterAssignment } = tr;
                           const isFirstInWave = rowIdx === 0 || tableRows[rowIdx - 1]!.wave.id !== wave.id;
                           const monthReview = reviewByWaveId.get(wave.id);
-                          const waveMobs = mobAssignments.filter((m) => m.waveId === wave.id);
-                          const rowSheets = sheetsByWaveWorker.get(`${wave.id}|${rw.workerId}`) ?? [];
-                          const byDate = new Map<string, DailyTimesheet>();
-                          for (const t of rowSheets) {
-                            byDate.set(t.date, t);
-                          }
-                          const rowTotal = rowSheets.reduce((s, t) => s + (t.normalHours ?? 0), 0);
+                          const waveMobs = eligibleMobsByWaveId.get(wave.id) ?? [];
+                          const rowWorkerMonthWorkTotal = workerWorkHoursMonthTotal.get(rw.workerId) ?? 0;
                           const editableGrid =
                             canEditTs &&
                             !isMonthTimesheetRowLocked(
@@ -748,8 +904,23 @@ export default function WaveMonthTimesheetSummaryPage() {
                               <TableCell className="sticky z-10 left-[100px] bg-background font-medium text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
                                 {rw.name}
                               </TableCell>
+                              <TableCell className="text-center align-middle text-[10px] px-1">
+                                <Badge className="bg-emerald-700 hover:bg-emerald-700 text-white border-transparent shadow-none text-[9px] px-1.5 py-0">
+                                  ผ่าน
+                                </Badge>
+                                <div className="text-muted-foreground font-mono text-[9px] mt-0.5 leading-tight">
+                                  {deploymentShortLabel(rosterAssignment.deploymentStatus)}
+                                </div>
+                              </TableCell>
                               {days.map((d) => {
-                                const ts = byDate.get(d);
+                                const ts = resolveTimesheetForWaveMonthCell(
+                                  wave.id,
+                                  rw.workerId,
+                                  d,
+                                  rosterAssignment.id,
+                                  sheetsByWaveWorker,
+                                  monthSheetsForOpenPos,
+                                );
                                 const cell = timesheetCellSummary(ts);
                                 return (
                                   <TableCell key={d} className="px-0.5 text-center font-mono text-[10px]">
@@ -799,7 +970,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   </TableCell>
                                 );
                               })}
-                              <TableCell className="text-center font-bold text-sm">{rowTotal}</TableCell>
+                              <TableCell
+                                className="text-center font-bold text-sm"
+                                title="ชม.ทำงานรวมทุก wave ในเดือนนี้ (ไม่รวม standby)"
+                              >
+                                {rowWorkerMonthWorkTotal}
+                              </TableCell>
                             </TableRow>
                           );
                         })}
@@ -807,7 +983,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                     </Table>
                     <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <strong>คีย์:</strong> ตัวเลข = ชม.ปกติ + รหัส (W/SB/T/…) —{' '}
+                        <strong>คีย์:</strong> ตัวเลขหน้ารหัส = ชม.ที่นับเป็นทำงาน (เฉพาะ W = วันทำงาน; SB/T/M ฯลฯ = 0 ในชั่วโมงทำงาน) + รหัสประเภท —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
@@ -826,7 +1002,15 @@ export default function WaveMonthTimesheetSummaryPage() {
         )}
       </div>
 
-      <Dialog open={!!cellEdit} onOpenChange={(open) => !open && !savingCell && setCellEdit(null)}>
+      <Dialog
+        open={!!cellEdit}
+        onOpenChange={(open) => {
+          if (!open && !savingCell) {
+            setCellSaveAwaitingConfirm(false);
+            setCellEdit(null);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>แก้ไขลงเวลารายวัน</DialogTitle>
@@ -838,6 +1022,15 @@ export default function WaveMonthTimesheetSummaryPage() {
           </DialogHeader>
           {cellEdit ? (
             <div className="space-y-3 py-1">
+              {cellSaveAwaitingConfirm ? (
+                <Alert className="border-amber-200/80 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/30">
+                  <AlertTitle className="text-sm">ยืนยันการบันทึก</AlertTitle>
+                  <AlertDescription className="text-xs sm:text-sm">
+                    ต้องการบันทึกการแก้ไขลงเวลารายวันนี้ใช่หรือไม่? ถ้ามี daily timesheet เดิมสำหรับคน วัน
+                    และการมอบหมายนี้แล้ว ระบบจะอัปเดตทับตามค่าที่คุณเลือก
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               <div className="space-y-1.5">
                 <Label htmlFor="wm-edit-date">วันที่ (ในเดือนที่เลือก)</Label>
                 <Input
@@ -847,7 +1040,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                   max={lastDayOfCalendarMonth(monthYm)}
                   value={editDate}
                   onChange={(e) => setEditDate(e.target.value)}
-                  disabled={savingCell}
+                  disabled={savingCell || cellSaveAwaitingConfirm}
                 />
               </div>
               <div className="space-y-1.5">
@@ -855,7 +1048,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                 <Select
                   value={editEvent}
                   onValueChange={(v: RateConditionEventType) => setEditEvent(v)}
-                  disabled={savingCell}
+                  disabled={savingCell || cellSaveAwaitingConfirm}
                 >
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="เลือกประเภท" />
@@ -879,7 +1072,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                   step={0.5}
                   value={editHours}
                   onChange={(e) => setEditHours(Number(e.target.value))}
-                  disabled={savingCell || editEvent === 'unpaid_leave'}
+                  disabled={savingCell || cellSaveAwaitingConfirm || editEvent === 'unpaid_leave'}
                 />
                 {editEvent === 'unpaid_leave' ? (
                   <p className="text-xs text-muted-foreground">ลาไม่รับค่าจ้าง — ชั่วโมงจะถูกตั้งเป็น 0</p>
@@ -892,26 +1085,51 @@ export default function WaveMonthTimesheetSummaryPage() {
                   rows={2}
                   value={editRemark}
                   onChange={(e) => setEditRemark(e.target.value)}
-                  disabled={savingCell}
+                  disabled={savingCell || cellSaveAwaitingConfirm}
                   placeholder="เช่น แก้วันผิด / สาเหตุลา"
                 />
               </div>
             </div>
           ) : null}
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" disabled={savingCell} onClick={() => setCellEdit(null)}>
-              ยกเลิก
-            </Button>
-            <Button type="button" disabled={savingCell || !cellEdit} onClick={() => void handleSaveCellEdit()}>
-              {savingCell ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  กำลังบันทึก…
-                </>
-              ) : (
-                'บันทึก'
-              )}
-            </Button>
+          <DialogFooter className="gap-2 sm:gap-0 flex-wrap">
+            {savingCell ? (
+              <span className="mr-auto flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                กำลังบันทึก…
+              </span>
+            ) : null}
+            {!cellSaveAwaitingConfirm ? (
+              <>
+                <Button type="button" variant="outline" disabled={savingCell} onClick={() => setCellEdit(null)}>
+                  ยกเลิก
+                </Button>
+                <Button
+                  type="button"
+                  disabled={savingCell || !cellEdit}
+                  onClick={() => setCellSaveAwaitingConfirm(true)}
+                >
+                  บันทึก
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingCell}
+                  onClick={() => setCellSaveAwaitingConfirm(false)}
+                >
+                  กลับไปแก้ไข
+                </Button>
+                <Button
+                  type="button"
+                  disabled={savingCell || !cellEdit}
+                  onClick={() => void performSaveCellEdit()}
+                >
+                  ยืนยันบันทึก
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

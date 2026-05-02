@@ -67,6 +67,13 @@ function WaveTimesheetBoardContent() {
   const filterPoActiveBundleId = filterPoActiveBundleIdRaw ? normalizePoActiveBundleId(filterPoActiveBundleIdRaw) : null;
   const monthFromQuery = (searchParams.get('month') || '').trim() || null;
 
+  /** เมื่อเปิดจากศูนย์ลงเวลา (?month=) ให้รายชื่อตรงกับงวดเดือน — ไม่ใช่แค่วันแรกของเดือน */
+  const rosterFilterYm = useMemo(() => {
+    if (!monthFromQuery || !/^\d{4}-\d{2}$/.test(monthFromQuery)) return null;
+    if (!targetDate.startsWith(monthFromQuery)) return null;
+    return monthFromQuery;
+  }, [monthFromQuery, targetDate]);
+
   useEffect(() => {
     if (monthFromQuery && /^\d{4}-\d{2}$/.test(monthFromQuery)) {
       setTargetDate(`${monthFromQuery}-01`);
@@ -146,6 +153,14 @@ function WaveTimesheetBoardContent() {
     }
     return [...m.values()].sort((a, b) => a.po.poCode.localeCompare(b.po.poCode, 'th'));
   }, [sortedWavesForBoard, pos, filterPoId, poIdsInBundleFilter]);
+
+  /** PO ทั้งหมดในชุดเดียวกัน — ใช้โหมดตารางเดียวบน Wave Board */
+  const bundlePosList = useMemo(() => {
+    if (!filterPoActiveBundleId || !(pos ?? []).length) return [];
+    return (pos ?? [])
+      .filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId)
+      .sort((a, b) => a.poCode.localeCompare(b.poCode, 'th'));
+  }, [filterPoActiveBundleId, pos]);
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewTimesheets ? collection(firestore, 'workers') : null),
@@ -248,11 +263,28 @@ function WaveTimesheetBoardContent() {
           <p className="text-muted-foreground text-lg max-w-4xl">
             {filterPoActiveBundleId ? (
               <>
-                กรองตาม <strong>ชุด PO Active</strong> — หนึ่งการ์ดต่อ PO ภายในชุดเดียวกัน · แถวมาจาก mobilization ที่ครอบคลุมวันที่เลือก
+                กรองตาม <strong>ชุด PO Active</strong> — <strong>ตารางเดียว</strong> รวมทุกใบในชุด (สอดคล้องหน้า Assignment) · แถวคือคนที่{' '}
+                <strong>mobilization ผ่านเกณฑ์แล้ว</strong>
+                {rosterFilterYm ? (
+                  <>
+                    {' '}
+                    และช่วงมอบหมาย<strong>ทับเดือน {rosterFilterYm}</strong> (สอดคล้องคอลัมน์ MOB ผ่าน) — เลือกวันที่ใต้ตารางเพื่อลงเวลารายวัน
+                  </>
+                ) : (
+                  <>
+                    {' '}
+                    และช่วงมอบหมายครอบคลุม<strong>วันที่เลือก</strong>
+                  </>
+                )}
               </>
             ) : (
               <>
-                แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถวมาจาก mobilization ที่ช่วงเริ่ม–สิ้นสุดครอบคลุมวันที่เลือก
+                แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถว mobilization ผ่านเกณฑ์
+                {rosterFilterYm ? (
+                  <> และช่วงทับเดือน {rosterFilterYm}</>
+                ) : (
+                  <> และครอบคลุมวันที่เลือก</>
+                )}
               </>
             )}{' '}
             บันทึกร่าง DRAFT ที่นี่ ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
@@ -266,21 +298,48 @@ function WaveTimesheetBoardContent() {
         <PageGuidance
           title="วิธีใช้"
           tips={[
-            'PO = คำสั่งจ้าง; แถวลงเวลามาจาก mobilization ที่วันที่เลือกอยู่ในช่วง start–end ของ assignment',
+            'ชุด PO Active = ตารางเดียวรายชื่อรวม; คนที่ยังอยู่แค่ assign / ยังไม่ mob จะไม่ขึ้นในกระดานจนกว่าจะผ่าน Mobilization ตามเกณฑ์ readiness + deployment',
             'วางบิล / payroll รอบเดือนให้ยึดเอกสาร PO+เดือนหลังอนุมัติ',
             'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
-            'ตัวกรอง URL: ?month=2026-04&poId=… หรือ ?poActiveBundleId=customerId__OFFSHORE — กำหนดงวดและขอบเขต PO / ชุด PO Active',
+            'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
             'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
           ]}
         />
 
         <p className="text-sm text-muted-foreground">
-          {posOrderedForBoard.length} การ์ด (PO)
-          {sortedWavesForBoard.length > 0 ? ` · มี wave เก่าในชุดนี้ ${sortedWavesForBoard.length} รายการ` : ''}
+          {filterPoActiveBundleId
+            ? `ตารางเดียวในชุด PO Active · ${bundlePosList.length} ใบ`
+            : `${posOrderedForBoard.length} การ์ด (PO)`}
+          {sortedWavesForBoard.length > 0 ? ` · wave ในขอบเขตนี้ ${sortedWavesForBoard.length} รายการ` : ''}
         </p>
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
+        ) : filterPoActiveBundleId ? (
+          bundlePosList.length === 0 ? (
+            <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
+              ไม่พบ PO ในชุด PO Active นี้ — ตรวจสถานะ PO หรือการจัดชุด PO Active
+            </p>
+          ) : (
+            <div className="space-y-8">
+              <PoDailyBoardCard
+                key={`bundle-${filterPoActiveBundleId}-${targetDate}`}
+                scope={{
+                  mode: 'bundle',
+                  bundleKey: filterPoActiveBundleId,
+                  pos: bundlePosList,
+                  waves: sortedWavesForBoard,
+                }}
+                rosterFilterYm={rosterFilterYm}
+                targetDate={targetDate}
+                onBoardDateChange={handleBoardDateChange}
+                currentUser={currentUser}
+                workers={workers ?? undefined}
+                positionLabel={positionLabel}
+                canEditTimesheets={canEditTimesheets}
+              />
+            </div>
+          )
         ) : posOrderedForBoard.length === 0 ? (
           <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
             ไม่มี PO สำหรับแสดง — ตรวจสถานะ PO (pending/active)
@@ -290,8 +349,8 @@ function WaveTimesheetBoardContent() {
             {posOrderedForBoard.map(({ po, waves: poWaves }) => (
               <PoDailyBoardCard
                 key={`${po.id}-${targetDate}`}
-                po={po}
-                waves={poWaves}
+                scope={{ mode: 'single', po, waves: poWaves }}
+                rosterFilterYm={rosterFilterYm}
                 targetDate={targetDate}
                 onBoardDateChange={handleBoardDateChange}
                 currentUser={currentUser}

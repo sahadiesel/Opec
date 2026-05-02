@@ -257,7 +257,6 @@ const navGroups: NavGroup[] = [
         href: '/po-active-quota-queue',
         icon: ClipboardList,
       },
-      { key: 'waves', title: UI_LABELS.WAVES, href: '/waves', icon: Waves },
       { key: 'assignments', title: UI_LABELS.ASSIGNMENTS, href: '/assignments', icon: UserPlus },
       { key: 'mobilization', title: UI_LABELS.MOBILIZATION, href: '/mobilization', icon: Truck },
       { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
@@ -717,7 +716,7 @@ export function SidebarNav({
 
           if (visibleItems.length === 0) return null;
 
-          const staffingBasePaths = ['/po-active-quota-queue', '/waves', '/assignments', '/mobilization'];
+          const staffingBasePaths = ['/po-active-quota-queue', '/assignments', '/mobilization'];
           const warehousePathSet = new Set<string>(OPS_WAREHOUSE_SUB_PATHS);
           const staffingItems =
             group.label === 'งานปฏิบัติการ (Operations)'

@@ -910,7 +910,6 @@ export default function Home() {
                 {(check('waves', 'view') || check('assignments', 'view')) && (
                   <ShortcutLink href="/po-active-quota-queue" label="คิวเติมโควต้า (PO Active)" sub="PO ยังไม่ครบโควต้า" />
                 )}
-                {check('waves', 'view') && <ShortcutLink href="/waves" label="กลุ่มงาน (Waves)" sub="Waves" />}
                 {check('assignments', 'view') && (
                   <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
                 )}

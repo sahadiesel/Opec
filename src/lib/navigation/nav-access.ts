@@ -163,7 +163,6 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/vendors', 'vendors'],
   ['/operations/petty-cash', 'operations_petty_cash'],
   ['/po-active-quota-queue', 'waves'],
-  ['/waves', 'waves'],
   ['/store', 'store_inventory'],
 ];
 

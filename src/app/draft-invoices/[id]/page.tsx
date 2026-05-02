@@ -719,10 +719,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   <span>ใบเสนอราคา (ไม่มี Wave / timesheet)</span>
                 ) : (
                   <>
-                    {invoice.waveCode || '—'}{' '}
-                    <Link className="text-primary text-xs underline ml-2" href={`/waves`}>
-                      (รหัส {invoice.waveId.slice(0, 10)}…)
-                    </Link>
+                    <span className="font-mono">{invoice.waveCode || '—'}</span>
+                    <span className="text-muted-foreground text-xs ml-2 font-mono">
+                      ({invoice.waveId.slice(0, 10)}…)
+                    </span>
                   </>
                 )}
               </div>

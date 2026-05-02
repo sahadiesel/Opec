@@ -16,6 +16,7 @@ import {
   type PoLineFulfillmentRow,
 } from '@/lib/ops/po-fulfillment-read-model';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { countMobTimesheetSlotsForPoScope } from '@/lib/ops/assignment-mob-eligibility';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 function workModeBadgeLabel(mode: JobMode | undefined): string {
@@ -425,10 +426,12 @@ export function PoQuotaQueueCardShell({
 export function PoAssignmentBundleLandingPanel({
   rows,
   customers,
+  assignments,
   loading,
 }: {
   rows: PoQuotaQueueRow[];
   customers: Customer[] | undefined;
+  assignments: Assignment[] | undefined;
   loading: boolean;
 }) {
   if (loading) {
@@ -473,6 +476,10 @@ export function PoAssignmentBundleLandingPanel({
             <CardDescription className="text-xs max-w-3xl leading-relaxed">
               แต่ละแถวคือ <strong className="font-semibold text-foreground">หนึ่งชุด</strong> ต่อลูกค้าและ Onshore/Offshore — กด{' '}
               <strong className="font-semibold text-foreground">เข้าชุดนี้</strong> เพื่อดูรายการมอบหมายและสร้างการมอบหมายภายในชุดเดียวกัน
+              <span className="block mt-1.5 text-muted-foreground">
+                คอลัมน์ <strong>สถานะ MOB</strong> แยกจำนวนที่ <strong>ผ่าน</strong> เกณฑ์ขึ้นตารางลงเวลา กับ{' '}
+                <strong>รอตรวจสอบ</strong> (มอบหมายแล้วแต่ยังไม่ mobilization ครบตาม Wave Board)
+              </span>
             </CardDescription>
           </div>
           <Badge variant="secondary" className="shrink-0 w-fit">
@@ -488,6 +495,9 @@ export function PoAssignmentBundleLandingPanel({
               <TableHead className="font-bold hidden md:table-cell">รหัส PO ในชุด</TableHead>
               <TableHead className="text-center font-bold">โควต้า</TableHead>
               <TableHead className="text-center font-bold">มอบหมายแล้ว</TableHead>
+              <TableHead className="text-center font-bold min-w-[9rem]" title="ผ่าน = พร้อมลงเวลา · รอ = มอบหมายแล้วแต่ยังไม่ผ่าน mobilization ตามเกณฑ์ Wave Board">
+                สถานะ MOB
+              </TableHead>
               <TableHead className="text-center font-bold">ว่าง</TableHead>
               <TableHead className="text-right pr-6 font-bold">ดำเนินการ</TableHead>
             </TableRow>
@@ -496,6 +506,8 @@ export function PoAssignmentBundleLandingPanel({
             {rows.map(({ bundleKey, customerId, workMode, pos, totals }) => {
               const cust = customers?.find((c) => c.id === customerId);
               const poCodesLine = pos.map((p) => p.poCode).join(', ');
+              const poIdSet = new Set(pos.map((p) => p.id));
+              const { mobPassed, mobWaiting } = countMobTimesheetSlotsForPoScope(assignments, poIdSet);
               const manageHref = `/assignments?poActiveBundleId=${encodeURIComponent(bundleKey)}`;
               const assignHref = `${manageHref}&openDialog=1`;
               return (
@@ -521,6 +533,19 @@ export function PoAssignmentBundleLandingPanel({
                   </TableCell>
                   <TableCell className="text-center font-semibold">{totals.required}</TableCell>
                   <TableCell className="text-center">{totals.assigned}</TableCell>
+                  <TableCell className="text-center text-xs align-middle">
+                    <div className="flex flex-col items-center gap-1 py-0.5">
+                      <Badge className="bg-emerald-700 hover:bg-emerald-700 text-white border-transparent shadow-none font-semibold tabular-nums">
+                        ผ่าน {mobPassed}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="border-amber-600/50 text-amber-900 bg-amber-50/80 font-semibold tabular-nums"
+                      >
+                        รอตรวจ {mobWaiting}
+                      </Badge>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-center">
                     <Badge
                       variant={totals.openSlots > 0 ? 'default' : 'secondary'}

@@ -14,7 +14,7 @@ type Props = {
   poActiveBundleId?: string | null;
   /** รหัส PO ในชุด (แสดงในแบนเนอร์) */
   bundlePoCodes?: string[];
-  /** Path without query to clear filter, e.g. "/waves" */
+  /** Path without query to clear filter, e.g. "/assignments" */
   listBasePath: string;
   /** Short label for screen context */
   moduleLabel: string;
