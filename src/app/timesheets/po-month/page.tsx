@@ -42,6 +42,7 @@ import type {
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole, canEdit } from '@/lib/permissions';
 import { formatThaiYearMonthLabel } from '@/lib/ops/timesheet-hub-po-month';
+import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
@@ -122,6 +123,8 @@ function TimesheetPoMonthContent() {
 
   const monthFromUrl = (searchParams.get('month') || '').trim();
   const highlightPo = (searchParams.get('highlightPo') || '').trim();
+  const poActiveBundleIdRaw = (searchParams.get('poActiveBundleId') || '').trim() || null;
+  const filterPoActiveBundleId = poActiveBundleIdRaw ? normalizePoActiveBundleId(poActiveBundleIdRaw) : null;
   const [monthYm, setMonthYm] = useState(monthFromUrl && /^\d{4}-\d{2}$/.test(monthFromUrl) ? monthFromUrl : ymNow());
 
   const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
@@ -231,6 +234,19 @@ function TimesheetPoMonthContent() {
     });
     return list;
   }, [locShellRows]);
+
+  const bundlePoIdSet = useMemo(() => {
+    if (!filterPoActiveBundleId) return null;
+    const ids = (allPos ?? [])
+      .filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId)
+      .map((p) => p.id);
+    return new Set(ids);
+  }, [filterPoActiveBundleId, allPos]);
+
+  const locShellsForDisplay = useMemo(() => {
+    if (!filterPoActiveBundleId || !bundlePoIdSet) return locShellsSorted;
+    return locShellsSorted.filter((row) => bundlePoIdSet.has(row.poId));
+  }, [locShellsSorted, bundlePoIdSet, filterPoActiveBundleId]);
 
   const contractPosForShellEnsure = useMemo(
     () =>
@@ -464,7 +480,9 @@ function TimesheetPoMonthContent() {
 
   const loading = posLoading || wavesLoading || reviewsLoading;
 
-  const posRows = posWithWaves.filter((po) => (allWaves ?? []).some((w) => w.poId === po.id && waveTouchesMonth(w, monthYm)));
+  const posRows = posWithWaves
+    .filter((po) => (allWaves ?? []).some((w) => w.poId === po.id && waveTouchesMonth(w, monthYm)))
+    .filter((po) => !filterPoActiveBundleId || (bundlePoIdSet?.has(po.id) ?? false));
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -485,6 +503,22 @@ function TimesheetPoMonthContent() {
             )}
           </p>
         </div>
+
+        {filterPoActiveBundleId ? (
+          <Alert className="border-primary/30 bg-primary/5">
+            <Info className="h-4 w-4" />
+            <AlertTitle className="text-sm">กรองตามชุด PO Active</AlertTitle>
+            <AlertDescription className="text-sm flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-mono text-xs">{filterPoActiveBundleId}</span>
+              <Link href="/timesheets" className="font-semibold text-primary underline">
+                ← กลับศูนย์ลงเวลา (ชุด)
+              </Link>
+              <Link href={`/timesheets/wave-board?poActiveBundleId=${encodeURIComponent(filterPoActiveBundleId)}&month=${encodeURIComponent(monthYm)}`} className="text-primary underline">
+                เปิดกระดานลงเวลาในงวดนี้ →
+              </Link>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <PageGuidance
           title="ขั้นตอน"
@@ -523,7 +557,7 @@ function TimesheetPoMonthContent() {
               <p className="text-sm text-muted-foreground flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดรายการงวด…
               </p>
-            ) : locShellsSorted.length === 0 ? (
+            ) : locShellsForDisplay.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 ยังไม่มีหัวงวด — ตรวจว่า PO สัญญา (active) ทับช่วงเดือนนี้และมีบรรทัด PO ระบุสถานที่
               </p>
@@ -539,7 +573,7 @@ function TimesheetPoMonthContent() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {locShellsSorted.map((row) => (
+                    {locShellsForDisplay.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell className="align-top text-sm">
                           <div className="font-mono font-medium">{row.poCodeSnapshot || row.poId}</div>
@@ -608,7 +642,9 @@ function TimesheetPoMonthContent() {
               <div className="space-y-6 p-4">
                 {posRows.map((po) => {
                   const r = reviewByPoId.get(po.id);
-                  const isHi = highlightPo && highlightPo === po.id;
+                  const isHi =
+                    (!!highlightPo && highlightPo === po.id) ||
+                    (!!filterPoActiveBundleId && (bundlePoIdSet?.has(po.id) ?? false));
                   const bundle = bundleByPoId.get(po.id);
                   const photoReadOnly = isAttachmentReadonly(r);
                   const displayAtts = photoReadOnly

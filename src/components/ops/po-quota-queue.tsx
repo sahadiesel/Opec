@@ -50,7 +50,7 @@ export function buildPoActiveBundleRows(
   allWaves: Wave[] | undefined,
   activeMainContractIdSet: Set<string>,
   contractsLoaded: boolean,
-  variant: 'quota-queue' | 'assignment-landing',
+  variant: 'quota-queue' | 'assignment-landing' | 'timesheet-hub',
 ): PoQuotaQueueRow[] {
   if (!activePOs?.length || !allPOLines || !contractsLoaded || activeMainContractIdSet.size === 0) return [];
 
@@ -81,7 +81,7 @@ export function buildPoActiveBundleRows(
       }
     }
     const totals = aggregateActiveLineTotals(lineRows);
-    if (totals.required <= 0) continue;
+    if (variant !== 'timesheet-hub' && totals.required <= 0) continue;
     if (variant === 'quota-queue' && totals.openSlots <= 0) continue;
 
     const head = pos[0];

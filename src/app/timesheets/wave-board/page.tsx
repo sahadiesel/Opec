@@ -15,6 +15,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import Link from 'next/link';
 import { OPEN_WAVE_STATUSES_FOR_TIMESHEET } from '@/lib/constants/timesheet-wave';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -62,6 +63,8 @@ function WaveTimesheetBoardContent() {
   const [pendingDateChangeMs, setPendingDateChangeMs] = useState<number | null>(null);
 
   const filterPoId = (searchParams.get('poId') || '').trim() || null;
+  const filterPoActiveBundleIdRaw = (searchParams.get('poActiveBundleId') || '').trim() || null;
+  const filterPoActiveBundleId = filterPoActiveBundleIdRaw ? normalizePoActiveBundleId(filterPoActiveBundleIdRaw) : null;
   const monthFromQuery = (searchParams.get('month') || '').trim() || null;
 
   useEffect(() => {
@@ -89,6 +92,12 @@ function WaveTimesheetBoardContent() {
 
   const openPoIdSet = useMemo(() => new Set((pos ?? []).map((p) => p.id)), [pos]);
 
+  const poIdsInBundleFilter = useMemo(() => {
+    if (!filterPoActiveBundleId || !(pos ?? []).length) return null;
+    const ids = (pos ?? []).filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId).map((p) => p.id);
+    return ids.length ? new Set(ids) : null;
+  }, [filterPoActiveBundleId, pos]);
+
   const sortedWaves = useMemo(() => {
     const list = (allOpenWaves ?? []).filter((w) => openPoIdSet.has(w.poId));
     const poById = new Map((pos ?? []).map((p) => [p.id, p]));
@@ -101,17 +110,22 @@ function WaveTimesheetBoardContent() {
   }, [allOpenWaves, openPoIdSet, pos]);
 
   const sortedWavesForBoard = useMemo(() => {
-    if (!filterPoId) return sortedWaves;
-    return sortedWaves.filter((w) => w.poId === filterPoId);
-  }, [sortedWaves, filterPoId]);
+    if (filterPoId) return sortedWaves.filter((w) => w.poId === filterPoId);
+    if (poIdsInBundleFilter) return sortedWaves.filter((w) => poIdsInBundleFilter.has(w.poId));
+    return sortedWaves;
+  }, [sortedWaves, filterPoId, poIdsInBundleFilter]);
 
   const boardPoIds = useMemo(() => {
     const ids = new Set<string>();
     for (const w of sortedWavesForBoard) ids.add(w.poId);
-    const list = filterPoId ? (pos ?? []).filter((p) => p.id === filterPoId) : (pos ?? []);
+    const list = filterPoId
+      ? (pos ?? []).filter((p) => p.id === filterPoId)
+      : poIdsInBundleFilter
+        ? (pos ?? []).filter((p) => poIdsInBundleFilter.has(p.id))
+        : (pos ?? []);
     for (const p of list) ids.add(p.id);
     return [...ids];
-  }, [sortedWavesForBoard, pos, filterPoId]);
+  }, [sortedWavesForBoard, pos, filterPoId, poIdsInBundleFilter]);
 
   const posOrderedForBoard = useMemo(() => {
     const m = new Map<string, { po: PurchaseOrder; waves: Wave[] }>();
@@ -122,12 +136,16 @@ function WaveTimesheetBoardContent() {
       cur.waves.push(w);
       m.set(w.poId, cur);
     }
-    const list = filterPoId ? (pos ?? []).filter((p) => p.id === filterPoId) : (pos ?? []);
+    const list = filterPoId
+      ? (pos ?? []).filter((p) => p.id === filterPoId)
+      : poIdsInBundleFilter
+        ? (pos ?? []).filter((p) => poIdsInBundleFilter.has(p.id))
+        : (pos ?? []);
     for (const p of list) {
       if (!m.has(p.id)) m.set(p.id, { po: p, waves: [] as Wave[] });
     }
     return [...m.values()].sort((a, b) => a.po.poCode.localeCompare(b.po.poCode, 'th'));
-  }, [sortedWavesForBoard, pos, filterPoId]);
+  }, [sortedWavesForBoard, pos, filterPoId, poIdsInBundleFilter]);
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewTimesheets ? collection(firestore, 'workers') : null),
@@ -228,8 +246,16 @@ function WaveTimesheetBoardContent() {
             คีย์ลงเวลาแบบกลุ่ม (PO + assignment)
           </h1>
           <p className="text-muted-foreground text-lg max-w-4xl">
-            แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถวมาจาก mobilization ที่ช่วงเริ่ม–สิ้นสุดครอบคลุมวันที่เลือก — บันทึกร่าง DRAFT ที่นี่
-            ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
+            {filterPoActiveBundleId ? (
+              <>
+                กรองตาม <strong>ชุด PO Active</strong> — หนึ่งการ์ดต่อ PO ภายในชุดเดียวกัน · แถวมาจาก mobilization ที่ครอบคลุมวันที่เลือก
+              </>
+            ) : (
+              <>
+                แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถวมาจาก mobilization ที่ช่วงเริ่ม–สิ้นสุดครอบคลุมวันที่เลือก
+              </>
+            )}{' '}
+            บันทึกร่าง DRAFT ที่นี่ ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
             <Link href="/timesheets/po-month" className="text-primary font-semibold underline">
               เอกสาร timesheet ราย PO+เดือน
             </Link>
@@ -243,7 +269,7 @@ function WaveTimesheetBoardContent() {
             'PO = คำสั่งจ้าง; แถวลงเวลามาจาก mobilization ที่วันที่เลือกอยู่ในช่วง start–end ของ assignment',
             'วางบิล / payroll รอบเดือนให้ยึดเอกสาร PO+เดือนหลังอนุมัติ',
             'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
-            'ตัวกรอง URL: ?month=2026-04&poId=… — กำหนดวันที่ 1 ของงวดและ/หรือ PO',
+            'ตัวกรอง URL: ?month=2026-04&poId=… หรือ ?poActiveBundleId=customerId__OFFSHORE — กำหนดงวดและขอบเขต PO / ชุด PO Active',
             'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
           ]}
         />

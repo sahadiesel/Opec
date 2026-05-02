@@ -44,8 +44,8 @@ export default function HrApprovalCenterPage() {
             ศูนย์อนุมัติ (Approval Center)
           </h1>
           <p className="mt-2 text-muted-foreground max-w-2xl">
-            แยกตามประเภทงาน — <strong>Timesheet รอบเดือน</strong> ส่งจาก Payroll/Officer หลังตรวจตัวเลขในแอป (มุมมอง Wave
-            + เดือน) แล้วเข้าคิวให้ผู้จัดการอนุมัติก่อนนำไปคำนวณ payroll และออก Draft Invoice ให้ลูกค้า
+            แยกตามประเภทงาน — <strong>Timesheet รอบเดือน</strong> ส่งจาก Payroll/Officer หลังตรวจตัวเลขในแอป แล้วเข้าคิวให้ผู้จัดการอนุมัติ
+            (คิว timesheet จัด<strong className="text-foreground">กลุ่มตามชุด PO Active</strong>) ก่อนนำไปคำนวณ payroll และออก Draft Invoice ให้ลูกค้า
           </p>
         </div>
 

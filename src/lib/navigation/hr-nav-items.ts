@@ -58,7 +58,7 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
       { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
       {
         key: 'timesheets',
-        title: 'ลงเวลา (ภาพรวม PO / Wave → เปิด Wave Board)',
+        title: 'ลงเวลา (ศูนย์ตามชุด PO Active → Wave Board)',
         href: '/timesheets',
         icon: Grid3X3,
       },
@@ -81,7 +81,7 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
       },
       {
         key: 'hr_hub',
-        title: 'Timesheet รอบเดือน (Wave) — คิวรอตรวจ',
+        title: 'Timesheet รอบเดือน — คิวรอตรวจ (จัดกลุ่มชุด PO Active)',
         href: '/hr/timesheet-month-approval',
         icon: CalendarCheck,
       },

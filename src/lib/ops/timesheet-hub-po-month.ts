@@ -42,6 +42,23 @@ export function yearMonthsForPoAssignments(
   return [...u].sort((a, b) => a.localeCompare(b));
 }
 
+/** งวด yyyy-MM ที่ครอบคลุมจาก mobilization ของหลาย PO ในชุด PO Active เดียวกัน (+ alwaysIncludeYm เช่น เดือนปัจจุบัน) */
+export function yearMonthsForBundleAssignments(
+  assignments: readonly Pick<Assignment, 'poId' | 'startDate' | 'endDate'>[],
+  poIds: readonly string[],
+  alwaysIncludeYm?: string,
+): string[] {
+  const idSet = new Set(poIds.filter(Boolean));
+  if (!idSet.size) return alwaysIncludeYm && /^\d{4}-\d{2}$/.test(alwaysIncludeYm) ? [alwaysIncludeYm] : [];
+  const u = new Set<string>();
+  for (const a of assignments) {
+    if (!idSet.has(a.poId)) continue;
+    for (const ym of yearMonthsTouchingDateRange(a.startDate, a.endDate)) u.add(ym);
+  }
+  if (alwaysIncludeYm && /^\d{4}-\d{2}$/.test(alwaysIncludeYm)) u.add(alwaysIncludeYm);
+  return [...u].sort((a, b) => a.localeCompare(b));
+}
+
 export function assignmentOverlapsYearMonth(
   a: Pick<Assignment, 'startDate' | 'endDate'>,
   yearMonth: string,
@@ -79,6 +96,14 @@ export function wavesForPoInYearMonth(waves: Wave[], yearMonth: string): Wave[] 
 /** รหัสอ้างอิงงวด timesheet รายเดือน (แสดงคู่กับรหัสคำสั่งจ้าง + yyyy-MM) */
 export function formatPoMonthTimesheetDocLabel(po: Pick<PurchaseOrder, 'poCode'>, yearMonth: string): string {
   return `TS·${po.poCode}·${yearMonth}`;
+}
+
+/** ป้ายงวดเมื่อรวมหลาย PO ในชุด PO Active */
+export function formatBundleMonthTimesheetDocLabel(poCodes: readonly string[], yearMonth: string): string {
+  const codes = [...poCodes].filter(Boolean);
+  const head = codes.slice(0, 2).join(', ');
+  const extra = codes.length > 2 ? ` +${codes.length - 2}` : '';
+  return `TS·ชุด·${head}${extra}·${yearMonth}`;
 }
 
 export function formatThaiYearMonthLabel(yearMonth: string, locale: string = 'th-TH'): string {

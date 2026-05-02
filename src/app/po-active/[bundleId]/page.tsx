@@ -41,6 +41,12 @@ export default function PoActiveBundleDetailPage({
   const parsedRoute = useMemo(() => parseCanonicalPoActiveBundleRouteKey(normalizedBundleId), [normalizedBundleId]);
   const router = useRouter();
 
+  const timesheetWaveBoardThisMonthHref = useMemo(() => {
+    const d = new Date();
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return `/timesheets/wave-board?poActiveBundleId=${encodeURIComponent(normalizedBundleId)}&month=${encodeURIComponent(ym)}`;
+  }, [normalizedBundleId]);
+
   /** ลิงก์เก่า/พารามิเตอร์แบบ `id_OFFSHORE` → แปลงเป็น `id__OFFSHORE` ในแถบที่อยู่ให้ตรงกับเอกสาร Firestore */
   useEffect(() => {
     const raw = (bundleIdParam || '').trim();
@@ -169,9 +175,21 @@ export default function PoActiveBundleDetailPage({
               เอกสารรวม PO Active ต่อลูกค้าและโหมดงาน — ใช้มอบหมายและเป็นฐานมุมมอง timesheet / payroll
             </p>
           </div>
-          <Button variant="outline" asChild>
-            <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <Button variant="outline" asChild>
+              <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
+            </Button>
+            {!normalizedBundleId.startsWith('orphan:') ? (
+              <>
+                <Button variant="outline" asChild>
+                  <Link href="/timesheets">ศูนย์ลงเวลา</Link>
+                </Button>
+                <Button variant="default" asChild>
+                  <Link href={timesheetWaveBoardThisMonthHref}>กระดานลงเวลา (เดือนนี้)</Link>
+                </Button>
+              </>
+            ) : null}
+          </div>
         </div>
 
         {bundleLoading ? (
