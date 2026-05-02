@@ -15,6 +15,16 @@ export function poActiveBundleDocId(customerId: string, workMode: JobMode): stri
   return `${customerId}__${workMode}`;
 }
 
+/** คีย์ชุด PO Active สำหรับจัดกลุ่ม UI — ใช้ฟิลด์บน PO ถ้ามี ไม่เช่นนั้นคำนวณแบบเดียวกับเอกสาร `po_active_bundles` */
+export function resolvePoActiveBundleKeyForPo(po: PurchaseOrder): string {
+  const bid = (po.poActiveBundleId || '').trim();
+  if (bid) return bid;
+  const cid = (po.customerId || '').trim();
+  if (!cid) return `orphan:${po.id}`;
+  const mode = po.poWorkMode ?? 'OFFSHORE';
+  return poActiveBundleDocId(cid, mode);
+}
+
 /**
  * รวบรวม PO สายสัญญาที่ Active ของลูกค้า แยกตาม Onshore/Offshore — เขียน `po_active_bundles` และอัปเดต `poActiveBundleId` บนแต่ละ PO
  */

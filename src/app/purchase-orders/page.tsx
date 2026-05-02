@@ -600,7 +600,7 @@ function CustomerPOsPageContent() {
                                   <p>
                                     {po.poType === 'quotation'
                                       ? 'อนุมัติ PO — Active (ออกใบวางบิล/ใบกำกับ — ไม่มี Wave)'
-                                      : 'อนุมัติ PO — สถานะ Active (สร้าง Wave ได้)'}
+                                      : 'อนุมัติ PO — Active (เข้าชุด PO Active / คิวเติมโควต้า → มอบหมาย)'}
                                   </p>
                                 </TooltipContent>
                               </Tooltip>
@@ -668,18 +668,21 @@ function CustomerPOsPageContent() {
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
-                  <p className="font-bold">ระบุรายการสั่งจอง (Manage PO Lines)</p>
+                  <p className="font-bold">โควต้า PO และชุด PO Active</p>
                   <p className="text-muted-foreground text-xs">
-                    สายสัญญา: เพิ่มโควต้า → Wave → มอบหมาย / สายใบเสนอราคา: ขายสินค้าหรือบริการครั้งเดียวจบ (ไม่ใช้ Wave) — ทั้งสองสายเรียกเก็บผ่าน «รายการใบแจ้งหนี้» ก่อนออกใบกำกับภาษี
+                    สายสัญญา: กำหนดโควต้าตามบรรทัด PO — ระบบรวบรวมเป็น{' '}
+                    <strong>PO Active</strong> ต่อลูกค้าและ Onshore/Offshore — ใช้เป็นหน่วยเดียวกันสำหรับโควต้าที่ยังเปิดอยู่
+                    สายใบเสนอราคา: ขายครั้งเดียวจบ (ไม่ผ่าน PO Active แบบสายสัญญา) — เรียกเก็บผ่าน «รายการใบแจ้งหนี้» ก่อนใบกำกับภาษี
                   </p>
                 </div>
               </div>
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
                 <div>
-                  <p className="font-bold">สายสัญญา: Wave → มอบหมายคนงาน (สายใบเสนอราคาไม่ใช้ขั้นนี้)</p>
+                  <p className="font-bold">มอบหมาย → Mobilization → Timesheet</p>
                   <p className="text-muted-foreground text-xs">
-                    PO จากสัญญา — Wave + timesheet แล้วสร้างใบแจ้งหนี้ — PO จากใบเสนอราคาใช้รายการ PO Line → ใบแจ้งหนี้ → ใบกำกับภาษี → รับเงิน
+                    จาก <strong>คิวเติมโควต้า (PO Active)</strong> ไปมอบหมายคนตามชุดโควต้า — Mobilization แล้วลงเวลา — สรุปรายเดือน ส่งอนุมัติ ใบแจ้งหนี้ / payroll ตามลำดับงาน
+                    (เมนู Waves / Assignments ยังอยู่ภายใต้ Operations หากต้องใช้เส้นทางเดิม)
                   </p>
                 </div>
               </div>
@@ -687,10 +690,14 @@ function CustomerPOsPageContent() {
           </CardContent>
           <CardFooter className="pt-0 justify-end gap-2 flex-wrap">
             <Button variant="link" className="gap-2 text-primary font-bold" asChild>
-              <a href="/waves">ไปยังระบบ Waves (เวฟ) <ArrowRight className="h-4 w-4" /></a>
+              <Link href="/po-active">
+                ไปยังรายการ PO Active <ArrowRight className="h-4 w-4" />
+              </Link>
             </Button>
             <Button variant="link" className="gap-2 text-primary font-bold" asChild>
-              <a href="/assignments">ไปยังระบบการมอบหมายงาน (Assignments) <ArrowRight className="h-4 w-4" /></a>
+              <Link href="/po-active-quota-queue">
+                ไปยังคิวเติมโควต้า <ArrowRight className="h-4 w-4" />
+              </Link>
             </Button>
           </CardFooter>
         </Card>

@@ -32,7 +32,18 @@ import {
   timestampToHtmlDateValue,
   formatStoredDateRangeThaiBE,
 } from '@/lib/date-thai';
-import { Assignment, Worker, POLine, DeploymentStatus, PurchaseOrder, Wave, Position } from '@/lib/types';
+import {
+  Assignment,
+  Worker,
+  POLine,
+  DeploymentStatus,
+  PurchaseOrder,
+  Wave,
+  Position,
+  JobMode,
+  Customer,
+  MainContract,
+} from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -44,6 +55,9 @@ import {
   collectionGroup,
   getDocs,
   writeBatch,
+  setDoc,
+  query,
+  where,
 } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -73,7 +87,6 @@ import {
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { setDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/services/assignment-overlap';
@@ -81,6 +94,9 @@ import { positionListPrimaryName, type PositionDoc } from '@/lib/position-displa
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
 import { assignmentCountsTowardQuota, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
+import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
+import { buildPoActiveBundleRows, PoAssignmentBundleLandingPanel } from '@/components/ops/po-quota-queue';
 import { dedupeAssignmentsByWorkerAndWave } from '@/lib/ops/assignment-roster';
 import { MOBILIZATION_FULFILLMENT_SUBCOLLECTION } from '@/lib/store/mobilization-fulfillment';
 import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
@@ -99,6 +115,22 @@ function parseDialogLinePickKey(key: string): { poId: string; lineId: string } |
   const i = key.indexOf(DIALOG_LINE_KEY_SEP);
   if (i <= 0 || i + DIALOG_LINE_KEY_SEP.length >= key.length) return null;
   return { poId: key.slice(0, i), lineId: key.slice(i + DIALOG_LINE_KEY_SEP.length) };
+}
+
+function formatFirestoreWriteError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === 'object' && 'message' in e) return String((e as { message?: unknown }).message ?? '');
+  return typeof e === 'string' ? e : 'ไม่ทราบสาเหตุ';
+}
+
+function enrichFirestoreWriteMessage(raw: string, e: unknown): string {
+  if (e && typeof e === 'object' && 'code' in e) {
+    const code = String((e as { code?: string }).code || '');
+    if (code === 'permission-denied') {
+      return `${raw || 'Permission denied'} — ไม่มีสิทธิ์เขียน Firestore (mobilizations / number_sequences / audit_logs) หรือยังไม่ล็อกอินผู้ใช้ภายใน`;
+    }
+  }
+  return raw;
 }
 
 /** วันเริ่ม = วันมอบหมาย (วันนี้) · วันจบ = +1 เดือน — เก็บเป็น yyyy-mm-dd */
@@ -162,7 +194,7 @@ function AssignmentsPageContent() {
     if (!firestore || !isAuthorized) return null;
     return collectionGroup(firestore, 'po_lines');
   }, [firestore, isAuthorized]);
-  const { data: allPOLines } = useCollection<POLine>(poLinesQuery as any);
+  const { data: allPOLines, isLoading: isPOLinesLoading } = useCollection<POLine>(poLinesQuery as any);
 
   /** Backfill workerName บน mobilizations เก่า — client portal อ่านชื่อจากฟิลด์นี้เมื่ออ่าน workers ไม่ได้ */
   useEffect(() => {
@@ -204,18 +236,83 @@ function AssignmentsPageContent() {
   const [assignmentTableSearch, setAssignmentTableSearch] = useState('');
 
   const filterPoId = (searchParams.get('poId') || '').trim() || null;
+  const filterPoActiveBundleId = (searchParams.get('poActiveBundleId') || '').trim() || null;
   const filterPoLineId = (searchParams.get('poLineId') || '').trim() || null;
   const openDialogFromUrl = searchParams.get('openDialog') === '1';
+  /** โหมดเดิม: แสดงตารางมอบหมายทั้งระบบโดยไม่บังคับเลือกชุด PO Active ก่อน */
+  const showAllAssignmentsLegacy = searchParams.get('all') === '1';
   const openDialogKeyRef = useRef<string>('');
   const filterPO = useMemo(
     () => (filterPoId && allPOs?.length ? allPOs.find((p) => p.id === filterPoId) : undefined),
     [filterPoId, allPOs]
   );
 
+  const showAssignmentBundleLanding =
+    isAuthorized && !filterPoId && !filterPoActiveBundleId && !showAllAssignmentsLegacy;
+
+  const landingContractsQuery = useMemoFirebase(() => {
+    if (!firestore || !showAssignmentBundleLanding) return null;
+    return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
+  }, [firestore, showAssignmentBundleLanding]);
+
+  const { data: landingActiveContracts, isLoading: landingContractsLoading } = useCollection<MainContract>(
+    landingContractsQuery as any,
+  );
+
+  const landingCustomersQuery = useMemoFirebase(() => {
+    if (!firestore || !showAssignmentBundleLanding) return null;
+    return collection(firestore, 'customers');
+  }, [firestore, showAssignmentBundleLanding]);
+
+  const { data: landingCustomers, isLoading: landingCustomersLoading } = useCollection<Customer>(
+    landingCustomersQuery as any,
+  );
+
+  const landingMainContractIdSet = useMemo(() => {
+    if (landingActiveContracts === undefined) return new Set<string>();
+    return new Set((landingActiveContracts ?? []).map((c) => c.id).filter(Boolean));
+  }, [landingActiveContracts]);
+
+  const activePOsForLanding = useMemo(
+    () => (allPOs || []).filter((p) => p.status === 'active'),
+    [allPOs],
+  );
+
+  const assignmentLandingRows = useMemo(
+    () =>
+      buildPoActiveBundleRows(
+        activePOsForLanding,
+        allPOLines ?? undefined,
+        assignments ?? undefined,
+        allWaves ?? undefined,
+        landingMainContractIdSet,
+        landingActiveContracts !== undefined,
+        'assignment-landing',
+      ),
+    [
+      activePOsForLanding,
+      allPOLines,
+      assignments,
+      allWaves,
+      landingMainContractIdSet,
+      landingActiveContracts,
+    ],
+  );
+
+  const assignmentLandingLoading =
+    showAssignmentBundleLanding &&
+    (landingContractsLoading || landingCustomersLoading || isAssignmentsLoading || isPOLinesLoading);
+
   const contractActivePOs = useMemo(
     () => (allPOs || []).filter((p) => p.status === 'active' && (p.poType || 'contract') === 'contract'),
     [allPOs],
   );
+
+  /** ขอบเขต PO สำหรับหน้านี้ — กรองตามชุด PO Active เมื่อ URL มี poActiveBundleId (รวม PO ที่ยังไม่ sync ฟิลด์บนเอกสาร) */
+  const contractActivePOsForScope = useMemo(() => {
+    if (!filterPoActiveBundleId) return contractActivePOs;
+    return contractActivePOs.filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId);
+  }, [contractActivePOs, filterPoActiveBundleId]);
 
   const dialogPoLineFulfillmentFiltered = useMemo(() => {
     if (!filterPoId) return [];
@@ -229,7 +326,7 @@ function AssignmentsPageContent() {
 
   /** บรรทัด PO active ทุกตัวจากทุก PO สายสัญญา — ใช้เมื่อไม่ได้กรอง poId */
   const allFlatPoLinesForDialog = useMemo(() => {
-    const poById = new Map(contractActivePOs.map((p) => [p.id, p]));
+    const poById = new Map(contractActivePOsForScope.map((p) => [p.id, p]));
     const out: Array<{
       poId: string;
       poCode: string;
@@ -239,7 +336,7 @@ function AssignmentsPageContent() {
       requiredQty: number;
       remainingSlots: number;
     }> = [];
-    for (const po of contractActivePOs) {
+    for (const po of contractActivePOsForScope) {
       const rows = buildPoFulfillmentByLine(allPOLines, assignments, allWaves, po.id);
       const p = poById.get(po.id);
       for (const r of rows) {
@@ -265,7 +362,7 @@ function AssignmentsPageContent() {
       return a.positionLabel.localeCompare(b.positionLabel, 'th');
     });
     return out;
-  }, [contractActivePOs, allPOLines, assignments, allWaves, allPositions]);
+  }, [contractActivePOsForScope, allPOLines, assignments, allWaves, allPositions]);
 
   const parsedDialogLinePick = useMemo(
     () => parseDialogLinePickKey(dialogLinePickKey),
@@ -278,6 +375,10 @@ function AssignmentsPageContent() {
   const displayedAssignments = useMemo(() => {
     let list = assignments || [];
     if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
+    else if (filterPoActiveBundleId) {
+      const idSet = new Set(contractActivePOsForScope.map((p) => p.id));
+      list = list.filter((a) => idSet.has(a.poId));
+    }
     list = dedupeAssignmentsByWorkerAndWave(list);
     const q = assignmentTableSearch.trim().toLowerCase();
     if (!q) return list;
@@ -293,7 +394,16 @@ function AssignmentsPageContent() {
         (allPOs?.find((p) => p.id === a.poId)?.poCode || '').toLowerCase().includes(q)
       );
     });
-  }, [assignments, filterPoId, assignmentTableSearch, allWorkers, allWaves, allPOs]);
+  }, [
+    assignments,
+    filterPoId,
+    filterPoActiveBundleId,
+    contractActivePOsForScope,
+    assignmentTableSearch,
+    allWorkers,
+    allWaves,
+    allPOs,
+  ]);
 
   /** ใช้เฉพาะตอนยังไม่มีช่วงวันที่ — fallback */
   const occupiedWorkerIds = useMemo(
@@ -304,7 +414,7 @@ function AssignmentsPageContent() {
   const targetPositionIdForDialogLine = useMemo(() => {
     if (!effectiveDialogPoId || !effectiveDialogLineId || !allPOLines?.length) return '';
     const line = allPOLines.find((l) => l.id === effectiveDialogLineId && l.poId === effectiveDialogPoId);
-    return line?.positionId || '';
+    return (line?.positionId || '').trim();
   }, [effectiveDialogPoId, effectiveDialogLineId, allPOLines]);
 
   const availableWorkers = useMemo(() => {
@@ -313,7 +423,7 @@ function AssignmentsPageContent() {
     const rangeEnd = (endDate && endDate.trim()) || '';
     return (allWorkers || []).filter((w) => {
       if (w.readinessStatus !== 'READY') return false;
-      if (w.currentPositionId !== targetPositionIdForDialogLine) return false;
+      if ((w.currentPositionId || '').trim() !== targetPositionIdForDialogLine) return false;
       if (rangeStart && rangeEnd) {
         const { hasOverlap } = checkWorkerAssignmentOverlap(
           assignments || [],
@@ -341,6 +451,11 @@ function AssignmentsPageContent() {
     setSelectedWorkerId('');
   }, [dialogLinePickKey]);
 
+  /** เปลี่ยนช่วงวันที่หลังเลือกคน → ล้างคน เพื่อไม่ให้ยืนยันด้วยช่วงที่ไม่ผ่าน overlap / availableWorkers */
+  useEffect(() => {
+    setSelectedWorkerId('');
+  }, [startDate, endDate]);
+
   useEffect(() => {
     if (!openDialogFromUrl) {
       openDialogKeyRef.current = '';
@@ -355,6 +470,15 @@ function AssignmentsPageContent() {
     openDialogKeyRef.current = key;
     setIsDialogOpen(true);
   }, [openDialogFromUrl, filterPoId]);
+
+  /** เปิด dialog จากชุด PO Active (หลาย PO — กรองบรรทัดในชุดเดียวกัน) */
+  useEffect(() => {
+    if (!openDialogFromUrl || !filterPoActiveBundleId || filterPoId) return;
+    const key = `open|bundle|${filterPoActiveBundleId}`;
+    if (openDialogKeyRef.current === key) return;
+    openDialogKeyRef.current = key;
+    setIsDialogOpen(true);
+  }, [openDialogFromUrl, filterPoActiveBundleId, filterPoId]);
 
   /** กรอง PO เดียว: ถ้ามี poLineId ใน URL ให้เลือกบรรทัดนั้น — ไม่เช่นนั้นเลือกบรรทัดว่างอัตโนมัติ */
   useEffect(() => {
@@ -426,10 +550,25 @@ function AssignmentsPageContent() {
       });
       return;
     }
+    if (startDate > endDate) {
+      toast({
+        variant: 'destructive',
+        title: 'ช่วงวันที่ไม่ถูกต้อง',
+        description: 'วันเริ่มต้องไม่หลังวันจบงาน',
+      });
+      return;
+    }
 
     const worker = allWorkers?.find(w => w.id === selectedWorkerId);
     const po = allPOs?.find((p) => p.id === dialogPoIdResolved);
-    if (!worker || !po) return;
+    if (!worker || !po) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่พบข้อมูล',
+        description: !worker ? 'ไม่พบคนงานในระบบ' : 'ไม่พบ Customer PO — รีเฟรชหน้าแล้วลองใหม่',
+      });
+      return;
+    }
 
     // --- SUITABILITY VALIDATIONS ---
     
@@ -520,14 +659,16 @@ function AssignmentsPageContent() {
       return;
     }
 
-    const targetPositionId = poLine.positionId;
-    const position = allPositions?.find(p => p.id === targetPositionId);
-    const resolvedWorkMode = position?.jobMode || 'OFFSHORE';
+    const targetPositionId = (poLine.positionId || '').trim();
+    const position = allPositions?.find((p) => (p.id || '').trim() === targetPositionId);
+    const rawJobMode = (position?.jobMode ?? po.poWorkMode ?? 'OFFSHORE').toString().toUpperCase();
+    const resolvedWorkMode: JobMode = rawJobMode === 'ONSHORE' ? 'ONSHORE' : 'OFFSHORE';
 
     // 4. Position Suitability Check
-    if (worker.currentPositionId !== targetPositionId) {
+    const workerPosId = (worker.currentPositionId || '').trim();
+    if (workerPosId !== targetPositionId) {
       const targetPosName = position?.positionName || position?.positionNameTh || targetPositionId;
-      const workerPos = allPositions?.find((p) => p.id === worker.currentPositionId);
+      const workerPos = allPositions?.find((p) => (p.id || '').trim() === workerPosId);
       const workerPosName = (workerPos?.positionName || workerPos?.positionNameTh) || worker.currentPositionId;
       toast({ 
         variant: "destructive", 
@@ -543,37 +684,41 @@ function AssignmentsPageContent() {
     try {
       const tsScopeId = poTimesheetScopeId(po.id);
 
-      // Atomic Number Generation
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'assignment', { 
-        actor: currentUser.displayName 
+      const { code: finalNo } = await generateNextDocumentCode(firestore, 'assignment', {
+        actor: currentUser.displayName || currentUser.email || currentUser.id,
+        userId: currentUser.id,
       });
 
-      // Create in top-level 'mobilizations' collection
       const mobCollectionRef = collection(firestore, 'mobilizations');
       const newMobRef = doc(mobCollectionRef);
-      
+
       const workerDisplayName = mobilizationWorkerNameFromWorker(worker);
       const locFromLine = (poLine.workLocation || '').trim();
+      const nowTs = Date.now();
       const newAssignment: Assignment = {
         id: newMobRef.id,
-        assignmentNo: finalNo, // Apply unique sequential code
+        assignmentNo: finalNo,
         workerId: selectedWorkerId,
         workerName: workerDisplayName,
         poLineId: effectivePoLineId,
         poId: dialogPoIdResolved,
-        contractId: po?.contractId || '',
+        contractId: po.contractId || '',
         waveId: tsScopeId,
-        positionId: position?.id || poLine?.positionId || '', 
+        positionId: (position?.id || poLine.positionId || '').trim(),
         customerId: po.customerId,
         projectName: po.projectName || po.title,
-        workLocation: locFromLine || undefined,
-        workLocationUpdatedAt: locFromLine ? Date.now() : undefined,
-        workLocationUpdatedByUserId: locFromLine ? currentUser.id : undefined,
-        startDate: startDate,
-        endDate: endDate,
+        ...(locFromLine
+          ? {
+              workLocation: locFromLine,
+              workLocationUpdatedAt: nowTs,
+              workLocationUpdatedByUserId: currentUser.id,
+            }
+          : {}),
+        startDate,
+        endDate,
         deploymentStatus: 'DRAFT',
         clientApprovalStatus: 'NOT_SUBMITTED',
-        readinessStatus: 'ready', // Worker was validated as ready before creation
+        readinessStatus: 'ready',
         workMode: resolvedWorkMode,
         readinessSummary: {
           passportValid: 'pass',
@@ -583,21 +728,30 @@ function AssignmentsPageContent() {
           fitToWork: 'pass',
           ppeIssued: 'missing',
           toolsIssued: 'missing',
-          overlapClear: overlap.hasOverlap ? 'fail' : 'pass',
-          clientApproved: 'missing'
+          overlapClear: 'pass',
+          clientApproved: 'missing',
         },
-        notes: notes,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        createdAt: nowTs,
+        updatedAt: nowTs,
       };
 
-      setDocumentNonBlocking(newMobRef, newAssignment, { merge: true });
+      await setDoc(newMobRef, stripUndefinedForFirestore(newAssignment), { merge: true });
 
-      toast({ title: "มอบหมายงานสำเร็จ", description: `รหัสการมอบหมาย: ${finalNo}` });
+      toast({ title: 'มอบหมายงานสำเร็จ', description: `รหัสการมอบหมาย: ${finalNo}` });
       setIsDialogOpen(false);
     } catch (e) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกการมอบหมายได้" });
+      const raw = formatFirestoreWriteError(e);
+      const msg = enrichFirestoreWriteMessage(raw, e);
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกการมอบหมายไม่สำเร็จ',
+        description:
+          msg.length > 280
+            ? `${msg.slice(0, 280)}…`
+            : msg,
+      });
     } finally {
       setIsCreating(false);
     }
@@ -669,14 +823,24 @@ function AssignmentsPageContent() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <UserPlus className="h-8 w-8" /> การมอบหมายลูกจ้าง (Worker Assignments)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            กำหนดรายชื่อ <b>ลูกจ้างหน้างาน</b> ให้ชัดเจนต่อ <b>บรรทัดคำสั่งจ้าง (PO line)</b> ภายใต้สัญญา — ช่วงเริ่ม–สิ้นสุดอยู่ที่การมอบหมาย; ค่าแรงขาย/ต้นทุนสำหรับ payroll ยึดตามสัญญาและอัตราที่ลงในสัญญา (operations_manager / HR / Admin)
-          </p>
-        </div>
+        {!(isAuthorized && showAssignmentBundleLanding) ? (
+          <div className="flex flex-col gap-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <UserPlus className="h-8 w-8" /> การมอบหมายลูกจ้าง (Worker Assignments)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              กำหนดรายชื่อ <b>ลูกจ้างหน้างาน</b> ให้ชัดเจนต่อ <b>บรรทัดคำสั่งจ้าง (PO line)</b> ภายใต้สัญญา — ช่วงเริ่ม–สิ้นสุดอยู่ที่การมอบหมาย; ค่าแรงขาย/ต้นทุนสำหรับ payroll ยึดตามสัญญาและอัตราที่ลงในสัญญา (operations_manager / HR / Admin)
+              {showAllAssignmentsLegacy ? (
+                <span className="block mt-2 text-sm">
+                  กำลังใช้ <b>โหมดแสดงทั้งหมด</b> —{' '}
+                  <Link href="/assignments" className="font-semibold text-primary underline">
+                    กลับไปเลือกชุด PO Active
+                  </Link>
+                </span>
+              ) : null}
+            </p>
+          </div>
+        ) : null}
 
         {!isAuthorized ? (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
@@ -684,6 +848,28 @@ function AssignmentsPageContent() {
             <h2 className="text-xl font-bold">Access Pending (รอนุมัติสิทธิ์)</h2>
             <p className="text-muted-foreground max-w-md">บัญชีของคุณยังไม่ได้รับการกำหนดบทบาท กรุณาติดต่อผู้ดูแลระบบ</p>
           </div>
+        ) : showAssignmentBundleLanding ? (
+          <>
+            <div className="flex flex-col gap-2">
+              <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+                <UserPlus className="h-8 w-8" /> การมอบหมายลูกจ้าง — เลือกชุด PO Active
+              </h1>
+              <p className="text-muted-foreground text-lg max-w-3xl">
+                เลือก <b>หนึ่งชุด</b> (ลูกค้า + Onshore/Offshore) ก่อน — ระบบจะแสดงเฉพาะการมอบหมายและบรรทัด PO ในชุดนั้น
+              </p>
+              <p className="text-sm text-muted-foreground">
+                ต้องการมุมมองรายการทั้งระบบแบบเดิม?{' '}
+                <Link href="/assignments?all=1" className="font-semibold text-primary underline">
+                  เปิดโหมดแสดงทั้งหมด
+                </Link>
+              </p>
+            </div>
+            <PoAssignmentBundleLandingPanel
+              rows={assignmentLandingRows}
+              customers={landingCustomers ?? undefined}
+              loading={assignmentLandingLoading}
+            />
+          </>
         ) : (
           <>
             <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
@@ -700,6 +886,8 @@ function AssignmentsPageContent() {
             <PoFilterContextBanner
               poId={filterPoId}
               po={filterPO}
+              poActiveBundleId={filterPoActiveBundleId}
+              bundlePoCodes={contractActivePOsForScope.map((p) => p.poCode)}
               listBasePath="/assignments"
               moduleLabel="Assignments"
             />
@@ -731,6 +919,10 @@ function AssignmentsPageContent() {
                       {filterPoId ? (
                         <>
                           เลือก <strong>บรรทัด PO / ตำแหน่ง</strong> ด้านล่าง — แสดงชัดเจนว่าตำแหน่งไหนว่างหรือเต็มตามโควต้า PO และตั้งช่วงวันที่มอบหมาย (ลงเวลาอิง PO + assignment)
+                        </>
+                      ) : filterPoActiveBundleId ? (
+                        <>
+                          กรองตาม <strong>ชุด PO Active</strong> — เลือกบรรทัด/ตำแหน่งด้านล่าง (รวมทุก PO ในลูกค้าและ Onshore/Offshore ชุดเดียวกัน · มีรหัส PO ในแต่ละบรรทัด)
                         </>
                       ) : (
                         <>
@@ -768,12 +960,12 @@ function AssignmentsPageContent() {
                         <>
                           <Label className="font-bold">Customer PO ที่ Active (สายสัญญา)</Label>
                           <div className="max-h-40 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2 text-sm">
-                            {contractActivePOs.length === 0 ? (
+                            {contractActivePOsForScope.length === 0 ? (
                               <p className="py-2 text-center text-xs text-muted-foreground">
                                 ไม่มี PO สายสัญญาที่ Active — อนุมัติ PO ที่เมนู Customer PO ก่อน
                               </p>
                             ) : (
-                              contractActivePOs.map((p) => (
+                              contractActivePOsForScope.map((p) => (
                                 <div
                                   key={p.id}
                                   className="flex flex-wrap gap-x-2 gap-y-0.5 border-b border-border/50 py-2 text-xs last:border-0 last:pb-0"
@@ -786,7 +978,9 @@ function AssignmentsPageContent() {
                             )}
                           </div>
                           <p className="text-[10px] text-muted-foreground">
-                            ไม่ต้องเลือก PO ที่นี่ — ไปเลือกบรรทัด/ตำแหน่งในช่องด้านล่าง (ครอบคลุมทุก PO)
+                            {filterPoActiveBundleId
+                              ? 'ชุด PO Active นี้ — เลือกบรรทัด/ตำแหน่งในช่องด้านล่าง'
+                              : 'ไม่ต้องเลือก PO ที่นี่ — ไปเลือกบรรทัด/ตำแหน่งในช่องด้านล่าง (ครอบคลุมทุก PO)'}
                           </p>
                         </>
                       )}
@@ -795,7 +989,9 @@ function AssignmentsPageContent() {
                       <Label className="font-bold">
                         {filterPoId
                           ? 'เลือกบรรทัด PO / ตำแหน่ง (โควต้าตาม PO ที่กรอง)'
-                          : 'เลือกบรรทัด PO / ตำแหน่ง (ทุก PO · ตามโควต้าใน PO)'}
+                          : filterPoActiveBundleId
+                            ? 'เลือกบรรทัด PO / ตำแหน่ง (ในชุด PO Active ที่กรอง)'
+                            : 'เลือกบรรทัด PO / ตำแหน่ง (ทุก PO · ตามโควต้าใน PO)'}
                       </Label>
                       <Select
                         value={dialogLinePickKey || undefined}
@@ -811,7 +1007,7 @@ function AssignmentsPageContent() {
                             placeholder={
                               filterPoId
                                 ? 'เลือกบรรทัดที่ยังว่าง...'
-                                : contractActivePOs.length === 0
+                                : contractActivePOsForScope.length === 0
                                   ? 'ไม่มี PO Active'
                                   : 'เลือกบรรทัด / ตำแหน่ง...'
                             }

@@ -37,8 +37,9 @@ export default function PoActiveQuotaQueuePage() {
           <Info className="h-4 w-4" />
           <AlertTitle>คิวมอบหมายจาก PO Active</AlertTitle>
           <AlertDescription className="text-sm">
-            ตัวเลขจากบรรทัด PO และ Mobilization (assignment) — PO สายสัญญาที่สัญญาหลักยัง active และยังมีช่องว่าง
-            มอบหมายได้จากปุ่ม Assign ต่อบรรทัด โดยไม่ต้องสร้าง Wave
+            แต่ละแถวคือ <strong className="font-semibold text-foreground">หนึ่งชุด PO Active</strong> (ลูกค้า + Onshore/Offshore)
+            — โควต้ารวมจากทุก Customer PO ในชุดเดียวกัน มีปุ่มมอบหมายหนึ่งปุ่มต่อชุด ตารางย่อยแยกตาม PO แต่ละใบ
+            (สายสัญญาที่สัญญาหลักยัง active และยังมีช่องว่าง — ไม่บังคับสร้าง Wave)
           </AlertDescription>
         </Alert>
 
