@@ -56,7 +56,10 @@ import {
   aggregateActiveLineTotals,
   buildPoFulfillmentByLine,
 } from '@/lib/ops/po-fulfillment-read-model';
-import { rebuildAllPoActiveBundlesForCustomer } from '@/lib/ops/po-active-bundle';
+import {
+  normalizePoActiveBundleId,
+  rebuildAllPoActiveBundlesForCustomer,
+} from '@/lib/ops/po-active-bundle';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -454,7 +457,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2 pt-0">
               <Button size="sm" asChild>
-                <Link href={`/po-active/${encodeURIComponent(po.poActiveBundleId)}`}>เปิด PO Active</Link>
+                <Link
+                  href={`/po-active/${encodeURIComponent(normalizePoActiveBundleId(po.poActiveBundleId))}`}
+                >
+                  เปิด PO Active
+                </Link>
               </Button>
               <Button size="sm" variant="outline" asChild>
                 <Link href={`/assignments?poId=${encodeURIComponent(id)}&openDialog=1`}>มอบหมาย PO นี้</Link>

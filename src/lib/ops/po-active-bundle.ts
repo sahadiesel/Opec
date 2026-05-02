@@ -15,10 +15,44 @@ export function poActiveBundleDocId(customerId: string, workMode: JobMode): stri
   return `${customerId}__${workMode}`;
 }
 
+/**
+ * แปลงคีย์จาก query/path ที่มีขีดเดียวก่อนโหมด (`customer_OFFSHORE`) ให้เป็น canonical `customer__OFFSHORE`
+ * — ลดกรณีลิงก์ผิดแล้วโหลดเอกสาร bundle ไม่ตรง
+ */
+export function normalizePoActiveBundleId(raw: string): string {
+  const s = (raw || '').trim();
+  if (!s || s.startsWith('orphan:')) return s;
+  if (s.endsWith('__ONSHORE') || s.endsWith('__OFFSHORE')) return s;
+  if (s.endsWith('_ONSHORE') && !s.endsWith('__ONSHORE')) {
+    return `${s.slice(0, -'_ONSHORE'.length)}__ONSHORE`;
+  }
+  if (s.endsWith('_OFFSHORE') && !s.endsWith('__OFFSHORE')) {
+    return `${s.slice(0, -'_OFFSHORE'.length)}__OFFSHORE`;
+  }
+  return s;
+}
+
+/** แยก customer + โหมดจาก id แบบ `{customerId}__ONSHORE|OFFSHORE` (หลัง normalize) */
+export function parseCanonicalPoActiveBundleRouteKey(
+  rawBundleId: string,
+): { customerId: string; workMode: JobMode } | null {
+  const id = normalizePoActiveBundleId(rawBundleId);
+  if (!id || id.startsWith('orphan:')) return null;
+  const sep = '__';
+  const i = id.lastIndexOf(sep);
+  if (i <= 0 || i + sep.length >= id.length) return null;
+  const customerId = id.slice(0, i).trim();
+  const modeRaw = id.slice(i + sep.length).trim().toUpperCase();
+  if (!customerId) return null;
+  if (modeRaw !== 'ONSHORE' && modeRaw !== 'OFFSHORE') return null;
+  return { customerId, workMode: modeRaw as JobMode };
+}
+
 /** คีย์ชุด PO Active สำหรับจัดกลุ่ม UI — ใช้ฟิลด์บน PO ถ้ามี ไม่เช่นนั้นคำนวณแบบเดียวกับเอกสาร `po_active_bundles` */
 export function resolvePoActiveBundleKeyForPo(po: PurchaseOrder): string {
   const bid = (po.poActiveBundleId || '').trim();
-  if (bid) return bid;
+  /** normalize เพื่อให้เทียบกับ URL / `po_active_bundles` id แบบ `{customerId}__ONSHORE|OFFSHORE` ได้แม้ข้อมูลเก่าใช้ `_OFFSHORE` ขีดเดียว */
+  if (bid) return normalizePoActiveBundleId(bid);
   const cid = (po.customerId || '').trim();
   if (!cid) return `orphan:${po.id}`;
   const mode = po.poWorkMode ?? 'OFFSHORE';

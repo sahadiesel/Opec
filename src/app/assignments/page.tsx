@@ -94,7 +94,7 @@ import { positionListPrimaryName, type PositionDoc } from '@/lib/position-displa
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
 import { assignmentCountsTowardQuota, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
-import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import { buildPoActiveBundleRows, PoAssignmentBundleLandingPanel } from '@/components/ops/po-quota-queue';
 import { dedupeAssignmentsByWorkerAndWave } from '@/lib/ops/assignment-roster';
@@ -236,7 +236,10 @@ function AssignmentsPageContent() {
   const [assignmentTableSearch, setAssignmentTableSearch] = useState('');
 
   const filterPoId = (searchParams.get('poId') || '').trim() || null;
-  const filterPoActiveBundleId = (searchParams.get('poActiveBundleId') || '').trim() || null;
+  const filterPoActiveBundleIdRaw = (searchParams.get('poActiveBundleId') || '').trim() || null;
+  const filterPoActiveBundleId = filterPoActiveBundleIdRaw
+    ? normalizePoActiveBundleId(filterPoActiveBundleIdRaw)
+    : null;
   const filterPoLineId = (searchParams.get('poLineId') || '').trim() || null;
   const openDialogFromUrl = searchParams.get('openDialog') === '1';
   /** โหมดเดิม: แสดงตารางมอบหมายทั้งระบบโดยไม่บังคับเลือกชุด PO Active ก่อน */

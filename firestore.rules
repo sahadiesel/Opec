@@ -758,6 +758,13 @@ service cloud.firestore {
       allow read, write: if isInternalUser();
     }
 
+    /** สรุปกลุ่ม PO Active ต่อลูกค้า + โหมดงาน (id = `{customerId}__ONSHORE|OFFSHORE`) — คิวโควต้าใช้ PO โดยตรงได้แม้ยังไม่มีแถวนี้ */
+    match /po_active_bundles/{id} {
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow create, update: if isInternalUser();
+      allow delete: if isAdmin();
+    }
+
     match /sales_contract_terms/{id} {
       allow read, write: if isInternalUser();
     }
@@ -830,11 +837,11 @@ service cloud.firestore {
     }
 
     match /positions/{id} {
-      allow read: if isInternalUser() || clientPortalUserActive();
+      allow read: if isInternalUser() || isInternalStaffDoc() || clientPortalUserActive();
       allow write: if isInternalUser();
     }
     match /positions/{positionId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /labor_cost_contract_terms/{id} {
@@ -1055,7 +1062,7 @@ service cloud.firestore {
     }
 
     match /{path=**}/po_lines/{lineId} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /{path=**}/position_rates/{rateId} {

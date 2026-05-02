@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Layers, ShoppingCart } from 'lucide-react';
 import type { PurchaseOrder } from '@/lib/types';
+import { normalizePoActiveBundleId } from '@/lib/ops/po-active-bundle';
 
 type Props = {
   poId: string | null;
@@ -20,10 +21,11 @@ type Props = {
 };
 
 function parsePoActiveBundleDocId(id: string): { customerId: string; workMode: string } | null {
+  const normalized = normalizePoActiveBundleId(id);
   const sep = '__';
-  const i = id.lastIndexOf(sep);
-  if (i <= 0 || i + sep.length >= id.length) return null;
-  return { customerId: id.slice(0, i), workMode: id.slice(i + sep.length) };
+  const i = normalized.lastIndexOf(sep);
+  if (i <= 0 || i + sep.length >= normalized.length) return null;
+  return { customerId: normalized.slice(0, i), workMode: normalized.slice(i + sep.length) };
 }
 
 function workModeShortLabel(mode: string): string {
@@ -44,7 +46,7 @@ export function PoFilterContextBanner({
   listBasePath,
   moduleLabel,
 }: Props) {
-  const bundleId = (poActiveBundleId || '').trim();
+  const bundleId = normalizePoActiveBundleId((poActiveBundleId || '').trim());
   if (bundleId) {
     const parsed = parsePoActiveBundleDocId(bundleId);
     const codes = (bundlePoCodes || []).filter(Boolean);

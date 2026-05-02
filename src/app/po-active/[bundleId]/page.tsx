@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useMemo } from 'react';
+import { use, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
@@ -25,32 +26,49 @@ import {
   aggregateActiveLineTotals,
   buildPoFulfillmentByLine,
 } from '@/lib/ops/po-fulfillment-read-model';
+import {
+  normalizePoActiveBundleId,
+  parseCanonicalPoActiveBundleRouteKey,
+  resolvePoActiveBundleKeyForPo,
+} from '@/lib/ops/po-active-bundle';
 export default function PoActiveBundleDetailPage({
   params,
 }: {
   params: Promise<{ bundleId: string }>;
 }) {
-  const { bundleId } = use(params);
+  const { bundleId: bundleIdParam } = use(params);
+  const normalizedBundleId = useMemo(() => normalizePoActiveBundleId(bundleIdParam), [bundleIdParam]);
+  const parsedRoute = useMemo(() => parseCanonicalPoActiveBundleRouteKey(normalizedBundleId), [normalizedBundleId]);
+  const router = useRouter();
+
+  /** ลิงก์เก่า/พารามิเตอร์แบบ `id_OFFSHORE` → แปลงเป็น `id__OFFSHORE` ในแถบที่อยู่ให้ตรงกับเอกสาร Firestore */
+  useEffect(() => {
+    const raw = (bundleIdParam || '').trim();
+    if (!raw || raw.startsWith('orphan:')) return;
+    const canon = normalizePoActiveBundleId(raw);
+    if (canon && canon !== raw) {
+      router.replace(`/po-active/${encodeURIComponent(canon)}`);
+    }
+  }, [bundleIdParam, router]);
+
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
 
   const canSee = useMemo(() => !!currentUser && canView(currentUser, 'customer_pos'), [currentUser]);
 
   const bundleRef = useMemoFirebase(
-    () => (firestore && canSee ? doc(firestore, 'po_active_bundles', bundleId) : null),
-    [firestore, bundleId, canSee],
+    () => (firestore && canSee ? doc(firestore, 'po_active_bundles', normalizedBundleId) : null),
+    [firestore, normalizedBundleId, canSee],
   );
   const { data: bundle, isLoading: bundleLoading } = useDoc<PoActiveBundle>(bundleRef as any);
 
-  const customerId = bundle?.customerId;
+  const customerId = bundle?.customerId ?? parsedRoute?.customerId;
 
   const customerRef = useMemoFirebase(
     () => (firestore && canSee && customerId ? doc(firestore, 'customers', customerId) : null),
     [firestore, customerId, canSee],
   );
   const { data: customer } = useDoc<Customer>(customerRef as any);
-
-  const poIdsSet = useMemo(() => new Set(bundle?.poIds ?? []), [bundle?.poIds]);
 
   const activePosQuery = useMemoFirebase(() => {
     if (!firestore || !canSee || !customerId) return null;
@@ -62,6 +80,15 @@ export default function PoActiveBundleDetailPage({
   }, [firestore, customerId, canSee]);
 
   const { data: customerActivePos } = useCollection<PurchaseOrder>(activePosQuery as any);
+
+  const poIdsSet = useMemo(() => {
+    if (bundle?.poIds?.length) return new Set(bundle.poIds);
+    if (!parsedRoute || !normalizedBundleId) return new Set<string>();
+    const list = customerActivePos ?? [];
+    return new Set(
+      list.filter((p) => resolvePoActiveBundleKeyForPo(p) === normalizedBundleId).map((p) => p.id),
+    );
+  }, [bundle?.poIds, parsedRoute, normalizedBundleId, customerActivePos]);
 
   const bundlePos = useMemo(() => {
     const list = customerActivePos ?? [];
@@ -136,7 +163,7 @@ export default function PoActiveBundleDetailPage({
             <h1 className="text-2xl font-bold tracking-tight flex flex-wrap items-center gap-2">
               <Layers className="h-7 w-7 text-primary shrink-0" />
               <span className="truncate">PO Active — {customer?.name || customerId || '…'}</span>
-              <Badge variant="outline">{bundle?.workMode ?? '—'}</Badge>
+              <Badge variant="outline">{bundle?.workMode ?? parsedRoute?.workMode ?? '—'}</Badge>
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
               เอกสารรวม PO Active ต่อลูกค้าและโหมดงาน — ใช้มอบหมายและเป็นฐานมุมมอง timesheet / payroll
@@ -152,7 +179,7 @@ export default function PoActiveBundleDetailPage({
             <Loader2 className="h-6 w-6 animate-spin" />
             กำลังโหลดเอกสาร…
           </div>
-        ) : !bundle ? (
+        ) : !bundle && !parsedRoute ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground text-sm">
               ไม่พบกลุ่ม PO Active นี้ — อาจถูกลบหรือยังไม่ได้ซิงก์หลังอนุมัติ PO
@@ -165,7 +192,7 @@ export default function PoActiveBundleDetailPage({
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">จำนวน PO ในกลุ่ม</CardTitle>
                 </CardHeader>
-                <CardContent className="text-2xl font-bold">{bundle.poIds?.length ?? 0}</CardContent>
+                <CardContent className="text-2xl font-bold">{poIdsSet.size}</CardContent>
               </Card>
               <Card>
                 <CardHeader className="pb-2">
