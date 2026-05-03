@@ -341,7 +341,7 @@ export default function HRDashboardPage() {
           <PayrollScopeTag scope="worker" showHint={false} className="shrink-0" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard title="ลูกจ้างทั้งหมด" value={stats.total} sub="Total Workers" icon={Users} colorClass="border-l-blue-600" />
           <StatCard title="พร้อมใช้งาน" value={stats.ready} sub="Ready Workers" icon={CheckCircle2} colorClass="border-l-green-600" />
           <StatCard title="ขาดใบรับรอง" value={stats.missingCert} sub="Missing Certs" icon={AlertTriangle} colorClass="border-l-orange-500" />

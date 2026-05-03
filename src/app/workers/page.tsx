@@ -4,23 +4,24 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  Plus, 
-  Search, 
-  CheckCircle2, 
-  AlertCircle, 
-  FileQuestion, 
-  ShieldAlert, 
-  Trash2, 
-  HardHat, 
-  ChevronRight, 
-  Filter, 
-  ArrowRight,
+import {
+  Plus,
+  Search,
+  CheckCircle2,
+  AlertCircle,
+  FileQuestion,
+  ShieldAlert,
+  Trash2,
+  HardHat,
+  ChevronRight,
+  ChevronDown,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
   Info,
   Loader2,
-  Users,
   Package,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -49,6 +50,13 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
@@ -61,6 +69,44 @@ import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/servic
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
+
+type WorkerSortKey = 'name' | 'hours';
+type WorkerSortDir = 'asc' | 'desc';
+
+function workerDisplayNameKey(w: Worker): string {
+  return `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.workerCode || w.id;
+}
+
+function compareWorkersByName(a: Worker, b: Worker, dir: WorkerSortDir): number {
+  const ka = workerDisplayNameKey(a);
+  const kb = workerDisplayNameKey(b);
+  const c = ka.localeCompare(kb, 'th', { sensitivity: 'base', numeric: true });
+  if (c !== 0) return dir === 'asc' ? c : -c;
+  const code = (a.workerCode || '').localeCompare(b.workerCode || '', 'th', { numeric: true });
+  if (code !== 0) return dir === 'asc' ? code : -code;
+  const idc = a.id.localeCompare(b.id);
+  return dir === 'asc' ? idc : -idc;
+}
+
+function workerTotalHours(
+  w: Worker,
+  hoursMap: Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>,
+): number {
+  return Number(hoursMap.get(w.id)?.totalHours || w.totalWorkedHours || 0);
+}
+
+/** ชั่วโมง: desc = มาก→น้อย, asc = น้อย→มาก — เทียบเท่ากันเรียงชื่อ A–Z */
+function compareWorkersByHours(
+  a: Worker,
+  b: Worker,
+  dir: WorkerSortDir,
+  hoursMap: Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>,
+): number {
+  const ha = workerTotalHours(a, hoursMap);
+  const hb = workerTotalHours(b, hoursMap);
+  if (ha !== hb) return dir === 'asc' ? ha - hb : hb - ha;
+  return compareWorkersByName(a, b, 'asc');
+}
 
 function getInitialNewWorker(): Partial<Worker> {
   return {
@@ -147,15 +193,6 @@ export default function WorkersPage() {
     return bucket;
   }, [allTimesheets]);
 
-  const sortedWorkers = useMemo(() => {
-    return [...(workers || [])].sort((a, b) => {
-      const aHours = Number(workerHoursById.get(a.id)?.totalHours || a.totalWorkedHours || 0);
-      const bHours = Number(workerHoursById.get(b.id)?.totalHours || b.totalWorkedHours || 0);
-      if (bHours !== aHours) return bHours - aHours;
-      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
-    });
-  }, [workers, workerHoursById]);
-
   useEffect(() => {
     if (!firestore || !workers || workers.length === 0) return;
     workers.forEach((w) => {
@@ -185,12 +222,52 @@ export default function WorkersPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [positionFilter, setPositionFilter] = useState('all');
+  const [workerSearchQuery, setWorkerSearchQuery] = useState('');
+  const [workerSort, setWorkerSort] = useState<{ key: WorkerSortKey; dir: WorkerSortDir }>({
+    key: 'name',
+    dir: 'asc',
+  });
   const [newWorker, setNewWorker] = useState<Partial<Worker>>(getInitialNewWorker);
 
+  const positionFilteredWorkers = useMemo(() => {
+    if (positionFilter === 'all') return workers ?? [];
+    return (workers ?? []).filter((w) => w.currentPositionId === positionFilter);
+  }, [workers, positionFilter]);
+
+  const searchFilteredWorkers = useMemo(() => {
+    const q = workerSearchQuery.trim().toLowerCase();
+    if (!q) return positionFilteredWorkers;
+    return positionFilteredWorkers.filter((w) => {
+      const name = `${w.firstName || ''} ${w.lastName || ''}`.toLowerCase();
+      const nid = (w.thaiNationalId || '').toLowerCase();
+      const code = (w.workerCode || '').toLowerCase();
+      return name.includes(q) || nid.includes(q) || code.includes(q);
+    });
+  }, [positionFilteredWorkers, workerSearchQuery]);
+
   const filteredWorkers = useMemo(() => {
-    if (positionFilter === 'all') return sortedWorkers;
-    return sortedWorkers.filter((w) => w.currentPositionId === positionFilter);
-  }, [sortedWorkers, positionFilter]);
+    const list = [...searchFilteredWorkers];
+    list.sort((a, b) =>
+      workerSort.key === 'name'
+        ? compareWorkersByName(a, b, workerSort.dir)
+        : compareWorkersByHours(a, b, workerSort.dir, workerHoursById),
+    );
+    return list;
+  }, [searchFilteredWorkers, workerSort, workerHoursById]);
+
+  const toggleNameColumnSort = () => {
+    setWorkerSort((prev) =>
+      prev.key === 'name' ? { key: 'name', dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key: 'name', dir: 'asc' },
+    );
+  };
+
+  const toggleHoursColumnSort = () => {
+    setWorkerSort((prev) =>
+      prev.key === 'hours'
+        ? { key: 'hours', dir: prev.dir === 'desc' ? 'asc' : 'desc' }
+        : { key: 'hours', dir: 'desc' },
+    );
+  };
 
   const handleCreate = async () => {
     if (!canCreateWorkers) {
@@ -334,11 +411,32 @@ export default function WorkersPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามชื่อหรือเลขบัตรประชาชน..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหาตามชื่อหรือเลขบัตรประชาชน..."
+                className="pl-9 h-11"
+                value={workerSearchQuery}
+                onChange={(e) => setWorkerSearchQuery(e.target.value)}
+                aria-label="ค้นหาคนงาน"
+              />
             </div>
-            <Button variant="outline" className="gap-2 h-11">
-              <Filter className="h-4 w-4" /> ตัวกรอง (Filter)
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" className="h-11 gap-2 shrink-0">
+                  เรียงลำดับ
+                  <ChevronDown className="h-4 w-4 opacity-70" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[14rem]">
+                <DropdownMenuItem onClick={() => setWorkerSort({ key: 'name', dir: 'asc' })}>ชื่อ A–Z</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setWorkerSort({ key: 'name', dir: 'desc' })}>ชื่อ Z–A</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setWorkerSort({ key: 'hours', dir: 'desc' })}>
+                  ชั่วโมง มาก → น้อย
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setWorkerSort({ key: 'hours', dir: 'asc' })}>
+                  ชั่วโมง น้อย → มาก
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Select value={positionFilter} onValueChange={setPositionFilter}>
               <SelectTrigger className="h-11 min-w-[220px]">
                 <SelectValue placeholder="กรองตามตำแหน่ง" />
@@ -429,8 +527,48 @@ export default function WorkersPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">รหัส / ชื่อคนงาน (Field Worker)</TableHead>
-                    <TableHead className="font-bold">ชั่วโมงสะสม (Total Hours)</TableHead>
+                    <TableHead className="py-4 pl-6">
+                      <button
+                        type="button"
+                        onClick={toggleNameColumnSort}
+                        className={cn(
+                          'inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-1 -ml-1 text-left text-sm font-bold',
+                          'hover:bg-muted/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                        )}
+                      >
+                        <span className="min-w-0 leading-snug">รหัส / ชื่อคนงาน (Field Worker)</span>
+                        {workerSort.key === 'name' ? (
+                          workerSort.dir === 'asc' ? (
+                            <ArrowUp className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                          ) : (
+                            <ArrowDown className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60" aria-hidden />
+                        )}
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={toggleHoursColumnSort}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-md px-1 py-1 text-left text-sm font-bold',
+                          'hover:bg-muted/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                        )}
+                      >
+                        ชั่วโมงสะสม (Total Hours)
+                        {workerSort.key === 'hours' ? (
+                          workerSort.dir === 'desc' ? (
+                            <ArrowDown className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                          ) : (
+                            <ArrowUp className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                          )
+                        ) : (
+                          <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60" aria-hidden />
+                        )}
+                      </button>
+                    </TableHead>
                     <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
                     <TableHead className="font-bold min-w-[200px]">ความพร้อม (Readiness)</TableHead>
                     <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
@@ -491,7 +629,13 @@ export default function WorkersPage() {
                   })}
                   {(!filteredWorkers || filteredWorkers.length === 0) && !isCollectionLoading && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก</TableCell>
+                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">
+                        {(workers?.length ?? 0) === 0
+                          ? 'ยังไม่มีข้อมูลคนงานในระบบ'
+                          : workerSearchQuery.trim()
+                            ? 'ไม่พบข้อมูลตามคำค้นหา — ลองคำอื่นหรือล้างช่องค้นหา'
+                            : 'ไม่พบข้อมูลคนงานตามตำแหน่งที่เลือก'}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

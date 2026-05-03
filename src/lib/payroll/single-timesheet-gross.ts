@@ -5,12 +5,15 @@ import { collection, doc, getDoc, getDocs, type Firestore } from 'firebase/fires
 import type { DailyTimesheet, MainContract, Position, PurchaseOrder, Worker } from '@/lib/types';
 import { loadWorkersAndPositionsForPayroll } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
+import type { WorkerGlobalLaborContext } from '@/lib/payroll/worker-global-labor-policy';
+import { fetchWorkerGlobalLaborContextFromFirestore } from '@/lib/payroll/worker-global-labor-policy';
 
 export type SingleTimesheetGrossContext = {
   contractMap: Map<string, MainContract>;
   poLineById: Map<string, Record<string, unknown>>;
   workerById: Map<string, Worker>;
   posById: Map<string, Position>;
+  workerGlobalLabor: WorkerGlobalLaborContext;
 };
 
 /** Gross หนึ่งใบ — สอดคล้อง loop ใน PayrollService.generatePayrollBatch */
@@ -26,6 +29,7 @@ export function computeSingleTimesheetGrossLikeBatch(
     linePosition: linePos,
     poLine,
     contractMap: ctx.contractMap,
+    workerGlobalLabor: ctx.workerGlobalLabor,
   });
   return r.gross > 0 ? r.gross : null;
 }
@@ -75,5 +79,7 @@ export async function buildSingleTimesheetGrossContext(
     }),
   );
 
-  return { contractMap, poLineById, workerById, posById };
+  const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(db);
+
+  return { contractMap, poLineById, workerById, posById, workerGlobalLabor };
 }

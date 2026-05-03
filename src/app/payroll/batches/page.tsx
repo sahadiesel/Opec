@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, Suspense } from 'react';
+import { useState, useMemo, useCallback, useEffect, Suspense } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
-import { PayrollBatch, PayrollPeriod, PayrollPeriodStatus, User } from '@/lib/types';
+import { PayrollBatch, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, User } from '@/lib/types';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -46,6 +46,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,6 +67,20 @@ import {
   shouldFilterToAccountingPayoutQueue,
   WORKER_BATCH_STATUSES_FOR_ACCOUNTING_PAYOUT,
 } from '@/lib/payroll/accounting-payout-queue';
+import {
+  ensureWorkerMonthlyPayrollPeriodForYearMonth,
+  parseYearMonthFromWorkerPayrollPeriodId,
+  workerPayrollPeriodIdForYearMonth,
+} from '@/lib/timesheet/po-month-timesheet-bridge';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
+
+const PO_MONTH_GATE_STATUSES = new Set<PoMonthTimesheetReview['status']>([
+  'approved',
+  'entry_locked',
+  'pending_manager_review',
+]);
+
+const PO_MONTH_REVIEWS_LIMIT = 120;
 
 function PayrollBatchesPageContent() {
   const router = useRouter();
@@ -110,6 +125,13 @@ function PayrollBatchesPageContent() {
     searchParams,
     isSimpleAcc,
   ]);
+
+  /** ลิงก์เดิมจากเมนูบัญชี (?payout=1) → หน้าคิวทำจ่ายใต้ /accounting */
+  useEffect(() => {
+    if (searchParams.get('payout') === '1') {
+      router.replace('/accounting/worker-payroll');
+    }
+  }, [searchParams, router]);
   const showGenerateBatch = canCreateWorkerPayroll && canPrepareWorkerPayroll;
 
   const batchQuery = useMemoFirebase(() => {
@@ -130,10 +152,48 @@ function PayrollBatchesPageContent() {
   }, [firestore, canAccessBatchesPage]);
   const { data: periods } = useCollection<PayrollPeriod>(periodsQuery as any);
 
+  const poMonthReviewsQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccessBatchesPage) return null;
+    return query(
+      collection(firestore, 'po_month_timesheet_reviews'),
+      orderBy('yearMonth', 'desc'),
+      limit(PO_MONTH_REVIEWS_LIMIT),
+    );
+  }, [firestore, canAccessBatchesPage]);
+  const { data: poMonthReviews } = useCollection<PoMonthTimesheetReview>(poMonthReviewsQuery as any);
+
   const selectablePeriods = useMemo(() => {
     const allowed: PayrollPeriodStatus[] = ['OPEN', 'PROCESSING', 'DRAFT'];
-    return (periods ?? []).filter((p) => allowed.includes(p.status));
-  }, [periods]);
+    const allById = new Map<string, PayrollPeriod>();
+    for (const p of periods ?? []) {
+      allById.set(p.id, p);
+    }
+    const fromDb = (periods ?? []).filter((p) => allowed.includes(p.status));
+    const byId = new Map<string, PayrollPeriod>();
+    for (const p of fromDb) {
+      byId.set(p.id, p);
+    }
+    for (const r of poMonthReviews ?? []) {
+      if (!PO_MONTH_GATE_STATUSES.has(r.status)) continue;
+      const ym = (r.yearMonth || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+      const periodId = workerPayrollPeriodIdForYearMonth(ym);
+      if (allById.has(periodId)) continue;
+      if (byId.has(periodId)) continue;
+      const now = Date.now();
+      byId.set(periodId, {
+        id: periodId,
+        label: `${ym} · งวดลูกจ้าง (จาก PO+เดือนที่ปิดงวดแล้ว)`,
+        startDate: `${ym}-01`,
+        endDate: lastDayOfCalendarMonth(ym),
+        cycleType: 'MONTHLY',
+        status: 'PROCESSING',
+        generatedAt: now,
+        generatedBy: 'po_month_timesheet_reviews',
+      });
+    }
+    return [...byId.values()].sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
+  }, [periods, poMonthReviews]);
 
   const [isGenerateOpen, setIsGenerateOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -145,6 +205,15 @@ function PayrollBatchesPageContent() {
   const [regenTarget, setRegenTarget] = useState<PayrollBatch | null>(null);
   const [adminBusy, setAdminBusy] = useState(false);
 
+  /** สร้างเอกสาร payroll_periods ถ้ายังไม่มี — ใช้กับรอบ worker_ym_* หลังเลือกจาก dropdown ที่ดึงจาก PO+เดือนที่ล็อกแล้ว */
+  const ensureWorkerPeriodDocument = useCallback(async () => {
+    if (!firestore || !currentUser || !targetPeriodId) return;
+    const ym = parseYearMonthFromWorkerPayrollPeriodId(targetPeriodId);
+    if (!ym) return;
+    const actor = currentUser.displayName || currentUser.email || currentUser.id;
+    await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, ym, actor);
+  }, [firestore, currentUser, targetPeriodId]);
+
   const adminBatchActionsBlocked = (status: string) =>
     ['FINANCE_PREPARED', 'PAYMENT_EXPORTED', 'PAID', 'LOCKED'].includes(status);
 
@@ -153,11 +222,25 @@ function PayrollBatchesPageContent() {
     setIsChecking(true);
     setPreflight(null);
     try {
+      await ensureWorkerPeriodDocument();
       const service = new PayrollService(firestore);
       const result = await service.preflightPayrollCheck(targetPeriodId, { workModeScope: workModeFilter });
       setPreflight(result);
-      if (!result.hasWarnings) {
+      if (result.missingApprovedMonthlyTimesheet) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังไม่พร้อมสร้าง Batch',
+          description: result.payrollYearMonth
+            ? `ยังไม่มีสรุปลงเวลารายเดือน (${result.payrollYearMonth}) ที่ปิดงวดแล้ว — ล็อกงวดที่ PO+เดือนก่อน`
+            : 'ตรวจสอบวันที่เริ่มรอบบัญชี',
+        });
+      } else if (!result.hasWarnings) {
         toast({ title: 'ตรวจสอบผ่าน', description: `พร้อมประมวลผล ${result.totalWorkers} คน / ${result.totalTimesheets} ใบงาน` });
+      } else {
+        toast({
+          title: 'พบข้อควรระวัง',
+          description: `มีคนงานที่อาจได้ค่าจ้าง 0 บาท ${result.zeroGrossWorkers.length} คน — ตรวจทะเบียนตำแหน่ง/ลูกจ้างหรือยืนยันสร้างต่อ`,
+        });
       }
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'ตรวจสอบล้มเหลว', description: e.message });
@@ -179,6 +262,7 @@ function PayrollBatchesPageContent() {
     
     setIsGenerating(true);
     try {
+      await ensureWorkerPeriodDocument();
       const service = new PayrollService(firestore);
       const batchId = await service.generatePayrollBatch(targetPeriodId, currentUser, { workModeScope: workModeFilter });
       
@@ -187,7 +271,7 @@ function PayrollBatchesPageContent() {
       toast({ title: "สร้าง Payroll Batch สำเร็จ", description: "ข้อมูลกำลังถูกประมวลผล" });
       router.push(`/payroll/batches/${batchId}`);
     } catch (e: any) {
-      toast({ variant: "destructive", title: "Generation Failed", description: e.message });
+      toast({ variant: 'destructive', title: 'สร้าง Batch ไม่สำเร็จ', description: e.message });
     } finally {
       setIsGenerating(false);
     }
@@ -256,7 +340,8 @@ function PayrollBatchesPageContent() {
               <Coins className="h-8 w-8 shrink-0" /> งวดจ่ายลูกจ้าง (Payroll Batches)
             </h1>
             <p className="text-muted-foreground text-lg italic">
-              <strong>Worker Payroll</strong> — รวมเฉพาะรายวันที่ตั้งค่า readyForPayroll แล้ว (หลังผู้จัดการอนุมัติงวดเดือน Wave) ภายในรอบ period ที่เลือก
+              <strong>Worker Payroll</strong> — ดึงจากใบงานรายวันที่ระบบตั้ง <strong>readyForPayroll</strong> แล้ว ภายในรอบที่เลือก โดยปกติเกิดหลัง{' '}
+              <strong>ล็อกงวดหรือปิดงวดที่เอกสารสรุปลงเวลารายเดือน (PO + เดือน)</strong> — ไม่ต้องรอผู้จัดการอนุมัติ timesheet รอบจ่ายรายเดือนจะเปิดเมื่อมีงวดสรุปที่ปิดแล้วอย่างน้อยหนึ่งฉบับในเดือนนั้น
             </p>
             {accountingPayoutQueueOnly && (
               <p className="text-sm text-blue-800 bg-blue-50/80 border border-blue-200 rounded-md px-3 py-2 max-w-3xl">
@@ -281,10 +366,9 @@ function PayrollBatchesPageContent() {
               <DialogHeader>
                 <DialogTitle>ประมวลผล Payroll Batch ใหม่</DialogTitle>
                 <DialogDescription>
-                  ระบบจะรวบรวมเฉพาะ Daily Timesheets ที่ถูกตั้งค่า <strong>พร้อมจ่าย payroll</strong> (readyForPayroll) แล้ว — โดยปกติเกิดหลัง{' '}
-                  <strong>ผู้จัดการ Ops/HR อนุมัติสรุปลงเวลารายเดือน (Wave)</strong> จากเมนูคิวอนุมัติ — ไม่บังคับให้ลูกค้าอนุมัติก่อน
+                  เลือกรอบบัญชีที่ตรงกับเดือนที่ต้องการจ่าย ระบบจะรวบรวมเฉพาะใบงานรายวันที่ตั้ง <strong>readyForPayroll</strong> แล้ว และใช้ชื่อคนงาน / เวลาทำงาน / ราคาตามสัญญาและตำแหน่งจากข้อมูลในใบงานชุดนั้นประมวลผลเป็นชุดจ่าย
                   {' '}
-                  หลังอนุมัติ Wave แล้วระบบจะสร้าง <strong>รอบบัญชีลูกจ้าง</strong> ให้เลือกในรายการด้านล่างโดยอัตโนมัติ
+                  สำหรับรอบแบบรายเดือน ต้องมีอย่างน้อยหนึ่งเอกสาร <strong>สรุปลงเวลารายเดือน (PO + เดือน)</strong> ที่ <strong>ล็อกงวดหรือส่งตรวจแล้ว</strong> ในเดือนนั้น — รายการรอบในเมนูดึงจากเดือนที่ปิดงวดแล้วด้วย (ไม่ต้องรออนุมัติผู้จัดการ)
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -303,7 +387,7 @@ function PayrollBatchesPageContent() {
                   </Select>
                   {selectablePeriods.length === 0 && (
                     <p className="text-xs text-muted-foreground">
-                      ยังไม่มีรอบที่เลือกได้ — รอสักครู่หลังอนุมัติสรุปลงเวลารายเดือน (Wave) ระบบจะสร้างรอบบัญชีอัตโนมัติ หรือให้ผู้ดูแลระบบตรวจสอบคอลเลกชัน payroll_periods
+                      ยังไม่มีรอบที่เลือกได้ — ให้ล็อกงวดที่เมนูเอกสาร PO+เดือนก่อน ระบบจะแสดงเดือนที่ปิดงวดแล้วที่นี่ และสร้างเอกสารรอบบัญชีอัตโนมัติเมื่อกดตรวจสอบ/สร้าง Batch
                     </p>
                   )}
                 </div>
@@ -319,6 +403,28 @@ function PayrollBatchesPageContent() {
                   </Select>
                 </div>
               </div>
+              {preflight?.missingApprovedMonthlyTimesheet && (
+                <Alert variant="destructive" className="border-red-300 bg-red-50 text-red-950">
+                  <AlertTriangle className="h-5 w-5" />
+                  <AlertTitle className="font-bold">ยังไม่มีสรุปลงเวลารายเดือนที่ปิดงวดแล้ว</AlertTitle>
+                  <AlertDescription className="text-xs mt-1 space-y-2">
+                    <p>
+                      {preflight.payrollYearMonth
+                        ? `เดือน ${preflight.payrollYearMonth}: ให้ล็อกงวดหรือส่งตรวจที่เอกสาร PO+เดือนก่อน — จากนั้นระบบจึงจะให้สร้าง Payroll Batch ในรอบรายเดือนนี้ (ไม่ต้องรอผู้จัดการอนุมัติ timesheet)`
+                        : 'วันที่เริ่มรอบบัญชีไม่ตรงรูปแบบ — ตรวจสอบรอบในระบบ'}
+                    </p>
+                    <p className="flex flex-wrap gap-x-3 gap-y-1">
+                      <Link href="/timesheets" className="font-semibold underline">
+                        ศูนย์ Timesheet
+                      </Link>
+                      <Link href="/hr/timesheet-month-approval" className="font-semibold underline">
+                        คิวอนุมัติสรุปรายเดือน
+                      </Link>
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {preflight && preflight.hasWarnings && (
                 <Alert className="bg-amber-50 border-amber-300 text-amber-900">
                   <AlertTriangle className="h-5 w-5 text-amber-600" />
@@ -341,12 +447,18 @@ function PayrollBatchesPageContent() {
                 </Alert>
               )}
 
-              {preflight && !preflight.hasWarnings && (
+              {preflight && !preflight.missingApprovedMonthlyTimesheet && !preflight.hasWarnings && (
                 <Alert className="bg-green-50 border-green-300 text-green-900">
                   <CheckCircle2 className="h-5 w-5 text-green-600" />
                   <AlertTitle className="font-bold">ตรวจสอบผ่าน</AlertTitle>
-                  <AlertDescription className="text-xs">
-                    พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — ฐานค่าแรงจากทะเบียน (ลูกจ้าง/ตำแหน่ง) ครอบคลุม
+                  <AlertDescription className="text-xs space-y-2">
+                    <p>
+                      พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — ฐานค่าแรงจากทะเบียน (ลูกจ้าง/ตำแหน่ง) ครอบคลุม
+                    </p>
+                    <p className="text-green-800/90 border-t border-green-200 pt-2">
+                      <span className="font-semibold">หมายเหตุ:</span> จำนวน &quot;คน&quot; คือลูกจ้างไม่ซ้ำที่มีอย่างน้อยหนึ่งใบงานในรอบนี้ที่ตั้งพร้อมจ่ายแล้ว (และยังไม่ถูกล็อกจาก Batch เก่า)
+                      ตารางสรุปเดือนแบบ Wave นับแถวต่อ wave — คนเดียวกันหลาย wave จึงอาจเห็นแถวมากกว่าจำนวนคนใน payroll ได้ ถ้าต้องการให้ครบทุกคนในรายชื่อ ให้ตรวจว่าทุกคนมีใบงานในเดือนนั้นที่พร้อมจ่าย และ PO ที่เกี่ยวข้องถูกจัดการที่ PO+เดือนแล้ว
+                    </p>
                   </AlertDescription>
                 </Alert>
               )}
@@ -358,9 +470,21 @@ function PayrollBatchesPageContent() {
                     ตรวจสอบก่อนประมวลผล (Pre-check)
                   </Button>
                 ) : (
-                  <Button onClick={handleGenerate} className="w-full bg-primary font-bold h-12" disabled={isGenerating || !targetPeriodId}>
+                  <Button
+                    onClick={handleGenerate}
+                    className="w-full bg-primary font-bold h-12"
+                    disabled={
+                      isGenerating ||
+                      !targetPeriodId ||
+                      preflight.missingApprovedMonthlyTimesheet
+                    }
+                  >
                     {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <TrendingUp className="h-4 w-4 mr-2" />}
-                    {preflight.hasWarnings ? 'ยืนยันสร้าง Batch (มีคนงานได้ 0)' : 'เริ่มการประมวลผล (Start Processing)'}
+                    {preflight.missingApprovedMonthlyTimesheet
+                      ? 'รอปิดงวด PO+เดือนก่อน'
+                      : preflight.hasWarnings
+                        ? 'ยืนยันสร้าง Batch (มีคนงานได้ 0)'
+                        : 'เริ่มการประมวลผล (Start Processing)'}
                   </Button>
                 )}
               </DialogFooter>
@@ -372,7 +496,7 @@ function PayrollBatchesPageContent() {
         <PageGuidance
           title="นโยบายการเบิกจ่าย (Disbursement Policy)"
           tips={[
-            "รายการที่เข้า Payroll Batch ต้องเป็น daily timesheet ที่ระบบตั้ง readyForPayroll แล้ว — โดยปกติหลังผู้จัดการ Ops/HR อนุมัติงวดเดือน (wave month review) ซึ่งจะเปิดให้ลูกค้าเห็นสรุปใน portal และสร้าง Draft Invoice ได้ตามลำดับงาน",
+            'รายการที่เข้า Payroll Batch ต้องเป็นใบงานรายวันที่ระบบตั้ง readyForPayroll แล้ว — เกิดหลังล็อกงวด/ปิดงวดที่เอกสารสรุปลงเวลารายเดือน (PO + เดือน) ซึ่งจะส่งต่อไปยังพอร์ทัลลูกค้า และเป็นฐานทำใบแจ้งหนี้จากสรุปรายเดือน (แทนการอ้าง Wave เดิม)',
             "ลำดับการอนุมัติภายใน: HR เตรียมงวด → HR Manager / ผู้จัดการที่เกี่ยวข้องอนุมัติ batch → บัญชีเตรียมจ่ายเงิน (FINANCE_PREPARED) → บัญชีกด «ยืนยันจ่าย» ในหน้ารายละเอียด batch (ไม่ใช่จากตารางนี้) พร้อมเลือกบัญชีธนาคารตัดจ่าย — จึงจะมีสถานะ PAID + ลง cashbook",
             "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน",
           ]}

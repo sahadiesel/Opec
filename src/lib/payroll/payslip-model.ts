@@ -2,6 +2,7 @@ import type {
   OfficePayrollLine,
   OfficePayrollRun,
   PayrollBatch,
+  PayrollBatchIncomeSegment,
   PayrollBatchLine,
   PayrollLineD8Snapshot,
 } from '@/lib/types';
@@ -88,6 +89,7 @@ function humanizeDeductionKey(key: string): string {
   const map: Record<string, string> = {
     social_security: 'ประกันสังคม',
     pit_withholding: 'ภาษี ณ ที่จ่าย (ภงด. 1)',
+    cash_advance_recovery: 'หักคืนเบิกล่วงหน้า',
   };
   return map[key] || key.replace(/_/g, ' ');
 }
@@ -106,19 +108,21 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function payslipIncomeSegmentPrefix(seg: PayrollBatchIncomeSegment): string {
+  const po =
+    seg.poCodeSnapshot?.trim() ||
+    (seg.purchaseOrderId === '_unknown_po' ? 'ไม่ระบุ PO' : seg.purchaseOrderId);
+  const cust = seg.customerNameSnapshot?.trim();
+  return cust ? `[${po} · ${cust}]` : `[${po}]`;
+}
+
 /**
  * รายได้รายบรรทัด — อ้างอิง snapshot ก่อน แล้วจึง earningsBreakdown + รายการเบี้ยเลี้ยงจาก HR
  */
 export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLineItem[] {
-  const fromSnapshot = line.d8Snapshot?.earningsComponents;
-  const baseEb = { ...(fromSnapshot && Object.keys(fromSnapshot).length > 0 ? fromSnapshot : line.earningsBreakdown || {}) };
   const allowanceItems = (line.hrLineAdjustments?.allowanceItems ?? []).filter(
     (x) => (Number(x.amount) || 0) > 0,
   );
-
-  if (allowanceItems.length > 0) {
-    delete baseEb.hr_allowances;
-  }
 
   const lines: PayslipLineItem[] = [];
 
@@ -127,6 +131,33 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
       label: it.label?.trim() || 'รายได้เพิ่ม (HR)',
       amount: round2(Number(it.amount) || 0),
     });
+  }
+
+  const multiSeg = line.incomeSegments && line.incomeSegments.length > 1;
+  if (multiSeg) {
+    const sorted = [...line.incomeSegments!].sort((a, b) => {
+      const ka = `${a.poCodeSnapshot || ''}\t${a.purchaseOrderId}`;
+      const kb = `${b.poCodeSnapshot || ''}\t${b.purchaseOrderId}`;
+      return ka.localeCompare(kb, 'th');
+    });
+    for (const seg of sorted) {
+      const prefix = payslipIncomeSegmentPrefix(seg);
+      const eb = seg.earningsBreakdown || {};
+      const keys = Object.keys(eb).sort((a, b) => a.localeCompare(b));
+      for (const k of keys) {
+        const amt = round2(Number(eb[k]) || 0);
+        if (Math.abs(amt) < 0.005) continue;
+        lines.push({ label: `${prefix} ${humanizeWorkerEarningsKey(k)}`, amount: amt });
+      }
+    }
+    return lines;
+  }
+
+  const fromSnapshot = line.d8Snapshot?.earningsComponents;
+  const baseEb = { ...(fromSnapshot && Object.keys(fromSnapshot).length > 0 ? fromSnapshot : line.earningsBreakdown || {}) };
+
+  if (allowanceItems.length > 0) {
+    delete baseEb.hr_allowances;
   }
 
   const keys = Object.keys(baseEb).sort((a, b) => a.localeCompare(b));
@@ -199,7 +230,10 @@ export function buildPayslipFromWorkerLine(
   const deductionsTotal = sumLines(deductionLines);
   const netFromLine = round2(line.netAmount);
   const netFromSnapshot = line.d8Snapshot?.net != null ? round2(line.d8Snapshot.net) : null;
-  const netPay = netFromSnapshot != null ? netFromSnapshot : netFromLine;
+  /** หักเบิกล่วงหน้าอยู่ที่บรรทัด batch ไม่ได้อยู่ใน D8 snapshot เดิม — ใช้ยอดสุทธิจากบรรทัด */
+  const hasCashAdvanceRecovery = Number(line.deductionsBreakdown?.cash_advance_recovery) > 0;
+  const netPay =
+    hasCashAdvanceRecovery || netFromSnapshot == null ? netFromLine : netFromSnapshot;
 
   const impliedNet = round2(grossTotal - deductionsTotal);
   const roundingNote = Math.abs(impliedNet - netPay) >= 0.02;

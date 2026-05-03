@@ -119,7 +119,7 @@ export const portalNav = {
     tsMonthlyNoAttach: 'No files attached for this period.',
     tsMonthlySummary: '{month} · {people} people · {rows} timesheet rows this month',
     tsMonthlyKey:
-      'Numbers show normal hours + day type (W=work, SB=standby, …). Ring styles match OPEC internal view.',
+      'Letters show day type (W=work, SB=standby, …). A dash means no entry or unpaid day. Ring styles match OPEC internal view.',
     tsGoMonthly: 'Monthly wave grid',
     tsGoDaily: 'Daily activity list',
     tsMonthlyFilterSection: 'Filter',
@@ -149,6 +149,7 @@ export const portalNav = {
     tsHubApprovedBadge: 'Manager approved',
     tsHubBillingBadge: 'Released for billing',
     tsHubViewMonthly: 'View monthly summary',
+    tsHubBundleStrip: 'PO Active bundle',
     tsHubSectionPoMonth: 'PO + month timesheet (signed document)',
     tsHubSectionWaves: 'By wave (detail)',
     tsHubViewPoMonth: 'View PO+month document',
@@ -366,7 +367,7 @@ export const portalNav = {
     tsMonthlyNoAttach: 'ไม่มีไฟล์แนบในช่วงนี้',
     tsMonthlySummary: '{month} · {people} คน · {rows} แถว timesheet ในเดือน',
     tsMonthlyKey:
-      'ตัวเลข = ชม.ปกติ + ประเภทวัน (W=ทำงาน, SB=สแตนด์บาย, …) — สไตล์วงแหวนตรงกับมุมมองภายใน OPEC',
+      'ตัวอักษร = ประเภทวัน (W=ทำงาน, SB=สแตนด์บาย, …) · « - » = ไม่มีบันทึกหรือไม่จ่าย — สไตล์วงแหวนตรงกับมุมมองภายใน OPEC',
     tsGoMonthly: 'ตารางรายเดือนตามเวฟ',
     tsGoDaily: 'รายการรายวัน',
     tsMonthlyFilterSection: 'ตัวกรอง',
@@ -396,6 +397,7 @@ export const portalNav = {
     tsHubApprovedBadge: 'ผู้จัดการอนุมัติแล้ว',
     tsHubBillingBadge: 'เปิดให้ตรวจตามการเรียกเก็บ',
     tsHubViewMonthly: 'ดูสรุปรายเดือน',
+    tsHubBundleStrip: 'ชุด PO Active',
     tsHubSectionPoMonth: 'เอกสาร timesheet ราย PO+เดือน (ฉบับอนุมัติ)',
     tsHubSectionWaves: 'รายเวฟ (รายละเอียด)',
     tsHubViewPoMonth: 'ดูเอกสาร PO+เดือน',

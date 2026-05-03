@@ -17,13 +17,16 @@ import {
   limit
 } from 'firebase/firestore';
 import { 
-  PayrollBatch, 
-  PayrollBatchLine, 
-  PayrollPeriod, 
-  DailyTimesheet, 
-  User, 
+  PayrollBatch,
+  PayrollBatchIncomeSegment,
+  PayrollBatchLine,
+  PayrollPeriod,
+  DailyTimesheet,
+  User,
   WorkerPaymentProfile,
   MainContract,
+  PurchaseOrder,
+  Customer,
   PayrollLineD8Snapshot,
   PayrollBatchStatus,
   LaborCostResolutionSnapshot,
@@ -73,6 +76,24 @@ import {
   timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
+import { fetchWorkerGlobalLaborContextFromFirestore } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  calendarYearMonthFromPeriodStart,
+  hasApprovedMonthlyTimesheetForYearMonth,
+  shouldGatePayrollOnMonthlyApproval,
+} from '@/lib/payroll/monthly-timesheet-approval-gate';
+import {
+  aggregateDailyTimesheetsPayrollChunk,
+  mergePayrollTimesheetAggChunks,
+} from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
+import {
+  CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
+  fetchWorkerCashAdvancesPendingSalaryRecovery,
+} from '@/lib/payroll/cash-advance-recovery';
+
+function round2Payroll(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 export interface PayrollPreflightZeroWorker {
   workerId: string;
@@ -85,7 +106,11 @@ export interface PayrollPreflightResult {
   totalWorkers: number;
   totalTimesheets: number;
   zeroGrossWorkers: PayrollPreflightZeroWorker[];
+  /** ฐานค่าแรง/ตำแหน่ง — คนใดคนหนึ่งได้ gross 0 */
   hasWarnings: boolean;
+  /** รอบ MONTHLY: ยังไม่มี po_month / wave_month ที่ปิดงวดแล้ว (ล็อก/ส่งตรวจ/อนุมัติ) ใน yyyy-MM ของรอบ */
+  missingApprovedMonthlyTimesheet: boolean;
+  payrollYearMonth: string | null;
 }
 
 function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
@@ -103,6 +128,25 @@ function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
  */
 export class PayrollService {
   constructor(private db: Firestore) {}
+
+  /** รอบจ่ายรายเดือน — ต้องมีเอกสาร PO+เดือน / Wave เดือนที่ปิดงวดแล้ว (ล็อก / ส่งตรวจ / อนุมัติ) ก่อนประมวลผล */
+  private async assertMonthlyTimesheetApprovalForPeriod(period: PayrollPeriod): Promise<{
+    payrollYearMonth: string | null;
+    missingApprovedMonthlyTimesheet: boolean;
+  }> {
+    if (!shouldGatePayrollOnMonthlyApproval(period)) {
+      return {
+        payrollYearMonth: calendarYearMonthFromPeriodStart(period.startDate),
+        missingApprovedMonthlyTimesheet: false,
+      };
+    }
+    const ym = calendarYearMonthFromPeriodStart(period.startDate);
+    if (!ym) {
+      return { payrollYearMonth: null, missingApprovedMonthlyTimesheet: true };
+    }
+    const ok = await hasApprovedMonthlyTimesheetForYearMonth(this.db, ym);
+    return { payrollYearMonth: ym, missingApprovedMonthlyTimesheet: !ok };
+  }
 
   private getBatchCollection(): CollectionReference {
     return collection(this.db, 'payroll_batches');
@@ -123,8 +167,10 @@ export class PayrollService {
   ): Promise<PayrollPreflightResult> {
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
-    if (!periodSnap.exists()) throw new Error('Payroll period not found');
+    if (!periodSnap.exists()) throw new Error('ไม่พบรอบบัญชี (payroll period)');
     const period = periodSnap.data() as PayrollPeriod;
+
+    const monthlyGate = await this.assertMonthlyTimesheetApprovalForPeriod(period);
 
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
@@ -186,6 +232,8 @@ export class PayrollService {
       timesheets,
     );
 
+    const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+
     const workerTsMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach((ts) => {
       if (!workerTsMap[ts.workerId]) workerTsMap[ts.workerId] = [];
@@ -208,12 +256,13 @@ export class PayrollService {
           linePosition: linePos,
           poLine,
           contractMap,
+          workerGlobalLabor,
         });
         if (r.gross > 0) {
           hasAnyRate = true;
         } else {
           missingReasons.add(
-            `${ts.date} ${ts.eventType}: ฐานค่าแรงหรือตัวคูณได้ 0 (ตรวจตำแหน่ง/กำหนดรายคนลูกจ้าง และสัญญา)`,
+            `${ts.date} ${ts.eventType}: ฐานค่าแรงหรือตัวคูณได้ 0 (ตรวจตำแหน่ง/กำหนดรายคนลูกจ้าง และ HR ตั้งค่าตัวคูณ/ปฏิทิน)`,
           );
         }
       }
@@ -233,6 +282,8 @@ export class PayrollService {
       totalTimesheets: timesheets.length,
       zeroGrossWorkers,
       hasWarnings: zeroGrossWorkers.length > 0,
+      missingApprovedMonthlyTimesheet: monthlyGate.missingApprovedMonthlyTimesheet,
+      payrollYearMonth: monthlyGate.payrollYearMonth,
     };
   }
 
@@ -247,8 +298,18 @@ export class PayrollService {
     assertPayrollPermission(user, 'payroll_worker', 'create_batch');
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
-    if (!periodSnap.exists()) throw new Error('Payroll period not found');
+    if (!periodSnap.exists()) throw new Error('ไม่พบรอบบัญชี (payroll period)');
     const period = periodSnap.data() as PayrollPeriod;
+
+    const monthlyGate = await this.assertMonthlyTimesheetApprovalForPeriod(period);
+    if (monthlyGate.missingApprovedMonthlyTimesheet) {
+      const ym = monthlyGate.payrollYearMonth;
+      throw new Error(
+        ym
+          ? `ยังไม่มีเอกสารสรุปลงเวลารายเดือน (${ym}) ที่ปิดงวดแล้ว — ให้ล็อกงวดหรือส่งตรวจ/อนุมัติที่เมนูเอกสาร PO+เดือนก่อนสร้าง Payroll Batch`
+          : 'รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง — ตรวจสอบ payroll_periods',
+      );
+    }
 
     // RULE: Use readyForPayroll flag instead of status string.
     const tsQuery = query(
@@ -269,7 +330,7 @@ export class PayrollService {
     }
 
     if (timesheets.length === 0) {
-      throw new Error('No timesheets ready for payroll found for this period');
+      throw new Error('ไม่พบใบงานรายวันที่พร้อมจ่าย (readyForPayroll) ในรอบนี้');
     }
 
     const contractMap = new Map<string, MainContract>();
@@ -307,7 +368,31 @@ export class PayrollService {
       }),
     );
 
+    const poById = new Map<string, PurchaseOrder>();
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
+        if (poSnap.exists()) {
+          poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
+        }
+      }),
+    );
+
+    const customerIdsForPo = [...new Set([...poById.values()].map((p) => p.customerId).filter(Boolean))];
+    const customerNameById = new Map<string, string>();
+    await Promise.all(
+      customerIdsForPo.map(async (cid) => {
+        const s = await getDoc(doc(this.db, 'customers', cid));
+        if (s.exists()) {
+          const c = s.data() as Customer;
+          customerNameById.set(cid, (c.name || '').trim() || cid);
+        }
+      }),
+    );
+
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, timesheets);
+
+    const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
 
     // Aggregate by Worker
     const workerMap: Record<string, DailyTimesheet[]> = {};
@@ -324,6 +409,7 @@ export class PayrollService {
     let batchDeductions = 0;
     let batchNet = 0;
     const writeOp = writeBatch(this.db);
+    const advanceIdsToLinkToBatch: string[] = [];
 
     const policyRecords = await loadPayrollPoliciesFromFirestore(this.db);
     const asOf = period.endDate;
@@ -341,42 +427,53 @@ export class PayrollService {
       const ppSnap = await getDocs(ppQuery);
       const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' as any } : ppSnap.docs[0].data();
 
-      const eventBreakdown: Record<string, number> = {};
-      const earningsBreakdown: Record<string, number> = {};
-      let workerGross = 0;
+      const aggDeps = {
+        poLineById,
+        workerById,
+        posById,
+        contractMap,
+        workerGlobalLabor,
+      };
+
+      const byPo = new Map<string, DailyTimesheet[]>();
+      for (const ts of workerTs) {
+        const pid = (ts.purchaseOrderId || '').trim() || '_unknown_po';
+        if (!byPo.has(pid)) byPo.set(pid, []);
+        byPo.get(pid)!.push(ts);
+      }
+
+      const chunksOrdered: Array<{ poId: string; chunk: ReturnType<typeof aggregateDailyTimesheetsPayrollChunk> }> = [];
+      for (const [poId, list] of byPo) {
+        chunksOrdered.push({ poId, chunk: aggregateDailyTimesheetsPayrollChunk(list, aggDeps) });
+      }
+
+      const mergedChunk = mergePayrollTimesheetAggChunks(chunksOrdered.map((c) => c.chunk));
+      const workerGross = mergedChunk.gross;
+      const eventBreakdown = mergedChunk.eventBreakdown;
+      const earningsBreakdown = mergedChunk.earningsBreakdown;
+      const usedPackageLaborCost = mergedChunk.usedPackageLaborCost;
+      const usedContractFallback = mergedChunk.usedContractFallback;
+      const anyOpecPositionLaborBase = mergedChunk.anyOpecPositionLaborBase;
+
       const laborTermIds: string[] = [];
       const conditionIds: string[] = [];
-      let usedContractFallback = false;
-      let usedPackageLaborCost = false;
-      let anyOpecPositionLaborBase = false;
 
-      for (const ts of workerTs) {
-        const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
-        const wk = workerById.get(ts.workerId);
-        const linePos = ts.positionId ? posById.get(ts.positionId) : undefined;
-        const r = computeRegistryWorkerTimesheetGross(ts, {
-          worker: wk,
-          linePosition: linePos,
-          poLine,
-          contractMap,
+      const payingPoChunks = chunksOrdered.filter((c) => c.chunk.gross > 0);
+      let incomeSegments: PayrollBatchIncomeSegment[] | undefined;
+      if (payingPoChunks.length > 1) {
+        incomeSegments = payingPoChunks.map(({ poId, chunk }) => {
+          const po = poById.get(poId);
+          const cid = (po?.customerId || '').trim() || undefined;
+          return {
+            purchaseOrderId: poId,
+            customerId: cid,
+            poCodeSnapshot: po?.poCode,
+            customerNameSnapshot: cid ? customerNameById.get(cid) : undefined,
+            grossAmount: round2Payroll(chunk.gross),
+            eventBreakdown: { ...chunk.eventBreakdown },
+            earningsBreakdown: { ...chunk.earningsBreakdown },
+          };
         });
-        if (r.fromPositionModel) {
-          anyOpecPositionLaborBase = true;
-        }
-        if (r.gross <= 0) continue;
-        if (r.usedPackageLaborCost) {
-          usedPackageLaborCost = true;
-        } else if (r.usedPolicyFallback) {
-          usedContractFallback = true;
-        }
-        workerGross += r.gross;
-        eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
-        if (r.usedPackageLaborCost) {
-          earningsBreakdown.work_day_package = (earningsBreakdown.work_day_package || 0) + r.gross;
-        } else {
-          earningsBreakdown[`${ts.eventType}_policy`] =
-            (earningsBreakdown[`${ts.eventType}_policy`] || 0) + r.gross;
-        }
       }
 
       const rateParts: string[] = [
@@ -387,11 +484,11 @@ export class PayrollService {
       }
       if (usedPackageLaborCost) {
         rateParts.push(
-          'work_day: package (8h+OT; ตัวคูณจากสัญญา/PO)',
+          'work_day: package (8h+OT; ตัวคูณ OT จาก PO snapshot + วันหยุด/ตัวคูณจาก HR)',
         );
       }
       if (usedContractFallback) {
-        rateParts.push('event: ตัวคูณตามสัญญา หรือค่าเริ่มต้น (standby/travel/ฯลฯ)');
+        rateParts.push('event: ตัวคูณจาก HR Settings (standby/travel/ฯลฯ)');
       }
       const rateSummary = rateParts.join(' | ');
 
@@ -408,9 +505,20 @@ export class PayrollService {
         earningsBreakdown,
       });
 
-      const lineDedTotal = Object.values(d8Line.deductionsBreakdown).reduce((a, b) => a + b, 0);
-      batchDeductions += lineDedTotal;
-      batchNet += d8Line.netAmount;
+      const recovery = await fetchWorkerCashAdvancesPendingSalaryRecovery(this.db, workerId);
+      const deductionsBreakdown: Record<string, number> = { ...d8Line.deductionsBreakdown };
+      let lineNetAmount = d8Line.netAmount;
+      if (recovery.total > 0) {
+        deductionsBreakdown[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = round2Payroll(recovery.total);
+        lineNetAmount = round2Payroll(d8Line.netAmount - recovery.total);
+        for (const a of recovery.advances) {
+          advanceIdsToLinkToBatch.push(a.id);
+        }
+      }
+
+      const lineDedTotalFull = Object.values(deductionsBreakdown).reduce((a, b) => a + (Number(b) || 0), 0);
+      batchDeductions += lineDedTotalFull;
+      batchNet += lineNetAmount;
 
       const wkLine = workerById.get(workerId);
       const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
@@ -448,12 +556,13 @@ export class PayrollService {
         periodEndDate: period.endDate,
         eventBreakdown,
         earningsBreakdown,
-        deductionsBreakdown: d8Line.deductionsBreakdown,
+        deductionsBreakdown,
         grossAmount: workerGross,
-        netAmount: d8Line.netAmount,
+        netAmount: lineNetAmount,
         d8Snapshot: d8Line.snapshot,
         laborCostResolutionSnapshot,
         exportStatus: 'pending',
+        ...(incomeSegments ? { incomeSegments } : {}),
       };
 
       lines.push(line);
@@ -494,6 +603,26 @@ export class PayrollService {
     });
 
     await writeOp.commit();
+
+    /** ผูกคำขอเบิกแยก batch — กันเกิน limit 500 ops ของ Firestore เมื่อมี timesheet จำนวนมาก */
+    if (advanceIdsToLinkToBatch.length > 0) {
+      const nowLink = Date.now();
+      let wbAdv = writeBatch(this.db);
+      let advOps = 0;
+      for (const advId of advanceIdsToLinkToBatch) {
+        wbAdv.update(doc(this.db, 'cash_advance_requests', advId), {
+          payrollRecoveryBatchId: batchId,
+          updatedAt: nowLink,
+        });
+        advOps++;
+        if (advOps >= 400) {
+          await wbAdv.commit();
+          wbAdv = writeBatch(this.db);
+          advOps = 0;
+        }
+      }
+      if (advOps > 0) await wbAdv.commit();
+    }
 
     await writeAuditLog(this.db, user, {
       actionType: 'GENERATE',
@@ -564,6 +693,7 @@ export class PayrollService {
       line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
     });
     await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+    await this.clearCashAdvanceRecoveriesForPayrollBatch(batchId);
     await this.deletePayrollBatchSubcollectionAndDoc(batchId);
     await writeAuditLog(this.db, user, {
       actionType: 'DELETE',
@@ -573,6 +703,26 @@ export class PayrollService {
       sourceModule: 'hr',
       afterSummary: 'Admin deleted payroll batch; source daily timesheets unlocked (VERIFIED_PAPER)',
     });
+  }
+
+  /** คืนสถานะคำขอเบิกล่วงหน้าเมื่อลบ batch (ให้หักในงวดถัดไปได้) */
+  private async clearCashAdvanceRecoveriesForPayrollBatch(batchId: string): Promise<void> {
+    const snap = await getDocs(
+      query(collection(this.db, 'cash_advance_requests'), where('payrollRecoveryBatchId', '==', batchId)),
+    );
+    if (snap.empty) return;
+    let wb = writeBatch(this.db);
+    let n = 0;
+    for (const d of snap.docs) {
+      wb.update(d.ref, { payrollRecoveryBatchId: deleteField(), updatedAt: Date.now() });
+      n++;
+      if (n >= 400) {
+        await wb.commit();
+        wb = writeBatch(this.db);
+        n = 0;
+      }
+    }
+    if (n > 0) await wb.commit();
   }
 
   /**
@@ -598,6 +748,7 @@ export class PayrollService {
       line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
     });
     await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+    await this.clearCashAdvanceRecoveriesForPayrollBatch(batchId);
     await this.deletePayrollBatchSubcollectionAndDoc(batchId);
     await writeAuditLog(this.db, user, {
       actionType: 'DELETE',
@@ -967,6 +1118,11 @@ export class PayrollService {
     input.deductionItems.forEach((d, idx) => {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
     });
+
+    const caRecover = Number(line.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
+    if (caRecover > 0) {
+      deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = Math.round(caRecover * 100) / 100;
+    }
 
     const dedTotal = Object.values(deductions).reduce((a, b) => a + (Number(b) || 0), 0);
     const netAmount = Math.round((effectiveGross - dedTotal) * 100) / 100;

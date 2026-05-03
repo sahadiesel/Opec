@@ -125,6 +125,17 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     canonicalRole: 'client_user',
     descriptionTh: 'เข้าดูข้อมูลลูกค้าของตนเองและทำรายการใน client portal',
   },
+  employee_self: {
+    key: 'employee_self',
+    displayNameTh: 'พนักงาน / ลูกจ้าง (พอร์ทัลโปรไฟล์)',
+    displayNameEn: 'Employee self-service (My Profile)',
+    department: 'hr',
+    accessGroup: 'operations',
+    accessLevel: 'viewer',
+    permissionProfileKey: 'employee_self',
+    canonicalRole: 'employee_self',
+    descriptionTh: 'เข้า My Profile เบิกล่วงหน้า และเปลี่ยนรหัสผ่าน — ไม่เข้าถึงข้อมูลภายในอื่น',
+  },
   operations_officer: {
     key: 'operations_officer',
     displayNameTh: 'เจ้าหน้าที่ปฏิบัติการ',
@@ -162,6 +173,7 @@ export const ACTIVE_BUSINESS_ROLE_KEYS: BusinessRoleKey[] = [
   'accounting_manager',
   'accounting_officer',
   'client_user',
+  'employee_self',
 ];
 
 export function getCanonicalBusinessRoleKey(roleKey?: string | null): BusinessRoleKey | null {

@@ -1,4 +1,5 @@
-import type { DailyTimesheet, RateConditionEventType, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
+import type { Assignment, DailyTimesheet, RateConditionEventType, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
+import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
 
 /** คืน yyyy-mm-dd สำหรับวันสุดท้ายของเดือน yyyy-mm */
 /** แนบเป็น PDF หรือไม่ (รองรับข้อมูลเก่าที่ไม่มี contentType) */
@@ -64,8 +65,48 @@ export function normalHoursCountedAsWork(
 
 /**
  * จับคู่เซลล์รายเดือนกับ daily_timesheet — รองรับกรณี waveId ในเอกสารไม่ตรงกับแถว (เช่น บันทึกจาก wave อื่น/ข้อมูลเก่า)
- * ลำดับ: ตรงกุญแจ wave|คน ก่อน แล้วจึงค้นตาม worker + วันที่ + assignment ของแถว
+ * ลำดับ: ตรงกุญแจ wave|คน ก่อน — จากนั้น PO scope (`po_ts_scope_<poId>` จากกระดาน PO) — แล้วจึงค้นตาม worker + วันที่ + assignment
  */
+/** รวมชม.ทำงานในเดือนตามแถวตาราง — ใช้การจับคู่ timesheet เดียวกับช่องรายวัน (ไม่รวมซ้ำข้าม assignment/PO) */
+export function sumWorkHoursForWaveMonthRow(
+  assignment: Pick<
+    Assignment,
+    | 'poId'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'mobLocationEndDate'
+    | 'endDate'
+    | 'unassignedAt'
+  >,
+  waveId: string,
+  workerId: string,
+  rosterAssignmentId: string,
+  daysYmd: readonly string[],
+  sheetsByWaveWorker: Map<string, DailyTimesheet[]>,
+  flatMonthSheets: readonly DailyTimesheet[],
+  poScopeWaveId?: string | null,
+  alternateAssignmentIds?: readonly string[] | null,
+): number {
+  let sum = 0;
+  for (const d of daysYmd) {
+    const ts = resolveTimesheetForWaveMonthCell(
+      waveId,
+      workerId,
+      d,
+      rosterAssignmentId,
+      sheetsByWaveWorker,
+      flatMonthSheets,
+      poScopeWaveId,
+      assignment,
+      alternateAssignmentIds,
+    );
+    sum += normalHoursCountedAsWork(ts);
+  }
+  return sum;
+}
+
 export function resolveTimesheetForWaveMonthCell(
   waveId: string,
   workerId: string,
@@ -73,13 +114,82 @@ export function resolveTimesheetForWaveMonthCell(
   rosterAssignmentId: string,
   sheetsByWaveWorker: Map<string, DailyTimesheet[]>,
   flatMonthSheets: readonly DailyTimesheet[],
+  /** เท่ากับ `poTimesheetScopeId(poId)` เมื่อบันทึกจาก Po Daily Board (waveId ในเอกสาร = scope ไม่ใช่ wave จริง) */
+  poScopeWaveId?: string | null,
+  /** ถ้ามี — ไม่ดึงบันทึกรายวันที่อยู่นอกช่วง mobilization จริง (เทียบ `mobWorkingStartDate` / จบไซต์) */
+  assignmentWindow?: Pick<
+    Assignment,
+    | 'poId'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'mobLocationEndDate'
+    | 'endDate'
+    | 'unassignedAt'
+  > | null,
+  /** mobilization อื่นของคนเดียวกันใน wave เดียวกัน — ลองจับคู่หลังสร้าง mobilization ใหม่แต่ daily_timesheets ยังอ้าง assignment เดิม */
+  alternateAssignmentIds?: readonly string[] | null,
 ): DailyTimesheet | undefined {
-  const keyed = sheetsByWaveWorker.get(`${waveId}|${workerId}`);
-  const direct = keyed?.find((t) => t.date === date);
-  if (direct) return direct;
-  return flatMonthSheets.find(
-    (t) => t.workerId === workerId && t.date === date && t.assignmentId === rosterAssignmentId,
-  );
+  const assignmentIdsToTry = [
+    rosterAssignmentId,
+    ...(alternateAssignmentIds?.filter((id) => id && id !== rosterAssignmentId) ?? []),
+  ];
+
+  const lookupIgnoringMobWindow = (enforceMobWindow: boolean): DailyTimesheet | undefined => {
+    if (
+      enforceMobWindow &&
+      assignmentWindow &&
+      !isYmdWithinAssignmentMobTimesheetWindow(assignmentWindow, date)
+    ) {
+      return undefined;
+    }
+
+    /** ต้องจับคู่ assignment — ไม่ใช้แค่วันที่ (กัน wave เดียวกันมีหลาย mobilization / remob ซ้อน) */
+    const tryKeyed = (wid: string): DailyTimesheet | undefined => {
+      const keyed = sheetsByWaveWorker.get(`${wid}|${workerId}`);
+      if (!keyed?.length) return undefined;
+      for (const aid of assignmentIdsToTry) {
+        const hit = keyed.find((t) => t.date === date && t.assignmentId === aid);
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    const fromWave = tryKeyed(waveId);
+    if (fromWave) return fromWave;
+    if (poScopeWaveId && poScopeWaveId !== waveId) {
+      const fromScope = tryKeyed(poScopeWaveId);
+      if (fromScope) return fromScope;
+    }
+    for (const aid of assignmentIdsToTry) {
+      const hit = flatMonthSheets.find(
+        (t) => t.workerId === workerId && t.date === date && t.assignmentId === aid,
+      );
+      if (hit) return hit;
+    }
+
+    /** Fallback: บันทึกจาก mobilization เก่าหรือคีย์ไม่ตรง — จับคู่ PO + คน + วัน + wave (ถ้ามีหลายรายการ) */
+    const poId = (assignmentWindow?.poId || '').trim();
+    if (poId) {
+      const candidates = flatMonthSheets.filter(
+        (t) =>
+          t.workerId === workerId &&
+          t.date === date &&
+          (t.purchaseOrderId || '').trim() === poId,
+      );
+      if (candidates.length === 1) return candidates[0];
+      const byWave = candidates.find(
+        (t) => t.waveId === waveId || (!!poScopeWaveId && t.waveId === poScopeWaveId),
+      );
+      if (byWave) return byWave;
+      const byKnownMob = candidates.find((t) => assignmentIdsToTry.includes(t.assignmentId));
+      if (byKnownMob) return byKnownMob;
+    }
+    return undefined;
+  };
+
+  /** รอบแรก: เคารพช่วง mobilization — รอบสอง: ถ้ายังไม่เจอ ให้แสดงตาม daily_timesheets จริง (กันฟิลด์ mobilization ไม่ตรงกับที่บันทึกแล้วจนตารางว่างทั้งแถว) */
+  return lookupIgnoringMobWindow(true) ?? lookupIgnoringMobWindow(false);
 }
 
 export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {
@@ -87,6 +197,16 @@ export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {
   const h = normalHoursCountedAsWork(ts);
   const a = timesheetEventAbbrev(ts.eventType);
   return `${h}${a}`;
+}
+
+/**
+ * กระดานสรุปรายเดือน — แสดงเฉพาะรหัสประเภทวัน (ไม่มีเลขชม.)
+ * ไม่มีข้อมูล / วันไม่จ่าย (unpaid_leave) = " - "
+ */
+export function timesheetWaveMonthCellDisplay(ts: DailyTimesheet | undefined): string {
+  if (!ts) return ' - ';
+  if (ts.eventType === 'unpaid_leave') return ' - ';
+  return timesheetEventAbbrev(ts.eventType);
 }
 
 /**
@@ -143,7 +263,7 @@ export function timesheetEventCellBadgeClasses(
       tone = 'border-slate-300 bg-slate-100 text-slate-800';
   }
   const statusRing = isDraft
-    ? 'ring-2 ring-amber-400 ring-offset-0 shadow-sm'
-    : 'ring-1 ring-slate-300/90 ring-offset-0';
-  return `font-semibold ${tone} ${statusRing}`;
+    ? 'ring-1 ring-amber-400 ring-offset-0'
+    : 'ring-1 ring-slate-300/70 ring-offset-0';
+  return `font-medium ${tone} ${statusRing}`;
 }

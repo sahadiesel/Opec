@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, ChevronRight, Briefcase, Activity, Info, Filter, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
+import { Plus, Search, Trash2, ChevronRight, Activity, Info, ArrowRight, ShieldAlert, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Position, User } from '@/lib/types';
 import { 
@@ -50,6 +50,20 @@ import { canView, canCreate, canDelete } from '@/lib/permissions';
 
 const NO_PERMISSION_MESSAGE = 'คุณไม่มีสิทธิ์ในการทำรายการ';
 
+type PayrollListFilter = 'all' | 'DAILY' | 'MONTHLY';
+
+function normalizePayrollBasisList(raw: unknown): string {
+  return String(raw ?? 'DAILY').toUpperCase();
+}
+
+function payrollBasisLabel(raw: unknown): string {
+  const u = normalizePayrollBasisList(raw);
+  if (u === 'MONTHLY') return 'รายเดือน';
+  if (u === 'HOURLY') return 'รายชั่วโมง';
+  if (u === 'DAILY') return 'รายวัน';
+  return raw != null ? String(raw) : '—';
+}
+
 function isFirestorePermissionDenied(error: unknown): boolean {
   if (!error || typeof error !== 'object' || !('code' in error)) return false;
   const code = String((error as { code?: string }).code || '');
@@ -77,6 +91,23 @@ export default function PositionsPage() {
     () => sortPositionsByDisplayName(positions ?? []),
     [positions]
   );
+
+  const [positionSearch, setPositionSearch] = useState('');
+  const [payrollListFilter, setPayrollListFilter] = useState<PayrollListFilter>('all');
+
+  const positionsFiltered = useMemo(() => {
+    const q = positionSearch.trim().toLowerCase();
+    return positionsSorted.filter((pos) => {
+      const basis = normalizePayrollBasisList(pos.payrollBasis);
+      if (payrollListFilter === 'DAILY' && basis !== 'DAILY') return false;
+      if (payrollListFilter === 'MONTHLY' && basis !== 'MONTHLY') return false;
+      if (!q) return true;
+      const name = positionListPrimaryName(pos as PositionDoc).toLowerCase();
+      const secondary = (positionListSecondaryName(pos as PositionDoc) || '').toLowerCase();
+      const code = (pos.positionCode || '').toLowerCase();
+      return name.includes(q) || secondary.includes(q) || code.includes(q);
+    });
+  }, [positionsSorted, positionSearch, payrollListFilter]);
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [noPermissionDialogOpen, setNoPermissionDialogOpen] = useState(false);
@@ -190,24 +221,42 @@ export default function PositionsPage() {
         </Alert>
 
         {/* 3. Action Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาชื่อตำแหน่งหรือรหัสมาตรฐาน..." className="pl-9 h-11" />
-            </div>
-            <Button variant="outline" size="icon" className="h-11 w-11"><Filter className="h-4 w-4" /></Button>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between bg-card p-4 rounded-lg border shadow-sm">
+          <div className="relative w-full md:max-w-md md:flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="ค้นหาชื่อตำแหน่งหรือรหัสมาตรฐาน..."
+              className="pl-9 h-11"
+              value={positionSearch}
+              onChange={(e) => setPositionSearch(e.target.value)}
+              aria-label="ค้นหาตำแหน่งงาน"
+            />
           </div>
-          
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button
-                className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-semibold"
-                disabled={!canCreatePositions}
-              >
-                <Plus className="h-5 w-5" /> เพิ่มตำแหน่งงานมาตรฐาน (New Position)
-              </Button>
-            </DialogTrigger>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end sm:gap-3 shrink-0">
+            <Select
+              value={payrollListFilter}
+              onValueChange={(v) => setPayrollListFilter(v as PayrollListFilter)}
+            >
+              <SelectTrigger className="h-11 w-full sm:w-[200px]" aria-label="กรองตามฐานการจ่าย">
+                <SelectValue placeholder="ฐานการจ่าย" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">ทั้งหมด</SelectItem>
+                <SelectItem value="DAILY">รายวัน</SelectItem>
+                <SelectItem value="MONTHLY">รายเดือน</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-semibold w-full sm:w-auto"
+                  disabled={!canCreatePositions}
+                >
+                  <Plus className="h-5 w-5" /> เพิ่มตำแหน่งงานมาตรฐาน (New Position)
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
                 <DialogTitle>สร้างตำแหน่งงานใหม่ (New Position Entry)</DialogTitle>
@@ -262,7 +311,8 @@ export default function PositionsPage() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
+            </Dialog>
+          </div>
         </div>
 
         {/* 4. Data Content */}
@@ -278,14 +328,13 @@ export default function PositionsPage() {
                   <TableRow>
                     <TableHead className="font-bold py-4">ตำแหน่งงาน (Standard Position)</TableHead>
                     <TableHead className="font-bold">รหัส (Code)</TableHead>
-                    <TableHead className="font-bold">หมวดหมู่ (Category)</TableHead>
                     <TableHead className="font-bold">ฐานการจ่าย (Payroll)</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {positionsSorted.map((pos) => {
+                  {positionsFiltered.map((pos) => {
                     const p = pos as PositionDoc;
                     const nameSecondary = positionListSecondaryName(p);
                     return (
@@ -303,8 +352,7 @@ export default function PositionsPage() {
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs font-bold text-primary">{pos.positionCode}</TableCell>
-                      <TableCell>{pos.category}</TableCell>
-                      <TableCell>{pos.payrollBasis}</TableCell>
+                      <TableCell>{payrollBasisLabel(pos.payrollBasis)}</TableCell>
                       <TableCell>
                         <Badge variant={pos.active ? 'default' : 'secondary'} className={pos.active ? 'bg-green-600' : ''}>
                           {pos.active ? 'Active' : 'Inactive'}
@@ -331,7 +379,16 @@ export default function PositionsPage() {
                   })}
                   {!isLoading && positionsSorted.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground">ไม่พบข้อมูลตำแหน่งงานมาตรฐานในระบบ</TableCell>
+                      <TableCell colSpan={5} className="text-center py-20 text-muted-foreground">
+                        ไม่พบข้อมูลตำแหน่งงานมาตรฐานในระบบ
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!isLoading && positionsSorted.length > 0 && positionsFiltered.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center py-20 text-muted-foreground">
+                        ไม่พบตำแหน่งตามคำค้นหาหรือตัวกรองฐานการจ่าย
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

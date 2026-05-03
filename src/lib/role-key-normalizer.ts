@@ -28,6 +28,7 @@ export const BUILTIN_PERMISSION_PROFILE_DOC_IDS = new Set([
   'system_admin',
   'admin_admin',
   'client_user',
+  'employee_self',
   'sales_manager',
   'sales_officer',
   'hr_manager',

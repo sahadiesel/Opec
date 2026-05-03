@@ -1,4 +1,4 @@
-import type { Assignment, DeploymentStatus } from '@/lib/types';
+import type { Assignment, DeploymentStatus, PurchaseOrder } from '@/lib/types';
 
 /**
  * Statuses where a worker is considered "occupied" and cannot be assigned elsewhere.
@@ -15,36 +15,32 @@ const BLOCKING_STATUSES: Set<DeploymentStatus> = new Set([
   'ACTIVE',
 ]);
 
-export interface OverlapResult {
-  hasOverlap: boolean;
-  blockingAssignments: Pick<Assignment, 'id' | 'assignmentNo' | 'waveId' | 'projectName' | 'startDate' | 'endDate' | 'deploymentStatus'>[];
+/** เฟส 2 PO workflow: Unassign แล้วว่างสล็อตแม้ deployment ยังไม่อัปเดต */
+export function assignmentOccupiesWorkerSlot(a: Assignment): boolean {
+  if (a.unassignedAt != null && Number(a.unassignedAt) > 0) return false;
+  return BLOCKING_STATUSES.has(a.deploymentStatus);
 }
 
-function datesOverlap(
-  aStart: string,
-  aEnd: string,
-  bStart: string,
-  bEnd: string,
-): boolean {
-  return aStart <= bEnd && bStart <= aEnd;
+export interface OverlapResult {
+  hasOverlap: boolean;
+  blockingAssignments: Pick<
+    Assignment,
+    'id' | 'assignmentNo' | 'waveId' | 'projectName' | 'startDate' | 'endDate' | 'deploymentStatus'
+  >[];
 }
 
 /**
- * Check if a worker already has active (non-closed) assignments
- * that overlap with the proposed date range.
+ * เฟส 2: คนงานมีได้แค่หนึ่ง mobilization ที่ “ยังจับสล็อต” — ไม่ใช้ช่วงวันที่ทับซ้อน
  */
 export function checkWorkerAssignmentOverlap(
   allAssignments: Assignment[],
   workerId: string,
-  proposedStart: string,
-  proposedEnd: string,
   excludeAssignmentId?: string,
 ): OverlapResult {
   const blocking = allAssignments.filter((a) => {
     if (a.workerId !== workerId) return false;
     if (excludeAssignmentId && a.id === excludeAssignmentId) return false;
-    if (!BLOCKING_STATUSES.has(a.deploymentStatus)) return false;
-    return datesOverlap(a.startDate, a.endDate, proposedStart, proposedEnd);
+    return assignmentOccupiesWorkerSlot(a);
   });
 
   return {
@@ -68,9 +64,23 @@ export function checkWorkerAssignmentOverlap(
 export function getOccupiedWorkerIds(allAssignments: Assignment[]): Set<string> {
   const ids = new Set<string>();
   for (const a of allAssignments) {
-    if (BLOCKING_STATUSES.has(a.deploymentStatus)) {
+    if (assignmentOccupiesWorkerSlot(a)) {
       ids.add(a.workerId);
     }
   }
   return ids;
+}
+
+/** ช่วง startDate/endDate (yyyy-mm-dd) เก็บใน mobilization — ผูกกับ PO (เฟส 2) */
+export function mobilizationScheduleFromPo(
+  po: Pick<PurchaseOrder, 'startDate' | 'endDate'>,
+): { startDate: string; endDate: string } {
+  const msToYmd = (ms: unknown): string => {
+    const n = typeof ms === 'number' && Number.isFinite(ms) ? ms : Date.now();
+    return new Date(n).toISOString().slice(0, 10);
+  };
+  const startDate = msToYmd(po.startDate);
+  let endDate = msToYmd(po.endDate);
+  if (endDate < startDate) endDate = startDate;
+  return { startDate, endDate };
 }

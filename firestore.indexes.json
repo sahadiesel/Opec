@@ -66,6 +66,23 @@
       ]
     },
     {
+      "collectionGroup": "mobilizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "poActiveBundleId", "order": "ASCENDING" },
+        { "fieldPath": "deploymentStatus", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "poActiveBundleId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "daily_timesheets",
       "queryScope": "COLLECTION",
       "fields": [
@@ -260,6 +277,14 @@
       "fields": [
         { "fieldPath": "isActive", "order": "ASCENDING" },
         { "fieldPath": "sortOrder", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cash_advance_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subjectLinkedUserId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
   ],

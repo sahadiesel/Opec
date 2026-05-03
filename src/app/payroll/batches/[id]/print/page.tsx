@@ -40,7 +40,13 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
 
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
-    return lines.map((line) => buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined));
+    const sorted = [...lines].sort((a, b) =>
+      (a.workerNameSnapshot || '').localeCompare(b.workerNameSnapshot || '', 'th', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+    return sorted.map((line) => buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined));
   }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl]);
 
   const handlePrintAll = () => window.print();

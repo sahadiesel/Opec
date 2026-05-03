@@ -3,8 +3,11 @@ import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
-/** Mobilization ที่ยังถือว่าจองโควต้า (ยังไม่ปิด/ถอนกำลัง) */
-const DEPLOYMENT_RELEASED_FROM_QUOTA: DeploymentStatus[] = ['DEMOBILIZED', 'CLOSED'];
+/**
+ * ปล่อยโควต้าเฉพาะรายการปิดบัญชีแล้ว — DEMOBILIZED ยังนับเป็น "มอบหมายแล้ว" (รอรอบ Mob / DMOB)
+ * เพื่อให้ตัวเลขชุด PO Active ตรงกับคนที่ยังผูก PO อยู่จริง
+ */
+const DEPLOYMENT_RELEASED_FROM_QUOTA: DeploymentStatus[] = ['CLOSED'];
 
 export function assignmentCountsTowardQuota(status: DeploymentStatus): boolean {
   return !DEPLOYMENT_RELEASED_FROM_QUOTA.includes(status);

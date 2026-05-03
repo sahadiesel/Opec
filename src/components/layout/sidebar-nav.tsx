@@ -42,6 +42,7 @@ import {
   Receipt,
   FileQuestion,
   Calculator,
+  Wallet,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -168,7 +169,13 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
     icon: Coins,
     entries: [
       { key: 'office_payroll', title: 'พนักงานออฟฟิศ (ตัดจ่าย)', href: '/accounting/office-payroll', icon: Users },
-      { key: 'worker_payroll', title: 'ลูกจ้าง (คิวตัดจ่าย · ส่งถึงบัญชีแล้ว)', href: '/payroll/batches?payout=1', icon: Banknote },
+      { key: 'worker_payroll', title: 'ลูกจ้าง · ทำจ่าย (บัญชี)', href: '/accounting/worker-payroll', icon: Banknote },
+      {
+        key: 'cash_advances',
+        title: 'รออนุมัติจ่ายเบิกเงิน',
+        href: '/accounting/cash-advances-payout',
+        icon: Wallet,
+      },
       {
         kind: 'folder',
         folderKey: 'executive_payroll_folder',
@@ -210,7 +217,7 @@ const OPS_WAREHOUSE_SUB_PATHS = [
 function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavGroup[] {
   if (isStoreOfficer(user)) return groups;
   const rk = getPrimaryLegacyRole(user);
-  if (!rk || !['hr_officer', 'payroll_officer', 'hr_manager'].includes(rk)) return groups;
+  if (!rk || !['hr_officer', 'payroll_officer', 'hr_manager', 'operations_manager'].includes(rk)) return groups;
   return groups.map((g) => {
     if (g.label !== 'ภาพรวม (Overview)') return g;
     return {
@@ -228,7 +235,15 @@ const navGroups: NavGroup[] = [
   {
     label: 'ภาพรวม (Overview)',
     audience: 'internal',
-    items: [{ key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/', icon: LayoutDashboard }],
+    items: [
+      { key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/', icon: LayoutDashboard },
+      {
+        key: 'employee_self_profile',
+        title: 'My Profile',
+        href: '/my-profile',
+        icon: UserSearch,
+      },
+    ],
   },
   {
     label: 'งานขายและสัญญา (Commercial)',
@@ -416,7 +431,12 @@ export function SidebarNav({
           if (group.accountingStructured) {
             const filterNav = (item: NavItem) => {
               if (admin) return true;
-              if (isSimpleAccounting(user) && item.href.split('?')[0] === '/payroll/batches') return true;
+              const acctPayoutBase = item.href.split('?')[0];
+              if (
+                isSimpleAccounting(user) &&
+                (acctPayoutBase === '/accounting/worker-payroll' || acctPayoutBase === '/accounting/cash-advances-payout')
+              )
+                return true;
               const byMatrix = sidebarMatrixVisibility(user, item);
               if (byMatrix !== null) return byMatrix;
               return canView(user, item.key, profile);

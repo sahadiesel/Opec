@@ -123,6 +123,17 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const linesQuery = useMemoFirebase(() => (firestore && canViewBatch ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id, canViewBatch]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<PayrollBatchLine>(linesQuery as any);
 
+  const linesSorted = useMemo(() => {
+    const list = [...(lines ?? [])];
+    list.sort((a, b) =>
+      (a.workerNameSnapshot || '').localeCompare(b.workerNameSnapshot || '', 'th', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+    return list;
+  }, [lines]);
+
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
   const { profile: companyProfile } = useCompanyDocumentProfile();
@@ -183,8 +194,8 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   }, [firestore, lines]);
 
   const handleDownloadBankCsv = useCallback(() => {
-    if (!batch || !lines?.length) return;
-    const csv = buildWorkerPayrollBankVerificationCsv(batch, lines, workersById);
+    if (!batch || !linesSorted.length) return;
+    const csv = buildWorkerPayrollBankVerificationCsv(batch, linesSorted, workersById);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -193,7 +204,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
     a.click();
     URL.revokeObjectURL(url);
     toast({ title: 'ดาวน์โหลด CSV', description: 'ไฟล์ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)' });
-  }, [batch, lines, workersById, toast]);
+  }, [batch, linesSorted, workersById, toast]);
 
   const handleOfficerSubmitForPayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -422,7 +433,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-2">
-                {canBankCheckCsv && lines && lines.length > 0 && (
+                {canBankCheckCsv && linesSorted.length > 0 && (
                   <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleDownloadBankCsv}>
                     <FileSpreadsheet className="h-4 w-4" />
                     ดาวน์โหลด CSV ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)
@@ -544,7 +555,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lines?.map((line) => {
+                    {linesSorted.map((line) => {
                       const periodLabel = period?.label || batch.payrollPeriodId;
                       let slipModel: PayslipViewModel | null = null;
                       try {
@@ -561,8 +572,13 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         <TableCell className="pl-6 align-top py-3 min-w-0 max-w-[300px]">
                           <div className="flex flex-col gap-0.5 min-w-0">
-                            <span className="font-bold text-sm text-primary leading-snug break-words">
+                            <span className="font-bold text-sm text-primary leading-snug break-words inline-flex flex-wrap items-center gap-1">
                               {line.workerNameSnapshot}
+                              {(line.incomeSegments?.length ?? 0) > 1 ? (
+                                <Badge variant="secondary" className="text-[9px] font-semibold shrink-0">
+                                  หลาย PO
+                                </Badge>
+                              ) : null}
                             </span>
                             <span className="text-[10px] text-muted-foreground uppercase truncate font-mono">
                               {line.workerId}
@@ -611,7 +627,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                         </TableCell>
                       </TableRow>
                     );})}
-                    {(!lines || lines.length === 0) && !isLinesLoading && (
+                    {linesSorted.length === 0 && !isLinesLoading && (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
                       </TableRow>

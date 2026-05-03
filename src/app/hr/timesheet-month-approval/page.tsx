@@ -28,16 +28,19 @@ import type {
   PurchaseOrder,
   Wave,
   Customer,
-  JobMode,
 } from '@/lib/types';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import {
+  groupRowsByPoActiveBundle,
+  poActiveBundleWorkModeShortLabel,
+} from '@/lib/ops/po-active-bundle-grouping';
 import {
   ensureOpenPayrollPeriodForWaveMonthReview,
   markTimesheetsReadyForPayrollAfterMonthApproval,
 } from '@/lib/timesheet/wave-month-payroll-bridge';
 import {
-  ensureOpenPayrollPeriodForPoMonthReview,
-  markTimesheetsReadyForPayrollAfterPoMonthApproval,
+  ensureWorkerMonthlyPayrollPeriodForYearMonth,
+  syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import {
   ensureCommercialDraftInvoiceAfterMonthApproval,
@@ -51,47 +54,6 @@ function canReviewMonthlyQueue(user: User | null): boolean {
   if (!user) return false;
   if (isSystemAdmin(user)) return true;
   return isOperationManager(user) || isHrManager(user);
-}
-
-function workModeShortLabel(mode: JobMode | undefined): string {
-  if (mode === 'ONSHORE') return 'Onshore';
-  if (mode === 'OFFSHORE') return 'Offshore';
-  return '—';
-}
-
-/** จัดแถวคิวที่มี poId เป็นกลุ่มชุด PO Active — เรียงกลุ่มตามชื่อลูกค้าแล้วคีย์ชุด */
-function groupPendingRowsByPoActiveBundle<T extends { poId: string; submittedAt: number }>(
-  rows: T[],
-  poById: Map<string, PurchaseOrder>,
-  customerLabel: (customerId: string) => string,
-): Array<{ bundleKey: string; customerId: string; workMode: JobMode | undefined; rows: T[] }> {
-  const m = new Map<string, T[]>();
-  for (const row of rows) {
-    const po = poById.get(row.poId);
-    const bundleKey = po ? resolvePoActiveBundleKeyForPo(po) : `orphan:${row.poId}`;
-    const arr = m.get(bundleKey) ?? [];
-    arr.push(row);
-    m.set(bundleKey, arr);
-  }
-  const out = [...m.entries()].map(([bundleKey, groupRows]) => {
-    const headPo = poById.get(groupRows[0].poId);
-    const modeFromKey =
-      bundleKey.endsWith('__ONSHORE') ? 'ONSHORE' : bundleKey.endsWith('__OFFSHORE') ? 'OFFSHORE' : undefined;
-    return {
-      bundleKey,
-      customerId: headPo?.customerId ?? '',
-      workMode: modeFromKey ?? headPo?.poWorkMode,
-      rows: [...groupRows].sort((a, b) => b.submittedAt - a.submittedAt),
-    };
-  });
-  out.sort((a, b) => {
-    const na = customerLabel(a.customerId);
-    const nb = customerLabel(b.customerId);
-    const c = na.localeCompare(nb, 'th');
-    if (c !== 0) return c;
-    return a.bundleKey.localeCompare(b.bundleKey);
-  });
-  return out;
 }
 
 export default function TimesheetMonthApprovalQueuePage() {
@@ -175,12 +137,13 @@ export default function TimesheetMonthApprovalQueuePage() {
   }, [customers]);
 
   const groupedPoMonth = useMemo(
-    () => groupPendingRowsByPoActiveBundle(sortedPo, poById, customerLabel),
+    () =>
+      groupRowsByPoActiveBundle(sortedPo, poById, customerLabel, (a, b) => b.submittedAt - a.submittedAt),
     [sortedPo, poById, customerLabel],
   );
 
   const groupedWaveMonth = useMemo(
-    () => groupPendingRowsByPoActiveBundle(sorted, poById, customerLabel),
+    () => groupRowsByPoActiveBundle(sorted, poById, customerLabel, (a, b) => b.submittedAt - a.submittedAt),
     [sorted, poById, customerLabel],
   );
 
@@ -248,9 +211,12 @@ export default function TimesheetMonthApprovalQueuePage() {
       });
       if (next === 'approved') {
         const approvedRow: PoMonthTimesheetReview = { ...row, status: 'approved' };
-        const { updated } = await markTimesheetsReadyForPayrollAfterPoMonthApproval(firestore, approvedRow);
         const actorName = currentUser.displayName || currentUser.email || currentUser.id;
-        const payrollPeriod = await ensureOpenPayrollPeriodForPoMonthReview(firestore, approvedRow, actorName);
+        const { updated, gatedPoCount, syncedPoCount } = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(
+          firestore,
+          row.yearMonth,
+        );
+        const payrollPeriod = await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, row.yearMonth, actorName);
         const billing = await ensureCommercialDraftInvoiceAfterPoMonthApproval(firestore, approvedRow, currentUser);
         const billingLine =
           billing.ok === true
@@ -259,7 +225,7 @@ export default function TimesheetMonthApprovalQueuePage() {
         const zeroPayrollHint =
           updated === 0
             ? ' — ไม่พบ timesheet ที่อัปเดตได้ในช่วงงวด (หรือ LOCKED หมด) — ตรวจรายวันว่า readyForPayroll / ช่วงวันที่'
-            : '';
+            : ` — ซิงก์ครอบคลุม ${syncedPoCount} PO ที่ทับเดือน (เอกสารปิดงวดในเดือนนี้ ${gatedPoCount} ฉบับ)`;
         const periodHint = payrollPeriod.created
           ? ' — สร้างรอบบัญชีลูกจ้างอัตโนมัติแล้ว (ไปเมนูงวดจ่ายลูกจ้าง)'
           : '';
@@ -362,7 +328,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                         <TableCell colSpan={6} className="py-3">
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                             <Badge variant="outline" className="font-semibold">
-                              {workModeShortLabel(g.workMode)}
+                              {poActiveBundleWorkModeShortLabel(g.workMode)}
                             </Badge>
                             <span className="font-bold text-foreground">{customerLabel(g.customerId)}</span>
                             <span className="text-muted-foreground text-xs font-mono truncate max-w-[240px]" title={g.bundleKey}>
@@ -488,7 +454,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                         <TableCell colSpan={6} className="py-3">
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                             <Badge variant="outline" className="font-semibold">
-                              {workModeShortLabel(g.workMode)}
+                              {poActiveBundleWorkModeShortLabel(g.workMode)}
                             </Badge>
                             <span className="font-bold text-foreground">{customerLabel(g.customerId)}</span>
                             <span className="text-muted-foreground text-xs font-mono truncate max-w-[240px]" title={g.bundleKey}>
@@ -511,6 +477,12 @@ export default function TimesheetMonthApprovalQueuePage() {
                       {g.rows.map((row) => {
                         const po = poById.get(row.poId);
                         const wv = waveById.get(row.waveId);
+                        const waveBundleKey = po ? resolvePoActiveBundleKeyForPo(po) : `orphan:${row.poId}`;
+                        const waveMonthHref =
+                          `/timesheets/wave-month?month=${encodeURIComponent(row.yearMonth)}&highlightWave=${encodeURIComponent(row.waveId)}` +
+                          (waveBundleKey.startsWith('orphan:')
+                            ? ''
+                            : `&poActiveBundleId=${encodeURIComponent(waveBundleKey)}`);
                         return (
                           <TableRow key={row.id}>
                             <TableCell className="font-mono text-sm">{row.yearMonth}</TableCell>
@@ -537,9 +509,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                             <TableCell className="text-center">
                               <div className="flex flex-wrap items-center justify-center gap-2">
                                 <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
-                                  <Link
-                                    href={`/timesheets/wave-month?month=${encodeURIComponent(row.yearMonth)}&highlightWave=${encodeURIComponent(row.waveId)}`}
-                                  >
+                                  <Link href={waveMonthHref}>
                                     <ExternalLink className="h-3.5 w-3.5" />
                                     ดูสรุปรายเดือน
                                   </Link>

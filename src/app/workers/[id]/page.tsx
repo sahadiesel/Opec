@@ -184,6 +184,7 @@ function WorkerDetailContent({ id }: { id: string }) {
   // --- UI state ---
   const [isEditing, setIsEditing] = useState(false);
   const [editedWorker, setEditedWorker] = useState<Partial<Worker>>({});
+  const [activateLoginBusy, setActivateLoginBusy] = useState(false);
 
   // --- Derived data (unchanged) ---
   const workerTimesheets = useMemo(() => {
@@ -234,6 +235,66 @@ function WorkerDetailContent({ id }: { id: string }) {
   }, [isEditing, editedWorker.currentPositionId, worker?.currentPositionId, allPositions]);
 
   // --- Business logic: save master (unchanged) ---
+  const handleActivateWorkerLogin = async () => {
+    if (!firebaseUser || !worker || !canEditWorker) return;
+    const loginEmail = String(worker.email ?? '').trim().toLowerCase();
+    if (!loginEmail.includes('@')) {
+      toast({
+        variant: 'destructive',
+        title: 'อีเมลไม่ถูกต้อง',
+        description: 'บันทึกอีเมลในทะเบียนให้ครบก่อน (โหมดแก้ไข → บันทึก)',
+      });
+      return;
+    }
+    if (isEditing) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกการแก้ไขก่อน',
+        description: 'ออกจากโหมดแก้ไขและบันทึกข้อมูล แล้วจึงกดเปิดใช้อีเมลล็อกอิน',
+      });
+      return;
+    }
+    setActivateLoginBusy(true);
+    try {
+      const token = await firebaseUser.getIdToken();
+      const res = await fetch('/api/workers/activate-login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ workerId: worker.id, loginEmail }),
+      });
+      let data: { error?: string } = {};
+      try {
+        data = (await res.json()) as { error?: string };
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดใช้บัญชีไม่สำเร็จ',
+          description: data.error || res.statusText,
+        });
+        return;
+      }
+      toast({
+        title: 'เปิดใช้อีเมลล็อกอินแล้ว',
+        description:
+          'รหัสเริ่มต้น: opecopec — แนะนำให้พนักงานเข้า My Profile เพื่อเปลี่ยนรหัส หรือใช้ Forgot password ที่หน้าเข้าสู่ระบบ',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'เกิดข้อผิดพลาด',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setActivateLoginBusy(false);
+    }
+  };
+
   const handleSaveMaster = () => {
     if (!canEditWorker) {
       toast({
@@ -465,6 +526,9 @@ function WorkerDetailContent({ id }: { id: string }) {
     );
   }
 
+  const workerProfileTabTriggerClassName =
+    'gap-2 py-2.5 px-2 sm:px-3 w-full justify-center text-[11px] sm:text-sm whitespace-normal leading-snug min-h-10 sm:min-h-11 [&_svg]:shrink-0';
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1400px] mx-auto">
@@ -531,17 +595,29 @@ function WorkerDetailContent({ id }: { id: string }) {
           onValueChange={(v) => setActiveTab((v as WorkerProfileTab) || 'info')}
           className="w-full"
         >
-          <TabsList className="flex flex-wrap w-full md:w-fit h-auto p-1 bg-muted/50 gap-1">
-            <TabsTrigger value="info" className="gap-2 py-2 px-6"><User className="h-4 w-4" /> ข้อมูลประวัติ (Info)</TabsTrigger>
-            <TabsTrigger value="certs" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ใบเซอร์ (Certs)</TabsTrigger>
-            <TabsTrigger value="medical" className="gap-2 py-2 px-6"><Stethoscope className="h-4 w-4" /> ตรวจร่างกาย (Medical)</TabsTrigger>
-            <TabsTrigger value="drug" className="gap-2 py-2 px-6"><AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)</TabsTrigger>
-            <TabsTrigger value="docs" className="gap-2 py-2 px-6"><FileSearch className="h-4 w-4" /> เอกสาร (Docs)</TabsTrigger>
-            <TabsTrigger value="worklog" className="gap-2 py-2 px-6"><History className="h-4 w-4" /> ประวัติชั่วโมงงาน</TabsTrigger>
-            <TabsTrigger value="ppe_list" className="gap-2 py-2 px-6">
+          <TabsList className="grid w-full grid-cols-4 h-auto p-1.5 bg-muted/50 gap-1.5 rounded-md">
+            <TabsTrigger value="info" className={workerProfileTabTriggerClassName}>
+              <User className="h-4 w-4" /> ข้อมูลประวัติ (Info)
+            </TabsTrigger>
+            <TabsTrigger value="certs" className={workerProfileTabTriggerClassName}>
+              <FileText className="h-4 w-4" /> ใบเซอร์ (Certs)
+            </TabsTrigger>
+            <TabsTrigger value="medical" className={workerProfileTabTriggerClassName}>
+              <Stethoscope className="h-4 w-4" /> ตรวจร่างกาย (Medical)
+            </TabsTrigger>
+            <TabsTrigger value="drug" className={workerProfileTabTriggerClassName}>
+              <AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)
+            </TabsTrigger>
+            <TabsTrigger value="docs" className={workerProfileTabTriggerClassName}>
+              <FileSearch className="h-4 w-4" /> เอกสาร (Docs)
+            </TabsTrigger>
+            <TabsTrigger value="worklog" className={workerProfileTabTriggerClassName}>
+              <History className="h-4 w-4" /> ประวัติชั่วโมงงาน
+            </TabsTrigger>
+            <TabsTrigger value="ppe_list" className={workerProfileTabTriggerClassName}>
               <HardHat className="h-4 w-4" /> รายการ PPE
             </TabsTrigger>
-            <TabsTrigger value="tools_list" className="gap-2 py-2 px-6">
+            <TabsTrigger value="tools_list" className={workerProfileTabTriggerClassName}>
               <Wrench className="h-4 w-4" /> รายการอุปกรณ์
             </TabsTrigger>
           </TabsList>
@@ -556,6 +632,9 @@ function WorkerDetailContent({ id }: { id: string }) {
               currentPosition={currentPositionForLabor}
               canViewLaborCost={canViewLaborCost}
               canEditLaborCost={canEditLaborCost}
+              canActivateWorkerLogin={canEditWorker}
+              onActivateWorkerLogin={handleActivateWorkerLogin}
+              activateWorkerLoginBusy={activateLoginBusy}
             />
           </TabsContent>
 

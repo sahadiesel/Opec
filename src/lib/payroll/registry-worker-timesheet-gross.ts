@@ -5,6 +5,10 @@
 import type { DailyTimesheet, MainContract, Position, Worker } from '@/lib/types';
 import { computeWorkDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
 import { resolveBaseCostForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
+import {
+  type WorkerGlobalLaborContext,
+  workerGlobalLaborToPayrollRestSchedule,
+} from '@/lib/payroll/worker-global-labor-policy';
 
 type GlobalCostMultiplierPolicy = {
   otAfterShift?: number;
@@ -18,7 +22,7 @@ type GlobalCostMultiplierPolicy = {
   travel?: number;
 };
 
-/** ตัวคูณเมื่อสัญญาไม่กำหนด rateMultiplierPolicy.cost — ยังคำนวณจากฐานทะเบียนได้ */
+/** @deprecated ใช้ WorkerGlobalLaborContext จาก HR Settings — คงชื่อเดิมเพื่อ import ภายนอก */
 export const DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY: GlobalCostMultiplierPolicy = {
   otAfterShift: 1.5,
   holiday: 1.5,
@@ -31,20 +35,8 @@ export const DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY: GlobalCostMultiplierPolic
   travel: 1,
 };
 
-function resolveContractCostPolicy(
-  contractId: string | undefined,
-  contractMap: Map<string, MainContract>,
-): GlobalCostMultiplierPolicy | undefined {
-  if (!contractId) return undefined;
-  const contract = contractMap.get(contractId);
-  if (!contract) return undefined;
-  if ((contract.contractType || 'master') === 'supplemental') {
-    const sourceId = contract.inheritTermsFromContractId || contract.parentContractId;
-    if (sourceId && contractMap.has(sourceId)) {
-      return contractMap.get(sourceId)?.rateMultiplierPolicy?.cost;
-    }
-  }
-  return contract.rateMultiplierPolicy?.cost;
+function workerLaborCostPolicy(ctx: WorkerGlobalLaborContext): GlobalCostMultiplierPolicy {
+  return ctx.cost;
 }
 
 function resolvePolicyFallbackCost(
@@ -80,8 +72,8 @@ export interface RegistryWorkerTimesheetGrossResult {
 }
 
 /**
- * ฐานค่าแรง: ลูกจ้าง + ตำแหน่ง (และ override รายคน) → work_day ใช้แพ็กต้นทุน + OT ตามสัญญา/PO
- * เหตุอื่น: ตัวคูณจากสัญญาหลักถ้ามี ไม่งั้น DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY
+ * ฐานค่าแรง: ลูกจ้าง + ตำแหน่ง (และ override รายคน) → work_day ใช้แพ็กต้นทุน + OT ตาม PO snapshot + ปฏิทิน/ตัวคูณ HR
+ * เหตุอื่น: ตัวคูณจาก HR Settings (worker_global_labor)
  */
 export function computeRegistryWorkerTimesheetGross(
   ts: DailyTimesheet,
@@ -91,6 +83,7 @@ export function computeRegistryWorkerTimesheetGross(
     linePosition: Position | null | undefined;
     poLine: Record<string, unknown>;
     contractMap: Map<string, MainContract>;
+    workerGlobalLabor: WorkerGlobalLaborContext;
   },
 ): RegistryWorkerTimesheetGrossResult {
   const mainContract = ts.contractId ? input.contractMap.get(ts.contractId) : undefined;
@@ -101,8 +94,8 @@ export function computeRegistryWorkerTimesheetGross(
     timesheet: ts,
     mainContract,
   });
-  const contractPolicy = resolveContractCostPolicy(ts.contractId, input.contractMap);
-  const policy = contractPolicy ?? DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY;
+  const policy = workerLaborCostPolicy(input.workerGlobalLabor);
+  const payrollRestSchedule = workerGlobalLaborToPayrollRestSchedule(input.workerGlobalLabor);
 
   const useWorkDayPackage = ts.eventType === 'work_day' && baseCost > 0;
   if (useWorkDayPackage) {
@@ -118,7 +111,7 @@ export function computeRegistryWorkerTimesheetGross(
       costPackagePerDay: baseCost,
       statedHours,
       otAfterShiftMultiplier: otMult,
-      mainContract,
+      payrollRestSchedule,
     });
     return {
       gross: pkg.amount,

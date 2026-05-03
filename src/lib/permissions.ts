@@ -163,6 +163,16 @@ export const SYSTEM_MODULES = [
   { group: 'HR & Payroll (บุคคล)', key: 'workers', label: 'ทะเบียนคนงาน (Workers)' },
   { group: 'HR & Payroll (บุคคล)', key: 'worker_documents', label: 'เอกสารบุคลากรกลาง (Worker document catalog)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_staff', label: 'พนักงานออฟฟิศ (Office Staff)' },
+  {
+    group: 'HR & Payroll (บุคคล)',
+    key: 'cash_advances',
+    label: 'เบิกเงินล่วงหน้า (Cash advance)',
+  },
+  {
+    group: 'HR & Payroll (บุคคล)',
+    key: 'employee_self_profile',
+    label: 'โปรไฟล์ของฉัน (My Profile)',
+  },
   { group: 'Operations (ปฏิบัติการ)', key: 'waves', label: 'กลุ่มรอบการทำงาน (Waves)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'assignments', label: 'การมอบหมายงาน (Assignments)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'mobilization', label: 'การเตรียมส่งตัว (Mobilization)' },
@@ -269,6 +279,7 @@ const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
   'payroll_runs',
   'payslips',
   'payment_export_batches',
+  'cash_advances',
 ]);
 
 function clonePermission(p: ModulePermission): ModulePermission {
@@ -377,6 +388,23 @@ export function getPermissions(
 
   if (ADMIN_ONLY_MODULE_KEYS.has(moduleKey)) return clonePermission(NO_ACCESS);
 
+  /** พนักงาน/ลูกจ้างที่เปิดบัญชีจากทะเบียน (employee_self) — เฉพาะโปรไฟล์ตนเอง + เบิกล่วงหน้า */
+  if (getEffectiveSimpleRole(u) === 'employee_self') {
+    if (moduleKey === 'employee_self_profile') {
+      return clonePermission({ ...READ_ONLY, create: true, edit: true });
+    }
+    if (moduleKey === 'cash_advances') {
+      return clonePermission({
+        view: true,
+        create: true,
+        edit: false,
+        delete: false,
+        approve: false,
+      });
+    }
+    return clonePermission(NO_ACCESS);
+  }
+
   /** ใบกำกับร่าง + แนบสลิป: พนักงานภายใน (ไม่ใช่บัญชี) ดู/แก้ไขได้ แต่ไม่สร้างเอกสารใหม่ใน UI */
   if (
     moduleKey === 'tax_invoices' &&
@@ -397,6 +425,23 @@ export function getPermissions(
   if (moduleKey === 'draft_invoices') {
     if (isOperationManager(u) || isHrManager(u)) return clonePermission(FULL_ACCESS);
     if (getEffectiveSimpleRole(u) === 'accounting_manager') return clonePermission(FULL_ACCESS);
+    return clonePermission(NO_ACCESS);
+  }
+
+  /** พอร์ทัลโปรไฟล์ — ทุกพนักงานภายในที่ล็อกอินได้เข้าเมนูได้ (หน้าตรวจสอบการเชื่อมทะเบียน) */
+  if (moduleKey === 'employee_self_profile') {
+    if (!isSimpleInternalEligible(u)) return clonePermission(NO_ACCESS);
+    return clonePermission({ ...READ_ONLY, create: true, edit: true });
+  }
+
+  /**
+   * เบิกเงินล่วงหน้า — Payroll / HR manager / Ops manager สร้างและไล่ขั้น;
+   * บัญชีจ่ายหรือตัด Petty ตอนท้าย
+   */
+  if (moduleKey === 'cash_advances') {
+    if (isSystemAdmin(u) || isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
+    if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
+    if (isPayrollOfficer(u) || isHrManager(u) || isOperationManager(u)) return clonePermission(FULL_ACCESS);
     return clonePermission(NO_ACCESS);
   }
 

@@ -12,21 +12,19 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { 
-  Plus, 
-  Trash2, 
-  Save, 
-  FileText, 
-  HardHat, 
-  Hammer, 
+import {
+  Plus,
+  Trash2,
+  Save,
+  FileText,
+  HardHat,
+  Hammer,
   ArrowLeft,
   Sparkles,
   Loader2,
   Briefcase,
   Activity,
   Info,
-  Globe,
-  Anchor
 } from 'lucide-react';
 import { 
   Dialog, 
@@ -38,7 +36,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, collection, getCountFromServer, query, where } from 'firebase/firestore';
+import { doc, collection, getCountFromServer, query, where, deleteField } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
   Position,
@@ -46,7 +44,6 @@ import {
   PositionPPERequirement,
   PositionToolRequirement,
   User,
-  JobMode,
   WorkerDocumentCatalogItem,
   StoreItem,
   STORE_ITEM_CATEGORIES,
@@ -59,6 +56,7 @@ import {
 const TOOL_STORE_CATEGORIES = STORE_ITEM_CATEGORIES.filter((c) => c !== 'PPE');
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { positionDetailHeadline, type PositionDoc } from '@/lib/position-display';
@@ -67,6 +65,15 @@ import { canView, canEdit, canDelete } from '@/lib/permissions';
 import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '@/lib/payroll/labor-cost-model';
 import { LaborCostPositionSection } from '@/components/hr/labor-cost-position-section';
 import { LaborCostByContractSection } from '@/components/hr/labor-cost-by-contract-section';
+import { mergeLaborCostRowsWithMainContracts } from '@/lib/payroll/position-labor-cost-contract-rows';
+
+function normalizePositionPayrollBasis(raw: unknown): Position['payrollBasis'] {
+  const u = String(raw ?? 'DAILY').toUpperCase();
+  if (u === 'MONTHLY') return 'MONTHLY';
+  if (u === 'HOURLY') return 'HOURLY';
+  if (u === 'DAILY') return 'DAILY';
+  return 'DAILY';
+}
 
 export default function PositionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -110,8 +117,14 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const [editedPos, setEditedPos] = useState<Partial<Position>>({});
 
   const laborCostByContractRows = useMemo(
-    () => editedPos.laborCostByContract ?? position?.laborCostByContract ?? [],
-    [editedPos.laborCostByContract, position?.laborCostByContract],
+    () =>
+      mergeLaborCostRowsWithMainContracts(
+        isEditing
+          ? (editedPos.laborCostByContract ?? position?.laborCostByContract)
+          : position?.laborCostByContract,
+        allMainContracts ?? [],
+      ),
+    [isEditing, editedPos.laborCostByContract, position?.laborCostByContract, allMainContracts],
   );
 
   const certsQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'positions', id, 'certificate_requirements') : null), [firestore, id, canViewPositions]);
@@ -206,32 +219,57 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const displayLaborOn = isEditing ? nextLaborOn : position?.defaultLaborCostOnshore;
   const displayLaborOff = isEditing ? nextLaborOff : position?.defaultLaborCostOffshore;
 
+  const displayPayrollBasis = useMemo(() => {
+    const raw = isEditing ? editedPos.payrollBasis ?? position?.payrollBasis : position?.payrollBasis;
+    return normalizePositionPayrollBasis(raw);
+  }, [isEditing, editedPos.payrollBasis, position?.payrollBasis]);
+
+  const isMonthlyPayrollBasis = displayPayrollBasis === 'MONTHLY';
+
+  const showHourlyPayrollBasisOption = useMemo(() => {
+    const p = position?.payrollBasis;
+    const e = editedPos.payrollBasis;
+    return p === 'HOURLY' || e === 'HOURLY';
+  }, [position?.payrollBasis, editedPos.payrollBasis]);
+
   const laborDefaultsChanged = useMemo(() => {
     if (!position) return false;
+    if (displayPayrollBasis === 'MONTHLY') return false;
     return (
       nMoney(nextLaborOn) !== nMoney(position.defaultLaborCostOnshore) ||
       nMoney(nextLaborOff) !== nMoney(position.defaultLaborCostOffshore)
     );
-  }, [position, nextLaborOn, nextLaborOff]);
+  }, [position, nextLaborOn, nextLaborOff, displayPayrollBasis]);
 
   const commitPositionSave = useCallback(() => {
     if (!posRef || !position) return;
+    const payrollBasis = normalizePositionPayrollBasis(editedPos.payrollBasis ?? position.payrollBasis);
     const base: Record<string, unknown> = {
       ...editedPos,
       positionCode: position.positionCode,
+      payrollBasis,
       updatedAt: Date.now(),
     };
-    if (!canViewLabor) {
+    if (payrollBasis === 'MONTHLY') {
+      base.defaultLaborCostOnshore = deleteField();
+      base.defaultLaborCostOffshore = deleteField();
+      base.laborCostByContract = [];
+    } else if (!canViewLabor) {
       delete base.defaultLaborCostOnshore;
       delete base.defaultLaborCostOffshore;
       delete base.laborCostByContract;
+    } else if (canEditLabor) {
+      base.laborCostByContract = mergeLaborCostRowsWithMainContracts(
+        editedPos.laborCostByContract ?? position.laborCostByContract,
+        allMainContracts ?? [],
+      );
     }
     updateDocumentNonBlocking(posRef, base);
     setIsEditing(false);
     setLaborSaveDialogOpen(false);
     setLaborWorkerCount(null);
     toast({ title: 'บันทึกสำเร็จ', description: 'ข้อมูลหลักของตำแหน่งงานถูกอัปเดตแล้ว' });
-  }, [posRef, position, editedPos, canViewLabor, toast]);
+  }, [posRef, position, editedPos, canViewLabor, canEditLabor, toast, allMainContracts]);
 
   const handleSaveMaster = useCallback(async () => {
     if (!canEditPositions) {
@@ -447,16 +485,12 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             <Link href="/positions"><ArrowLeft className="h-5 w-5" /></Link>
           </Button>
           <div className="flex-1">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight text-primary">
                 {positionDetailHeadline(position as PositionDoc)}
               </h1>
               <Badge variant="outline" className="font-mono text-primary border-primary/20">
                 Code: {position.positionCode}
-              </Badge>
-              <Badge variant="secondary" className="gap-1">
-                {position.jobMode === 'OFFSHORE' ? <Anchor className="h-3 w-3" /> : <Globe className="h-3 w-3" />}
-                {position.jobMode} Mode
               </Badge>
             </div>
             <p className="text-muted-foreground mt-1 flex items-center gap-2">
@@ -492,61 +526,149 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6 pt-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* มือถือ: เรียงแนวตั้ง */}
+                <div className="flex flex-col gap-4 md:hidden">
                   <div className="space-y-2">
-                    <Label className="font-bold">ชื่อตำแหน่ง (Position Name) *</Label>
-                    <Input 
-                      disabled={!isEditing} 
-                      value={isEditing ? (editedPos.positionName ?? editedPos.positionNameTh) : (position.positionName ?? position.positionNameTh)} 
-                      onChange={e => setEditedPos({...editedPos, positionName: e.target.value})}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">รหัสตำแหน่ง (Position Code) *</Label>
+                    <Label className="font-bold">รหัสตำแหน่ง (Position Code)</Label>
                     <Input
                       readOnly
                       aria-readonly="true"
                       autoComplete="off"
+                      tabIndex={-1}
                       value={position.positionCode ?? ''}
-                      className="bg-muted font-mono font-bold text-primary cursor-not-allowed"
+                      className="h-10 bg-muted font-mono font-bold text-primary cursor-not-allowed"
                     />
-                    <p className="text-[10px] text-muted-foreground">
-                      รหัสออกโดยระบบตอนสร้างตำแหน่ง — ไม่สามารถแก้ไขเพื่อป้องกันการชนกับรหัสที่มีอยู่
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      ออกโดยระบบ — แก้ไขไม่ได้
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label className="font-bold">นโยบายการทำงาน (Job Mode) *</Label>
-                    <Select 
+                    <Label className="font-bold">ชื่อตำแหน่ง (Position Name) *</Label>
+                    <Input
+                      className="h-10"
                       disabled={!isEditing}
-                      onValueChange={v => setEditedPos({...editedPos, jobMode: v as JobMode})}
-                      value={isEditing ? editedPos.jobMode : position.jobMode}
-                    >
-                      <SelectTrigger className="h-10 font-bold border-primary/20"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="OFFSHORE">OFFSHORE (นอกชายฝั่ง)</SelectItem>
-                        <SelectItem value="ONSHORE">ONSHORE (บนฝั่ง)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-[10px] text-muted-foreground italic">
-                      * นโยบายจะมีผลต่อเกณฑ์การคำนวณความพร้อม (Readiness) และกฎการเบิกจ่าย
-                    </p>
+                      value={
+                        isEditing
+                          ? (editedPos.positionName ?? editedPos.positionNameTh ?? '')
+                          : (position.positionName ?? position.positionNameTh ?? '')
+                      }
+                      onChange={(e) => setEditedPos({ ...editedPos, positionName: e.target.value })}
+                    />
                   </div>
                   <div className="space-y-2">
-                    <Label className="font-bold">ฐานการจ่ายเงินคนงาน (Payroll Basis)</Label>
-                    <Select 
+                    <Label className="font-bold">ฐานการจ่าย (Payroll Basis)</Label>
+                    <Select
                       disabled={!isEditing}
-                      onValueChange={v => setEditedPos({...editedPos, payrollBasis: v as any})}
-                      value={isEditing ? editedPos.payrollBasis : position.payrollBasis}
+                      onValueChange={(v) => {
+                        const basis = v as Position['payrollBasis'];
+                        setEditedPos((prev) => {
+                          const next: Partial<Position> = { ...prev, payrollBasis: basis };
+                          if (basis === 'MONTHLY') {
+                            delete next.defaultLaborCostOnshore;
+                            delete next.defaultLaborCostOffshore;
+                            next.laborCostByContract = [];
+                          }
+                          return next;
+                        });
+                      }}
+                      value={displayPayrollBasis}
                     >
-                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Daily">Daily (รายวัน)</SelectItem>
-                        <SelectItem value="Monthly">Monthly (รายเดือน)</SelectItem>
-                        <SelectItem value="Hourly">Hourly (รายชั่วโมง)</SelectItem>
+                        <SelectItem value="DAILY">รายวัน (Daily)</SelectItem>
+                        <SelectItem value="MONTHLY">รายเดือน (Monthly)</SelectItem>
+                        {showHourlyPayrollBasisOption ? (
+                          <SelectItem value="HOURLY">รายชั่วโมง (Hourly · legacy)</SelectItem>
+                        ) : null}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
+
+                {/* เดสก์ท็อป: แถวป้าย / แถวช่อง (ความสูงเท่ากัน) / แถบคำอธิบายใต้รหัส */}
+                <div className="hidden md:grid md:grid-cols-12 md:gap-x-4 md:gap-y-2">
+                  <div className="col-span-3 flex min-h-[2.75rem] items-end pb-1">
+                    <Label className="font-bold leading-snug">รหัสตำแหน่ง (Position Code)</Label>
+                  </div>
+                  <div className="col-span-5 flex min-h-[2.75rem] items-end pb-1">
+                    <Label className="font-bold leading-snug">ชื่อตำแหน่ง (Position Name) *</Label>
+                  </div>
+                  <div className="col-span-4 flex min-h-[2.75rem] items-end pb-1">
+                    <Label className="font-bold leading-snug">ฐานการจ่าย (Payroll Basis)</Label>
+                  </div>
+
+                  <div className="col-span-3 flex items-stretch">
+                    <Input
+                      readOnly
+                      aria-readonly="true"
+                      autoComplete="off"
+                      tabIndex={-1}
+                      value={position.positionCode ?? ''}
+                      className="h-10 w-full bg-muted font-mono font-bold text-primary cursor-not-allowed"
+                    />
+                  </div>
+                  <div className="col-span-5 flex items-stretch">
+                    <Input
+                      className="h-10 w-full"
+                      disabled={!isEditing}
+                      value={
+                        isEditing
+                          ? (editedPos.positionName ?? editedPos.positionNameTh ?? '')
+                          : (position.positionName ?? position.positionNameTh ?? '')
+                      }
+                      onChange={(e) => setEditedPos({ ...editedPos, positionName: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-4 flex items-stretch">
+                    <Select
+                      disabled={!isEditing}
+                      onValueChange={(v) => {
+                        const basis = v as Position['payrollBasis'];
+                        setEditedPos((prev) => {
+                          const next: Partial<Position> = { ...prev, payrollBasis: basis };
+                          if (basis === 'MONTHLY') {
+                            delete next.defaultLaborCostOnshore;
+                            delete next.defaultLaborCostOffshore;
+                            next.laborCostByContract = [];
+                          }
+                          return next;
+                        });
+                      }}
+                      value={displayPayrollBasis}
+                    >
+                      <SelectTrigger className="h-10 w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="DAILY">รายวัน (Daily)</SelectItem>
+                        <SelectItem value="MONTHLY">รายเดือน (Monthly)</SelectItem>
+                        {showHourlyPayrollBasisOption ? (
+                          <SelectItem value="HOURLY">รายชั่วโมง (Hourly · legacy)</SelectItem>
+                        ) : null}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="col-span-3 text-[10px] text-muted-foreground leading-snug">
+                    ออกโดยระบบ — แก้ไขไม่ได้
+                  </div>
+                  <div className="col-span-5" aria-hidden />
+                  <div className="col-span-4" aria-hidden />
+                </div>
+                {isMonthlyPayrollBasis ? (
+                  <Alert className="border-sky-200 bg-sky-50/80 text-sky-950">
+                    <Info className="h-4 w-4 text-sky-700" />
+                    <AlertTitle className="text-sky-950">ฐานการจ่ายรายเดือน</AlertTitle>
+                    <AlertDescription className="text-sky-900/90 text-sm leading-relaxed">
+                      ตำแหน่งนี้ไม่ใช้ค่าแรงรายวัน Onshore/Offshore และไม่ดึงราคาจากสัญญา — กำหนดเงินเดือนพนักงานได้ที่{' '}
+                      <Link href="/office-staff" className="font-semibold text-primary underline underline-offset-2">
+                        ทะเบียนพนักงานออฟฟิศ
+                      </Link>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 <div className="space-y-2">
                   <Label className="font-bold">รายละเอียดงาน (Description)</Label>
                   <Textarea 
@@ -558,23 +680,27 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                 </div>
               </CardContent>
             </Card>
-            <LaborCostPositionSection
-              displayOnshore={displayLaborOn}
-              displayOffshore={displayLaborOff}
-              isEditing={isEditing}
-              onPatch={(p) => setEditedPos((prev) => ({ ...prev, ...p }))}
-              canView={canViewLabor}
-              canEdit={canEditLabor}
-            />
-            <LaborCostByContractSection
-              rows={laborCostByContractRows}
-              isEditing={isEditing}
-              canView={canViewLabor}
-              canEdit={canEditLabor}
-              contracts={allMainContracts ?? undefined}
-              customerNameById={customerNameById}
-              onChange={(next) => setEditedPos((prev) => ({ ...prev, laborCostByContract: next }))}
-            />
+            {!isMonthlyPayrollBasis ? (
+              <>
+                <LaborCostPositionSection
+                  displayOnshore={displayLaborOn}
+                  displayOffshore={displayLaborOff}
+                  isEditing={isEditing}
+                  onPatch={(p) => setEditedPos((prev) => ({ ...prev, ...p }))}
+                  canView={canViewLabor}
+                  canEdit={canEditLabor}
+                />
+                <LaborCostByContractSection
+                  rows={laborCostByContractRows}
+                  isEditing={isEditing}
+                  canView={canViewLabor}
+                  canEdit={canEditLabor}
+                  contracts={allMainContracts ?? undefined}
+                  customerNameById={customerNameById}
+                  onChange={(next) => setEditedPos((prev) => ({ ...prev, laborCostByContract: next }))}
+                />
+              </>
+            ) : null}
           </TabsContent>
 
           <TabsContent value="certs" className="mt-6">

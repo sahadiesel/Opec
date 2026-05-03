@@ -59,6 +59,39 @@ service cloud.firestore {
         : '';
     }
 
+    /** assignedRoleKeys[0] — สอดคล้องลำดับ getPrimaryLegacyRole ฝั่งแอป */
+    function effectiveRoleFromAssignedKeysFirst(d) {
+      return d != null
+        && 'assignedRoleKeys' in d
+        && d.assignedRoleKeys is list
+        && d.assignedRoleKeys.size() > 0
+        && d.assignedRoleKeys[0] is string
+        && d.assignedRoleKeys[0].size() > 0
+        ? d.assignedRoleKeys[0].lower()
+        : '';
+    }
+
+    function permissionProfileIndicatesOperationsManager(d) {
+      return d != null && (
+        (
+          'permissionProfileKey' in d
+          && d.permissionProfileKey is string
+          && d.permissionProfileKey.lower() == 'operations_manager'
+        )
+        || (
+          'permissionProfileKeys' in d
+          && d.permissionProfileKeys is list
+          && d.permissionProfileKeys.size() > 0
+          && d.permissionProfileKeys[0] is string
+          && d.permissionProfileKeys[0].lower() == 'operations_manager'
+        )
+      );
+    }
+
+    /**
+     * Legacy effectiveRole: role field ก่อน assignedRoleKey — ใช้ที่อื่นในไฟล์นี้
+     * ผู้จัดการปฏิบัติการ Petty Cash: แอปใช้ assignedRoleKey ก่อน role + รองรับ permissionProfileKey
+     */
     function effectiveRole(d) {
       return effectiveRoleFromRoleField(d).size() > 0
         ? effectiveRoleFromRoleField(d)
@@ -77,6 +110,14 @@ service cloud.firestore {
       return hasUserDoc()
         && isInternalTypeData(userData())
         && !isCustomerPortalData(userData());
+    }
+
+    /**
+     * อ่านข้อมูล payroll / exception / monthly docs — ให้สอดคล้อง workers·daily_timesheets (มี isInternalStaffDoc)
+     * เพื่อให้ payroll_officer และบัญชี internal ที่สถานะยังไม่ active ครบเปิด HR dashboard / list งวดได้
+     */
+    function internalPayrollDataReader() {
+      return isInternalUser() || isInternalStaffDoc();
     }
 
     /**
@@ -171,8 +212,29 @@ service cloud.firestore {
       return isAdmin() || isAccounting();
     }
 
+    /** hasUserDoc ก่อน — หลีกเลี่ยง userData()/get() ล้ม; ห้ามใช้ if/return แบบ JS (Rules ไม่รองรับ) */
     function isOperationsManagerRole() {
-      return (isInternalUser() || isInternalStaffDoc()) && effectiveRole(userData()) == 'operations_manager';
+      return hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && (
+          effectiveRoleFromAssignedKey(userData()) == 'operations_manager'
+          || (
+            effectiveRoleFromAssignedKey(userData()).size() == 0
+            && (
+              effectiveRoleFromAssignedKeysFirst(userData()) == 'operations_manager'
+              || (
+                effectiveRoleFromAssignedKeysFirst(userData()).size() == 0
+                && (
+                  effectiveRoleFromRoleField(userData()) == 'operations_manager'
+                  || (
+                    effectiveRoleFromRoleField(userData()).size() == 0
+                    && permissionProfileIndicatesOperationsManager(userData())
+                  )
+                )
+              )
+            )
+          )
+        );
     }
 
     /** บัญชี: master data — ผู้จัดการปฏิบัติการบันทึก Petty Cash / โอน (อัปเดตยอด) ได้ */
@@ -180,21 +242,43 @@ service cloud.firestore {
       return isAccountingOrAdmin() || isOperationsManagerRole();
     }
 
+    /** เบิกล่วงหน้า — list/get ทั้งชุดเฉพาะบทบาทที่เกี่ยวข้อง (พนักงานเห็นเฉพาะแถวของตนเอง) */
+    function cashAdvancePrivilegedReader() {
+      return isAdmin()
+        || isAccountingOrAdmin()
+        || isOperationsManagerRole()
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && (
+            effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
+            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
+            || effectiveRoleFromRoleField(userData()) == 'hr_manager'
+          )
+        )
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && (
+            effectiveRoleFromAssignedKey(userData()) == 'payroll_officer'
+            || effectiveRoleFromAssignedKeysFirst(userData()) == 'payroll_officer'
+            || effectiveRoleFromRoleField(userData()) == 'payroll_officer'
+          )
+        );
+    }
+
     // Head of commercial/ops/HR pillar (not system_admin): broad internal business access in app + rules.
     function isOperationsPillarExecutive() {
-      let d = userData();
-      return isInternalUser()
+      return hasUserDoc()
+        && isInternalUser()
         && (
-          effectiveRole(d) == 'operations_manager'
-          || effectiveRole(d) == 'hr_manager'
-          || effectiveRole(d) == 'sales_manager'
+          effectiveRole(userData()) == 'operations_manager'
+          || effectiveRole(userData()) == 'hr_manager'
+          || effectiveRole(userData()) == 'sales_manager'
           || (
-            d != null
-            && (
-              ('accessGroup' in d && (d.accessGroup == 'operations' || d.accessGroup == 'operation'))
-              || ('departmentGroup' in d && (d.departmentGroup == 'operations' || d.departmentGroup == 'operation'))
+            (
+              ('accessGroup' in userData() && (userData().accessGroup == 'operations' || userData().accessGroup == 'operation'))
+              || ('departmentGroup' in userData() && (userData().departmentGroup == 'operations' || userData().departmentGroup == 'operation'))
             )
-            && ('accessLevel' in d && d.accessLevel == 'manager')
+            && ('accessLevel' in userData() && userData().accessLevel == 'manager')
           )
         );
     }
@@ -209,6 +293,62 @@ service cloud.firestore {
         && c.customerId.size() > 0
         && ('email' in c)
         && c.email is string;
+    }
+
+    /** สร้างบัญชีพนักงาน/ลูกจ้างจากทะเบียน (พอร์ทัล My Profile) — เฉพาะผู้บริหารสายปฏิบัติการ */
+    function isEmployeeSelfPortalUserCreate(userId) {
+      let c = request.resource.data;
+      return c.id == userId
+        && c.userType == 'internal'
+        && c.assignedRoleKey == 'employee_self'
+        && ('email' in c)
+        && c.email is string
+        && c.email.size() > 0;
+    }
+
+    /** บัญชีพนักงานแบบจำกัดสิทธิ์ (ล็อกอินจากทะเบียนลูกจ้าง) */
+    function isEmployeeSelfPortalUser() {
+      return hasUserDoc()
+        && isInternalTypeData(userData())
+        && !isCustomerPortalData(userData())
+        && isActiveStatus(userData())
+        && effectiveRole(userData()) == 'employee_self';
+    }
+
+    /** พนักงานสร้างคำขอเบิกล่วงหน้าด้วยตนเอง — ห้ามแอบอ้าง UID คนอื่น */
+    function cashAdvanceEmployeeSelfCreateValid() {
+      let c = request.resource.data;
+      return c.keys().hasAll([
+          'subjectLinkedUserId', 'origin', 'status', 'amountBaht', 'reason',
+          'createdAt', 'updatedAt', 'createdByUid', 'createdByName', 'requestNo',
+        ])
+        && c.subjectLinkedUserId is string
+        && c.subjectLinkedUserId == request.auth.uid
+        && c.createdByUid is string
+        && c.createdByUid == request.auth.uid
+        && c.origin == 'employee'
+        && c.status == 'PENDING_PAYROLL_REVIEW';
+    }
+
+    /** สอดคล้อง permissions.ts — hr_officer ถูกบล็อกโมดูล cash_advances */
+    function isHrOfficerRoleScalar() {
+      return hasUserDoc()
+        && (
+          effectiveRoleFromAssignedKey(userData()) == 'hr_officer'
+          || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_officer'
+          || effectiveRoleFromRoleField(userData()) == 'hr_officer'
+        );
+    }
+
+    /**
+     * แอปให้ internal หลายบทบาทเห็นรายการเบิก (fallback FULL_ACCESS) แต่เดิมกฎอนุญาตเฉพาะ cashAdvancePrivilegedReader
+     * จึง list /hr/cash-advances ไม่ได้ — เปิดอ่านคิวให้ internal ที่ไม่ใช่ employee_self และไม่ใช่ hr_officer
+     */
+    function cashAdvanceInternalQueueReader() {
+      return hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && !isEmployeeSelfPortalUser()
+        && !isHrOfficerRoleScalar();
     }
 
     function opsExecClientPortalUpdateOk() {
@@ -515,7 +655,8 @@ service cloud.firestore {
       allow create: if isAdmin()
         || (isOwner(userId) && bootstrapUserCreateValid(userId))
         || (isOwner(userId) && selfRegistrationPendingCreateValid(userId))
-        || (isOperationsPillarExecutive() && isCustomerPortalUserCreate(userId));
+        || (isOperationsPillarExecutive() && isCustomerPortalUserCreate(userId))
+        || (isOperationsPillarExecutive() && isEmployeeSelfPortalUserCreate(userId));
       allow update: if isAdmin()
         || (isOwner(userId) && !userSecurityFieldChanges())
         || opsExecClientPortalUpdateOk();
@@ -541,9 +682,9 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // Document codes (customers, workers, POs, etc.) - any active internal user must read/write.
+    // Document codes (customers, workers, POs, vendor bills, etc.) — active internal + staff doc (pending activation).
     match /number_sequences/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     // ---------- Accounting-only modules ----------
@@ -646,17 +787,19 @@ service cloud.firestore {
     }
 
     // Internal users may create rows from store workflow (vendor bill); accounting still controls payment in UI.
+    // isInternalStaffDoc: ฝ่ายคลัง/ผจก. ที่ยัง pending activation — เทียบ purchases / purchase_requests
     match /accounts_payable/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     /** หัก ณ ที่จ่าย (ผู้รับเงิน) — สะสมรอนำส่งสรรพากร ไม่ตัดบัญชีธนาคารตอนจ่ายคู่ค้า */
     match /withholding_at_source_items/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || isInternalUser() || isInternalStaffDoc();
+      allow write: if isAccountingOrAdmin();
     }
 
     match /purchase_vendor_bills/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /bank_accounts/{id} {
@@ -691,7 +834,7 @@ service cloud.firestore {
     match /system/{docId} {
       allow read: if isAdmin()
         || (docId == 'bootstrap' && isSignedIn())
-        || (docId == 'company_profile' && (isInternalUser() || clientPortalUserActive()))
+        || (docId == 'company_profile' && (isInternalUser() || isInternalStaffDoc() || clientPortalUserActive()))
         || (docId == 'drug_test_panel' && isInternalUser());
       allow write: if isAdmin();
     }
@@ -801,7 +944,8 @@ service cloud.firestore {
 
     match /mobilizations/{id} {
       allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId();
-      allow write: if isInternalUser();
+      /** ให้ payroll_officer / internal_staff อัปเดตสถานะจาก Wave Board (จบงาน → รอ Mob) — เทียบเท่า customer_month_timesheet_documents */
+      allow write: if isInternalUser() || isInternalStaffDoc();
     }
     match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
       allow read, write: if isInternalUser();
@@ -818,22 +962,31 @@ service cloud.firestore {
     match /workers/{workerId} {
       allow read: if isInternalUser()
         || isInternalStaffDoc()
+        || (isEmployeeSelfPortalUser()
+          && resource.data.keys().hasAll(['linkedUserId'])
+          && resource.data.linkedUserId is string
+          && resource.data.linkedUserId == request.auth.uid)
         || (portalCustomerIdOk()
             && exists(/databases/$(database)/documents/workers/$(workerId))
             && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
             && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
             && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
-      allow write: if isInternalUser();
+      allow write: if isInternalUser() && !isEmployeeSelfPortalUser();
     }
     match /workers/{workerId}/{document=**} {
       allow read: if isInternalUser()
         || isInternalStaffDoc()
+        || (isEmployeeSelfPortalUser()
+          && exists(/databases/$(database)/documents/workers/$(workerId))
+          && get(/databases/$(database)/documents/workers/$(workerId)).data.keys().hasAll(['linkedUserId'])
+          && get(/databases/$(database)/documents/workers/$(workerId)).data.linkedUserId is string
+          && get(/databases/$(database)/documents/workers/$(workerId)).data.linkedUserId == request.auth.uid)
         || (portalCustomerIdOk()
             && exists(/databases/$(database)/documents/workers/$(workerId))
             && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
             && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
             && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
-      allow write: if isInternalUser();
+      allow write: if isInternalUser() && !isEmployeeSelfPortalUser();
     }
 
     match /positions/{id} {
@@ -895,43 +1048,61 @@ service cloud.firestore {
     }
 
     match /payroll_runs/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
 
     match /payroll_batches/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
     match /payroll_batches/{batchId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
 
     match /payroll_periods/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
 
     match /payroll_policies/{id} {
-      allow read, write: if isInternalUser();
+      /** ลูกจ้าง/พนักงานพอร์ทัลอ่านได้เฉพาะนโยบายปฏิทิน-ตัวคูณค่าจ้างกลาง (แสดงใน My Profile) — ไม่เปิดทั้งคอลเลกชัน */
+      allow read: if internalPayrollDataReader()
+        || (
+          id == 'policy_worker_global_labor'
+          && isSignedIn()
+          && hasUserDoc()
+          && !isCustomerPortalData(userData())
+        );
+      allow write: if isInternalUser();
     }
 
     match /payroll_correction_requests/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
 
     match /office_payroll_runs/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
     match /office_payroll_runs/{runId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
 
     match /payment_export_batches/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
     }
 
     match /wave_month_timesheet_reviews/{id} {
@@ -972,7 +1143,14 @@ service cloud.firestore {
     }
 
     match /monthly_timesheet_documents/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
+    }
+
+    /** เฟส 2 — หัวเอกสาร timesheet รายเดือนต่อลูกค้า × Onshore/Offshore */
+    match /customer_month_timesheet_documents/{id} {
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /daily_timesheets/{id} {
@@ -989,7 +1167,37 @@ service cloud.firestore {
     }
 
     match /exception_requests/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
+    }
+
+    /** เบิกเงินล่วงหน้า — HR/Payroll workflow (ยืนยันฝั่งผู้ถือเรื่องเมื่อสร้างจาก office) */
+    match /cash_advance_requests/{id} {
+      /** เงื่อนไขเจ้าของเรื่องมาก่อน — ไม่ต้องประเมิน privileged reader (หลีกเลี่ยง userData() ล้มเมื่อยังไม่มี users/{uid}) */
+      allow read: if (
+          isSignedIn()
+          && resource.data.keys().hasAll(['subjectLinkedUserId'])
+          && resource.data.subjectLinkedUserId is string
+          && resource.data.subjectLinkedUserId == request.auth.uid
+        )
+        || cashAdvancePrivilegedReader()
+        || cashAdvanceInternalQueueReader();
+      allow create: if cashAdvancePrivilegedReader()
+        || (
+             (isInternalUser() || isInternalStaffDoc())
+             && !isEmployeeSelfPortalUser()
+             && !isHrOfficerRoleScalar()
+           )
+        || (isEmployeeSelfPortalUser() && cashAdvanceEmployeeSelfCreateValid());
+      allow update: if cashAdvancePrivilegedReader()
+        || (
+          isSignedIn()
+          && resource.data.keys().hasAll(['subjectLinkedUserId'])
+          && resource.data.subjectLinkedUserId == request.auth.uid
+          && resource.data.status == 'PENDING_SUBJECT_CONFIRMATION'
+          && request.resource.data.status == 'PENDING_PAYROLL_REVIEW'
+        );
+      allow delete: if cashAdvancePrivilegedReader();
     }
 
     match /customer_issues/{id} {
@@ -1005,7 +1213,7 @@ service cloud.firestore {
     }
 
     match /vendors/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     // PR: ฝ่ายคลัง + ผู้จัดการอนุมัติ — อนุญาต isInternalStaffDoc เหมือน po_month_timesheet_reviews (บัญชียัง pending / activation ยังไม่ครบ)

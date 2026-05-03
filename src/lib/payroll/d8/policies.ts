@@ -1,5 +1,6 @@
 import type { PayrollPolicyKind, PayrollPolicyRecord } from '@/lib/types';
 import {
+  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
   HR_STATUTORY_POLICY_SSO_ID,
   HR_STATUTORY_POLICY_TAX_OFFICE_ID,
 } from '@/lib/payroll/d8/hr-statutory-policy-ids';
@@ -10,6 +11,7 @@ export type ResolvedPayrollPolicies = {
   sso: PayrollPolicyRecord | null;
   tax: PayrollPolicyRecord | null;
   allowanceDeduction: PayrollPolicyRecord | null;
+  monthlyWorkNorm: PayrollPolicyRecord | null;
 };
 
 function inEffectiveRange(asOf: string, p: PayrollPolicyRecord): boolean {
@@ -41,6 +43,10 @@ function pickLatest(
     const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_SSO_ID);
     if (hr) return hr;
   }
+  if (kind === 'monthly_work_norm') {
+    const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_MONTHLY_WORK_ID);
+    if (hr) return hr;
+  }
   /** ชุดเดียวกับหน้า HR settings — ใช้ได้ทั้ง Office และ Worker เมื่อ appliesTo รวม scope นั้น */
   if (kind === 'tax') {
     const hr = candidates.find((p) => p.id === HR_STATUTORY_POLICY_TAX_OFFICE_ID);
@@ -59,6 +65,7 @@ export function resolvePayrollPoliciesForDate(
     sso: pickLatest(asOf, all, 'sso', scope),
     tax: pickLatest(asOf, all, 'tax', scope),
     allowanceDeduction: pickLatest(asOf, all, 'allowance_deduction', scope),
+    monthlyWorkNorm: pickLatest(asOf, all, 'monthly_work_norm', scope),
   };
 }
 
@@ -87,6 +94,13 @@ export function policiesAppliedList(
       policyId: resolved.allowanceDeduction.id,
       policyName: resolved.allowanceDeduction.name,
       effectiveFrom: resolved.allowanceDeduction.effectiveFrom,
+    });
+  if (resolved.monthlyWorkNorm)
+    out.push({
+      kind: 'monthly_work_norm',
+      policyId: resolved.monthlyWorkNorm.id,
+      policyName: resolved.monthlyWorkNorm.name,
+      effectiveFrom: resolved.monthlyWorkNorm.effectiveFrom,
     });
   return out;
 }

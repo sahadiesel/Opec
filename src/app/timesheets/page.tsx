@@ -244,6 +244,9 @@ function TimesheetHubContent() {
                 <Link href="/timesheets">กลับโหมดชุด PO Active</Link>
               </Button>
             )}
+            <Button variant="outline" asChild>
+              <Link href="/timesheets/customer-month">สรุปตามลูกค้า × On/Offshore</Link>
+            </Button>
             <Button asChild>
               <Link href="/timesheets/po-month">เอกสาร Timesheet รายเดือน</Link>
             </Button>

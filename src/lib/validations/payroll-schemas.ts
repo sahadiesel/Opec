@@ -62,6 +62,16 @@ export const PayrollBatchSchema = z.object({
   updatedAt: z.number(),
 });
 
+const PayrollBatchIncomeSegmentSchema = z.object({
+  purchaseOrderId: z.string().min(1),
+  customerId: z.string().optional(),
+  poCodeSnapshot: z.string().optional(),
+  customerNameSnapshot: z.string().optional(),
+  grossAmount: z.number(),
+  eventBreakdown: z.record(z.number()).default({}),
+  earningsBreakdown: z.record(z.number()).default({}),
+});
+
 /**
  * Zod validation schema for PayrollBatchLine
  */
@@ -110,4 +120,5 @@ export const PayrollBatchLineSchema = z.object({
     })
     .optional()
     .nullable(),
+  incomeSegments: z.array(PayrollBatchIncomeSegmentSchema).optional(),
 });

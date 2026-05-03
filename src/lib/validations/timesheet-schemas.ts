@@ -16,6 +16,10 @@ export const DailyTimesheetSchema = z.object({
   salesContractTermId: z.string().optional().nullable(),
   laborCostContractTermId: z.string().optional().nullable(),
   purchaseOrderId: z.string().min(1, 'Purchase Order ID is required'),
+  /** Denormalized billing scope — optional on legacy rows */
+  customerId: z.string().optional(),
+  /** PO Active bundle — เฟส 1 workflow / reporting */
+  poActiveBundleId: z.string().optional(),
   poLineId: z.string().min(1, 'PO Line ID is required'),
   siteId: z.string().min(1, 'Site ID is required'),
   positionId: z.string().min(1, 'Position ID is required'),
@@ -53,6 +57,10 @@ export const DailyTimesheetSchema = z.object({
   unpaidLeaveUnits: z.number().min(0).optional(),
   quantityOverride: z.number().optional().nullable(),
   remark: z.string().optional().nullable(),
+  poActiveAutoDaily: z.boolean().optional(),
+  /** เฟส 1 — denormalized จาก mobilization */
+  mobCycleId: z.string().optional(),
+  mobLocationKey: z.string().optional(),
   status: z.enum([
     'DRAFT', 
     'SUBMITTED', 

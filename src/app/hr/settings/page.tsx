@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   ArrowLeft,
+  CalendarDays,
+  Clock,
   Info,
   Landmark,
   Percent,
@@ -41,9 +43,26 @@ import { loadPayrollPoliciesFromFirestore } from '@/lib/payroll/d8/policy-loader
 import { socialSecurityFromPolicy } from '@/lib/payroll/d8/deductions-from-policy';
 import { resolvePayrollPoliciesForDate } from '@/lib/payroll/d8/policies';
 import {
+  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
   HR_STATUTORY_POLICY_SSO_ID,
   HR_STATUTORY_POLICY_TAX_OFFICE_ID,
+  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
 } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
+  type WorkerGlobalLaborContext,
+  workerGlobalLaborContextFromPolicy,
+} from '@/lib/payroll/worker-global-labor-policy';
+import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
+import { CalendarHolidayEditor } from '@/app/main-contracts/[id]/_components/calendar-holiday-editor';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  computeWorkDayEndDisplay,
+  DEFAULT_MONTHLY_WORK_NORM,
+  monthlyWorkNormFromUnknownConfig,
+  validateMonthlyWorkNormForSave,
+  type MonthlyWorkNormPolicyConfig,
+} from '@/lib/hr/monthly-work-norm-policy';
 import type { PayrollPolicyRecord } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -180,6 +199,17 @@ export default function HrSettingsPage() {
   /** ฐานรายได้รายเดือนสำหรับกล่องทดสอบ ภงด.1 (ไม่บันทึกแยก — สะท้อนสูตร payroll) */
   const [demoMonthlyGross, setDemoMonthlyGross] = useState(50_000);
 
+  const [workDaysPerMonth, setWorkDaysPerMonth] = useState(DEFAULT_MONTHLY_WORK_NORM.standardWorkingDaysPerMonth);
+  const [normalWorkHoursPerDay, setNormalWorkHoursPerDay] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.normalWorkingHoursPerDay
+  );
+  const [breakHoursPerDay, setBreakHoursPerDay] = useState(DEFAULT_MONTHLY_WORK_NORM.breakHoursPerDay);
+  const [workStartTime, setWorkStartTime] = useState(DEFAULT_MONTHLY_WORK_NORM.workStartTime);
+
+  const [workerLaborDraft, setWorkerLaborDraft] = useState<WorkerGlobalLaborContext>(() => ({
+    ...DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
+  }));
+
   const canViewPage = currentUser && isHRStaff(currentUser);
   const canEdit = canEditHrStatutoryPayrollSettings(currentUser);
 
@@ -210,6 +240,16 @@ export default function HrSettingsPage() {
         if (nb && nb.length) setPitBands(rechainPitBandsFromTops(nb));
         else setPitBands(cloneDefaultPitBands());
       }
+      const mw = resolved.monthlyWorkNorm;
+      if (mw?.config) {
+        const cfg = monthlyWorkNormFromUnknownConfig(mw.config as Record<string, unknown>);
+        setWorkDaysPerMonth(cfg.standardWorkingDaysPerMonth);
+        setNormalWorkHoursPerDay(cfg.normalWorkingHoursPerDay);
+        setBreakHoursPerDay(cfg.breakHoursPerDay);
+        setWorkStartTime(cfg.workStartTime);
+      }
+      const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
+      setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'โหลดไม่สำเร็จ');
     } finally {
@@ -222,6 +262,17 @@ export default function HrSettingsPage() {
   }, [load]);
 
   const pitRows = useMemo(() => pitBandsToReferenceRows(pitBands), [pitBands]);
+
+  const computedWorkEndLabel = useMemo(
+    () =>
+      computeWorkDayEndDisplay({
+        standardWorkingDaysPerMonth: workDaysPerMonth,
+        normalWorkingHoursPerDay: normalWorkHoursPerDay,
+        breakHoursPerDay: breakHoursPerDay,
+        workStartTime,
+      }),
+    [workDaysPerMonth, normalWorkHoursPerDay, breakHoursPerDay, workStartTime],
+  );
 
   const pitDemoCalc = useMemo(() => {
     const m = Math.max(0, Number(demoMonthlyGross) || 0);
@@ -314,12 +365,31 @@ export default function HrSettingsPage() {
       return;
     }
 
+    const monthlyWorkCfg: MonthlyWorkNormPolicyConfig = {
+      standardWorkingDaysPerMonth: Math.round(Number(workDaysPerMonth)),
+      normalWorkingHoursPerDay: Number(normalWorkHoursPerDay),
+      breakHoursPerDay: Number(breakHoursPerDay),
+      workStartTime: workStartTime.trim(),
+    };
+    const mwErr = validateMonthlyWorkNormForSave(monthlyWorkCfg);
+    if (mwErr) {
+      toast({ variant: 'destructive', title: mwErr });
+      return;
+    }
+
     setSaving(true);
     const now = Date.now();
     try {
       const ssoRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_SSO_ID);
       const taxRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_TAX_OFFICE_ID);
-      const [ssoPrev, taxPrev] = await Promise.all([getDoc(ssoRef), getDoc(taxRef)]);
+      const mwRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID);
+      const wlRef = doc(firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID);
+      const [ssoPrev, taxPrev, mwPrev, wlPrev] = await Promise.all([
+        getDoc(ssoRef),
+        getDoc(taxRef),
+        getDoc(mwRef),
+        getDoc(wlRef),
+      ]);
       const ssoCreated =
         ssoPrev.exists() && typeof ssoPrev.data()?.createdAt === 'number'
           ? (ssoPrev.data()!.createdAt as number)
@@ -327,6 +397,14 @@ export default function HrSettingsPage() {
       const taxCreated =
         taxPrev.exists() && typeof taxPrev.data()?.createdAt === 'number'
           ? (taxPrev.data()!.createdAt as number)
+          : now;
+      const mwCreated =
+        mwPrev.exists() && typeof mwPrev.data()?.createdAt === 'number'
+          ? (mwPrev.data()!.createdAt as number)
+          : now;
+      const wlCreated =
+        wlPrev.exists() && typeof wlPrev.data()?.createdAt === 'number'
+          ? (wlPrev.data()!.createdAt as number)
           : now;
 
       const ssoPolicy: PayrollPolicyRecord = {
@@ -361,12 +439,50 @@ export default function HrSettingsPage() {
         createdAt: taxCreated,
       };
 
+      const monthlyWorkPolicy: PayrollPolicyRecord = {
+        id: HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
+        kind: 'monthly_work_norm',
+        name: 'Monthly working-day norm — HR settings',
+        effectiveFrom: '2000-01-01',
+        effectiveTo: null,
+        status: 'active',
+        appliesTo: 'all',
+        config: {
+          standardWorkingDaysPerMonth: monthlyWorkCfg.standardWorkingDaysPerMonth,
+          normalWorkingHoursPerDay: monthlyWorkCfg.normalWorkingHoursPerDay,
+          breakHoursPerDay: monthlyWorkCfg.breakHoursPerDay,
+          workStartTime: monthlyWorkCfg.workStartTime,
+        },
+        updatedAt: now,
+        createdAt: mwCreated,
+      };
+
+      const workerLaborPolicy: PayrollPolicyRecord = {
+        id: HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+        kind: 'worker_global_labor',
+        name: 'Worker payroll — global OT/holiday multipliers & calendar (HR settings)',
+        effectiveFrom: '2000-01-01',
+        effectiveTo: null,
+        status: 'active',
+        appliesTo: 'worker',
+        config: {
+          costMultipliers: { ...workerLaborDraft.cost },
+          weeklyRestPattern: workerLaborDraft.weeklyRestPattern,
+          calendarHolidays: workerLaborDraft.calendarHolidays,
+        },
+        updatedAt: now,
+        createdAt: wlCreated,
+      };
+
       await setDoc(ssoRef, { ...ssoPolicy }, { merge: true });
       await setDoc(taxRef, { ...taxPolicy }, { merge: true });
+      await setDoc(mwRef, { ...monthlyWorkPolicy }, { merge: true });
+      await setDoc(wlRef, { ...workerLaborPolicy }, { merge: true });
 
       toast({
         title: 'บันทึกตั้งค่าแล้ว',
-        description: 'งวดเงินเดือน Office / ค่าจ้าง Worker ที่คำนวณใหม่จะใช้อัตราชุดนี้ — บรรทัดเก็บ snapshot เดิมไม่เปลี่ยน',
+        description:
+          'ภาษี ปสง. วันทำงานมาตรฐาน และตัวคูณ/ปฏิทินค่าจ้างลูกจ้าง — งวดที่คำนวณใหม่จะใช้ชุดนี้ (บรรทัด snapshot เดิมไม่เปลี่ยน)',
       });
       await load();
     } catch (e: unknown) {
@@ -514,42 +630,119 @@ export default function HrSettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                <Landmark className="h-5 w-5 text-primary" /> ประกันสังคม (ฝั่งลูกจ้าง)
+                <Landmark className="h-5 w-5 text-primary" /> ประกันสังคม และวันทำงานมาตรฐาน
               </CardTitle>
-              <CardDescription>ใช้กับทุก scope ที่คำนวณ SSO — ปรับตามประกาศ กสร.</CardDescription>
+              <CardDescription>
+                ด้านบน: SSO ฝั่งลูกจ้าง — ด้านล่าง: จำนวนวันทำงานต่อเดือนและเวลาทำงานปกติ (เก็บใน{' '}
+                <code className="text-xs bg-muted px-1 rounded">payroll_policies</code>)
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <div className="grid gap-2">
-                <Label className="text-muted-foreground flex items-center gap-2">
-                  <Percent className="h-4 w-4" /> อัตราหัก (ลูกจ้าง) %
-                </Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  disabled={!canEdit || loading}
-                  value={ssoRate}
-                  onChange={(e) => setSsoRate(Number(e.target.value))}
-                  className="font-mono max-w-[200px]"
-                />
+            <CardContent className="space-y-6 text-sm">
+              <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
+                <p className="text-xs font-semibold text-muted-foreground tracking-wide">ประกันสังคม (ฝั่งลูกจ้าง)</p>
+                <p className="text-xs text-muted-foreground -mt-2">ใช้กับทุก scope ที่คำนวณ SSO — ปรับตามประกาศ กสร.</p>
+                <div className="grid gap-2">
+                  <Label className="text-muted-foreground flex items-center gap-2">
+                    <Percent className="h-4 w-4" /> อัตราหัก (ลูกจ้าง) %
+                  </Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    disabled={!canEdit || loading}
+                    value={ssoRate}
+                    onChange={(e) => setSsoRate(Number(e.target.value))}
+                    className="font-mono max-w-[200px]"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label className="text-muted-foreground">เพดานค่าจ้างคำนวณต่อเดือน (บาท)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    step={100}
+                    disabled={!canEdit || loading}
+                    value={ssoCeiling}
+                    onChange={(e) => setSsoCeiling(Number(e.target.value))}
+                    className="font-mono max-w-[240px]"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground flex gap-2">
+                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                  ไม่ต้องตั้งซ้ำรายคน — รัน payroll จะดึงจากนโยบาย SSO ที่บันทึกที่นี่
+                </p>
               </div>
-              <div className="grid gap-2">
-                <Label className="text-muted-foreground">เพดานค่าจ้างคำนวณต่อเดือน (บาท)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  step={100}
-                  disabled={!canEdit || loading}
-                  value={ssoCeiling}
-                  onChange={(e) => setSsoCeiling(Number(e.target.value))}
-                  className="font-mono max-w-[240px]"
-                />
+
+              <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
+                <p className="text-xs font-semibold text-muted-foreground tracking-wide flex items-center gap-2">
+                  <Clock className="h-4 w-4" /> นโยบายวันทำงานประจำเดือน
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground">วันทำงานมาตรฐานต่อเดือน (วัน)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={31}
+                      step={1}
+                      disabled={!canEdit || loading}
+                      value={workDaysPerMonth}
+                      onChange={(e) => setWorkDaysPerMonth(Number(e.target.value))}
+                      className="font-mono max-w-[120px]"
+                    />
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      ตัวอย่าง: 26 — เมื่อหักตามวันทำงานไม่ครบ ระบบจะใช้หารเงินเดือนด้วยค่านี้ (เมื่อรองรับใน payroll)
+                    </p>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground">เวลาเริ่มงาน</Label>
+                    <Input
+                      type="time"
+                      disabled={!canEdit || loading}
+                      value={workStartTime}
+                      onChange={(e) => setWorkStartTime(e.target.value)}
+                      className="font-mono max-w-[140px]"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground">ชั่วโมงทำงานปกติต่อวัน</Label>
+                    <Input
+                      type="number"
+                      min={0.25}
+                      max={24}
+                      step={0.25}
+                      disabled={!canEdit || loading}
+                      value={normalWorkHoursPerDay}
+                      onChange={(e) => setNormalWorkHoursPerDay(Number(e.target.value))}
+                      className="font-mono max-w-[120px]"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground">ชั่วโมงพักต่อวัน</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.25}
+                      disabled={!canEdit || loading}
+                      value={breakHoursPerDay}
+                      onChange={(e) => setBreakHoursPerDay(Number(e.target.value))}
+                      className="font-mono max-w-[120px]"
+                    />
+                  </div>
+                </div>
+                <div className="rounded-md border bg-background px-3 py-2 text-sm">
+                  <span className="text-muted-foreground">เวลาเลิกงาน (คำนวณ: เริ่ม + ชม.ทำงาน + ชม.พัก): </span>
+                  <span className="font-mono font-medium tabular-nums">
+                    {computedWorkEndLabel === '—' ? '—' : `${computedWorkEndLabel} น.`}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground flex gap-2">
+                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                  ใช้ประกอบค่าล่วงเวลา / มาสาย เมื่อระบบคำนวณต่อจากนโยบายนี้ — ค่าที่แสดงเป็นผลคำนวณเท่านั้น ไม่ต้องกรอกเอง
+                </p>
               </div>
-              <p className="text-xs text-muted-foreground flex gap-2">
-                <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                ไม่ต้องตั้งซ้ำรายคน — รัน payroll จะดึงจากนโยบาย SSO ที่บันทึกที่นี่
-              </p>
             </CardContent>
           </Card>
 
@@ -769,6 +962,123 @@ export default function HrSettingsPage() {
               แก้เฉพาะค่า <strong>ถึง (บาท)</strong> ของแต่ละขั้น — ขั้นถัดไปจะเริ่มที่เลขถัดจากเพดานนั้นอัตโนมัติ (เช่น เปลี่ยนเพดานเป็น 160,000
               แล้วช่วงถัดไปแสดง 160,001 – …) สูตรคำนวณ payroll ใช้แบบขั้นบันไดตามตารางนี้ ขั้นสุดท้ายเว้น &quot;ถึง&quot; ว่าง = ไม่มีเพดานบน
             </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-muted">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-primary shrink-0" /> ตั้งค่าวันหยุดและตัวคูณค่าจ้างลูกจ้าง (กลาง)
+            </CardTitle>
+            <CardDescription>
+              ใช้คำนวณ payroll ลูกจ้างทุกสัญญา (รวม OT / วันหยุดในปฏิทิน / เสาร์–อาทิตย์) — พนักงานออฟฟิศไม่ผ่านไดร์ฟ timesheet จึงไม่ใช้ชุดนี้ในการคิดเวลา
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6 text-sm">
+            <p className="flex gap-2 items-start leading-relaxed text-muted-foreground">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                หน้าสัญญาหลักเหลือเฉพาะตัวคูณฝั่งลูกค้า (Billing) — ฝั่งต้นทุนย้ายมาที่นี่แล้ว แท็บ &quot;วันหยุดบริษัท&quot; ใน My Profile จะแสดงปฏิทินชุดเดียวกัน
+              </span>
+            </p>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-foreground">ตัวคูณฝั่งต้นทุน (ลูกจ้าง): OT / Holiday / Public Holiday / Sunday / Sunday OT</Label>
+              <div className="grid grid-cols-5 gap-2 max-w-3xl">
+                {(
+                  [
+                    ['otAfterShift', 'OT หลังกะ'],
+                    ['holiday', 'Holiday'],
+                    ['publicHoliday', 'นักขัตฤกษ์'],
+                    ['sunday', 'อาทิตย์'],
+                    ['sundayOt', 'อาทิตย์ OT'],
+                  ] as const
+                ).map(([key, hint]) => (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      disabled={loading || !canEdit}
+                      className="font-mono h-9"
+                      value={workerLaborDraft.cost[key]}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
+              <div className="grid grid-cols-4 gap-2 max-w-3xl">
+                {(
+                  [
+                    ['standby', 'Standby'],
+                    ['mobilization', 'Mob'],
+                    ['demobilization', 'Demob'],
+                    ['travel', 'Travel'],
+                  ] as const
+                ).map(([key, hint]) => (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      disabled={loading || !canEdit}
+                      className="font-mono h-9"
+                      value={workerLaborDraft.cost[key]}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2 max-w-md">
+              <Label>รูปแบบวันหยุดประจำสัปดาห์ (ค่าจ้าง)</Label>
+              <Select
+                disabled={loading || !canEdit}
+                value={workerLaborDraft.weeklyRestPattern}
+                onValueChange={(v) =>
+                  setWorkerLaborDraft((d) => ({
+                    ...d,
+                    weeklyRestPattern: v as WorkerGlobalLaborContext['weeklyRestPattern'],
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKLY_REST_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <CalendarHolidayEditor
+              title="วันหยุดในปฏิทิน (วันที่ + ชื่อ)"
+              disabled={loading || !canEdit}
+              holidays={workerLaborDraft.calendarHolidays}
+              setHolidays={(fn) =>
+                setWorkerLaborDraft((d) => ({
+                  ...d,
+                  calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
+                }))
+              }
+            />
           </CardContent>
         </Card>
       </div>

@@ -1,20 +1,14 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, Building2 } from 'lucide-react';
+import { Building2, Trash2 } from 'lucide-react';
 import type { MainContract, Position } from '@/lib/types';
+import { mainContractsForLaborCostRegistry } from '@/lib/payroll/position-labor-cost-contract-rows';
 
 type Row = NonNullable<Position['laborCostByContract']>[number];
 
@@ -48,23 +42,11 @@ export function LaborCostByContractSection({
   if (!canView) return null;
 
   const disabled = !isEditing || !canEdit;
-  const contractsSorted = [...(contracts ?? [])].sort((a, b) =>
-    (a.contractNumber || a.id).localeCompare(b.contractNumber || b.id, 'th'),
-  );
 
-  const addRow = () => {
-    const first = contractsSorted[0];
-    onChange([
-      ...rows,
-      {
-        contractId: first?.id || '',
-        customerId: first?.customerId,
-        contractLabel: first?.contractNumber || first?.title,
-        onshore: undefined,
-        offshore: undefined,
-      },
-    ]);
-  };
+  const activeContractIds = useMemo(
+    () => new Set(mainContractsForLaborCostRegistry(contracts ?? []).map((c) => c.id)),
+    [contracts],
+  );
 
   const patchRow = (index: number, patch: Partial<Row>) => {
     const next = rows.map((r, i) => (i === index ? { ...r, ...patch } : r));
@@ -73,15 +55,6 @@ export function LaborCostByContractSection({
 
   const removeRow = (index: number) => {
     onChange(rows.filter((_, i) => i !== index));
-  };
-
-  const onPickContract = (index: number, contractId: string) => {
-    const mc = contractsSorted.find((c) => c.id === contractId);
-    patchRow(index, {
-      contractId,
-      customerId: mc?.customerId,
-      contractLabel: mc?.contractNumber || mc?.title || contractId,
-    });
   };
 
   return (
@@ -95,15 +68,11 @@ export function LaborCostByContractSection({
           </Badge>
         </div>
         <CardDescription className="text-amber-950/85">
-          ระบุฐานบาท/วัน Onshore และ Offshore ต่อสัญญาหลัก — เมื่อ timesheet มี contractId ตรงกัน ระบบจะใช้ค่าจากแถวนี้ก่อนฐานทั่วไปของตำแหน่ง
+          แสดงสัญญาหลักที่สถานะยังใช้งานได้ครบทุกฉบับ — กำหนดบาท/วัน Onshore และ Offshore ต่อสัญญาสำหรับตำแหน่งนี้ เมื่อ timesheet อ้าง{' '}
+          <code className="text-xs">contractId</code> ตรงกัน ระบบจะใช้ค่าจากแถวนี้ก่อนค่ามาตรฐานของตำแหน่งด้านบน
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-4 space-y-4">
-        {!disabled && (
-          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addRow}>
-            <Plus className="h-4 w-4" /> เพิ่มสัญญา
-          </Button>
-        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -117,49 +86,24 @@ export function LaborCostByContractSection({
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-sm text-muted-foreground py-8 text-center">
-                  {disabled
-                    ? 'ยังไม่มีรายการต่อสัญญา — ใช้ฐาน Onshore/Offshore ด้านบน'
-                    : 'ยังไม่มีรายการ — กด «เพิ่มสัญญา» แล้วเลือกสัญญาหลัก'}
+                  ยังไม่มีสัญญาหลักในระบบ — เพิ่มสัญญาที่เมนูสัญญาหลักก่อน แล้วกลับมากำหนดค่าต่อแถว
                 </TableCell>
               </TableRow>
             ) : (
               rows.map((row, index) => {
-                const mcRow = contractsSorted.find((c) => c.id === row.contractId);
-                const cid = row.customerId || mcRow?.customerId;
+                const cid = row.customerId;
                 const cust = (cid && customerNameById.get(cid)) || '—';
+                const isOrphan = Boolean(row.contractId && !activeContractIds.has(row.contractId));
                 return (
                   <TableRow key={`${row.contractId}-${index}`}>
                     <TableCell className="align-top">
-                      {disabled ? (
-                        <div className="space-y-1">
-                          <p className="font-mono text-xs font-semibold">
-                            {row.contractLabel || row.contractId || '—'}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">ลูกค้า: {cust}</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <Label className="text-[10px] text-muted-foreground">สัญญาหลัก</Label>
-                          <Select
-                            value={row.contractId || ''}
-                            onValueChange={(v) => onPickContract(index, v)}
-                          >
-                            <SelectTrigger className="h-9">
-                              <SelectValue placeholder="เลือกสัญญา…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {contractsSorted.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  {c.contractNumber || c.id}{' '}
-                                  <span className="text-muted-foreground text-xs">
-                                    ({customerNameById.get(c.customerId) || c.customerId})
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
+                      <div className="space-y-1">
+                        <p className="font-mono text-xs font-semibold">{row.contractLabel || row.contractId || '—'}</p>
+                        <p className="text-[11px] text-muted-foreground">ลูกค้า: {cust}</p>
+                        {isOrphan ? (
+                          <p className="text-[10px] text-amber-800">สัญญาปิด/หมดอายุแล้ว — ลบแถวได้ถ้าไม่ใช้</p>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="align-top max-w-[140px]">
                       <Input
@@ -167,10 +111,8 @@ export function LaborCostByContractSection({
                         inputMode="decimal"
                         disabled={disabled}
                         placeholder="—"
-                        value={row.onshore != null && row.onshore > 0 ? String(row.onshore) : ''}
-                        onChange={(e) =>
-                          patchRow(index, { onshore: parseMoney(e.target.value) })
-                        }
+                        value={row.onshore != null ? String(row.onshore) : ''}
+                        onChange={(e) => patchRow(index, { onshore: parseMoney(e.target.value) })}
                       />
                     </TableCell>
                     <TableCell className="align-top max-w-[140px]">
@@ -179,24 +121,23 @@ export function LaborCostByContractSection({
                         inputMode="decimal"
                         disabled={disabled}
                         placeholder="—"
-                        value={row.offshore != null && row.offshore > 0 ? String(row.offshore) : ''}
-                        onChange={(e) =>
-                          patchRow(index, { offshore: parseMoney(e.target.value) })
-                        }
+                        value={row.offshore != null ? String(row.offshore) : ''}
+                        onChange={(e) => patchRow(index, { offshore: parseMoney(e.target.value) })}
                       />
                     </TableCell>
                     <TableCell className="align-top text-right">
-                      {!disabled && (
+                      {!disabled && isOrphan ? (
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           className="text-destructive h-8 w-8"
+                          title="ลบแถวสัญญาที่ไม่ใช้ในระบบแล้ว"
                           onClick={() => removeRow(index)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 );

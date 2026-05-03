@@ -11,7 +11,7 @@ import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 import {
   isWaveMonthAttachmentPdf,
   listDaysInMonth,
-  timesheetCellSummary,
+  timesheetWaveMonthCellDisplay,
   timesheetEventCellBadgeClasses,
 } from '@/lib/timesheet/wave-month-utils';
 import {
@@ -191,18 +191,20 @@ export function PortalWaveMonthReadonlyCard({
           <p className="text-center text-muted-foreground py-10 px-4 text-sm">{t('tsMonthlyNoRoster')}</p>
         ) : (
           <>
-            <Table className="min-w-max text-xs">
+            <Table className="min-w-max text-xs [&_th]:h-auto [&_th]:min-h-0 [&_th]:py-1 [&_th]:px-1.5 [&_td]:p-1 [&_td]:py-0.5">
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead className="sticky left-0 z-20 min-w-[160px] max-w-[220px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
+                  <TableHead className="sticky left-0 z-20 w-[9rem] min-w-[7.5rem] max-w-[10rem] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)] px-2">
                     {t('tsColWorker')}
                   </TableHead>
                   {days.map((d) => (
-                    <TableHead key={d} className="px-1 text-center w-10 font-mono" title={d}>
+                    <TableHead key={d} className="px-0.5 text-center w-7 min-w-[1.75rem] font-mono text-[10px]" title={d}>
                       {d.slice(8, 10)}
                     </TableHead>
                   ))}
-                  <TableHead className="text-center font-bold min-w-[56px]">{t('tsMonthlyTotalCol')}</TableHead>
+                  <TableHead className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 text-[10px] leading-tight">
+                    {t('tsMonthlyTotalCol')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -211,12 +213,14 @@ export function PortalWaveMonthReadonlyCard({
                     rw.positionId && (positionLabels[rw.positionId] || rw.positionId).trim();
                   return (
                   <TableRow key={rw.workerId}>
-                    <TableCell className="sticky left-0 z-10 bg-background text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)] min-w-[160px] max-w-[220px]">
-                      <div className="flex flex-col gap-0.5 pr-1">
-                        <span className="font-medium leading-snug">{rw.name}</span>
+                    <TableCell className="sticky left-0 z-10 bg-background text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)] max-w-[10rem] px-2 py-0.5">
+                      <div className="flex flex-col gap-0 leading-tight">
+                        <span className="font-medium truncate" title={rw.name}>
+                          {rw.name}
+                        </span>
                         {posText ? (
                           <span
-                            className="text-[10px] font-normal text-muted-foreground leading-tight line-clamp-2"
+                            className="text-[10px] font-normal text-muted-foreground line-clamp-1 truncate"
                             title={posText}
                           >
                             {posText}
@@ -226,30 +230,31 @@ export function PortalWaveMonthReadonlyCard({
                     </TableCell>
                     {days.map((d) => {
                       const ts = byWorkerDate.get(`${rw.workerId}|${d}`);
-                      const cell = timesheetCellSummary(ts);
+                      const cellLabel = timesheetWaveMonthCellDisplay(ts);
                       return (
-                        <TableCell key={d} className="px-0.5 text-center font-mono text-[10px]">
+                        <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">
                           {ts ? (
                             <span className="inline-flex max-w-full justify-center">
-                              <Badge
-                                variant="outline"
+                              <span
                                 className={cn(
-                                  'h-7 min-w-[2.5rem] px-1 font-mono text-[10px] leading-tight',
+                                  'inline-flex items-center justify-center rounded-sm border px-1 py-px text-[11px] font-medium leading-none min-w-[1.125rem]',
                                   timesheetEventCellBadgeClasses(ts.eventType, ts.status),
                                 )}
                               >
-                                {cell || '—'}
-                              </Badge>
+                                {cellLabel}
+                              </span>
                             </span>
                           ) : (
-                            <span className="tabular-nums min-h-[28px] min-w-[28px] inline-block text-muted-foreground/40">
-                              ·
+                            <span className="inline-flex min-w-[1.125rem] items-center justify-center font-medium text-muted-foreground/80 text-[11px] leading-none py-px">
+                              {' - '}
                             </span>
                           )}
                         </TableCell>
                       );
                     })}
-                    <TableCell className="text-center font-bold text-sm">{rowTotals.get(rw.workerId) ?? 0}</TableCell>
+                    <TableCell className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-0.5">
+                      {rowTotals.get(rw.workerId) ?? 0}
+                    </TableCell>
                   </TableRow>
                   );
                 })}

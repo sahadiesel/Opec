@@ -44,7 +44,9 @@ export const MOBILIZATION_STATUSES_NOT_CLOSED: DeploymentStatus[] = [
 ];
 
 /**
- * คิวหน้า /mobilization — แสดงตั้งแต่ DRAFT (หลังมอบหมาย) จนถึงก่อนลงงานหน้าไซต์ (ACTIVE)
+ * คิวหน้า /mobilization — ตั้งแต่สร้างมอบหมายจนถึงก่อนขึ้นไซต์เต็มรูปแบบ (ACTIVE)
+ * ไม่รวม ACTIVE · ไม่รวม DEMOBILIZED — รอบใหม่หลังจบงานใช้ DRAFT (Waiting MOB) จาก Wave Board เท่านั้น
+ * (DEMOBILIZED = ปิดภารกิจแบบเก่าจากเมนู Assignments — ไม่เข้าคิวเตรียมส่งตัวที่นี่เพื่อไม่ปะปนกับคนที่ยังปฏิบัติงานจริง)
  */
 export const MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES: DeploymentStatus[] = [
   'DRAFT',

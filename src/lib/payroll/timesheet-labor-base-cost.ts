@@ -1,5 +1,8 @@
 /**
- * ฐานต้นทุนค่าแรงต่อใบ timesheet (เฟส 3) — ลำดับ: รายคน (custom) → ฐานรายสัญญา+ตำแหน่ง → มาตรฐาน Position → costBaselineSnapshot จาก PO
+ * ฐานต้นทุนค่าแรงต่อใบ timesheet — ลำดับ:
+ * รายคน (custom) → ทะเบียนต่อสัญญาบน Position (`laborCostByContract` × timesheet.contractId)
+ * → มาตรฐาน Position (`defaultLaborCost*`) → costBaselineSnapshot จาก PO
+ * (ไม่อ่าน `MainContract.laborCostBaselinesByPositionId` — ตั้งที่ทะเบียนตำแหน่งเท่านั้น)
  */
 import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type {
@@ -49,20 +52,6 @@ function positionRateForLaborMode(
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** ฐานต้นทุนรายวันจาก `MainContract.laborCostBaselinesByPositionId` สำหรับบรรทัด timesheet (ตำแหน่งตาม `timesheet.positionId`) */
-export function resolveLaborCostBaselineFromMainContract(
-  main: MainContract | null | undefined,
-  timesheetPositionId: string,
-  mode: LaborCostWorkMode,
-): number {
-  if (!main?.laborCostBaselinesByPositionId || !timesheetPositionId) return 0;
-  const row = main.laborCostBaselinesByPositionId[timesheetPositionId];
-  if (!row) return 0;
-  const v = mode === 'onshore' ? row.onshore : row.offshore;
-  const n = v !== undefined && v !== null ? Number(v) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
 /** ทะเบียนต้นทุนต่อสัญญา บน Position — จับคู่ `timesheet.contractId` */
 function resolveLaborCostFromPositionRegistry(
   pos: Position | null | undefined,
@@ -90,12 +79,10 @@ function resolvePayrollLaborBaseCore(input: {
   fromPositionModel: boolean;
   resolution: { rate: number; source: LaborCostSourceKind; workMode: LaborCostWorkMode } | null;
 } {
+  void input.mainContract;
   const mode = timesheetToLaborWorkMode(input.timesheet);
-  const posId = input.timesheet.positionId;
   const w = input.worker;
   const linePos = input.linePosition;
-  const main = input.mainContract;
-  const contractB = resolveLaborCostBaselineFromMainContract(main, posId, mode);
   const registryB = resolveLaborCostFromPositionRegistry(linePos, input.timesheet.contractId, mode);
 
   if (w) {
@@ -117,13 +104,6 @@ function resolvePayrollLaborBaseCore(input: {
           resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
         };
       }
-      if (contractB > 0) {
-        return {
-          baseCost: contractB,
-          fromPositionModel: true,
-          resolution: { rate: contractB, source: 'contract_position_baseline', workMode: mode },
-        };
-      }
       const pOnly = positionRateForLaborMode(linePos, mode);
       if (pOnly > 0) {
         return {
@@ -142,13 +122,6 @@ function resolvePayrollLaborBaseCore(input: {
         resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
       };
     }
-    if (contractB > 0) {
-      return {
-        baseCost: contractB,
-        fromPositionModel: true,
-        resolution: { rate: contractB, source: 'contract_position_baseline', workMode: mode },
-      };
-    }
     const p = positionRateForLaborMode(linePos, mode);
     if (p > 0) {
       return {
@@ -165,13 +138,6 @@ function resolvePayrollLaborBaseCore(input: {
       baseCost: registryB,
       fromPositionModel: true,
       resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
-    };
-  }
-  if (contractB > 0) {
-    return {
-      baseCost: contractB,
-      fromPositionModel: true,
-      resolution: { rate: contractB, source: 'contract_position_baseline', workMode: mode },
     };
   }
   const p = positionRateForLaborMode(linePos, mode);

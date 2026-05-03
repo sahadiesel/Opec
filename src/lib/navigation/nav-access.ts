@@ -52,7 +52,10 @@ export function canViewHrPayrollFlowSubsection(
 ): boolean {
   if (admin) return true;
   if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
-  return isHrManager(user) || isOperationManager(user) || isPayrollOfficer(user);
+  if (isHrManager(user) || isOperationManager(user) || isPayrollOfficer(user)) return true;
+  /** สอดคล้องเมนู «อนุมัติ» — กรณี assignedRoleKey/โปรไฟล์ยังไม่ sync กับ getPrimaryLegacyRole */
+  const d = deriveBusinessRoleKey(user);
+  return d === 'hr_manager' || d === 'operations_manager' || d === 'payroll_officer';
 }
 
 /** หมวด «อนุมัติ (Approval)» ใน HR sidebar — เฉพาะผู้จัดการปฏิบัติการ / HR (+ แอดมิน) */
@@ -131,6 +134,8 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/draft-invoices', 'draft_invoices'],
   ['/accounting/executive-payroll', 'executive_payroll'],
   ['/accounting/office-payroll', 'office_payroll'],
+  ['/accounting/worker-payroll', 'worker_payroll'],
+  ['/accounting/cash-advances-payout', 'cash_advances'],
   ['/office-payroll', 'office_payroll'],
   ['/payroll', 'worker_payroll'],
   ['/timesheets', 'timesheets'],
@@ -162,6 +167,8 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/workers', 'workers'],
   ['/vendors', 'vendors'],
   ['/operations/petty-cash', 'operations_petty_cash'],
+  ['/my-profile', 'employee_self_profile'],
+  ['/hr/cash-advances', 'cash_advances'],
   ['/po-active-quota-queue', 'waves'],
   ['/store', 'store_inventory'],
 ];
@@ -237,8 +244,29 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     }
   }
 
+  /** รายละเอียดเบิกล่วงหน้า — พนักงานที่มีเมนู My Profile เปิดได้ (Firestore จำกัดเฉพาะแถวของตน) */
+  if (p.startsWith('/hr/cash-advances/') && p !== '/hr/cash-advances/new' && canView(user, 'employee_self_profile', profile)) {
+    return true;
+  }
+
   /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) — ไม่ต้องมี module worker_payroll ทั้งชุด */
-  if (!admin && isSimpleAccounting(user) && (p === '/payroll/batches' || p.startsWith('/payroll/batches/'))) {
+  if (
+    !admin &&
+    isSimpleAccounting(user) &&
+    (p === '/payroll/batches' ||
+      p.startsWith('/payroll/batches/') ||
+      p === '/accounting/worker-payroll' ||
+      p.startsWith('/accounting/worker-payroll/'))
+  ) {
+    return true;
+  }
+
+  /** บัญชี: คิวจ่ายเบิกล่วงหน้าหลังผู้จัดการอนุมัติ */
+  if (
+    !admin &&
+    isSimpleAccounting(user) &&
+    (p === '/accounting/cash-advances-payout' || p.startsWith('/accounting/cash-advances-payout/'))
+  ) {
     return true;
   }
 

@@ -8,7 +8,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
-import { CalendarCheck, Coins, PackageSearch, ShieldCheck } from 'lucide-react';
+import { CalendarCheck, Coins, PackageSearch, ShieldCheck, Wallet } from 'lucide-react';
 import type { User } from '@/lib/types';
 
 /**
@@ -83,6 +83,27 @@ export default function HrApprovalCenterPage() {
             <CardContent>
               <Button asChild variant="secondary">
                 <Link href="/hr/payroll-approval">เปิดศูนย์อนุมัติ Payroll</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-emerald-500/25">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Wallet className="h-5 w-5 text-emerald-700" />
+                อนุมัติการเบิกเงิน (เบิกล่วงหน้า)
+              </CardTitle>
+              <CardDescription>
+                คิวผู้จัดการอนุมัติหลัง Payroll ตรวจแล้ว — เมื่ออนุมัติและจ่ายแล้ว ระบบจะ<strong className="text-foreground">หักยอดเบิกจากสลิปเงินเดือน</strong>อัตโนมัติเมื่อสร้าง Payroll
+                Batch งวดถัดไป (ลูกจ้าง)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link href="/hr/cash-advances?focus=manager">เปิดคิวรอผู้จัดการ</Link>
+              </Button>
+              <Button variant="outline" asChild size="sm">
+                <Link href="/hr/cash-advances">รายการเบิกล่วงหน้าทั้งหมด</Link>
               </Button>
             </CardContent>
           </Card>

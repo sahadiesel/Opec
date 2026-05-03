@@ -24,7 +24,8 @@ export type RoleType =
   | 'operations_officer'
   | 'operations_manager'
   | 'store_officer'
-  | 'client_user'; 
+  | 'client_user'
+  | 'employee_self'; 
 
 export type BusinessRoleKey = 
   | 'system_admin'
@@ -38,7 +39,8 @@ export type BusinessRoleKey =
   | 'accounting_manager'
   | 'accounting_officer'
   | 'store_officer'
-  | 'client_user';
+  | 'client_user'
+  | 'employee_self';
 
 /** Readiness Status for Workers (ลูกจ้าง) */
 export type ReadinessStatus = 
@@ -136,7 +138,13 @@ export type PayrollBatchStatus =
 
 // --- D8 Payroll Engine (lifecycle + policies; คู่กับ legacy status ด้านบน) ---
 
-export type PayrollPolicyKind = 'sso' | 'tax' | 'allowance_deduction';
+export type PayrollPolicyKind =
+  | 'sso'
+  | 'tax'
+  | 'allowance_deduction'
+  | 'monthly_work_norm'
+  /** ตัวคูณ/ปฏิทินค่าจ้างลูกจ้างแบบกลาง — `payroll_policies/policy_worker_global_labor` */
+  | 'worker_global_labor';
 
 export type PayrollPolicyRecordStatus = 'draft' | 'active' | 'superseded' | 'archived';
 
@@ -425,7 +433,10 @@ export interface Worker {
   nationality: string;
   gender: 'MALE' | 'FEMALE' | 'OTHER';
   contactPhone: string;
+  /** อีเมลสำหรับล็อกอิน — ใช้ได้จริงหลัง HR กด Activate และสร้างบัญชีใน Firebase Auth */
   email?: string;
+  /** เวลาที่เปิดใช้ล็อกอินด้วยอีเมลครั้งล่าสุด (timestamp ms) */
+  loginEmailActivatedAt?: number;
   address?: string;
   currentPositionId: string;
   jobMode: JobMode;
@@ -454,6 +465,8 @@ export interface Worker {
   skills: string[];
   notes?: string;
   disciplinaryNotes?: string;
+  /** เชื่อมบัญชี Firebase Auth สำหรับพอร์ทัลพนักงาน / เบิกล่วงหน้า */
+  linkedUserId?: string;
   /**
    * ต้นทุนค่าแรง: `true` / undefined = ยึด `defaultLaborCost*` ของ Position ตาม `currentPositionId` ทุกงาน/สัญญา
    * `false` = ใช้ `laborCostCustom*` ทุกที่
@@ -915,6 +928,25 @@ export interface LaborCostContractTerm {
   updatedAt: number;
 }
 
+/**
+ * Workflow บนข้อมูล mobilization — ข้อมูลเก่าไม่มีฟิลด์นี้ (= legacy เทียบเท่า wave-centric)
+ * เฟส 1+ จะใช้ `po_active_v2` เป็นแกน PO Active / location / finished_location
+ */
+export type MobWorkflowVersion = 'legacy' | 'po_active_v2';
+
+/**
+ * ขั้นชีวิต “อยู่ที่ไซต์” ต่อรอบ mob — แยกจาก deploymentStatus เพื่อรองรับ finished_location แล้วเปิดรอบใหม่
+ * ข้อมูลเก่า: ฟิลด์ว่าง → UI/logic เดิมยังใช้ timestamps / deploymentStatus ได้
+ */
+export type MobLocationPhase =
+  | 'unset'
+  /** เลือก/ยืนยันไซต์แล้ว แต่ยังไม่ถึงขั้นบันทึก working */
+  | 'location_selected'
+  /** กำลังปฏิบัติที่ไซต์ (มี working / auto daily ตามเฟสถัดไป) */
+  | 'active_at_location'
+  /** จบที่ไซต์นี้แล้ว — พร้อมเปิด mobCycleNumber ถัดไปหรือกลับคิว */
+  | 'finished_location';
+
 export interface Assignment {
   id: string;
   assignmentNo: string;
@@ -926,6 +958,48 @@ export interface Assignment {
   salesContractTermId?: string;
   poId: string;
   poLineId: string;
+  /**
+   * Denormalized PO Active bundle (`customerId__ONSHORE|OFFSHORE`) — เฟส 1 PO workflow;
+   * sync จาก `purchase_orders.poActiveBundleId` หรือคำนวณแบบเดียวกับ `resolvePoActiveBundleKeyForPo`
+   */
+  poActiveBundleId?: string;
+  /**
+   * รอบ mobilization ภายใต้ assignment เดิม (จบงานที่หนึ่งแล้วเริ่มรอบใหม่ → เพิ่มเลข).
+   * Legacy / ข้อมูลเก่า = 1
+   */
+  mobCycleNumber?: number;
+  /**
+   * คีย์คงที่ต่อรอบ — รูปแบบแนะนำ `${assignmentId}_c${mobCycleNumber}` (ดู `buildMobCycleDocId`)
+   * ใช้อ้างอิงร่วมกับ daily_timesheets เมื่อต้องแยกช่วงไซต์ลูกค้าเดียวกัน
+   */
+  mobCycleId?: string;
+  /** ระบุว่า mobilization นี้อยู่ workflow รุ่นใด — ไม่มีฟิลด์ = legacy */
+  mobWorkflowVersion?: MobWorkflowVersion;
+  /**
+   * คีย์ไซต์จากทะเบียน (หรือค่าที่ทีมนิยาม) — คนละอย่างกับข้อความ `workLocation`
+   * เฟส 1 จะผูก dropdown เลือกไซต์ตอน mob
+   */
+  mobLocationKey?: string;
+  /** สถานะไซต์ปัจจุบันต่อรอบ — optional เพื่อไม่ทับข้อมูลเก่า */
+  mobLocationPhase?: MobLocationPhase;
+  /** Final clearance ขั้น 1 — ยืนยันพร้อมเดินทาง */
+  mobReadyToTravelAt?: number;
+  mobReadyToTravelByUserId?: string;
+  /** Final clearance ขั้น 2 — วัน standby (YYYY-MM-DD, Asia/Bangkok) */
+  mobStandbyDate?: string;
+  mobStandbyRecordedAt?: number;
+  mobStandbyRecordedByUserId?: string;
+  /** Final clearance ขั้น 3 — วันเริ่มนับ working / auto รายวัน */
+  mobWorkingStartDate?: string;
+  mobWorkingStartedAt?: number;
+  mobWorkingStartedByUserId?: string;
+  /** จบงานที่สถานที่หนึ่ง — หยุด auto รอบนี้; ยัง assigned PO เดิม → กลับคิว Mob */
+  mobLocationEndDate?: string;
+  mobLocationEndedAt?: number;
+  mobLocationEndedByUserId?: string;
+  /** Unassign — คืนคนให้ไป assign PO Active ชุดอื่นได้ */
+  unassignedAt?: number;
+  unassignedByUserId?: string;
   /** Optional: copied from PO for downstream screens (e.g. mobilization) */
   contractId?: string;
   positionId: string;
@@ -935,6 +1009,8 @@ export interface Assignment {
   workLocation?: string;
   workLocationUpdatedAt?: number;
   workLocationUpdatedByUserId?: string;
+  /** วันที่มอบหมาย (yyyy-mm-dd, Asia/Bangkok) — แสดงเป็นหลัก; ช่วง standby/working ตั้งที่หน้า Mobilization */
+  assignedDate?: string;
   startDate: string;
   endDate: string;
   /** สถานะขั้น mobilization (เอกสาร mobilizations) */
@@ -1058,6 +1134,12 @@ export interface DailyTimesheet {
   unpaidLeaveUnits?: number;
   quantityOverride?: number;
   remark?: string;
+  /** เฟส 4 — แถวที่สร้าง/ซิงค์อัตโนมัติจาก PO workflow (ให้ job อัปเดตได้; แถวที่ไม่มี flag นี้ถือว่าแก้มือ) */
+  poActiveAutoDaily?: boolean;
+  /** Denormalized จาก mobilization — แยกช่วงรอบ/ไซต์ (เฟส 0+) */
+  mobCycleId?: string;
+  /** คีย์ไซต์เดียวกับ mobilization.mobLocationKey เมื่อมี */
+  mobLocationKey?: string;
   status: DailyTimesheetStatus;
   // Readiness flags
   readyForPayroll: boolean;
@@ -1138,6 +1220,24 @@ export interface MonthlyTimesheetDocument {
   /** yyyy-MM */
   yearMonth: string;
   timesheetNo: string;
+  createdAt: number;
+  updatedAt: number;
+  createdByUserId?: string;
+}
+
+/**
+ * หัวเอกสาร timesheet รายเดือนแยกตามลูกค้า × โหมดงาน (Onshore / Offshore)
+ * — เฟส 2 PO workflow · id = `{customerId}__{yyyy-MM}__ONSHORE|OFFSHORE` · collection `customer_month_timesheet_documents`
+ */
+export interface CustomerMonthTimesheetDocument {
+  id: string;
+  customerId: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  workMode: JobMode;
+  /** เลขอ้างอิงฉบับ (CTX-) — คนละใบต่อคู่ลูกค้า+โหมดในเดือนเดียวกัน */
+  timesheetNo?: string;
+  customerNameSnapshot?: string;
   createdAt: number;
   updatedAt: number;
   createdByUserId?: string;
@@ -1595,6 +1695,62 @@ export interface PettyCashEntry {
   updatedAt: number;
 }
 
+/** เบิกเงินล่วงหน้า — workflow HR / ผู้จัดการ / บัญชี / Petty Cash */
+export type CashAdvanceSubjectType = 'worker' | 'office_staff';
+
+/** office = สร้างจาก HR/ออฟฟิศ (ผู้ถือใบอาจต้องยืนยัน); employee = สร้างจากผู้ถือบัญชีเอง */
+export type CashAdvanceOrigin = 'office' | 'employee';
+
+export type CashAdvanceStatus =
+  | 'PENDING_SUBJECT_CONFIRMATION'
+  | 'PENDING_PAYROLL_REVIEW'
+  | 'REJECTED_PAYROLL'
+  | 'PENDING_MANAGER_APPROVAL'
+  | 'REJECTED_MANAGER'
+  | 'PENDING_PAYMENT'
+  | 'PAID_PETTY_CASH'
+  | 'PAID_OTHER'
+  | 'CANCELLED';
+
+export interface CashAdvanceRequest {
+  id: string;
+  requestNo: string;
+  subjectType: CashAdvanceSubjectType;
+  workerId?: string;
+  officeStaffId?: string;
+  /** ชื่อแสดง snapshot */
+  subjectNameSnapshot: string;
+  amountBaht: number;
+  reason: string;
+  origin: CashAdvanceOrigin;
+  status: CashAdvanceStatus;
+  /** UID ของผู้ถือเรื่อง (ยืนยันเมื่อสร้างจาก office) — จาก linkedUserId ของ worker/office_staff */
+  subjectLinkedUserId?: string | null;
+  createdAt: number;
+  createdByUid: string;
+  createdByName: string;
+  updatedAt: number;
+  subjectConfirmedAt?: number;
+  subjectConfirmationIp?: string;
+  payrollReviewedAt?: number;
+  payrollReviewedByUid?: string;
+  payrollReviewedByName?: string;
+  payrollRejectReason?: string;
+  managerApprovedAt?: number;
+  managerApprovedByUid?: string;
+  managerApprovedByName?: string;
+  managerRejectReason?: string;
+  paidAt?: number;
+  paidByUid?: string;
+  paidByName?: string;
+  paymentNote?: string;
+  pettyCashBankAccountId?: string;
+  pettyCashEntryId?: string;
+  pettyCashEntryNo?: string;
+  /** เมื่อสร้าง Payroll Batch แล้วหักเบิกล่วงหน้าในสลิป — อ้าง batch ที่ผูกการหัก */
+  payrollRecoveryBatchId?: string | null;
+}
+
 export type CashbookEntryType =
   | 'CUSTOMER_RECEIPT'
   | 'SUPPLIER_PAYMENT'
@@ -1777,6 +1933,19 @@ export interface PayrollBatch {
 export type WorkerPitCalculationMode = 'manual_baht' | 'auto_timesheet' | 'auto_salary_base';
 
 /** ปรับยอดรายคนใน batch (เงินพิเศษ / หักเพิ่ม / ภาษี ณ ที่จ่าย) — คำนวณ net ใหม่ตาม HR settings */
+/**
+ * แยกยอดเงินได้ตาม PO (และลูกค้า) ในงวดเดียว — ใช้แสดงสลิปใบเดียวหลายอัตรา/โครงการ (เฟส 3 payroll)
+ */
+export interface PayrollBatchIncomeSegment {
+  purchaseOrderId: string;
+  customerId?: string;
+  poCodeSnapshot?: string;
+  customerNameSnapshot?: string;
+  grossAmount: number;
+  eventBreakdown: Record<string, number>;
+  earningsBreakdown: Record<string, number>;
+}
+
 export interface HrPayrollLineAdjustments {
   allowanceItems: Array<{ label: string; amount: number }>;
   deductionItems: Array<{ label: string; amount: number }>;
@@ -1822,6 +1991,8 @@ export interface PayrollBatchLine {
   remarks?: string;
   /** ปรับเพิ่มเบี้ยเลี้ยง/หักพิเศษ/ภาษี — grossAmount ยังเป็นยอดจาก timesheet เดิม */
   hrLineAdjustments?: HrPayrollLineAdjustments | null;
+  /** มีหลาย PO ที่มียอดในคนเดียว — แสดงรายได้แยกบนสลิป (ยังเป็นบรรทัดเดียวต่อคนต่อ batch) */
+  incomeSegments?: PayrollBatchIncomeSegment[];
 }
 
 /**

@@ -9,7 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { CalendarRange, ChevronLeft, FileText, Loader2, Waves } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
@@ -30,18 +29,24 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { assignmentReadyForWaveTimesheet, waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
+import {
+  assignmentIncludedInWaveTimesheetRoster,
+  isYmdWithinAssignmentMobTimesheetWindow,
+  waveRoundMonthLabel,
+} from '@/lib/constants/timesheet-ui';
+import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import { assignmentOverlapsYearMonth } from '@/lib/ops/timesheet-hub-po-month';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import {
   lastDayOfCalendarMonth,
   listDaysInMonth,
-  normalHoursCountedAsWork,
   resolveTimesheetForWaveMonthCell,
-  timesheetCellSummary,
+  sumWorkHoursForWaveMonthRow,
+  timesheetWaveMonthCellDisplay,
   timesheetEventCellBadgeClasses,
 } from '@/lib/timesheet/wave-month-utils';
 import { OPEN_WAVE_STATUSES_FOR_TIMESHEET } from '@/lib/constants/timesheet-wave';
+import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import {
   Dialog,
   DialogContent,
@@ -65,27 +70,12 @@ function ymNow(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** แถวสรุปรายเดือน = เฉพาะ mobilization ที่พร้อมลงเวลา (เดียวกับ Wave Board) และทับเดือนที่เลือก */
+/** แถวสรุปรายเดือน = เดียวกับ Wave Board (รวมคนจบงานแล้วในเดือนนั้น) */
 function mobilizationsEligibleForWaveMonthGrid(mobs: Assignment[], monthYm: string): Assignment[] {
   const eligible = mobs.filter(
-    (m) => assignmentReadyForWaveTimesheet(m) && assignmentOverlapsYearMonth(m, monthYm),
+    (m) => assignmentIncludedInWaveTimesheetRoster(m) && assignmentOverlapsYearMonth(m, monthYm),
   );
   return pickRosterLinePerWorker(eligible);
-}
-
-function deploymentShortLabel(s: string | undefined): string {
-  switch (s) {
-    case 'ACTIVE':
-      return 'Active';
-    case 'MOBILIZING':
-      return 'Mob';
-    case 'READY_TO_MOB':
-      return 'Ready';
-    case 'CONFIRMED':
-      return 'Confirmed';
-    default:
-      return s || '—';
-  }
 }
 
 function chunkIds<T>(arr: T[], size: number): T[][] {
@@ -417,7 +407,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const waveIdsWithEligibleMobInMonth = useMemo(() => {
     const s = new Set<string>();
     for (const m of mobAssignments) {
-      if (assignmentReadyForWaveTimesheet(m) && assignmentOverlapsYearMonth(m, monthYm)) {
+      if (assignmentIncludedInWaveTimesheetRoster(m) && assignmentOverlapsYearMonth(m, monthYm)) {
         s.add(m.waveId);
       }
     }
@@ -505,18 +495,6 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [monthSheetsForOpenPos]);
 
-  /** รวมชม.ทำงาน (เฉพาะ work_day) ของพนักงานในเดือน — ทุก wave / ทุก timesheet */
-  const workerWorkHoursMonthTotal = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const t of monthSheetsForOpenPos) {
-      const add = normalHoursCountedAsWork(t);
-      if (add === 0) continue;
-      const id = t.workerId;
-      m.set(id, (m.get(id) ?? 0) + add);
-    }
-    return m;
-  }, [monthSheetsForOpenPos]);
-
   const eligibleMobsByWaveId = useMemo(() => {
     const map = new Map<string, Assignment[]>();
     for (const wave of displayWaves) {
@@ -536,13 +514,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     for (const wave of displayWaves) {
       const po = poById.get(wave.poId);
       let roster = [...(eligibleMobsByWaveId.get(wave.id) ?? [])];
-      roster.sort((a, b) => {
-        const wa = allWorkers?.find((x) => x.id === a.workerId);
-        const wb = allWorkers?.find((x) => x.id === b.workerId);
-        const na = wa ? `${wa.firstName || ''} ${wa.lastName || ''}`.trim() || wa.workerCode : a.workerId;
-        const nb = wb ? `${wb.firstName || ''} ${wb.lastName || ''}`.trim() || wb.workerCode : b.workerId;
-        return na.localeCompare(nb, 'th');
-      });
+      roster.sort((a, b) => compareAssignmentWorkerNamesTh(a, b, allWorkers));
       for (const asgn of roster) {
         const wid = asgn.workerId;
         const w = allWorkers?.find((x) => x.id === wid);
@@ -550,8 +522,41 @@ export default function WaveMonthTimesheetSummaryPage() {
         out.push({ wave, po, rw: { workerId: wid, name }, rosterAssignment: asgn });
       }
     }
+    out.sort((a, b) => {
+      const c = a.rw.name.localeCompare(b.rw.name, 'th', { sensitivity: 'base', numeric: true });
+      if (c !== 0) return c;
+      return `${a.wave.id}\0${a.rosterAssignment.id}`.localeCompare(`${b.wave.id}\0${b.rosterAssignment.id}`);
+    });
     return out;
   }, [displayWaves, eligibleMobsByWaveId, allWorkers, poById]);
+
+  /** รวมชม.ทำงานต่อแถว — สอดคล้องช่องรายวัน (ไม่บวกซ้ำจาก mobilization/PO อื่นของคนเดียวกัน) */
+  const rowWorkHoursMonthTotalByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const tr of tableRows) {
+      const { wave, rw, rosterAssignment } = tr;
+      const key = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
+      /** ทุก mobilization ใน wave นี้ — ไม่ใช่แค่แถวที่ pickRoster เลือก (กันมีหลาย doc ต่อคน) */
+      const alternateMobIds = mobAssignments
+        .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+        .map((m) => m.id);
+      m.set(
+        key,
+        sumWorkHoursForWaveMonthRow(
+          rosterAssignment,
+          wave.id,
+          rw.workerId,
+          rosterAssignment.id,
+          days,
+          sheetsByWaveWorker,
+          monthSheetsForOpenPos,
+          poTimesheetScopeId(rosterAssignment.poId),
+          alternateMobIds,
+        ),
+      );
+    }
+    return m;
+  }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
   const openCellEdit = useCallback(
     (
@@ -728,7 +733,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     const w = p.get('highlightWave');
     if (!w) return;
     const t = window.setTimeout(() => {
-      document.getElementById(`wave-month-wave-${w}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById(`wave-month-data-${w}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 450);
     return () => clearTimeout(t);
   }, [monthYm, loading, displayWaves.length]);
@@ -765,13 +770,10 @@ export default function WaveMonthTimesheetSummaryPage() {
               ) : (
                 <span className="font-mono text-foreground font-semibold">{monthlyTimesheetNo ?? '—'}</span>
               )}{' '}
-              · ตารางรวมทุกคนทุก Wave ในเดือนที่เลือก — คอลัมน์ Wave บอกรอบงาน (ไม่อ้าง PO) · กดเซลล์เพื่อแก้รายวัน
+              · ตารางรวมทุกคนที่ลงเวลาในเดือนที่เลือก — กดเซลล์เพื่อแก้รายวัน
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" asChild>
-              <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}>เอกสาร PO+งวด (ล็อก / ส่งตรวจ)</Link>
-            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link href="/timesheets/wave-board">ไป Wave Board</Link>
             </Button>
@@ -784,8 +786,11 @@ export default function WaveMonthTimesheetSummaryPage() {
             'ปิดงวด / ส่งตรวจ / แนบรูป—PDF / ออกเอกสาร (invoice+payroll): ทำที่เมนู «เอกสาร timesheet ราย PO+เดือน» ไม่อ้างอิง Wave',
             'เลือกเดือน — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; ตารางด้านล่าง = รวมทุก wave เพื่อแก้รายวันจนกว่า PO+งวดจะถูกล็อก',
             'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
-            'ตัวเลขในเซลล์ = ชม.ที่นับเป็นทำงาน (เฉพาะวันทำงาน) — standby แสดง 0SB; คอลัมน์รวม = สะสมทุก wave ของคนนั้นในเดือน',
-            'เซลล์จับคู่กับบันทึกรายวันตามการมอบหมายของแถว (แม้ waveId ในเอกสารจะไม่ตรงแถว) — บันทึกจากหน้านี้จะยืนยันก่อน แล้วอัปเดตทับข้อมูลเดิมถ้ามี',
+            'ตัวอักษรในเซลล์ = ประเภทวัน (W/SB/…) · « - » = ว่างหรือไม่จ่าย · คอลัมน์รวม = ชม.ทำงานสะสมในเดือน',
+            'เซลล์จับคู่กับบันทึกรายวัน — รวมข้อมูลจาก Wave Board ที่เก็บ waveId แบบ PO scope (`po_ts_scope_…`) ให้ตรงกับแถว wave จริง',
+            'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «จบงาน» ในเมนูลงเวลารายวัน (Wave Board) ที่แถวพนักงาน — หน้านี้เป็นตารางสรุปรายเดือนเท่านั้น',
+            'ช่วง Standby / เริ่มงาน: สรุปรายเดือนใช้ทั้งวัน Standby และวันเริ่มทำงานจาก Mobilization — คนสถานะ MOBILIZING ที่ความพร้อม READY ขึ้นตารางเมื่อช่วงมอบหมายทับเดือนนั้น (ยังไม่ ACTIVE จะยังไม่มี work_day อัตโนมัติ — ต้องผ่านขั้น Mobilization)',
+            'ลงเวลาอัตโนมัติ ACTIVE (PO Active): ระบบสร้าง work_day ถึงเมื่อวานตามเวลาไทย — วันปัจจุบันให้บันทึกเมื่อปิดวัน',
           ]}
         />
 
@@ -810,37 +815,48 @@ export default function WaveMonthTimesheetSummaryPage() {
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
-        ) : displayWaves.length === 0 ? (
-          <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
-            ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
-          </p>
         ) : (
           <div className="space-y-6">
             <Alert className="border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20">
-              <AlertTitle>ปิดงวด &amp; ส่งตรวจ &amp; แนบ — ย้ายไปเอกสาร PO+เดือน</AlertTitle>
-              <AlertDescription className="text-sm space-y-2">
-                <p>
-                  ใช้{' '}
-                  <Link
-                    className="font-semibold text-primary underline"
-                    href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}
-                  >
-                    เอกสาร timesheet ราย PO+เดือน
-                  </Link>{' '}
-                  เพื่อล็อกงวด แนบรูป/PDF สูงสุด 4 ไฟล์ (รูป &gt; ~500 KB บีบอัตโนมัติ) แล้วส่งผู้จัดการ — หลังอนุมัติใช้ทำ invoice + payroll
-                  (ไม่อ้างอิง Wave ในเอกสารจ่าย/วางบิล)
-                </p>
-                <p className="text-xs text-muted-foreground">ตารางด้านล่าง = ลงเวลารายวันต่อ wave จนกว่า PO+งวดจะถูกล็อก</p>
-              </AlertDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <AlertTitle>ปิดงวด &amp; ส่งตรวจ &amp; แนบ — ย้ายไปเอกสาร PO+เดือน</AlertTitle>
+                  <AlertDescription className="text-sm space-y-2">
+                    <p>
+                      ใช้{' '}
+                      <Link
+                        className="font-semibold text-primary underline"
+                        href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}
+                      >
+                        เอกสาร timesheet ราย PO+เดือน
+                      </Link>{' '}
+                      เพื่อล็อกงวด แนบรูป/PDF สูงสุด 4 ไฟล์ (รูป &gt; ~500 KB บีบอัตโนมัติ) แล้วส่งผู้จัดการ — หลังอนุมัติใช้ทำ invoice + payroll
+                      (ไม่อ้างอิง Wave ในเอกสารจ่าย/วางบิล)
+                    </p>
+                    <p className="text-xs text-muted-foreground">ตารางด้านล่าง = ลงเวลารายวันต่อพนักงาน จนกว่า PO+งวดจะถูกล็อก</p>
+                  </AlertDescription>
+                </div>
+                <Button size="sm" className="shrink-0 self-stretch sm:self-center w-full sm:w-auto" asChild>
+                  <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}>
+                    เอกสาร PO+งวด (ล็อก / ส่งตรวจ)
+                  </Link>
+                </Button>
+              </div>
             </Alert>
+            {displayWaves.length === 0 ? (
+              <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
+                ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
+              </p>
+            ) : (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">สรุปลงเวลา — ทุกคนทุก Wave</CardTitle>
+                <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
                 <CardDescription>
                   เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
-                  · คอลัมน์ Wave / พนักงาน · <strong>สถานะ MOB</strong> = ผ่านเกณฑ์ขึ้นตารางลงเวลาแล้ว ·{' '}
-                  แถวเฉพาะคนที่ mobilization ครบและช่วงมอบหมายทับเดือนนี้ — โหลดจาก PO ที่เปิด (สอดคล้อง Wave Board) รวม Wave ที่ปิดแล้วถ้ายังมีคนในเงื่อนไขนี้ ·{' '}
-                  <strong>รวมชม.</strong> = ชม.ทำงาน (วันทำงานเท่านั้น ไม่รวม standby) สะสมจากทุก wave ของพนักงานในเดือนนี้
+                  · แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ (โหลดจาก PO ที่เปิด สอดคล้องกระดานลงเวลา) ·{' '}
+                  <strong>รวมชม.</strong> = ชม.ทำงาน (วันทำงานเท่านั้น ไม่รวม standby) ตามแถวนี้เท่านั้น — จับคู่ timesheet แบบเดียวกับช่องวัน
+                  (ไม่รวมซ้ำจาก assignment/PO อื่นของคนเดียวกัน) · ช่องวันและชม.รวมนับเฉพาะช่วง mobilization จริง (วันเริ่มทำงานบนไซต์ / วันจบไซต์ จาก Mobilization)
+                  ไม่ใช่แค่วันที่มอบหมายเก่า
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
@@ -850,30 +866,24 @@ export default function WaveMonthTimesheetSummaryPage() {
                   </p>
                 ) : (
                   <>
-                    <Table className="min-w-max text-xs">
+                    <Table className="min-w-max text-xs [&_th]:h-auto [&_th]:min-h-0 [&_th]:py-1.5 [&_th]:px-1.5 [&_tbody_td]:py-1.5 [&_tbody_td]:align-middle">
                       <TableHeader>
                         <TableRow className="bg-muted/50">
-                          <TableHead className="sticky left-0 z-20 min-w-[100px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
-                            Wave
-                          </TableHead>
-                          <TableHead className="sticky z-20 min-w-[140px] left-[100px] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
+                          <TableHead className="sticky left-0 z-20 w-[9rem] min-w-[7.5rem] max-w-[10rem] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)] px-2">
                             พนักงาน
                           </TableHead>
-                          <TableHead className="text-center font-bold min-w-[88px] max-w-[100px] text-[10px] leading-tight px-1">
-                            สถานะ MOB
-                          </TableHead>
                           {days.map((d) => (
-                            <TableHead key={d} className="px-1 text-center w-10 font-mono" title={d}>
+                            <TableHead key={d} className="px-0.5 text-center w-7 min-w-[1.75rem] font-mono text-[10px]" title={d}>
                               {d.slice(8, 10)}
                             </TableHead>
                           ))}
                           <TableHead
-                            className="text-center font-bold min-w-[72px] max-w-[88px] text-[10px] leading-tight px-1"
-                            title="ชม.ทำงาน (เฉพาะวันทำงาน) รวมทุก wave ของพนักงานในเดือนนี้ — ไม่รวม standby"
+                            className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 text-[10px] leading-tight px-2"
+                            title="ชม.ทำงาน (เฉพาะวันทำงาน) รวมในแถวนี้ตามการจับคู่ timesheet กับช่องวัน — ไม่รวม standby"
                           >
                             รวมชม.
                             <br />
-                            <span className="font-normal text-muted-foreground">(ทำงาน·ทุก Wave)</span>
+                            <span className="font-normal text-muted-foreground">(ทำงาน)</span>
                           </TableHead>
                         </TableRow>
                       </TableHeader>
@@ -883,7 +893,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                           const isFirstInWave = rowIdx === 0 || tableRows[rowIdx - 1]!.wave.id !== wave.id;
                           const monthReview = reviewByWaveId.get(wave.id);
                           const waveMobs = eligibleMobsByWaveId.get(wave.id) ?? [];
-                          const rowWorkerMonthWorkTotal = workerWorkHoursMonthTotal.get(rw.workerId) ?? 0;
+                          const alternateMobIds = mobAssignments
+                            .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+                            .map((m) => m.id);
+                          const rowWorkerMonthWorkTotal =
+                            rowWorkHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
                           const editableGrid =
                             canEditTs &&
                             !isMonthTimesheetRowLocked(
@@ -892,27 +906,26 @@ export default function WaveMonthTimesheetSummaryPage() {
                             );
                           return (
                             <TableRow
-                              key={`${wave.id}-${rw.workerId}`}
+                              key={`${wave.id}-${rw.workerId}-${rosterAssignment.id}`}
                               id={isFirstInWave ? `wave-month-data-${wave.id}` : undefined}
                             >
                               <TableCell
-                                className="sticky left-0 z-10 bg-background font-mono text-[10px] text-muted-foreground shadow-[2px_0_4px_rgba(0,0,0,0.06)]"
-                                title={wave.waveCode}
+                                className="sticky left-0 z-10 bg-background shadow-[2px_0_4px_rgba(0,0,0,0.06)] max-w-[11rem] px-2 py-1.5"
+                                title={`${rw.name} · ${wave.waveCode?.trim() || wave.id}`}
                               >
-                                {wave.waveCode}
-                              </TableCell>
-                              <TableCell className="sticky z-10 left-[100px] bg-background font-medium text-xs shadow-[2px_0_4px_rgba(0,0,0,0.06)]">
-                                {rw.name}
-                              </TableCell>
-                              <TableCell className="text-center align-middle text-[10px] px-1">
-                                <Badge className="bg-emerald-700 hover:bg-emerald-700 text-white border-transparent shadow-none text-[9px] px-1.5 py-0">
-                                  ผ่าน
-                                </Badge>
-                                <div className="text-muted-foreground font-mono text-[9px] mt-0.5 leading-tight">
-                                  {deploymentShortLabel(rosterAssignment.deploymentStatus)}
+                                <div className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="truncate text-xs font-medium leading-tight">{rw.name}</span>
+                                  <span className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
+                                    {wave.waveCode?.trim() || wave.id}
+                                  </span>
                                 </div>
                               </TableCell>
                               {days.map((d) => {
+                                /** ต้องจับคู่แบบเดียวกับ sumWorkHoursForWaveMonthRow — ห้ามบังคับว่างเมื่ออยู่นอกหน้าต่าง mobilization ถ้า resolve พบใบงานจริง (มิฉะนั้นแถวเป็น "-" ทั้งแถวแต่รวมชม.ยังมีเลข) */
+                                const inMobWindow = isYmdWithinAssignmentMobTimesheetWindow(
+                                  rosterAssignment,
+                                  d,
+                                );
                                 const ts = resolveTimesheetForWaveMonthCell(
                                   wave.id,
                                   rw.workerId,
@@ -920,34 +933,50 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   rosterAssignment.id,
                                   sheetsByWaveWorker,
                                   monthSheetsForOpenPos,
+                                  poTimesheetScopeId(rosterAssignment.poId),
+                                  rosterAssignment,
+                                  alternateMobIds,
                                 );
-                                const cell = timesheetCellSummary(ts);
+                                const cellLabel = timesheetWaveMonthCellDisplay(ts);
                                 return (
-                                  <TableCell key={d} className="px-0.5 text-center font-mono text-[10px]">
-                                    {ts ? (
+                                  <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">
+                                    {!inMobWindow && !ts ? (
+                                      <span
+                                        className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 text-[11px] font-medium text-muted-foreground/40"
+                                        title="นอกช่วง mobilization ตามฟิลด์บนเอกสาร — ยังไม่มีบันทึกรายวันที่จับคู่ได้"
+                                      >
+                                        {' - '}
+                                      </span>
+                                    ) : ts ? (
                                       <button
                                         type="button"
-                                        title={
-                                          editableGrid
-                                            ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
-                                            : `${d} · ${ts.eventType} · ${ts.status}`
-                                        }
                                         disabled={!editableGrid}
                                         onClick={() =>
                                           openCellEdit(wave, po, monthReview, rw, d, ts, waveMobs)
                                         }
                                         className={cn(
-                                          'inline-flex max-w-full justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                          'inline-flex max-w-full justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                                           !editableGrid && 'cursor-not-allowed opacity-60',
                                           editableGrid && 'cursor-pointer hover:opacity-90',
                                         )}
+                                        title={
+                                          (editableGrid
+                                            ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
+                                            : `${d} · ${ts.eventType} · ${ts.status}`) +
+                                          (!inMobWindow
+                                            ? ' · วันนี้อยู่นอกหน้าต่าง mobilization บนเอกสาร — แสดงตามใบงานที่มีจริง'
+                                            : '')
+                                        }
                                       >
-                                        <Badge
-                                          variant="outline"
-                                          className={`h-7 min-w-[2.5rem] px-1 font-mono text-[10px] leading-tight ${timesheetEventCellBadgeClasses(ts.eventType, ts.status)}`}
+                                        <span
+                                          className={cn(
+                                            'inline-flex items-center justify-center rounded-sm border px-1 py-0.5 text-[11px] font-medium leading-none min-w-[1.125rem]',
+                                            timesheetEventCellBadgeClasses(ts.eventType, ts.status),
+                                            !inMobWindow && 'ring-1 ring-amber-500/45',
+                                          )}
                                         >
-                                          {cell || '—'}
-                                        </Badge>
+                                          {cellLabel}
+                                        </span>
                                       </button>
                                     ) : (
                                       <button
@@ -958,21 +987,21 @@ export default function WaveMonthTimesheetSummaryPage() {
                                           openCellEdit(wave, po, monthReview, rw, d, undefined, waveMobs)
                                         }
                                         className={cn(
-                                          'tabular-nums min-h-[28px] min-w-[28px] rounded text-muted-foreground/40',
+                                          'inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 font-medium text-muted-foreground/80 text-[11px] leading-none',
                                           editableGrid &&
-                                            'cursor-pointer text-muted-foreground/70 hover:bg-muted/60',
-                                          !editableGrid && 'cursor-default opacity-50',
+                                            'cursor-pointer hover:bg-muted/60 text-muted-foreground',
+                                          !editableGrid && 'cursor-default opacity-45',
                                         )}
                                       >
-                                        ·
+                                        {' - '}
                                       </button>
                                     )}
                                   </TableCell>
                                 );
                               })}
                               <TableCell
-                                className="text-center font-bold text-sm"
-                                title="ชม.ทำงานรวมทุก wave ในเดือนนี้ (ไม่รวม standby)"
+                                className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-1.5"
+                                title="ชม.ทำงานรวมในแถวนี้ (ไม่รวม standby)"
                               >
                                 {rowWorkerMonthWorkTotal}
                               </TableCell>
@@ -983,11 +1012,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                     </Table>
                     <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <strong>คีย์:</strong> ตัวเลขหน้ารหัส = ชม.ที่นับเป็นทำงาน (เฉพาะ W = วันทำงาน; SB/T/M ฯลฯ = 0 ในชั่วโมงทำงาน) + รหัสประเภท —{' '}
+                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย, T เดินทาง, M Mob, D Demob ฯลฯ) · เซลล์ «-» = ยังไม่มีบันทึกหรือวันไม่จ่าย —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
-                        <strong className="text-orange-700">ส้ม</strong>=Mob/Demob ฯลฯ (ดู tooltip)
+                        <strong className="text-orange-700">ส้ม</strong>=Mob/Demob (ดู tooltip)
                       </p>
                       <p>
                         <strong>ขอบสถานะ:</strong> วงแหวน <span className="text-amber-600">เหลืองทองหนา</span> = DRAFT —
@@ -998,6 +1027,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                 )}
               </CardContent>
             </Card>
+            )}
           </div>
         )}
       </div>

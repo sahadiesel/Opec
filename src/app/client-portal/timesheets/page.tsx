@@ -23,6 +23,8 @@ import {
   shouldHidePortalWaveMonthAfterBillingSettlement,
   yearMonthFromCommercialInvoice,
 } from '@/lib/client-portal/timesheet-portal-utils';
+import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { poActiveBundleWorkModeShortLabel } from '@/lib/ops/po-active-bundle-grouping';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import type {
   AccountsReceivable,
@@ -297,10 +299,41 @@ export default function ClientPortalTimesheetHubPage() {
     });
   }, [rowsByPoId, poMonthRowsByPo, poById]);
 
-  const hubEmpty = useMemo(
-    () => poKeysOrdered.length === 0,
-    [poKeysOrdered],
-  );
+  const bundleOrdered = useMemo(() => {
+    const bundleToPoIds = new Map<string, string[]>();
+    for (const poId of poKeysOrdered) {
+      const po = poById.get(poId);
+      const bk = po ? resolvePoActiveBundleKeyForPo(po) : `orphan:${poId}`;
+      const list = bundleToPoIds.get(bk) ?? [];
+      list.push(poId);
+      bundleToPoIds.set(bk, list);
+    }
+    const entries = [...bundleToPoIds.entries()].map(([bundleKey, ids]) => {
+      const sortedPoIds = [...ids].sort((a, b) =>
+        formatCustomerPoNumberForPortal(poById.get(a), a).localeCompare(
+          formatCustomerPoNumberForPortal(poById.get(b), b),
+          'th',
+        ),
+      );
+      const headPo = poById.get(sortedPoIds[0]!);
+      const modeFromKey =
+        bundleKey.endsWith('__ONSHORE') ? 'ONSHORE' : bundleKey.endsWith('__OFFSHORE') ? 'OFFSHORE' : undefined;
+      return {
+        bundleKey,
+        poIds: sortedPoIds,
+        workMode: modeFromKey ?? headPo?.poWorkMode,
+      };
+    });
+    entries.sort((a, b) => {
+      const ao = a.bundleKey.startsWith('orphan:') ? 1 : 0;
+      const bo = b.bundleKey.startsWith('orphan:') ? 1 : 0;
+      if (ao !== bo) return ao - bo;
+      return a.bundleKey.localeCompare(b.bundleKey);
+    });
+    return entries;
+  }, [poKeysOrdered, poById]);
+
+  const hubEmpty = useMemo(() => bundleOrdered.length === 0, [bundleOrdered]);
 
   const loading =
     userLoading ||
@@ -352,15 +385,30 @@ export default function ClientPortalTimesheetHubPage() {
       ) : hubEmpty ? (
         <p className="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">{t('tsHubEmpty')}</p>
       ) : (
-        <div className="space-y-8">
-          {poKeysOrdered.map((poId) => {
-            const po = poById.get(poId);
-            const poLabel = formatCustomerPoNumberForPortal(po, poId);
-            const monthRows = poMonthRowsByPo.get(poId) ?? [];
-            const rows = rowsByPoId.get(poId) ?? [];
-            const n = monthRows.length + rows.length;
-            return (
-              <Card key={poId} className="overflow-hidden shadow-sm">
+        <div className="space-y-10">
+          {bundleOrdered.map(({ bundleKey, poIds, workMode }) => (
+            <div key={bundleKey} className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-4 py-2.5 text-sm">
+                <Badge variant="outline" className="shrink-0 font-semibold">
+                  {poActiveBundleWorkModeShortLabel(workMode)}
+                </Badge>
+                <span className="font-semibold text-foreground">{t('tsHubBundleStrip')}</span>
+                <span
+                  className="font-mono text-xs text-muted-foreground truncate max-w-[min(100%,22rem)]"
+                  title={bundleKey}
+                >
+                  {bundleKey}
+                </span>
+              </div>
+              <div className="space-y-8">
+                {poIds.map((poId) => {
+                  const po = poById.get(poId);
+                  const poLabel = formatCustomerPoNumberForPortal(po, poId);
+                  const monthRows = poMonthRowsByPo.get(poId) ?? [];
+                  const rows = rowsByPoId.get(poId) ?? [];
+                  const n = monthRows.length + rows.length;
+                  return (
+                    <Card key={poId} className="overflow-hidden shadow-sm">
                 <CardHeader className="border-b bg-muted/30">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -527,8 +575,11 @@ export default function ClientPortalTimesheetHubPage() {
                   ) : null}
                 </CardContent>
               </Card>
-            );
-          })}
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

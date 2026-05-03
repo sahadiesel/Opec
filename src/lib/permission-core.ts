@@ -35,7 +35,8 @@ export type CorePrimaryRoleKey =
   | 'operations_manager'
   | 'accounting_officer'
   | 'accounting_manager'
-  | 'client_user';
+  | 'client_user'
+  | 'employee_self';
 
 /** Canonical keys for tests and future UI. */
 export const CORE_PRIMARY_ROLE_KEYS = [
@@ -45,6 +46,7 @@ export const CORE_PRIMARY_ROLE_KEYS = [
   'accounting_officer',
   'accounting_manager',
   'client_user',
+  'employee_self',
 ] as const satisfies readonly CorePrimaryRoleKey[];
 
 export const ALL_ACCESS_DOMAINS: readonly AccessDomain[] = [
@@ -95,6 +97,7 @@ const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'accounting_officer',
   'accounting_manager',
   'client_user',
+  'employee_self',
 ]);
 
 function normalizeAssignedPrimaryRole(roleKey?: string | null): string | null {
@@ -122,6 +125,7 @@ export const BUSINESS_ROLE_TO_CORE: Record<
   operations_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
   operations_manager: { group: 'operations', level: 'manager', primaryKey: 'operations_manager' },
   client_user: { group: 'client', level: 'viewer', primaryKey: 'client_user' },
+  employee_self: { group: 'operations', level: 'viewer', primaryKey: 'employee_self' },
 };
 
 /** @deprecated use BUSINESS_ROLE_TO_CORE */

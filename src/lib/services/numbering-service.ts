@@ -99,6 +99,15 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     collectionName: 'purchase_vendor_bills',
     fieldName: 'receiptNo',
   },
+  cash_advance: {
+    label: 'Cash advance',
+    prefix: 'CAD-',
+    padding: 5,
+    dept: 'hr',
+    resetPolicy: 'monthly',
+    collectionName: 'cash_advance_requests',
+    fieldName: 'requestNo',
+  },
   vendor: { label: 'Vendor', prefix: 'VEN-', padding: 4, dept: 'store', resetPolicy: 'none', collectionName: 'vendors', fieldName: 'vendorCode' },
   store_receive: { label: 'Store Receive', prefix: 'REC-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_receipts', fieldName: 'receiveNo' },
   store_issue: { label: 'Store Issue', prefix: 'ISS-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_issue_slips', fieldName: 'issueNo' },
@@ -128,6 +137,16 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     dept: 'hr',
     resetPolicy: 'monthly',
     collectionName: 'monthly_timesheet_documents',
+    fieldName: 'timesheetNo',
+  },
+  /** เฟส 2 — หนึ่งเลขต่อลูกค้า × Onshore/Offshore × เดือน */
+  customer_month_timesheet: {
+    label: 'Timesheet ลูกค้า × On/Offshore (CTX-)',
+    prefix: 'CTX-',
+    padding: 4,
+    dept: 'hr',
+    resetPolicy: 'monthly',
+    collectionName: 'customer_month_timesheet_documents',
     fieldName: 'timesheetNo',
   },
   /** หนังสือรับรองการหักภาษี ณ ที่จ่าย (ม.50 ทวิ) — ปรับ prefix ได้ที่ Admin เลขที่เอกสาร */

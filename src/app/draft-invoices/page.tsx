@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { Fragment, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -59,6 +59,11 @@ import {
 } from '@/lib/services/commercial-invoice-service';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import Link from 'next/link';
+import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import {
+  groupRowsByPoActiveBundle,
+  poActiveBundleWorkModeShortLabel,
+} from '@/lib/ops/po-active-bundle-grouping';
 
 function statusBadge(inv: CommercialInvoice) {
   const status = inv.status;
@@ -174,6 +179,12 @@ export default function DraftInvoicesPage() {
     return m;
   }, [allPos]);
 
+  const customerLabel = useMemo(() => {
+    const nameById = new Map<string, string>();
+    for (const c of customers ?? []) nameById.set(c.id, c.name);
+    return (customerId: string) => nameById.get(customerId) || customerId;
+  }, [customers]);
+
   const waveById = useMemo(() => {
     const m = new Map<string, Wave>();
     for (const w of allWaves ?? []) m.set(w.id, w);
@@ -267,6 +278,19 @@ export default function DraftInvoicesPage() {
     list.sort((a, b) => (a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : 0));
     return list;
   }, [missingPoMonthReviews]);
+
+  const ymDesc = (a: { yearMonth: string }, b: { yearMonth: string }) =>
+    a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : 0;
+
+  const groupedMissingPoMonth = useMemo(
+    () => groupRowsByPoActiveBundle(sortedMissingPoMonth, poById, customerLabel, ymDesc),
+    [sortedMissingPoMonth, poById, customerLabel],
+  );
+
+  const groupedMissingWave = useMemo(
+    () => groupRowsByPoActiveBundle(sortedMissingReviews, poById, customerLabel, ymDesc),
+    [sortedMissingReviews, poById, customerLabel],
+  );
 
   const totalMissingInvoiceCount = sortedMissingReviews.length + sortedMissingPoMonth.length;
 
@@ -547,7 +571,8 @@ export default function DraftInvoicesPage() {
               <div>
                 <CardTitle className="text-base text-primary">งวด timesheet อนุมัติแล้ว — ยังไม่มีใบแจ้งหนี้</CardTitle>
                 <CardDescription>
-                  อ้างอิงงวด <strong>PO+เดือน</strong> (รวมทุก wave) หรืองวด <strong>ต่อ wave</strong> ตามที่อนุมัติ — กดสร้างใบเพื่อนำไปตรวจยอด / พิมพ์ / ส่งลูกค้า
+                  อ้างอิงงวด <strong>PO+เดือน</strong> (รวมทุก wave) หรืองวด <strong>ต่อ wave</strong> ตามที่อนุมัติ —{' '}
+                  <strong>จัดกลุ่มตามชุด PO Active</strong> (ลูกค้า + Onshore/Offshore) — กดสร้างใบเพื่อนำไปตรวจยอด / พิมพ์ / ส่งลูกค้า
                 </CardDescription>
               </div>
               {canCreateDoc && (
@@ -576,43 +601,75 @@ export default function DraftInvoicesPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedMissingPoMonth.map((r) => {
-                        const po = poById.get(r.poId);
-                        return (
-                          <TableRow key={r.id}>
-                            <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
-                            <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">PO+เดือน (รวม wave)</TableCell>
-                            <TableCell className="text-right pr-6">
-                              <div className="flex flex-wrap justify-end gap-2">
-                                <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                      {groupedMissingPoMonth.map((g) => (
+                        <Fragment key={g.bundleKey}>
+                          <TableRow className="bg-primary/5 hover:bg-primary/5 border-t-2 border-primary/15">
+                            <TableCell colSpan={4} className="py-3 pl-6">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                                <Badge variant="outline" className="font-semibold">
+                                  {poActiveBundleWorkModeShortLabel(g.workMode)}
+                                </Badge>
+                                <span className="font-bold text-foreground">{customerLabel(g.customerId)}</span>
+                                <span
+                                  className="text-muted-foreground text-xs font-mono truncate max-w-[240px]"
+                                  title={g.bundleKey}
+                                >
+                                  {g.bundleKey.startsWith('orphan:') ? 'ไม่มีชุด PO Active (PO เดี่ยว)' : g.bundleKey}
+                                </span>
+                                {!g.bundleKey.startsWith('orphan:') ? (
                                   <Link
-                                    href={`/timesheets/po-month?month=${encodeURIComponent(r.yearMonth)}&highlightPo=${encodeURIComponent(r.poId)}`}
+                                    href={`/po-active/${encodeURIComponent(g.bundleKey)}`}
+                                    className="text-xs font-semibold text-primary underline"
                                   >
-                                    <ExternalLink className="h-3.5 w-3.5" />
-                                    เอกสารรอบ PO
+                                    เปิด PO Active
                                   </Link>
-                                </Button>
-                                {canCreateDoc && (
-                                  <Button
-                                    size="sm"
-                                    className="h-8 gap-1"
-                                    disabled={syncRowId === r.id || syncingBulk}
-                                    onClick={() => void handleEnsureFromPoMonthReview(r)}
-                                  >
-                                    {syncRowId === r.id ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <Plus className="h-3.5 w-3.5" />
-                                    )}
-                                    สร้างใบแจ้งหนี้
-                                  </Button>
-                                )}
+                                ) : null}
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {g.rows.length} งวดในกลุ่ม
+                                </Badge>
                               </div>
                             </TableCell>
                           </TableRow>
-                        );
-                      })}
+                          {g.rows.map((r) => {
+                            const po = poById.get(r.poId);
+                            const bundleKey = po ? resolvePoActiveBundleKeyForPo(po) : `orphan:${r.poId}`;
+                            return (
+                              <TableRow key={r.id}>
+                                <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
+                                <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
+                                <TableCell className="text-sm text-muted-foreground">PO+เดือน (รวม wave)</TableCell>
+                                <TableCell className="text-right pr-6">
+                                  <div className="flex flex-wrap justify-end gap-2">
+                                    <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                                      <Link
+                                        href={`/timesheets/po-month?month=${encodeURIComponent(r.yearMonth)}&highlightPo=${encodeURIComponent(r.poId)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`}
+                                      >
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                        เอกสารรอบ PO
+                                      </Link>
+                                    </Button>
+                                    {canCreateDoc && (
+                                      <Button
+                                        size="sm"
+                                        className="h-8 gap-1"
+                                        disabled={syncRowId === r.id || syncingBulk}
+                                        onClick={() => void handleEnsureFromPoMonthReview(r)}
+                                      >
+                                        {syncRowId === r.id ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Plus className="h-3.5 w-3.5" />
+                                        )}
+                                        สร้างใบแจ้งหนี้
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </Fragment>
+                      ))}
                     </TableBody>
                   </Table>
                 </div>
@@ -630,44 +687,79 @@ export default function DraftInvoicesPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedMissingReviews.map((r) => {
-                        const po = poById.get(r.poId);
-                        const wv = waveById.get(r.waveId);
-                        return (
-                          <TableRow key={r.id}>
-                            <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
-                            <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
-                            <TableCell className="text-sm font-mono">{wv?.waveCode ?? r.waveId.slice(0, 10)}</TableCell>
-                            <TableCell className="text-right pr-6">
-                              <div className="flex flex-wrap justify-end gap-2">
-                                <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                      {groupedMissingWave.map((g) => (
+                        <Fragment key={`wv-${g.bundleKey}`}>
+                          <TableRow className="bg-muted/40 hover:bg-muted/40 border-t border-muted">
+                            <TableCell colSpan={4} className="py-3 pl-6">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                                <Badge variant="outline" className="font-semibold">
+                                  {poActiveBundleWorkModeShortLabel(g.workMode)}
+                                </Badge>
+                                <span className="font-bold text-foreground">{customerLabel(g.customerId)}</span>
+                                <span
+                                  className="text-muted-foreground text-xs font-mono truncate max-w-[240px]"
+                                  title={g.bundleKey}
+                                >
+                                  {g.bundleKey.startsWith('orphan:') ? 'ไม่มีชุด PO Active (PO เดี่ยว)' : g.bundleKey}
+                                </span>
+                                {!g.bundleKey.startsWith('orphan:') ? (
                                   <Link
-                                    href={`/timesheets/wave-month?month=${encodeURIComponent(r.yearMonth)}&highlightWave=${encodeURIComponent(r.waveId)}`}
+                                    href={`/po-active/${encodeURIComponent(g.bundleKey)}`}
+                                    className="text-xs font-semibold text-primary underline"
                                   >
-                                    <ExternalLink className="h-3.5 w-3.5" />
-                                    ดูสรุปรายเดือน
+                                    เปิด PO Active
                                   </Link>
-                                </Button>
-                                {canCreateDoc && (
-                                  <Button
-                                    size="sm"
-                                    className="h-8 gap-1"
-                                    disabled={syncRowId === r.id || syncingBulk}
-                                    onClick={() => void handleEnsureFromReview(r)}
-                                  >
-                                    {syncRowId === r.id ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    ) : (
-                                      <Plus className="h-3.5 w-3.5" />
-                                    )}
-                                    สร้างใบแจ้งหนี้
-                                  </Button>
-                                )}
+                                ) : null}
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {g.rows.length} wave ในกลุ่ม
+                                </Badge>
                               </div>
                             </TableCell>
                           </TableRow>
-                        );
-                      })}
+                          {g.rows.map((r) => {
+                            const po = poById.get(r.poId);
+                            const wv = waveById.get(r.waveId);
+                            const bundleKey = po ? resolvePoActiveBundleKeyForPo(po) : `orphan:${r.poId}`;
+                            const waveMonthHref =
+                              `/timesheets/wave-month?month=${encodeURIComponent(r.yearMonth)}&highlightWave=${encodeURIComponent(r.waveId)}` +
+                              (bundleKey.startsWith('orphan:')
+                                ? ''
+                                : `&poActiveBundleId=${encodeURIComponent(bundleKey)}`);
+                            return (
+                              <TableRow key={r.id}>
+                                <TableCell className="pl-6 font-mono text-sm">{r.yearMonth}</TableCell>
+                                <TableCell className="text-sm">{po?.poCode ?? r.poId}</TableCell>
+                                <TableCell className="text-sm font-mono">{wv?.waveCode ?? r.waveId.slice(0, 10)}</TableCell>
+                                <TableCell className="text-right pr-6">
+                                  <div className="flex flex-wrap justify-end gap-2">
+                                    <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                                      <Link href={waveMonthHref}>
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                        ดูสรุปรายเดือน
+                                      </Link>
+                                    </Button>
+                                    {canCreateDoc && (
+                                      <Button
+                                        size="sm"
+                                        className="h-8 gap-1"
+                                        disabled={syncRowId === r.id || syncingBulk}
+                                        onClick={() => void handleEnsureFromReview(r)}
+                                      >
+                                        {syncRowId === r.id ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Plus className="h-3.5 w-3.5" />
+                                        )}
+                                        สร้างใบแจ้งหนี้
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </Fragment>
+                      ))}
                     </TableBody>
                   </Table>
                 </div>

@@ -50,13 +50,7 @@ import {
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
-import {
-  formatDateTimeThaiBE,
-  formatYmdLocalThaiBE,
-  htmlDateValueToTimestampMs,
-  timestampToHtmlDateValue,
-} from '@/lib/date-thai';
-import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { 
   Assignment, 
   Worker, 
@@ -146,8 +140,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   }, [currentUser]);
 
   const [workLocationDraft, setWorkLocationDraft] = useState('');
-  const [startDateDraft, setStartDateDraft] = useState('');
-  const [endDateDraft, setEndDateDraft] = useState('');
   const [deploymentEditing, setDeploymentEditing] = useState(false);
   const [isSavingDeployment, setIsSavingDeployment] = useState(false);
   const [isDemobilizing, setIsDemobilizing] = useState(false);
@@ -169,8 +161,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
   const beginDeploymentEdit = () => {
     if (!assignment || isDeploymentReleased) return;
-    setStartDateDraft(assignment.startDate || '');
-    setEndDateDraft(assignment.endDate || '');
     setWorkLocationDraft(
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
@@ -180,8 +170,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const cancelDeploymentEdit = () => {
     if (!assignment) return;
     setDeploymentEditing(false);
-    setStartDateDraft(assignment.startDate || '');
-    setEndDateDraft(assignment.endDate || '');
     setWorkLocationDraft(
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
@@ -189,32 +177,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
   const handleSaveDeploymentSummary = async () => {
     if (!firestore || !currentUser || !canEditAssignments || !assignment || isDeploymentReleased) return;
-    const s = startDateDraft.trim();
-    const e = endDateDraft.trim();
-    if (!s || !e) {
-      toast({
-        variant: 'destructive',
-        title: 'ข้อมูลไม่ครบ',
-        description: 'กรุณาระบุวันเริ่มและวันสิ้นสุด',
-      });
-      return;
-    }
-    if (s > e) {
-      toast({
-        variant: 'destructive',
-        title: 'ช่วงวันที่ไม่ถูกต้อง',
-        description: 'วันเริ่มต้องไม่หลังวันสิ้นสุด',
-      });
-      return;
-    }
 
     const trimmed = workLocationDraft.trim();
     const mobD = doc(firestore, 'mobilizations', id);
     setIsSavingDeployment(true);
     try {
       const patch: Record<string, unknown> = {
-        startDate: s,
-        endDate: e,
         updatedAt: Date.now(),
       };
       if (trimmed) {
@@ -227,7 +195,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         patch.workLocationUpdatedByUserId = deleteField();
       }
       await updateDoc(mobD, patch as DocumentData);
-      toast({ title: 'บันทึกข้อมูลแล้ว', description: 'วันที่และสถานที่ปฏิบัติงานอัปเดตแล้ว' });
+      toast({ title: 'บันทึกข้อมูลแล้ว', description: 'สถานที่ปฏิบัติงานอัปเดตแล้ว (วัน Standby/ทำงานตั้งที่ Mobilization)' });
       setDeploymentEditing(false);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -250,6 +218,10 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       await updateDoc(doc(firestore, 'mobilizations', id), {
         deploymentStatus: 'DEMOBILIZED',
         mobilizationStatus: 'DEMOBILIZED',
+        updatedAt: Date.now(),
+      });
+      await updateDoc(doc(firestore, 'workers', assignment.workerId), {
+        workerStatus: 'AVAILABLE',
         updatedAt: Date.now(),
       });
       toast({
@@ -424,7 +396,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 <div className="space-y-1">
                   <CardTitle className="text-lg">Deployment Summary</CardTitle>
                   <CardDescription className="text-xs">
-                    ลูกค้าเดิมย้าย site — แก้วันที่/สถานที่เฉพาะรายมอบหมายนี้ (ไม่เปลี่ยน PO หลัก)
+                    แก้สถานที่ปฏิบัติงานได้ที่นี่ — <strong>วัน Standby / เริ่มทำงาน</strong> ตั้งที่ Mobilization เท่านั้น
                     {poLine?.workLocation ? ` · ฐานจาก PO line: ${poLine.workLocation}` : ''}
                   </CardDescription>
                 </div>
@@ -479,12 +451,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   {!deploymentEditing ? (
                     <>
                       <div>
-                        <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน:</Label>
-                        <p className="font-bold">{formatYmdLocalThaiBE(assignment.startDate)}</p>
+                        <Label className="text-xs uppercase text-muted-foreground">วันที่มอบหมาย:</Label>
+                        <p className="font-bold">
+                          {formatYmdLocalThaiBE((assignment.assignedDate || assignment.startDate || '').trim() || '—')}
+                        </p>
                       </div>
                       <div>
-                        <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด:</Label>
-                        <p className="font-bold">{formatYmdLocalThaiBE(assignment.endDate)}</p>
+                        <Label className="text-xs uppercase text-muted-foreground">เพดาน PO (อ้างอิง):</Label>
+                        <p className="font-bold text-muted-foreground">{formatYmdLocalThaiBE(assignment.endDate)}</p>
                       </div>
                       <div className="col-span-2">
                         <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">
@@ -507,21 +481,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     </>
                   ) : (
                     <>
-                      <div className="space-y-2">
-                        <Label className="text-xs uppercase text-muted-foreground">เริ่มงาน</Label>
-                        <DatePickerThaiBE
-                          className="h-10"
-                          value={htmlDateValueToTimestampMs(startDateDraft)}
-                          onChange={(ms) => setStartDateDraft(timestampToHtmlDateValue(ms))}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs uppercase text-muted-foreground">สิ้นสุด</Label>
-                        <DatePickerThaiBE
-                          className="h-10"
-                          value={htmlDateValueToTimestampMs(endDateDraft)}
-                          onChange={(ms) => setEndDateDraft(timestampToHtmlDateValue(ms))}
-                        />
+                      <div className="col-span-2 rounded-md border border-muted bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                        วันเริ่ม Standby / ทำงานแก้ได้ที่หน้า{' '}
+                        <Link href={`/mobilization/${id}`} className="font-semibold text-primary underline">
+                          Mobilization
+                        </Link>{' '}
+                        เท่านั้น
                       </div>
                       <div className="col-span-2 space-y-2">
                         <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">

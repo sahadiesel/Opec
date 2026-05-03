@@ -9,6 +9,8 @@ import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
 interface ContractHolidayScheduleSectionProps {
   disabled: boolean;
   canViewCostFields: boolean;
+  /** false = ซ่อนฝั่ง payroll — ปฏิทินค่าจ้างอยู่ที่ HR Settings */
+  showPayrollSide?: boolean;
   sellWeeklyPattern: WeeklyRestPattern;
   setSellWeeklyPattern: (v: WeeklyRestPattern) => void;
   costWeeklyPattern: WeeklyRestPattern;
@@ -22,6 +24,7 @@ interface ContractHolidayScheduleSectionProps {
 export function ContractHolidayScheduleSection({
   disabled,
   canViewCostFields,
+  showPayrollSide = true,
   sellWeeklyPattern,
   setSellWeeklyPattern,
   costWeeklyPattern,
@@ -36,7 +39,9 @@ export function ContractHolidayScheduleSection({
       <div>
         <Label className="text-base font-semibold">วันหยุด / วันพิเศษ (ใช้ร่วมทุกตำแหน่งในสัญญานี้)</Label>
         <p className="text-xs text-muted-foreground mt-1">
-          ใช้คู่กับกฎตัวคูณด้านบน — ฝั่งขายและฝั่งต้นทุนแยกกันได้
+          {showPayrollSide
+            ? 'ใช้คู่กับกฎตัวคูณด้านบน — ฝั่งขายและฝั่งต้นทุนแยกกันได้'
+            : 'ฝั่งวางบิลตั้งที่สัญญานี้ — ปฏิทินค่าจ้างลูกจ้างตั้งที่เมนู HR → ตั้งค่า'}
         </p>
       </div>
 
@@ -69,7 +74,7 @@ export function ContractHolidayScheduleSection({
         />
       </div>
 
-      {canViewCostFields ? (
+      {canViewCostFields && showPayrollSide ? (
         <div className="space-y-3 rounded-lg border border-amber-200/80 bg-amber-50/40 p-4">
           <h4 className="text-sm font-bold text-amber-900">ฝั่งต้นทุน / Payroll</h4>
           <div className="grid gap-2">

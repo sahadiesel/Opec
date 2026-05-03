@@ -25,13 +25,8 @@ import {
   Trash2,
   MapPin,
 } from 'lucide-react';
-import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import {
-  htmlDateValueToTimestampMs,
-  timestampToHtmlDateValue,
-  formatStoredDateRangeThaiBE,
-} from '@/lib/date-thai';
+import { formatStoredDateRangeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   Assignment,
   Worker,
@@ -56,6 +51,7 @@ import {
   getDocs,
   writeBatch,
   setDoc,
+  updateDoc,
   query,
   where,
 } from 'firebase/firestore';
@@ -89,23 +85,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { checkWorkerAssignmentOverlap, getOccupiedWorkerIds } from '@/lib/services/assignment-overlap';
+import {
+  checkWorkerAssignmentOverlap,
+  mobilizationScheduleFromPo,
+} from '@/lib/services/assignment-overlap';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
 import { assignmentCountsTowardQuota, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
-import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import {
+  normalizePoActiveBundleId,
+  resolvePoActiveBundleKeyForPo,
+} from '@/lib/ops/po-active-bundle';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import { buildPoActiveBundleRows, PoAssignmentBundleLandingPanel } from '@/components/ops/po-quota-queue';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { dedupeAssignmentsByWorkerAndWave } from '@/lib/ops/assignment-roster';
 import { MOBILIZATION_FULFILLMENT_SUBCOLLECTION } from '@/lib/store/mobilization-fulfillment';
-import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
+import {
+  compareAssignmentWorkerNamesTh,
+  mobilizationWorkerNameFromWorker,
+} from '@/lib/ops/mobilization-worker-name';
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { isPoTimesheetScopeId, poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
-import { addMonths } from 'date-fns';
+import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
 
-/** คีย์รวมใน dialog: poId + lineId — ไม่ต้องเลือก PO แยกเมื่อดึงบรรทัดจากทุก PO */
-const DIALOG_LINE_KEY_SEP = '###';
+/** คีย์รวมใน dialog: poId + lineId — ใช้ U+001F หลีกเลี่ยงชนกับรหัส PO ที่มี "###" */
+const DIALOG_LINE_KEY_SEP = '\u001f';
 
 function encodeDialogLinePickKey(poId: string, lineId: string): string {
   return `${poId}${DIALOG_LINE_KEY_SEP}${lineId}`;
@@ -113,8 +119,16 @@ function encodeDialogLinePickKey(poId: string, lineId: string): string {
 
 function parseDialogLinePickKey(key: string): { poId: string; lineId: string } | null {
   const i = key.indexOf(DIALOG_LINE_KEY_SEP);
-  if (i <= 0 || i + DIALOG_LINE_KEY_SEP.length >= key.length) return null;
-  return { poId: key.slice(0, i), lineId: key.slice(i + DIALOG_LINE_KEY_SEP.length) };
+  if (i < 0 || i + DIALOG_LINE_KEY_SEP.length >= key.length) return null;
+  const poId = key.slice(0, i).trim();
+  const lineId = key.slice(i + DIALOG_LINE_KEY_SEP.length).trim();
+  if (!poId || !lineId) return null;
+  return { poId, lineId };
+}
+
+/** เรียงตารางมอบหมายตามชื่อลูกจ้าง — รายการใหม่ไม่ไปโผล่บนสุดของตาราง */
+function sortAssignmentsByWorkerName(list: Assignment[], allWorkers: Worker[] | undefined): Assignment[] {
+  return [...list].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, allWorkers));
 }
 
 function formatFirestoreWriteError(e: unknown): string {
@@ -131,14 +145,6 @@ function enrichFirestoreWriteMessage(raw: string, e: unknown): string {
     }
   }
   return raw;
-}
-
-/** วันเริ่ม = วันมอบหมาย (วันนี้) · วันจบ = +1 เดือน — เก็บเป็น yyyy-mm-dd */
-function defaultAssignmentScheduleRange(): { start: string; end: string } {
-  const now = Date.now();
-  const start = timestampToHtmlDateValue(now);
-  const end = timestampToHtmlDateValue(addMonths(new Date(now), 1).getTime());
-  return { start, end };
 }
 
 function AssignmentsPageContent() {
@@ -230,8 +236,6 @@ function AssignmentsPageContent() {
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   /** บรรทัดที่เลือก: `poId###lineId` — PO อนุมาติจากบรรทัด (ไม่ต้องเลือก PO ก่อน) */
   const [dialogLinePickKey, setDialogLinePickKey] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
   const [assignmentTableSearch, setAssignmentTableSearch] = useState('');
 
@@ -323,7 +327,8 @@ function AssignmentsPageContent() {
   }, [filterPoId, allPOLines, assignments, allWaves]);
 
   const poLinesForDialogPickFiltered = useMemo(
-    () => dialogPoLineFulfillmentFiltered.filter((r) => r.lineStatus === 'active'),
+    () =>
+      dialogPoLineFulfillmentFiltered.filter((r) => r.lineStatus === 'active' && (r.lineId || '').trim().length > 0),
     [dialogPoLineFulfillmentFiltered],
   );
 
@@ -375,6 +380,16 @@ function AssignmentsPageContent() {
   const effectiveDialogPoId = filterPoId || parsedDialogLinePick?.poId || '';
   const effectiveDialogLineId = parsedDialogLinePick?.lineId || '';
 
+  const dialogPoForSchedule = useMemo(
+    () =>
+      effectiveDialogPoId && allPOs?.length ? allPOs.find((p) => p.id === effectiveDialogPoId) : undefined,
+    [effectiveDialogPoId, allPOs],
+  );
+  const schedulePreviewFromPo = useMemo(
+    () => (dialogPoForSchedule ? mobilizationScheduleFromPo(dialogPoForSchedule) : null),
+    [dialogPoForSchedule],
+  );
+
   const displayedAssignments = useMemo(() => {
     let list = assignments || [];
     if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
@@ -383,20 +398,24 @@ function AssignmentsPageContent() {
       list = list.filter((a) => idSet.has(a.poId));
     }
     list = dedupeAssignmentsByWorkerAndWave(list);
+    list = sortAssignmentsByWorkerName(list, allWorkers ?? undefined);
     const q = assignmentTableSearch.trim().toLowerCase();
     if (!q) return list;
-    return list.filter((a) => {
-      const worker = allWorkers?.find((w) => w.id === a.workerId);
-      const wave = allWaves?.find((w) => w.id === a.waveId);
-      const name = `${worker?.firstName || ''} ${worker?.lastName || ''}`.toLowerCase();
-      return (
-        name.includes(q) ||
-        (a.assignmentNo || '').toLowerCase().includes(q) ||
-        (a.projectName || '').toLowerCase().includes(q) ||
-        (wave?.waveCode || '').toLowerCase().includes(q) ||
-        (allPOs?.find((p) => p.id === a.poId)?.poCode || '').toLowerCase().includes(q)
-      );
-    });
+    return sortAssignmentsByWorkerName(
+      list.filter((a) => {
+        const worker = allWorkers?.find((w) => w.id === a.workerId);
+        const wave = allWaves?.find((w) => w.id === a.waveId);
+        const name = `${worker?.firstName || ''} ${worker?.lastName || ''}`.toLowerCase();
+        return (
+          name.includes(q) ||
+          (a.assignmentNo || '').toLowerCase().includes(q) ||
+          (a.projectName || '').toLowerCase().includes(q) ||
+          (wave?.waveCode || '').toLowerCase().includes(q) ||
+          (allPOs?.find((p) => p.id === a.poId)?.poCode || '').toLowerCase().includes(q)
+        );
+      }),
+      allWorkers ?? undefined,
+    );
   }, [
     assignments,
     filterPoId,
@@ -408,12 +427,6 @@ function AssignmentsPageContent() {
     allPOs,
   ]);
 
-  /** ใช้เฉพาะตอนยังไม่มีช่วงวันที่ — fallback */
-  const occupiedWorkerIds = useMemo(
-    () => getOccupiedWorkerIds(assignments || []),
-    [assignments],
-  );
-
   const targetPositionIdForDialogLine = useMemo(() => {
     if (!effectiveDialogPoId || !effectiveDialogLineId || !allPOLines?.length) return '';
     const line = allPOLines.find((l) => l.id === effectiveDialogLineId && l.poId === effectiveDialogPoId);
@@ -422,42 +435,17 @@ function AssignmentsPageContent() {
 
   const availableWorkers = useMemo(() => {
     if (!effectiveDialogPoId || !effectiveDialogLineId || !targetPositionIdForDialogLine) return [];
-    const rangeStart = (startDate && startDate.trim()) || '';
-    const rangeEnd = (endDate && endDate.trim()) || '';
     return (allWorkers || []).filter((w) => {
       if (w.readinessStatus !== 'READY') return false;
       if ((w.currentPositionId || '').trim() !== targetPositionIdForDialogLine) return false;
-      if (rangeStart && rangeEnd) {
-        const { hasOverlap } = checkWorkerAssignmentOverlap(
-          assignments || [],
-          w.id,
-          rangeStart,
-          rangeEnd,
-        );
-        return !hasOverlap;
-      }
-      if (occupiedWorkerIds.has(w.id)) return false;
-      return true;
+      const { hasOverlap } = checkWorkerAssignmentOverlap(assignments || [], w.id);
+      return !hasOverlap;
     });
-  }, [
-    allWorkers,
-    effectiveDialogPoId,
-    effectiveDialogLineId,
-    targetPositionIdForDialogLine,
-    startDate,
-    endDate,
-    assignments,
-    occupiedWorkerIds,
-  ]);
+  }, [allWorkers, effectiveDialogPoId, effectiveDialogLineId, targetPositionIdForDialogLine, assignments]);
 
   useEffect(() => {
     setSelectedWorkerId('');
   }, [dialogLinePickKey]);
-
-  /** เปลี่ยนช่วงวันที่หลังเลือกคน → ล้างคน เพื่อไม่ให้ยืนยันด้วยช่วงที่ไม่ผ่าน overlap / availableWorkers */
-  useEffect(() => {
-    setSelectedWorkerId('');
-  }, [startDate, endDate]);
 
   useEffect(() => {
     if (!openDialogFromUrl) {
@@ -528,41 +516,43 @@ function AssignmentsPageContent() {
     });
   }, [filterPoId, allFlatPoLinesForDialog]);
 
-  /** เมื่อเปิด dialog: default วันเริ่ม = วันมอบหมาย · วันจบ = +1 เดือน */
-  useEffect(() => {
-    if (!isDialogOpen) return;
-    const { start, end } = defaultAssignmentScheduleRange();
-    setStartDate(start);
-    setEndDate(end);
-  }, [isDialogOpen]);
-
   const handleCreateAssignment = async () => {
     if (!canCreateAssignments) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างการมอบหมายงาน' });
       return;
     }
-    const parsedPick = parseDialogLinePickKey(dialogLinePickKey);
-    const dialogPoIdResolved = (filterPoId || parsedPick?.poId || '').trim();
-    const dialogPoLineIdResolved = (parsedPick?.lineId || '').trim();
+    const dialogPoIdResolved = effectiveDialogPoId.trim();
+    const dialogPoLineIdResolved = effectiveDialogLineId.trim();
+    const workerIdTrim = (selectedWorkerId || '').trim();
 
-    if (!firestore || !currentUser || !selectedWorkerId || !dialogPoIdResolved || !dialogPoLineIdResolved || !startDate || !endDate) {
+    if (!firestore || !currentUser) {
       toast({
         variant: 'destructive',
         title: 'ข้อมูลไม่ครบ',
-        description: 'กรุณาเลือกบรรทัด PO / ตำแหน่ง / คนงาน และช่วงวันที่ให้ครบ',
+        description: !firestore ? 'การเชื่อมต่อฐานข้อมูลไม่พร้อม' : 'กรุณาล็อกอินใหม่',
       });
       return;
     }
-    if (startDate > endDate) {
+    if (!dialogPoIdResolved || !dialogPoLineIdResolved) {
       toast({
         variant: 'destructive',
-        title: 'ช่วงวันที่ไม่ถูกต้อง',
-        description: 'วันเริ่มต้องไม่หลังวันจบงาน',
+        title: 'ข้อมูลไม่ครบ',
+        description: !dialogPoLineIdResolved
+          ? 'กรุณาเลือกบรรทัด PO / ตำแหน่ง — ถ้าเลือกแล้วยังขึ้นอยู่ ให้เปลี่ยนบรรทัดแล้วเลือกใหม่'
+          : 'ไม่พบรหัส PO — รีเฟรชหน้าแล้วลองใหม่',
+      });
+      return;
+    }
+    if (!workerIdTrim) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาเลือกคนงาน — ช่วงวันที่เริ่ม/จบงานจริงไม่ต้องกรอกที่นี่ (นับจาก Mobilization: ยืนยัน mob · standby · จบงาน)',
       });
       return;
     }
 
-    const worker = allWorkers?.find(w => w.id === selectedWorkerId);
+    const worker = allWorkers?.find((w) => w.id === workerIdTrim);
     const po = allPOs?.find((p) => p.id === dialogPoIdResolved);
     if (!worker || !po) {
       toast({
@@ -600,18 +590,13 @@ function AssignmentsPageContent() {
     }
 
     // 3. Overlap / Double-assignment Check
-    const overlap = checkWorkerAssignmentOverlap(
-      assignments || [],
-      selectedWorkerId,
-      startDate,
-      endDate,
-    );
+    const overlap = checkWorkerAssignmentOverlap(assignments || [], selectedWorkerId);
     if (overlap.hasOverlap) {
       const first = overlap.blockingAssignments[0];
       toast({
         variant: 'destructive',
         title: 'คนงานมีงานมอบหมายอยู่แล้ว (Already Assigned)',
-        description: `${worker.firstName} ${worker.lastName} ถูกมอบหมายอยู่ในโครงการ "${first.projectName}" (${first.assignmentNo}) ช่วง ${formatStoredDateRangeThaiBE(first.startDate, first.endDate)} ต้องรอจบภารกิจ (Demobilize/Close) ก่อนมอบหมายใหม่`,
+        description: `${worker.firstName} ${worker.lastName} ถูกมอบหมายอยู่ในโครงการ "${first.projectName}" (${first.assignmentNo}) — Unassign / Demobilize หรือปิดรายการเดิมก่อนมอบหมายซ้ำ`,
       });
       return;
     }
@@ -698,13 +683,19 @@ function AssignmentsPageContent() {
       const workerDisplayName = mobilizationWorkerNameFromWorker(worker);
       const locFromLine = (poLine.workLocation || '').trim();
       const nowTs = Date.now();
+      const assignedDate = thailandTodayYmd();
+      const scheduleCeiling = mobilizationScheduleFromPo(po);
       const newAssignment: Assignment = {
         id: newMobRef.id,
         assignmentNo: finalNo,
-        workerId: selectedWorkerId,
+        workerId: workerIdTrim,
         workerName: workerDisplayName,
         poLineId: effectivePoLineId,
         poId: dialogPoIdResolved,
+        poActiveBundleId: resolvePoActiveBundleKeyForPo(po),
+        mobCycleNumber: 1,
+        mobCycleId: buildMobCycleDocId(newMobRef.id, 1),
+        mobWorkflowVersion: 'po_active_v2',
         contractId: po.contractId || '',
         waveId: tsScopeId,
         positionId: (position?.id || poLine.positionId || '').trim(),
@@ -717,8 +708,12 @@ function AssignmentsPageContent() {
               workLocationUpdatedByUserId: currentUser.id,
             }
           : {}),
-        startDate,
-        endDate,
+        assignedDate,
+        /** วันเปิดเอกสารมอบหมาย — วันเริ่มงานจริงยังไม่นับที่นี่ (ตั้งที่ Mobilization: standby / เริ่มทำงาน) */
+        startDate: assignedDate,
+        /** เพดานจาก PO — ไม่ใช่วันจบงานจริง (จบงานที่ปุ่ม Mobilization) */
+        endDate: scheduleCeiling.endDate,
+        mobilizationStatus: 'PENDING',
         deploymentStatus: 'DRAFT',
         clientApprovalStatus: 'NOT_SUBMITTED',
         readinessStatus: 'ready',
@@ -740,8 +735,12 @@ function AssignmentsPageContent() {
       };
 
       await setDoc(newMobRef, stripUndefinedForFirestore(newAssignment), { merge: true });
+      await updateDoc(doc(firestore, 'workers', workerIdTrim), {
+        workerStatus: 'ASSIGNED',
+        updatedAt: nowTs,
+      });
 
-      toast({ title: 'มอบหมายงานสำเร็จ', description: `รหัสการมอบหมาย: ${finalNo}` });
+      toast({ title: 'มอบหมายงานสำเร็จ', description: `รหัสการมอบหมาย: ${finalNo} — ไปดำเนินการ Mobilization (Waiting MOB)` });
       setIsDialogOpen(false);
     } catch (e) {
       console.error(e);
@@ -781,6 +780,13 @@ function AssignmentsPageContent() {
         });
       }
       await batch.commit();
+      const wid = assignmentPendingDelete.workerId;
+      if (wid) {
+        await updateDoc(doc(firestore, 'workers', wid), {
+          workerStatus: 'AVAILABLE',
+          updatedAt: Date.now(),
+        });
+      }
       toast({
         title: 'ลบการมอบหมายแล้ว',
         description: assignmentPendingDelete.assignmentNo || id,
@@ -812,7 +818,12 @@ function AssignmentsPageContent() {
 
   const getDeploymentStatusBadge = (status: DeploymentStatus) => {
     switch(status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 uppercase font-bold">Draft</Badge>;
+      case 'DRAFT':
+        return (
+          <Badge variant="outline" className="bg-sky-50 text-sky-900 border-sky-200 font-bold">
+            Waiting MOB
+          </Badge>
+        );
       case 'READINESS_CHECK': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">Checking</Badge>;
       case 'READY_TO_MOB': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 uppercase font-bold">Ready</Badge>;
       case 'MOBILIZING': return <Badge className="bg-blue-600 uppercase font-bold">Mobilizing</Badge>;
@@ -832,7 +843,7 @@ function AssignmentsPageContent() {
               <UserPlus className="h-8 w-8" /> การมอบหมายลูกจ้าง (Worker Assignments)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดรายชื่อ <b>ลูกจ้างหน้างาน</b> ให้ชัดเจนต่อ <b>บรรทัดคำสั่งจ้าง (PO line)</b> ภายใต้สัญญา — ช่วงเริ่ม–สิ้นสุดอยู่ที่การมอบหมาย; ค่าแรงขาย/ต้นทุนสำหรับ payroll ยึดตามสัญญาและอัตราที่ลงในสัญญา (operations_manager / HR / Admin)
+              กำหนดรายชื่อ <b>ลูกจ้างหน้างาน</b> ต่อ <b>บรรทัดคำสั่งจ้าง (PO line)</b> — ระบบบันทึกแค่<b>วันที่มอบหมาย</b>; วัน Standby / เริ่มทำงานตั้งที่หน้า <b>Mobilization</b> · หลังมอบหมายสถานะเป็น <b>Waiting MOB</b> (operations_manager / HR / Admin)
               {showAllAssignmentsLegacy ? (
                 <span className="block mt-2 text-sm">
                   กำลังใช้ <b>โหมดแสดงทั้งหมด</b> —{' '}
@@ -880,9 +891,9 @@ function AssignmentsPageContent() {
               <ShieldAlert className="h-5 w-5 text-amber-600" />
               <AlertTitle className="font-bold">นโยบายความเหมาะสม (Suitability Policy)</AlertTitle>
               <AlertDescription className="text-sm">
-                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b>, <b>สถานะความพร้อม (Readiness)</b> และ <b>การซ้อนงาน (Overlap)</b> โดยอัตโนมัติ — ห้ามมอบหมายคนงานที่ไม่พร้อม ตำแหน่งไม่ตรง หรือช่วงวันที่ชนกับ assignment อื่น
+                ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b>, <b>สถานะความพร้อม (Readiness)</b> และ <b>คนงานยังถือสล็อต mobilization อยู่หรือไม่</b> — ห้ามมอบหมายซ้ำจนกว่าจะ Unassign / ปิดงานเดิม (ไม่บังคับระบุช่วงวันที่ที่หน้านี้)
                 <span className="block mt-2 text-amber-900/90">
-                  ตารางนี้แสดง <b>1 แถวต่อคน</b> (โควต้าตามบรรทัด PO) — demob/ปิดก่อนมอบหมายช่วงใหม่จะไม่ซ้อน หากยัง active อยู่
+                  ตารางนี้แสดง <b>1 แถวต่อคน</b> (โควต้าตามบรรทัด PO) — วันเริ่มงานจริง / จบงานนับจากหน้า <b>Mobilization</b> (ยืนยัน mob · standby · จบงาน) ภายใน assignment เดียวกันสามารถเปิดรอบ mob ถัดไปได้หากยังไม่ unassign
                 </span>
               </AlertDescription>
             </Alert>
@@ -916,13 +927,16 @@ function AssignmentsPageContent() {
                       <Plus className="h-5 w-5" /> สร้างการมอบหมายใหม่ (Field Assignment)
                     </Button>
                   </DialogTrigger>
-                  <DialogContent className="max-w-2xl">
+                  <DialogContent
+                    className="max-w-2xl"
+                    onCloseAutoFocus={(e) => e.preventDefault()}
+                  >
                   <DialogHeader>
                     <DialogTitle>มอบหมายงาน (Field Crew Assignment)</DialogTitle>
                     <DialogDescription>
                       {filterPoId ? (
                         <>
-                          เลือก <strong>บรรทัด PO / ตำแหน่ง</strong> ด้านล่าง — แสดงชัดเจนว่าตำแหน่งไหนว่างหรือเต็มตามโควต้า PO และตั้งช่วงวันที่มอบหมาย (ลงเวลาอิง PO + assignment)
+                          เลือก <strong>บรรทัด PO / ตำแหน่ง</strong> และ <strong>คนงาน</strong> — ไม่ต้องระบุวันเริ่ม/สิ้นสุดที่นี่ (ระบบบันทึกแค่วันมอบหมาย = วันนี้; ช่วงทำงานจริงตั้งที่ Mobilization)
                         </>
                       ) : filterPoActiveBundleId ? (
                         <>
@@ -1103,24 +1117,23 @@ function AssignmentsPageContent() {
                         </SelectContent>
                       </Select>
                       <p className="text-[10px] text-muted-foreground italic">
-                        * แสดงเฉพาะตำแหน่งตรงบรรทัด PO + READY ที่ <strong>ไม่มี assignment ทับช่วงวันที่</strong> — Demobilize หรือปิดรายการเดิมก่อนมอบหมายซ้อน
+                        * เฟส 2 PO workflow: แสดงเฉพาะคนที่ <strong>ยังไม่ถูก assign ค้าง</strong> (หนึ่งคนหนึ่ง mobilization ที่ยังไม่ปิด/Unassign)
                       </p>
                     </div>
-                    <div className="space-y-2">
-                      <Label className="font-bold">วันที่เริ่มงาน (Start Date)</Label>
-                      <DatePickerThaiBE
-                        className="h-11"
-                        value={htmlDateValueToTimestampMs(startDate)}
-                        onChange={(ms) => setStartDate(timestampToHtmlDateValue(ms))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="font-bold">วันที่สิ้นสุดงาน (End Date)</Label>
-                      <DatePickerThaiBE
-                        className="h-11"
-                        value={htmlDateValueToTimestampMs(endDate)}
-                        onChange={(ms) => setEndDate(timestampToHtmlDateValue(ms))}
-                      />
+                    <div className="space-y-1 md:col-span-2 rounded-md border border-muted bg-muted/30 px-3 py-2">
+                      <Label className="text-xs font-bold text-muted-foreground">หลังยืนยันการมอบหมาย</Label>
+                      <p className="text-sm font-medium">
+                        บันทึก <strong>วันที่มอบหมาย = วันนี้</strong> และส่งคนเข้าคิว <strong>รอ Mobilization</strong>
+                      </p>
+                      {schedulePreviewFromPo ? (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          เพดานสัญญา PO (อ้างอิงภายใน):{' '}
+                          {formatStoredDateRangeThaiBE(schedulePreviewFromPo.startDate, schedulePreviewFromPo.endDate)} — วันเริ่ม
+                          standby / ทำงานจริงตั้งที่หน้า Mobilization
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-1">เลือกบรรทัด PO เพื่อแสดงเพดานวันที่จาก PO</p>
+                      )}
                     </div>
                   </div>
                     <DialogFooter>
@@ -1128,7 +1141,11 @@ function AssignmentsPageContent() {
                       <Button
                         onClick={handleCreateAssignment}
                         className="bg-primary font-bold"
-                        disabled={isCreating || !dialogLinePickKey.trim()}
+                        disabled={
+                          isCreating ||
+                          !dialogLinePickKey.trim() ||
+                          !(selectedWorkerId || '').trim()
+                        }
                       >
                         {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                         ยืนยันการมอบหมาย (Confirm)
@@ -1150,7 +1167,7 @@ function AssignmentsPageContent() {
                       <TableRow>
                         <TableHead className="font-bold py-4 pl-6">เลขที่ / ลูกจ้างหน้างาน</TableHead>
                         <TableHead className="font-bold min-w-[11rem]">คำสั่งจ้าง / บรรทัด PO</TableHead>
-                        <TableHead className="font-bold">ช่วงเวลา (Schedule)</TableHead>
+                        <TableHead className="font-bold">วันที่มอบหมาย</TableHead>
                         <TableHead className="font-bold">สถานที่</TableHead>
                         <TableHead className="font-bold">ความพร้อม (Readiness)</TableHead>
                         <TableHead className="font-bold">สถานะ Deployment</TableHead>
@@ -1239,9 +1256,14 @@ function AssignmentsPageContent() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-bold">
-                                <Calendar className="h-3.5 w-3.5" />
-                                {formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}
+                              <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground font-bold">
+                                <span className="inline-flex items-center gap-2">
+                                  <Calendar className="h-3.5 w-3.5 shrink-0" />
+                                  {formatYmdLocalThaiBE((asgn.assignedDate || asgn.startDate || '').trim() || '—')}
+                                </span>
+                                <span className="text-[9px] font-normal text-muted-foreground/90 pl-5">
+                                  เพดาน PO ถึง {formatYmdLocalThaiBE((asgn.endDate || '').trim() || '—')}
+                                </span>
                               </div>
                             </TableCell>
                             <TableCell>

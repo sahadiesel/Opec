@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,7 +43,11 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole, canEdit } from '@/lib/permissions';
 import { formatThaiYearMonthLabel } from '@/lib/ops/timesheet-hub-po-month';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
-import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-bridge';
+import {
+  ensureWorkerMonthlyPayrollPeriodForYearMonth,
+  poMonthTimesheetReviewDocId,
+  syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
+} from '@/lib/timesheet/po-month-timesheet-bridge';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
 import { PageGuidance } from '@/components/layout/page-guidance';
@@ -53,14 +57,34 @@ import { ensureMonthlyTimesheetDocument } from '@/lib/timesheet/ensure-monthly-t
 import {
   ensurePoLocationMonthShellsForPo,
   formatPoLocationMonthShellListLabel,
+  normalizeWorkLocationKey,
   purchaseOrderOverlapsYearMonth,
 } from '@/lib/timesheet/po-location-month-shell';
 import {
   deletePoMonthTimesheetPhotoFile,
   uploadPoMonthTimesheetPhoto,
 } from '@/lib/storage/po-month-timesheet-photos';
-import { FileText, ImagePlus, Info, Loader2, Lock, Send, Trash2, FileText as FileIcon, MapPin } from 'lucide-react';
+import {
+  FileText,
+  ImagePlus,
+  Info,
+  Loader2,
+  Lock,
+  Printer,
+  RefreshCw,
+  Send,
+  Trash2,
+  FileText as FileIcon,
+  MapPin,
+} from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const MAX_PO_MONTH_ATTACHMENTS = 4;
 
@@ -113,6 +137,7 @@ function isAttachmentReadonly(r: PoMonthTimesheetReview | undefined): boolean {
 
 function TimesheetPoMonthContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const firebaseApp = useFirebaseApp();
@@ -125,6 +150,9 @@ function TimesheetPoMonthContent() {
   const highlightPo = (searchParams.get('highlightPo') || '').trim();
   const poActiveBundleIdRaw = (searchParams.get('poActiveBundleId') || '').trim() || null;
   const filterPoActiveBundleId = poActiveBundleIdRaw ? normalizePoActiveBundleId(poActiveBundleIdRaw) : null;
+  const locationKeyRaw = (searchParams.get('locationKey') || '').trim();
+  /** คีย์ตรงกับ `PoLocationMonthTimesheet.locationKey` (รวม `__default__`) */
+  const filterLocationKey = locationKeyRaw ? normalizeWorkLocationKey(locationKeyRaw) : null;
   const [monthYm, setMonthYm] = useState(monthFromUrl && /^\d{4}-\d{2}$/.test(monthFromUrl) ? monthFromUrl : ymNow());
 
   const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
@@ -132,6 +160,7 @@ function TimesheetPoMonthContent() {
   const [periodEndByPo, setPeriodEndByPo] = useState<Record<string, string>>({});
   const [uploadingPhotoPoId, setUploadingPhotoPoId] = useState<string | null>(null);
   const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
+  const [payrollSyncBusy, setPayrollSyncBusy] = useState(false);
   const [submitDialogPo, setSubmitDialogPo] = useState<PurchaseOrder | null>(null);
   const [submitQ1, setSubmitQ1] = useState(false);
   const [submitQ2, setSubmitQ2] = useState(false);
@@ -243,10 +272,76 @@ function TimesheetPoMonthContent() {
     return new Set(ids);
   }, [filterPoActiveBundleId, allPos]);
 
-  const locShellsForDisplay = useMemo(() => {
+  /** หลังกรองชุด PO Active (เฟส 5) — ยังไม่กรองสถานที่ */
+  const locShellsAfterBundle = useMemo(() => {
     if (!filterPoActiveBundleId || !bundlePoIdSet) return locShellsSorted;
     return locShellsSorted.filter((row) => bundlePoIdSet.has(row.poId));
   }, [locShellsSorted, bundlePoIdSet, filterPoActiveBundleId]);
+
+  const locationFilterOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const row of locShellsAfterBundle) {
+      m.set(row.locationKey, row.locationLabel || row.locationKey);
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'th'));
+  }, [locShellsAfterBundle]);
+
+  const locShellsForDisplay = useMemo(() => {
+    if (!filterLocationKey) return locShellsAfterBundle;
+    return locShellsAfterBundle.filter((row) => row.locationKey === filterLocationKey);
+  }, [locShellsAfterBundle, filterLocationKey]);
+
+  const poIdsMatchingLocationFilter = useMemo(() => {
+    if (!filterLocationKey) return null;
+    const s = new Set<string>();
+    for (const row of locShellsAfterBundle) {
+      if (row.locationKey === filterLocationKey) s.add(row.poId);
+    }
+    return s;
+  }, [filterLocationKey, locShellsAfterBundle]);
+
+  const applyLocationFilter = useCallback(
+    (nextKey: string) => {
+      const p = new URLSearchParams(searchParams.toString());
+      if (!nextKey || nextKey === '__all__') {
+        p.delete('locationKey');
+      } else {
+        p.set('locationKey', nextKey);
+      }
+      router.replace(`/timesheets/po-month?${p.toString()}`);
+    },
+    [router, searchParams],
+  );
+
+  const filterHrefForShellRow = useCallback(
+    (row: PoLocationMonthTimesheet) => {
+      const p = new URLSearchParams(searchParams.toString());
+      p.set('locationKey', row.locationKey);
+      p.set('highlightPo', row.poId);
+      return `/timesheets/po-month?${p.toString()}`;
+    },
+    [searchParams],
+  );
+
+  const locationSelectValue = useMemo(() => {
+    if (!filterLocationKey) return '__all__';
+    return locationFilterOptions.some(([k]) => k === filterLocationKey) ? filterLocationKey : '__all__';
+  }, [filterLocationKey, locationFilterOptions]);
+
+  useEffect(() => {
+    if (!filterLocationKey || locShellsLoading) return;
+    if (locationFilterOptions.length === 0) return;
+    if (locationFilterOptions.some(([k]) => k === filterLocationKey)) return;
+    const p = new URLSearchParams(searchParams.toString());
+    p.delete('locationKey');
+    router.replace(`/timesheets/po-month?${p.toString()}`);
+  }, [
+    filterLocationKey,
+    locationFilterOptions,
+    locShellsLoading,
+    router,
+    searchParams,
+  ]);
 
   const contractPosForShellEnsure = useMemo(
     () =>
@@ -381,9 +476,47 @@ function TimesheetPoMonthContent() {
         }
         await setDoc(ref, base, { merge: true });
         if (status === 'entry_locked') {
-          toast({ title: 'ล็อกงวดแล้ว', description: 'แก้รายวันไม่ได้เมื่อเอกสาร PO+งวดถูกล็อก — กด «ส่งตรวจ» เมื่อแนบครบ' });
+          let readyCount = 0;
+          let gatedDocs = 0;
+          let syncedPos = 0;
+          try {
+            const sync = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(firestore, monthYm);
+            readyCount = sync.updated;
+            gatedDocs = sync.gatedPoCount;
+            syncedPos = sync.syncedPoCount;
+            const actorName = currentUser.displayName || currentUser.email || currentUser.id;
+            await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actorName);
+          } catch (e) {
+            console.error('[po-month] payroll bridge after lock', e);
+          }
+          toast({
+            title: 'ล็อกงวดแล้ว',
+            description:
+              readyCount > 0
+                ? `แก้รายวันไม่ได้ — ตั้งพร้อมจ่าย ${readyCount} ใบงาน — ครอบคลุม ${syncedPos} PO ที่ทับเดือน (เอกสารปิดงวดในเดือนนี้ ${gatedDocs} ฉบับ) · ไปทำ Payroll ได้โดยไม่ต้องรออนุมัติ timesheet · กด «ส่งตรวจ» เมื่อแนบครบ`
+                : 'แก้รายวันไม่ได้เมื่อเอกสารถูกล็อก — หากยังไม่มีใบงานในช่วงงวดจะไม่มีรายการพร้อมจ่าย · กด «ส่งตรวจ» เมื่อแนบครบ',
+          });
         } else if (status === 'pending_manager_review') {
-          toast({ title: 'ส่งตรวจสอบแล้ว', description: 'รอผู้จัดการที่คิวอนุมัติ — หลังอนุมัติระบบจะตั้งงาน invoice + payroll' });
+          let readyCountPm = 0;
+          let gatedDocsPm = 0;
+          let syncedPosPm = 0;
+          try {
+            const syncPm = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(firestore, monthYm);
+            readyCountPm = syncPm.updated;
+            gatedDocsPm = syncPm.gatedPoCount;
+            syncedPosPm = syncPm.syncedPoCount;
+            const actorNamePm = currentUser.displayName || currentUser.email || currentUser.id;
+            await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actorNamePm);
+          } catch (e) {
+            console.error('[po-month] payroll bridge after submit', e);
+          }
+          toast({
+            title: 'ส่งตรวจสอบแล้ว',
+            description:
+              readyCountPm > 0
+                ? `รอผู้จัดการที่คิวอนุมัติ — ตั้งพร้อมจ่าย ${readyCountPm} ใบงาน — ครอบคลุม ${syncedPosPm} PO ที่ทับเดือน (เอกสารปิดงวดในเดือนนี้ ${gatedDocsPm} ฉบับ) · ไปทำ Payroll ได้โดยไม่ต้องรออนุมัติ timesheet`
+                : 'รอผู้จัดการที่คิวอนุมัติ — หากยังไม่มีใบงานในช่วงงวดจะไม่มีรายการพร้อมจ่าย',
+          });
         }
       } catch (e: unknown) {
         toast({
@@ -397,6 +530,37 @@ function TimesheetPoMonthContent() {
     },
     [firestore, currentUser, canEditTs, monthYm, getPeriodBounds, relatedWaveIdsFor, toast],
   );
+
+  /** ล็อกงวดแล้วไม่ต้องกดซ้ำ — ใช้ปุ่มนี้ตั้ง readyForPayroll / รอบบัญชีใหม่ทั้งเดือน */
+  const runPayrollSyncForMonth = useCallback(async () => {
+    if (!firestore || !currentUser || !canEditTs || !/^\d{4}-\d{2}$/.test(monthYm)) return;
+    setPayrollSyncBusy(true);
+    try {
+      const { updated, gatedPoCount, syncedPoCount } = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(
+        firestore,
+        monthYm,
+      );
+      const actor = currentUser.displayName || currentUser.email || currentUser.id;
+      await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actor);
+      toast({
+        title: 'ซิงก์พร้อมจ่ายแล้ว',
+        description:
+          updated > 0
+            ? `อัปเดต ${updated} ใบงาน — ครอบคลุม ${syncedPoCount} PO active ที่ทับเดือน ${monthYm} (มีเอกสารปิดงวดในเดือนนี้ ${gatedPoCount} ฉบับ) — ไปเมนู งวดจ่ายลูกจ้าง แล้วกดสร้าง Batch`
+            : gatedPoCount === 0
+              ? `ยังไม่มี PO+เดือนที่ล็อก/ส่งตรวจ/อนุมัติในเดือนนี้ — ล็อกอย่างน้อยหนึ่งฉบับก่อน แล้วค่อยซิงก์`
+              : `ไม่มีใบงานให้อัปเดต — ตรวจว่ามี daily_timesheets ในเดือนนี้`,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ซิงก์ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPayrollSyncBusy(false);
+    }
+  }, [firestore, currentUser, canEditTs, monthYm, toast]);
 
   const appendPhoto = useCallback(
     async (po: PurchaseOrder, file: File) => {
@@ -480,20 +644,60 @@ function TimesheetPoMonthContent() {
 
   const loading = posLoading || wavesLoading || reviewsLoading;
 
-  const posRows = posWithWaves
-    .filter((po) => (allWaves ?? []).some((w) => w.poId === po.id && waveTouchesMonth(w, monthYm)))
+  /**
+   * เดิมกรองแค่ PO ที่มี wave ช่วงวันที่ทับเดือน — wave ที่ยังไม่มี start/end หรือไม่ทับเดือนจะทำให้การ์ดหาย
+   * แม้มีหัวงวดสถานที่ในเดือนนั้น · เมื่อกรองสถานที่จึงรับ PO ที่มีหัวงวดตรงคีย์ + PO ทับเดือนปฏิทินด้วย
+   */
+  const posRowsBase = posWithWaves
+    .filter((po) => {
+      const waveInMonth = (allWaves ?? []).some((w) => w.poId === po.id && waveTouchesMonth(w, monthYm));
+      if (waveInMonth) return true;
+      if (filterLocationKey && poIdsMatchingLocationFilter?.has(po.id)) {
+        return purchaseOrderOverlapsYearMonth(po, monthYm);
+      }
+      return false;
+    })
     .filter((po) => !filterPoActiveBundleId || (bundlePoIdSet?.has(po.id) ?? false));
+
+  const posRows =
+    poIdsMatchingLocationFilter === null
+      ? posRowsBase
+      : posRowsBase.filter((po) => poIdsMatchingLocationFilter.has(po.id));
+
+  const selectedLocationLabel =
+    filterLocationKey && locationFilterOptions.find(([k]) => k === filterLocationKey)?.[1];
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="mx-auto max-w-[1100px] space-y-6 py-6 px-4">
-        <div>
+        <div className="hidden print:block border-b border-foreground/25 pb-4 mb-2 space-y-1 text-sm text-foreground">
+          <div className="text-xl font-bold">Timesheet ราย PO+เดือน — สำหรับพิมพ์</div>
+          <div>
+            งวด: <span className="font-mono font-semibold">{monthYm}</span> ({formatThaiYearMonthLabel(monthYm, 'th-TH')})
+          </div>
+          {filterPoActiveBundleId ? (
+            <div>
+              ชุด PO Active: <span className="font-mono text-xs">{filterPoActiveBundleId}</span>
+            </div>
+          ) : null}
+          <div>
+            สถานที่:{' '}
+            <span className="font-semibold">{filterLocationKey ? (selectedLocationLabel ?? filterLocationKey) : 'ทุกสถานที่'}</span>
+          </div>
+          {monthlyTimesheetNo ? (
+            <div>
+              เลขรวมเอกสาร: <span className="font-mono">{monthlyTimesheetNo}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="print:hidden">
           <PayrollScopeTag scope="worker" showHint={false} />
           <h1 className="text-2xl font-bold text-primary flex items-center gap-2">
             <FileText className="h-7 w-7" />
             เอกสาร timesheet ราย PO+เดือน (ล็อก / ส่งตรวจ / แนบ)
           </h1>
-          <p className="text-muted-foreground text-sm max-w-3xl mt-1">
+          <p className="text-muted-foreground text-sm max-w-3xl mt-1 print:hidden">
             <strong>ชุดนี้เป็นหลัก</strong> สำหรับปิดงวด ส่งลูกค้า/ผู้จัดการตรวจ ออก invoice และงาน payroll —{' '}
             <strong>ไม่อ้างอิง Wave ในการออกเอกสาร</strong> (ราย wave ยังใช้ลงเวลารายวันบนกระดาน) · เลขรวม:{' '}
             {monthlyDocLoading ? (
@@ -505,7 +709,7 @@ function TimesheetPoMonthContent() {
         </div>
 
         {filterPoActiveBundleId ? (
-          <Alert className="border-primary/30 bg-primary/5">
+          <Alert className="border-primary/30 bg-primary/5 print:hidden">
             <Info className="h-4 w-4" />
             <AlertTitle className="text-sm">กรองตามชุด PO Active</AlertTitle>
             <AlertDescription className="text-sm flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -520,16 +724,32 @@ function TimesheetPoMonthContent() {
           </Alert>
         ) : null}
 
-        <PageGuidance
-          title="ขั้นตอน"
-          tips={[
-            'ตั้ง "วันสุดท้ายของงวด" ตามรอบปิดจริง แล้วกด ล็อกงวด — จากนั้นแนบรูป/PDF ได้สูงสุด 4 ไฟล์ (รูปใหญ่กว่า ~500KB จะบีบอัตโนมัติ, PDF สูงสุด 10MB)',
-            'กด ส่งตรวจสอบ ให้ผู้อนุมัติ (เมนู HR) — หลัง approved ระบบจะเตรียมใบแจ้งหนี้ + งวดจ่ายตาม timesheet รอบนี้',
-            'ดูสรุปกริดรายเดือน: ลิงก์ไปหน้า "สรุปรายเดือน" สำหรับตรวจตัวเลข แต่ปิดงวดทำที่นี่',
-          ]}
-        />
+        {filterLocationKey ? (
+          <Alert className="border-emerald-200/80 bg-emerald-50/60 print:hidden">
+            <MapPin className="h-4 w-4" />
+            <AlertTitle className="text-sm">กรองตามสถานที่ (เฟส 6)</AlertTitle>
+            <AlertDescription className="text-sm flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-medium">{selectedLocationLabel ?? filterLocationKey}</span>
+              <Button type="button" variant="link" className="h-auto p-0 text-primary" onClick={() => applyLocationFilter('__all__')}>
+                แสดงทุกสถานที่
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
-        <Alert className="border-sky-200/80 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20">
+        <div className="print:hidden">
+          <PageGuidance
+            title="ขั้นตอน"
+            tips={[
+              'ตั้ง "วันสุดท้ายของงวด" ตามรอบปิดจริง แล้วกด ล็อกงวด — จากนั้นแนบรูป/PDF ได้สูงสุด 4 ไฟล์ (รูปใหญ่กว่า ~500KB จะบีบอัตโนมัติ, PDF สูงสุด 10MB)',
+              'กด ส่งตรวจสอบ ให้ผู้อนุมัติ (เมนู HR) — หลัง approved ระบบจะเตรียมใบแจ้งหนี้ + งวดจ่ายตาม timesheet รอบนี้',
+              'ดูสรุปกริดรายเดือน: ลิงก์ไปหน้า "สรุปรายเดือน" สำหรับตรวจตัวเลข แต่ปิดงวดทำที่นี่',
+              'เลือกสถานที่จาก dropdown หรือพารามิเตอร์ URL locationKey — พิมพ์มุมมองนี้ได้เมื่อกรองแล้ว (หรือทั้งหมด)',
+            ]}
+          />
+        </div>
+
+        <Alert className="border-sky-200/80 bg-sky-50/50 dark:border-sky-800 dark:bg-sky-950/20 print:hidden">
           <Info className="h-4 w-4" />
           <AlertTitle>ไม่ใช่ราย Wave แล้ว</AlertTitle>
           <AlertDescription className="text-sm">
@@ -541,15 +761,16 @@ function TimesheetPoMonthContent() {
           </AlertDescription>
         </Alert>
 
-        <Card>
-          <CardHeader>
+        <Card className="print:shadow-none print:border print:break-inside-avoid">
+          <CardHeader className="print:py-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <MapPin className="h-4 w-4" />
-              งวด timesheet ตามสถานที่ (เฟส B — จาก PO line)
+              <MapPin className="h-4 w-4 print:hidden" />
+              งวด timesheet ตามสถานที่ (เฟส B — PO line · เฟส 6 — กรอง/พิมพ์)
             </CardTitle>
             <CardDescription>
               สร้าง/อัปเดตอัตโนมัติเมื่อโหลดหน้านี้ โดยรวมบรรทัด PO ตาม <strong>workLocation</strong> — แยกหัวงวดต่อ
-              ลูกค้า/สัญญา/PO/สถานที่/เดือน แม้ยังไม่มี wave หรือรายลงเวลา (สถานะเริ่มที่ PLANNING)
+              ลูกค้า/สัญญา/PO/สถานที่/เดือน แม้ยังไม่มี wave หรือรายลงเวลา (สถานะเริ่มที่ PLANNING) — เลือกสถานที่ด้านล่างหรือ{' '}
+              <span className="font-mono text-[10px]">?locationKey=…</span> แล้วกดพิมพ์
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -570,6 +791,7 @@ function TimesheetPoMonthContent() {
                       <TableHead>ลูกค้า</TableHead>
                       <TableHead>สถานที่</TableHead>
                       <TableHead className="w-[7rem]">สถานะ</TableHead>
+                      <TableHead className="w-[5.5rem] print:hidden text-right">ลัด</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -595,20 +817,25 @@ function TimesheetPoMonthContent() {
                           {row.locationLabel || row.locationKey}
                         </TableCell>
                         <TableCell className="align-top">{shellStatusBadge(row.status)}</TableCell>
+                        <TableCell className="align-top text-right print:hidden">
+                          <Link href={filterHrefForShellRow(row)} className="text-xs text-primary font-medium underline whitespace-nowrap">
+                            กรองที่นี่
+                          </Link>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
             )}
-            <p className="text-[10px] text-muted-foreground mt-3">
+            <p className="text-[10px] text-muted-foreground mt-3 print:hidden">
               เอกสาร PO+งวด (ล็อก/แนบ) ยังทำที่การ์ดด้านล่าง — รายการนี้คือ &quot;หัวงวด&quot; รายสถานที่เพื่อต่อกับกระดานลงเวลา/ใบ
               invoice ในรอบถัดไป
             </p>
           </CardContent>
         </Card>
 
-        <div className="flex flex-col sm:flex-row gap-3 items-end flex-wrap">
+        <div className="flex flex-col lg:flex-row gap-3 items-end flex-wrap print:hidden">
           <div className="space-y-1">
             <Label>งวด (yyyy-MM)</Label>
             <Input
@@ -618,6 +845,26 @@ function TimesheetPoMonthContent() {
             />
             <p className="text-xs text-muted-foreground">{formatThaiYearMonthLabel(monthYm, 'th-TH')}</p>
           </div>
+          <div className="space-y-1 w-full min-w-[220px] max-w-sm">
+            <Label>สถานที่ (จาก PO line / หัวงวด)</Label>
+            <Select value={locationSelectValue} onValueChange={applyLocationFilter}>
+              <SelectTrigger className="font-normal">
+                <SelectValue placeholder="ทุกสถานที่" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">ทุกสถานที่</SelectItem>
+                {locationFilterOptions.map(([key, label]) => (
+                  <SelectItem key={key} value={key}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button type="button" variant="secondary" className="gap-1" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" />
+            พิมพ์มุมมองนี้
+          </Button>
           <Button type="button" variant="outline" asChild>
             <Link href={`/timesheets/wave-month?month=${encodeURIComponent(monthYm)}`}>สรุปลงเวลา (ตาราง)</Link>
           </Button>
@@ -626,10 +873,38 @@ function TimesheetPoMonthContent() {
           </Button>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">PO ที่เปิด wave ในงวดนี้ + เอกสาร</CardTitle>
-            <CardDescription>เฉพาะ PO ที่มี wave กินเวลาในเดือนที่เลือก</CardDescription>
+        <Card className="print:shadow-none print:border print:break-inside-auto">
+          <CardHeader className="print:py-2 space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <CardTitle className="text-base">PO ที่เปิด wave ในงวดนี้ + เอกสาร</CardTitle>
+                <CardDescription>
+                  เฉพาะ PO ที่มี wave และ (ช่วง wave ทับเดือนที่เลือก หรือเมื่อกรองสถานที่ — มีหัวงวดสถานที่ในเดือนนี้และ PO ทับเดือนปฏิทิน)
+                  {filterLocationKey ? (
+                    <span className="block mt-1 text-emerald-900 font-medium">
+                      กรองเฉพาะ PO ที่มีหัวงวดสถานที่นี้ในเดือนนี้ — เหลือ {posRows.length} การ์ด
+                    </span>
+                  ) : null}
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="shrink-0 gap-1.5"
+                disabled={!canEditTs || payrollSyncBusy || !/^\d{4}-\d{2}$/.test(monthYm)}
+                onClick={() => void runPayrollSyncForMonth()}
+              >
+                {payrollSyncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                ซิงก์พร้อมจ่ายทั้งเดือน
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground rounded-md border border-dashed border-amber-300/60 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2">
+              <strong className="text-foreground">ล็อกงวดแล้ว — ปุ่มล็อกถูกปิดใช้ตามปกติ</strong>
+              เมื่อมีอย่างน้อยหนึ่ง PO+เดือนที่ปิดงวดในเดือนนี้ การกด{' '}
+              <span className="font-semibold">ซิงก์พร้อมจ่ายทั้งเดือน</span> จะตั้งพร้อมจ่ายให้ทุก PO active ที่ทับเดือนปฏิทิน — ไม่ต้องล็อกทุก PO — แล้วไป{' '}
+              <span className="font-semibold">การจ่ายค่าจ้าง → งวดจ่ายลูกจ้าง</span> เพื่อ Pre-check / สร้าง Batch
+            </p>
           </CardHeader>
           <CardContent className="p-0">
             {loading ? (
@@ -660,7 +935,7 @@ function TimesheetPoMonthContent() {
                   return (
                     <div
                       key={po.id}
-                      className={`rounded-lg border bg-card p-4 space-y-3 ${isHi ? 'ring-2 ring-primary/30' : ''}`}
+                      className={`rounded-lg border bg-card p-4 space-y-3 print:break-inside-avoid ${isHi ? 'ring-2 ring-primary/30' : ''}`}
                     >
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div>

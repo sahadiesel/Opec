@@ -4,11 +4,15 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CalendarDays, Save, Loader2, Zap, Lock, UserMinus } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Lock, UserMinus, Pencil, Undo2 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { htmlDateValueToTimestampMs, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatYmdLocalThaiBE,
+} from '@/lib/date-thai';
 import { parseISO, isWithinInterval } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -21,7 +25,7 @@ import {
   query,
   where,
   writeBatch,
-  increment,
+  deleteField,
   type Firestore,
 } from 'firebase/firestore';
 import {
@@ -44,7 +48,10 @@ import Link from 'next/link';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import {
   resolveContractDailyHoursForAssignmentLine,
-  assignmentReadyForWaveTimesheet,
+  assignmentIncludedInWaveTimesheetRoster,
+  assignmentExcludedFromPoDailyBoardOnDate,
+  isHtmlDateAfterMobLocationEnd,
+  isAssignmentDraftAwaitingFirstMobOnly,
 } from '@/lib/constants/timesheet-ui';
 import { poTimesheetScopeId, isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import {
@@ -57,7 +64,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
+import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import { assignmentOverlapsYearMonth, formatThaiYearMonthLabel } from '@/lib/ops/timesheet-hub-po-month';
+import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -80,7 +90,8 @@ function waveBoardStatusCode(
   const rest: Partial<Record<RateConditionEventType, string>> = {
     travel_day: 'TV',
     mobilization_day: 'MO',
-    demobilization_day: 'DE',
+    /** Dmob คิดเงินแนวเดียวกับ working — แสดง DMOB ให้ตรงภาษา Ops */
+    demobilization_day: 'DMOB',
     unpaid_leave: 'NP',
   };
   return rest[et] ?? String(et).replace(/_/g, ' ').slice(0, 3).toUpperCase();
@@ -102,6 +113,34 @@ function assignmentCoversHtmlDate(a: Pick<Assignment, 'startDate' | 'endDate'>, 
   return d >= s && d <= e;
 }
 
+/** ตรวจวันสิ้นสุดงานกับช่วงมอบหมาย — ใช้ทั้งจบงานครั้งแรกและแก้ไขวันที่ */
+function finishJobDateIssue(
+  asgn: Pick<Assignment, 'mobWorkingStartDate' | 'assignedDate' | 'startDate' | 'endDate'>,
+  finishYmd: string,
+): string | null {
+  const y = (finishYmd || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(y)) return 'กรุณาเลือกวันที่ให้ครบถ้วน';
+  const floor = (
+    (asgn.mobWorkingStartDate || asgn.assignedDate || asgn.startDate || '') as string
+  )
+    .trim()
+    .slice(0, 10);
+  const ceil = ((asgn.endDate || '') as string).trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(floor) && y < floor) {
+    return `วันสิ้นสุดต้องไม่ก่อน ${formatYmdLocalThaiBE(floor)} (เริ่มทำงาน / วันมอบหมาย)`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ceil) && y > ceil) {
+    return `วันสิ้นสุดต้องไม่หลัง ${formatYmdLocalThaiBE(ceil)} (เพดาน PO)`;
+  }
+  return null;
+}
+
+function assignmentAwaitingRemobAfterFinish(asgn: Assignment): boolean {
+  if (asgn.deploymentStatus !== 'DRAFT') return false;
+  if (!(asgn.mobLocationEndDate || '').trim()) return false;
+  return !isAssignmentDraftAwaitingFirstMobOnly(asgn);
+}
+
 export type PoDailyBoardScope =
   | { mode: 'single'; po: PurchaseOrder; waves: Wave[] }
   | { mode: 'bundle'; bundleKey: string; pos: PurchaseOrder[]; waves: Wave[] };
@@ -119,7 +158,8 @@ export type PoDailyBoardCardProps = {
 };
 
 /**
- * กระดานลงเวลารายวัน — แถวจาก mobilization ที่ช่วง start–end ครอบคลุมวันที่เลือก (readiness + deployment ตาม Wave Board)
+ * กระดานลงเวลารายวัน — แถวจาก mobilization ที่ช่วง start–end ครอบคลุมวันที่เลือก
+ * รวมคนที่จบงานแล้ว (กลับ DRAFT) ให้เห็นชื่อในเดือนเดียวกันสำหรับสรุป · ซ่อนเฉพาะ Waiting MOB ครั้งแรกก่อนขึ้นไซต์
  * โหมด bundle = ตารางเดียวรวมทุก PO ในชุด PO Active (ไม่แยกการ์ดต่อ PO)
  */
 export function PoDailyBoardCard({
@@ -150,7 +190,11 @@ export function PoDailyBoardCard({
   const { toast } = useToast();
   const [rosterData, setRosterData] = useState<Record<string, Partial<DailyTimesheet>>>({});
   const [isSaving, setIsSaving] = useState(false);
-  const [demobTarget, setDemobTarget] = useState<Assignment | null>(null);
+  const [finishJobModal, setFinishJobModal] = useState<
+    null | { mode: 'finish' | 'revise'; assignment: Assignment }
+  >(null);
+  const [cancelFinishTarget, setCancelFinishTarget] = useState<Assignment | null>(null);
+  const [finishJobDateYmd, setFinishJobDateYmd] = useState('');
   const [demobSubmitting, setDemobSubmitting] = useState(false);
   const [reviewByWaveId, setReviewByWaveId] = useState<Map<string, WaveMonthTimesheetReview | null>>(
     () => new Map(),
@@ -160,6 +204,20 @@ export function PoDailyBoardCard({
 
   const monthYm = targetDate.slice(0, 7);
   const waveById = useMemo(() => new Map(waves.map((w) => [w.id, w])), [waves]);
+
+  useEffect(() => {
+    if (!finishJobModal) {
+      setFinishJobDateYmd('');
+      return;
+    }
+    if (finishJobModal.mode === 'revise') {
+      const cur = (finishJobModal.assignment.mobLocationEndDate || '').trim().slice(0, 10);
+      setFinishJobDateYmd(/^\d{4}-\d{2}-\d{2}$/.test(cur) ? cur : thailandTodayYmd());
+      return;
+    }
+    const base = (targetDate || '').slice(0, 10);
+    setFinishJobDateYmd(/^\d{4}-\d{2}-\d{2}$/.test(base) ? base : thailandTodayYmd());
+  }, [finishJobModal, targetDate]);
 
   const poMonthHref = useMemo(() => {
     if (isBundle && bundleKey) {
@@ -263,11 +321,11 @@ export function PoDailyBoardCard({
       }
     }
     const inScope = mobsForPo.filter((a) => {
-      if (!WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as any)) return false;
-      if (!assignmentReadyForWaveTimesheet(a)) return false;
+      if (!assignmentIncludedInWaveTimesheetRoster(a)) return false;
       if (rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm)) {
         return assignmentOverlapsYearMonth(a, rosterFilterYm);
       }
+      if (assignmentExcludedFromPoDailyBoardOnDate(a, targetDate)) return false;
       try {
         const start = parseISO(a.startDate);
         const end = parseISO(a.endDate);
@@ -276,14 +334,8 @@ export function PoDailyBoardCard({
         return false;
       }
     });
-    const roster = pickRosterLinePerWorker(inScope).filter((a) => assignmentReadyForWaveTimesheet(a));
-    return roster.sort((a, b) => {
-      const wn = (id: string) => {
-        const w = workers?.find((x) => x.id === id);
-        return w ? `${w.firstName} ${w.lastName}` : id;
-      };
-      return wn(a.workerId).localeCompare(wn(b.workerId), 'th');
-    });
+    const roster = pickRosterLinePerWorker(inScope);
+    return [...roster].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, workers));
   }, [mobsForPo, targetDate, workers, rosterFilterYm]);
 
   const defaultHoursByAssignmentId = useMemo(() => {
@@ -372,6 +424,7 @@ export function PoDailyBoardCard({
     for (const key of Object.keys(updated)) {
       const asgn = assignmentRows.find((x) => x.id === key);
       if (!asgn || !assignmentCoversHtmlDate(asgn, targetDate)) continue;
+      if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
       const currentStatus = updated[key].status as DailyTimesheetStatus;
       if (service.canEdit(currentStatus)) {
         updated[key] = { ...updated[key], [field]: value };
@@ -460,41 +513,70 @@ export function PoDailyBoardCard({
     }
   };
 
-  const demobilizeEndDate = useMemo(() => {
-    if (!demobTarget) return targetDate;
-    const start = demobTarget.startDate || '1970-01-01';
-    return targetDate >= start ? targetDate : start;
-  }, [demobTarget, targetDate]);
-
-  const confirmDemobilize = async () => {
-    if (!firestore || !currentUser?.id || !demobTarget) return;
+  const confirmFinishJobModal = async () => {
+    if (!firestore || !currentUser?.id || !finishJobModal) return;
     if (!canEditTimesheets) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์' });
       return;
     }
-    const asgn = demobTarget;
-    const endDate = demobilizeEndDate;
+    const finishYmd = (finishJobDateYmd || '').trim().slice(0, 10);
+    const issue = finishJobDateIssue(finishJobModal.assignment, finishYmd);
+    if (issue) {
+      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: issue });
+      return;
+    }
+    const asgn = finishJobModal.assignment;
+    const now = Date.now();
     setDemobSubmitting(true);
     try {
       const mobRef = doc(firestore, 'mobilizations', asgn.id);
       const batch = writeBatch(firestore);
+      if (finishJobModal.mode === 'revise') {
+        batch.update(mobRef, {
+          mobLocationEndDate: finishYmd,
+          mobLocationEndedAt: now,
+          mobLocationEndedByUserId: currentUser.id,
+          updatedAt: now,
+          updatedBy: currentUser.id,
+        });
+        await batch.commit();
+        setFinishJobModal(null);
+        await loadRoster();
+        toast({
+          title: 'แก้ไขวันสิ้นสุดงานแล้ว',
+          description: `บันทึกวันสิ้นสุด ณ ${formatYmdLocalThaiBE(finishYmd)}`,
+        });
+        return;
+      }
+
+      const nextCycle = Math.max(1, (asgn.mobCycleNumber || 1) + 1);
       batch.update(mobRef, {
-        deploymentStatus: 'DEMOBILIZED',
-        mobilizationStatus: 'DEMOBILIZED',
-        endDate,
-        updatedAt: Date.now(),
+        deploymentStatus: 'DRAFT',
+        mobilizationStatus: 'PENDING',
+        mobCycleNumber: nextCycle,
+        mobCycleId: buildMobCycleDocId(asgn.id, nextCycle),
+        mobLocationEndDate: finishYmd,
+        mobLocationEndedAt: now,
+        mobLocationEndedByUserId: currentUser.id,
+        mobReadyToTravelAt: deleteField(),
+        mobReadyToTravelByUserId: deleteField(),
+        mobStandbyDate: deleteField(),
+        mobStandbyRecordedAt: deleteField(),
+        mobStandbyRecordedByUserId: deleteField(),
+        mobWorkingStartDate: deleteField(),
+        mobWorkingStartedAt: deleteField(),
+        mobWorkingStartedByUserId: deleteField(),
+        mobLocationPhase: deleteField(),
+        updatedAt: now,
         updatedBy: currentUser.id,
       });
-      const wId = (asgn.waveId || '').trim();
-      if (wId && !isPoTimesheetScopeId(wId)) {
-        batch.update(doc(firestore, 'waves', wId), {
-          assignedWorkers: increment(-1),
-          updatedAt: Date.now(),
-        });
-      }
       await batch.commit();
-      setDemobTarget(null);
-      toast({ title: 'จบงวด (Demob) แล้ว', description: 'รายการนี้จะไม่ถูกนับในกระดานตามช่วงมอบหมายอีกต่อไป' });
+      setFinishJobModal(null);
+      await loadRoster();
+      toast({
+        title: 'จบงานแล้ว — Waiting MOB',
+        description: `บันทึกจบงาน ณ ${formatYmdLocalThaiBE(finishYmd)} · ลงเวลาอัตโนมัติหยุดหลังวันนี้ · ไปเมนู Mobilization เพื่อเริ่มรอบส่งตัวใหม่`,
+      });
     } catch (e: unknown) {
       toast({ variant: 'destructive', title: 'อัปเดตไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -502,12 +584,54 @@ export function PoDailyBoardCard({
     }
   };
 
-  const demobWorkerName = demobTarget
+  const confirmCancelFinishJob = async () => {
+    if (!firestore || !currentUser?.id || !cancelFinishTarget) return;
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์' });
+      return;
+    }
+    const asgn = cancelFinishTarget;
+    const prevCycle = Math.max(1, (asgn.mobCycleNumber || 1) - 1);
+    const now = Date.now();
+    setDemobSubmitting(true);
+    try {
+      const mobRef = doc(firestore, 'mobilizations', asgn.id);
+      const batch = writeBatch(firestore);
+      batch.update(mobRef, {
+        deploymentStatus: 'ACTIVE',
+        mobilizationStatus: 'ACTIVE',
+        mobCycleNumber: prevCycle,
+        mobCycleId: buildMobCycleDocId(asgn.id, prevCycle),
+        mobLocationEndDate: deleteField(),
+        mobLocationEndedAt: deleteField(),
+        mobLocationEndedByUserId: deleteField(),
+        updatedAt: now,
+        updatedBy: currentUser.id,
+      });
+      await batch.commit();
+      setCancelFinishTarget(null);
+      await loadRoster();
+      toast({
+        title: 'ยกเลิกการจบงานแล้ว',
+        description: 'สถานะกลับเป็น ACTIVE — ตรวจขั้น Mobilization ถ้าต้องบันทึกวันเริ่มงานใหม่',
+      });
+    } catch (e: unknown) {
+      toast({ variant: 'destructive', title: 'อัปเดตไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setDemobSubmitting(false);
+    }
+  };
+
+  const finishModalWorkerName = finishJobModal
     ? (() => {
-        const w = workers?.find((x) => x.id === demobTarget.workerId);
-        return w ? `${w.firstName} ${w.lastName}`.trim() : demobTarget.workerId;
+        const w = workers?.find((x) => x.id === finishJobModal.assignment.workerId);
+        return w ? `${w.firstName} ${w.lastName}`.trim() : finishJobModal.assignment.workerId;
       })()
     : '';
+
+  const finishModalDateIssue = finishJobModal
+    ? finishJobDateIssue(finishJobModal.assignment, finishJobDateYmd)
+    : null;
 
   return (
     <>
@@ -648,12 +772,12 @@ export function PoDailyBoardCard({
                   {isBundle ? (
                     <TableHead className="font-bold w-[7rem] min-w-[6rem] whitespace-nowrap">รหัส PO</TableHead>
                   ) : null}
-                  <TableHead className="font-bold w-[8.5rem] min-w-[7rem]">ช่วงมอบหมาย</TableHead>
+                  <TableHead className="font-bold w-[8.5rem] min-w-[7rem]">วันที่มอบหมาย</TableHead>
                   <TableHead className="font-bold min-w-[5rem] max-w-[8rem]">ตำแหน่ง</TableHead>
                   <TableHead className="font-bold w-[148px] max-w-[160px] shrink-0">ประเภทวัน</TableHead>
                   <TableHead className="font-bold text-center w-[5.5rem] shrink-0">ชั่วโมงปกติ</TableHead>
                   <TableHead className="font-bold w-[6.5rem] shrink-0 whitespace-nowrap">สถานะปัจจุบัน</TableHead>
-                  <TableHead className="w-[5.75rem] text-center font-bold shrink-0">จบงวด</TableHead>
+                  <TableHead className="min-w-[6.5rem] text-center font-bold shrink-0">จบงาน</TableHead>
                   <TableHead className="text-right pr-6 min-w-[6rem] w-[18%]">หมายเหตุ</TableHead>
                 </TableRow>
               </TableHeader>
@@ -670,20 +794,37 @@ export function PoDailyBoardCard({
                   const rowLocked = scopeLocked || waveLocked;
                   const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
                   const raw = rosterData[asgn.id];
+                  const persisted = persistedAssignmentIds.has(asgn.id);
+                  const afterMobEnd = isHtmlDateAfterMobLocationEnd(asgn, targetDate);
                   const worker = workers?.find((x) => x.id === asgn.workerId);
                   const et = raw?.eventType ?? 'work_day';
-                  const row = {
-                    ...raw,
-                    eventType: et,
-                    normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
-                    ot15Hours: raw?.ot15Hours ?? 0,
-                    remark: raw?.remark ?? '',
-                  };
+                  const row =
+                    afterMobEnd && !raw
+                      ? {
+                          eventType: 'work_day' as RateConditionEventType,
+                          normalHours: 0,
+                          ot15Hours: 0,
+                          remark: '',
+                          status: undefined as DailyTimesheetStatus | undefined,
+                        }
+                      : {
+                          ...raw,
+                          eventType: et,
+                          normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
+                          ot15Hours: raw?.ot15Hours ?? 0,
+                          remark: raw?.remark ?? '',
+                        };
                   const tsService = new TimesheetService(firestore!);
                   const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
                   const dateInAssignment = assignmentCoversHtmlDate(asgn, targetDate);
-                  const rowEditLocked = isLocked || rowLocked || anyMonthLocked || !dateInAssignment;
-                  const persisted = persistedAssignmentIds.has(asgn.id);
+                  const rowEditLocked =
+                    isLocked || rowLocked || anyMonthLocked || !dateInAssignment || (afterMobEnd && !persisted);
+                  const canFinishJob =
+                    dateInAssignment &&
+                    WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
+                  const awaitingRemob = assignmentAwaitingRemobAfterFinish(asgn);
+                  const finishDateHintForRow =
+                    finishJobModal?.assignment.id === asgn.id ? finishModalDateIssue : null;
 
                   return (
                     <TableRow
@@ -708,6 +849,12 @@ export function PoDailyBoardCard({
                             <span className="text-[9px] text-amber-800 dark:text-amber-200 mt-0.5">
                               วันที่เลือกอยู่นอกช่วงมอบหมาย — เปลี่ยนวันที่หรือรอถึงช่วงที่ทับ
                             </span>
+                          ) : afterMobEnd && !persisted ? (
+                            <span className="text-[9px] text-muted-foreground mt-0.5">
+                              หลังวันจบงาน — ไม่สร้างลงเวลาอัตโนมัติ (ดูประวัติวันก่อนหน้าในตารางเดือน)
+                            </span>
+                          ) : finishDateHintForRow ? (
+                            <span className="text-[9px] text-destructive mt-0.5">{finishDateHintForRow}</span>
                           ) : null}
                         </div>
                       </TableCell>
@@ -717,7 +864,9 @@ export function PoDailyBoardCard({
                         </TableCell>
                       ) : null}
                       <TableCell className="align-top text-xs py-4 text-foreground/90">
-                        <span className="leading-tight">{formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}</span>
+                        <span className="leading-tight">
+                          {formatYmdLocalThaiBE((asgn.assignedDate || asgn.startDate || '').trim() || '—')}
+                        </span>
                       </TableCell>
                       <TableCell className="text-sm align-top py-4 max-w-[8rem]">
                         <span className="line-clamp-2" title={positionLabel(asgn.positionId)}>
@@ -725,53 +874,61 @@ export function PoDailyBoardCard({
                         </span>
                       </TableCell>
                       <TableCell className="w-[148px] max-w-[160px] align-top py-4 shrink-0">
-                        <Select
-                          disabled={rowEditLocked}
-                          value={row.eventType}
-                          onValueChange={(v: RateConditionEventType) => {
-                            setRosterData((prev) => {
-                              const cur = prev[asgn.id] ?? {
-                                workerId: asgn.workerId,
-                                assignmentId: asgn.id,
-                                date: targetDate,
-                                eventType: 'work_day' as RateConditionEventType,
-                                normalHours: dft,
-                                ot15Hours: 0,
-                                status: 'DRAFT' as DailyTimesheetStatus,
-                              };
-                              let nextHours = cur.normalHours ?? dft;
-                              if (v === 'unpaid_leave') nextHours = 0;
-                              else if (cur.eventType === 'unpaid_leave') nextHours = dft;
-                              return { ...prev, [asgn.id]: { ...cur, eventType: v, normalHours: nextHours } };
-                            });
-                          }}
-                        >
-                          <SelectTrigger className="h-9 text-xs w-full max-w-[160px] min-w-0 [&_span]:truncate">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {EVENT_TYPE_OPTIONS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {afterMobEnd && !persisted ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : (
+                          <Select
+                            disabled={rowEditLocked}
+                            value={row.eventType}
+                            onValueChange={(v: RateConditionEventType) => {
+                              setRosterData((prev) => {
+                                const cur = prev[asgn.id] ?? {
+                                  workerId: asgn.workerId,
+                                  assignmentId: asgn.id,
+                                  date: targetDate,
+                                  eventType: 'work_day' as RateConditionEventType,
+                                  normalHours: dft,
+                                  ot15Hours: 0,
+                                  status: 'DRAFT' as DailyTimesheetStatus,
+                                };
+                                let nextHours = cur.normalHours ?? dft;
+                                if (v === 'unpaid_leave') nextHours = 0;
+                                else if (cur.eventType === 'unpaid_leave') nextHours = dft;
+                                return { ...prev, [asgn.id]: { ...cur, eventType: v, normalHours: nextHours } };
+                              });
+                            }}
+                          >
+                            <SelectTrigger className="h-9 text-xs w-full max-w-[160px] min-w-0 [&_span]:truncate">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {EVENT_TYPE_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </TableCell>
                       <TableCell>
-                        <Input
-                          disabled={rowEditLocked || row.eventType === 'unpaid_leave'}
-                          type="number"
-                          className="h-9 text-center font-bold"
-                          value={row.normalHours}
-                          onChange={(e) => {
-                            const v = parseInt(e.target.value, 10) || 0;
-                            setRosterData((p) => ({
-                              ...p,
-                              [asgn.id]: { ...(p[asgn.id] || {}), normalHours: v },
-                            }));
-                          }}
-                        />
+                        {afterMobEnd && !persisted ? (
+                          <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
+                        ) : (
+                          <Input
+                            disabled={rowEditLocked || row.eventType === 'unpaid_leave'}
+                            type="number"
+                            className="h-9 text-center font-bold"
+                            value={row.normalHours}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10) || 0;
+                              setRosterData((p) => ({
+                                ...p,
+                                [asgn.id]: { ...(p[asgn.id] || {}), normalHours: v },
+                              }));
+                            }}
+                          />
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2 tabular-nums">
@@ -781,27 +938,63 @@ export function PoDailyBoardCard({
                             title={
                               !dateInAssignment
                                 ? 'วันนี้อยู่นอกช่วงมอบหมาย — ไม่บันทึกจากแถวนี้'
-                                : persisted
-                                  ? `บันทึกแล้ว · ${row.eventType}`
-                                  : 'ยังไม่มีการบันทึก timesheet สำหรับวันนี้'
+                                : afterMobEnd && !persisted
+                                  ? 'หลังวันจบงาน — ไม่มีช่องลงเวลาอัตโนมัติ'
+                                  : persisted
+                                    ? `บันทึกแล้ว · ${row.eventType}`
+                                    : 'ยังไม่มีการบันทึก timesheet สำหรับวันนี้'
                             }
                           >
-                            {!dateInAssignment ? '—' : waveBoardStatusCode(persisted, row.eventType)}
+                            {!dateInAssignment
+                              ? '—'
+                              : afterMobEnd && !persisted
+                                ? '—'
+                                : waveBoardStatusCode(persisted, row.eventType)}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-8 text-[10px] gap-1 border-amber-600/40"
-                          disabled={!canEditTimesheets || demobSubmitting || !dateInAssignment}
-                          onClick={() => setDemobTarget(asgn)}
-                        >
-                          <UserMinus className="h-3.5 w-3.5" />
-                          จบงวด
-                        </Button>
+                      <TableCell className="text-center align-top py-4">
+                        <div className="flex flex-col items-stretch gap-1.5 mx-auto max-w-[7rem]">
+                          {canFinishJob ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-[10px] gap-1 border-amber-600/40"
+                              disabled={!canEditTimesheets || demobSubmitting || anyMonthLocked}
+                              onClick={() => setFinishJobModal({ mode: 'finish', assignment: asgn })}
+                            >
+                              <UserMinus className="h-3.5 w-3.5 shrink-0" />
+                              จบงาน
+                            </Button>
+                          ) : null}
+                          {awaitingRemob ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                className="h-7 text-[9px] gap-0.5 px-1.5"
+                                disabled={!canEditTimesheets || demobSubmitting || anyMonthLocked}
+                                onClick={() => setFinishJobModal({ mode: 'revise', assignment: asgn })}
+                              >
+                                <Pencil className="h-3 w-3 shrink-0" />
+                                แก้ไขวันที่
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-[9px] gap-0.5 px-1.5 text-destructive hover:text-destructive"
+                                disabled={!canEditTimesheets || demobSubmitting || anyMonthLocked}
+                                onClick={() => setCancelFinishTarget(asgn)}
+                              >
+                                <Undo2 className="h-3 w-3 shrink-0" />
+                                ยกเลิกจบงาน
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right pr-6">
                         <Input
@@ -823,8 +1016,8 @@ export function PoDailyBoardCard({
               <Alert>
                 <AlertTitle>ยังไม่มีคนในตาราง</AlertTitle>
                 <AlertDescription>
-                  ยังไม่ mobilization ครบตามเกณฑ์ Wave Board / ถือ DRAFT / ยังไม่พร้อม (readiness) / วันที่อยู่นอกช่วงมอบหมาย —{' '}
-                  ตรวจ Mobilization และการมอบหมายในชุด PO Active นี้ (คนที่อยู่แค่ assign จะไม่ขึ้นที่นี่จนกว่าจะ mob แล้ว)
+                  ยังไม่ mobilization ครบตามเกณฑ์ Wave Board / ยัง Waiting MOB ครั้งแรก (DRAFT ก่อนขึ้นไซต์) / ยังไม่พร้อม (readiness) / วันที่อยู่นอกช่วงมอบหมาย —{' '}
+                  ตรวจ Mobilization และการมอบหมายในชุด PO Active นี้ · คนที่จบงานแล้วยังเห็นชื่อในเดือนเดียวกันเพื่อสรุปวางบิล
                 </AlertDescription>
               </Alert>
             </div>
@@ -845,27 +1038,103 @@ export function PoDailyBoardCard({
         </CardFooter>
       </Card>
       <AlertDialog
-        open={demobTarget !== null}
+        open={finishJobModal !== null}
         onOpenChange={(open) => {
-          if (!open) setDemobTarget(null);
+          if (!open) setFinishJobModal(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>ยืนยันจบงวด (Demobilize)</AlertDialogTitle>
-            <AlertDialogDescription>
-              สิ้นสุด {demobWorkerName} ใน {demobTarget ? waveById.get(demobTarget.waveId)?.waveCode : '—'}
+            <AlertDialogTitle>
+              {finishJobModal?.mode === 'revise'
+                ? 'แก้ไขวันสิ้นสุดงาน'
+                : 'ยืนยันจบงาน — ส่งกลับคิว Mobilization'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-3">
+                <p>
+                  พนักงาน <span className="font-medium text-foreground">{finishModalWorkerName}</span>
+                  {finishJobModal?.mode === 'revise' ? (
+                    <> — ปรับเฉพาะวันที่สิ้นสุดรอบนี้ (สถานะยังเป็น Waiting MOB)</>
+                  ) : (
+                    <>
+                      {' '}
+                      — หลังยืนยันจะเป็น <strong className="text-foreground">Waiting MOB</strong> และแสดงในเมนู Mobilization
+                      (ยังผูก PO เดิม)
+                    </>
+                  )}
+                </p>
+                <div className="space-y-2 rounded-md border border-primary/20 bg-muted/30 p-3">
+                  <Label className="text-xs font-semibold text-foreground">วันสิ้นสุดงานรอบนี้</Label>
+                  <DatePickerThaiBE
+                    className="h-10 w-full max-w-[280px]"
+                    value={htmlDateValueToTimestampMs(finishJobDateYmd)}
+                    onChange={(ms) => setFinishJobDateYmd(timestampToHtmlDateValue(ms))}
+                  />
+                  {finishModalDateIssue ? (
+                    <p className="text-xs text-destructive font-medium">{finishModalDateIssue}</p>
+                  ) : null}
+                  <p className="text-xs leading-relaxed">
+                    {finishJobModal?.mode === 'revise' ? (
+                      <>
+                        บันทึกวันสิ้นสุดใหม่เป็น{' '}
+                        <strong className="text-foreground">{formatYmdLocalThaiBE(finishJobDateYmd || '—')}</strong> — ระบบจะใช้วันนี้ตัดการสร้างลงเวลาอัตโนมัติหลังวันที่เลือก
+                      </>
+                    ) : (
+                      <>
+                        ยืนยันจบงาน ณ{' '}
+                        <strong className="text-foreground">{formatYmdLocalThaiBE(finishJobDateYmd || '—')}</strong> — ระบบจะไม่สร้างรายวันอัตโนมัติหลังวันนี้
+                        และสถานะ deployment กลับเป็นร่างเพื่อเข้าคิว Mob ใหม่
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={demobSubmitting}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogCancel disabled={demobSubmitting}>ปิด</AlertDialogCancel>
             <Button
               type="button"
-              className="bg-amber-700 text-white"
-              disabled={demobSubmitting}
-              onClick={() => void confirmDemobilize()}
+              className={finishJobModal?.mode === 'revise' ? 'bg-primary' : 'bg-amber-700 text-white'}
+              disabled={demobSubmitting || !!finishModalDateIssue}
+              onClick={() => void confirmFinishJobModal()}
             >
-              {demobSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยัน'}
+              {demobSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={cancelFinishTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelFinishTarget(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>ยกเลิกการจบงาน?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  จะคืนสถานะเป็น <strong className="text-foreground">ACTIVE</strong> และลบวันสิ้นสุดรอบนี้ — พนักงานกลับไปลงเวลาบนกระดานตามปกติ
+                </p>
+                <p className="text-xs">
+                  ถ้าเคยล้างขั้น Mobilization (Standby / เริ่มงาน) ตอนจบงาน อาจต้องบันทึกในเมนู Mobilization ใหม่
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={demobSubmitting}>ปิด</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={demobSubmitting || anyMonthLocked}
+              onClick={() => void confirmCancelFinishJob()}
+            >
+              {demobSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยันยกเลิกจบงาน'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

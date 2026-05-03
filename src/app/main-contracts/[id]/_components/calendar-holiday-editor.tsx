@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,10 +24,30 @@ export function CalendarHolidayEditor({
   const [pickTs, setPickTs] = useState<number | null>(null);
   const [rowLabel, setRowLabel] = useState('');
 
+  /** เรียงจากต้นปี → ปลายปี (วันที่แบบ yyyy-MM-dd); วันเดียวกันเรียงตามชื่อ */
+  const sortedHolidays = useMemo(
+    () =>
+      [...holidays].sort(
+        (a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label, 'th'),
+      ),
+    [holidays],
+  );
+
+  const removeHoliday = (h: CalendarHolidayEntry) => {
+    setHolidays((prev) => {
+      const idx = prev.findIndex((x) => x.date === h.date && x.label === h.label);
+      if (idx < 0) return prev;
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+    });
+  };
+
   const addRow = () => {
     if (disabled || pickTs == null || !rowLabel.trim()) return;
     const date = format(new Date(pickTs), 'yyyy-MM-dd');
-    setHolidays((prev) => [...prev, { date, label: rowLabel.trim() }]);
+    const row = { date, label: rowLabel.trim() };
+    setHolidays((prev) =>
+      [...prev, row].sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label, 'th')),
+    );
     setPickTs(null);
     setRowLabel('');
   };
@@ -58,10 +78,13 @@ export function CalendarHolidayEditor({
           <Plus className="h-4 w-4 mr-1" /> เพิ่ม
         </Button>
       </div>
-      {holidays.length > 0 && (
+      {sortedHolidays.length > 0 && (
         <ul className="space-y-1 text-xs border-t pt-2">
-          {holidays.map((h, i) => (
-            <li key={`${h.date}-${i}`} className="flex items-center justify-between gap-2 rounded bg-background px-2 py-1">
+          {sortedHolidays.map((h, i) => (
+            <li
+              key={`${h.date}|${h.label}|${i}`}
+              className="flex items-center justify-between gap-2 rounded bg-background px-2 py-1"
+            >
               <span>
                 <span className="font-mono text-primary">{formatYmdLocalThaiBE(h.date, h.date)}</span>
                 <span className="text-muted-foreground"> — {h.label}</span>
@@ -72,7 +95,7 @@ export function CalendarHolidayEditor({
                 size="icon"
                 className="h-7 w-7 shrink-0 text-destructive"
                 disabled={disabled}
-                onClick={() => setHolidays((prev) => prev.filter((_, j) => j !== i))}
+                onClick={() => removeHoliday(h)}
               >
                 <Trash2 className="h-3 w-3" />
               </Button>

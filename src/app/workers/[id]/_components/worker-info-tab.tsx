@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail } from 'lucide-react';
 import type { Worker, Position } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
@@ -25,6 +26,10 @@ interface WorkerInfoTabProps {
   currentPosition: Position | null;
   canViewLaborCost: boolean;
   canEditLaborCost: boolean;
+  /** HR/ผู้มีสิทธิ์แก้ทะเบียน — แสดงปุ่มเปิดใช้บัญชี Firebase */
+  canActivateWorkerLogin?: boolean;
+  onActivateWorkerLogin?: () => void | Promise<void>;
+  activateWorkerLoginBusy?: boolean;
 }
 
 function numIn(v: number | undefined) {
@@ -49,6 +54,9 @@ export function WorkerInfoTab({
   currentPosition,
   canViewLaborCost,
   canEditLaborCost,
+  canActivateWorkerLogin = false,
+  onActivateWorkerLogin,
+  activateWorkerLoginBusy = false,
 }: WorkerInfoTabProps) {
   const activeBankCatalog = useActiveBankNameCatalog();
   const activeHospitalCatalog = useActiveSsoHospitalCatalog();
@@ -134,6 +142,47 @@ export function WorkerInfoTab({
                 <Input disabled={!isEditing} value={(isEditing ? editedWorker.contactPhone : worker.contactPhone) ?? ''} onChange={e => setEditedWorker({...editedWorker, contactPhone: e.target.value})} />
               </div>
               <div className="space-y-2 md:col-span-2">
+                <Label className="font-bold flex items-center gap-2">
+                  <Mail className="h-4 w-4 opacity-70" /> อีเมล (สำหรับล็อกอิน Portal)
+                </Label>
+                <Input
+                  type="email"
+                  autoComplete="off"
+                  disabled={!isEditing}
+                  placeholder="name@example.com"
+                  value={(isEditing ? editedWorker.email : worker.email) ?? ''}
+                  onChange={(e) => setEditedWorker({ ...editedWorker, email: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground leading-snug">
+                  พนักงานล็อกอินด้วยอีเมลนี้ได้หลังผู้ดูแล HR กด «เปิดใช้อีเมลล็อกอิน» เท่านั้น — การแก้อีเมลในทะเบียนอย่างเดียวไม่ทำให้ Firebase Auth เปลี่ยนตามจนกว่าจะกดปุ่มนี้อีกครั้ง
+                </p>
+              </div>
+              <div className="space-y-2 flex flex-col justify-end pb-1">
+                {worker.linkedUserId ? (
+                  <Badge className="w-fit bg-emerald-600 hover:bg-emerald-600">เปิดใช้ล็อกอินแล้ว</Badge>
+                ) : (
+                  <Badge variant="outline" className="w-fit border-amber-500 text-amber-900 bg-amber-50">
+                    ยังไม่เปิดใช้ล็อกอิน
+                  </Badge>
+                )}
+                {canActivateWorkerLogin && onActivateWorkerLogin ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="w-full sm:w-auto shrink-0 font-semibold"
+                    disabled={
+                      activateWorkerLoginBusy ||
+                      isEditing ||
+                      !String(worker.email ?? '').trim().includes('@')
+                    }
+                    onClick={() => void onActivateWorkerLogin()}
+                  >
+                    {activateWorkerLoginBusy ? 'กำลังดำเนินการ…' : 'เปิดใช้อีเมลล็อกอิน (Activate)'}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="space-y-2 md:col-span-3">
                 <Label className="font-bold">ตำแหน่งงานหลัก (Primary Position) *</Label>
                 <Select
                   disabled={!isEditing}

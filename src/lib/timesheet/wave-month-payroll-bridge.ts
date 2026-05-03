@@ -7,9 +7,12 @@ import {
   setDoc,
   where,
   writeBatch,
+  type DocumentReference,
   type Firestore,
+  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
-import type { PayrollPeriod, PayrollPeriodStatus, WaveMonthTimesheetReview } from '@/lib/types';
+import type { Assignment, PayrollPeriod, PayrollPeriodStatus, WaveMonthTimesheetReview } from '@/lib/types';
+import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 
 const FIRESTORE_BATCH_LIMIT = 400;
@@ -39,28 +42,79 @@ export function resolveWaveMonthPeriodBounds(review: WaveMonthTimesheetReview): 
 /**
  * หลังผู้จัดการอนุมัติรอบเดือน — ตั้ง readyForPayroll / readyForBilling ให้ daily_timesheets ในช่วงงวด
  * (ข้ามรายการที่ LOCKED แล้วจาก payroll batch)
+ *
+ * รวมใบงานที่บันทึกจากกระดาน PO (`daily_timesheets.waveId` = `po_ts_scope_<poId>`) สำหรับคนที่อยู่ใน mobilization
+ * ของ wave นี้ — เดิมจับเฉพาะ `waveId` = รหัส Wave จริง จึงไม่ตั้ง ready ให้ใบงาน PO scope ทำให้ Payroll นับคนไม่ครบทั้งที่ตารางสรุปเดือนแสดงครบ
  */
 export async function markTimesheetsReadyForPayrollAfterMonthApproval(
   db: Firestore,
   review: WaveMonthTimesheetReview,
 ): Promise<{ updated: number }> {
   const { start, end } = resolveWaveMonthPeriodBounds(review);
-  const q = query(
-    collection(db, 'daily_timesheets'),
-    where('waveId', '==', review.waveId),
-    where('date', '>=', start),
-    where('date', '<=', end),
+
+  const refsById = new Map<string, DocumentReference>();
+
+  const consider = (d: QueryDocumentSnapshot) => {
+    const data = d.data();
+    if (data.status === 'LOCKED') return;
+    refsById.set(d.id, d.ref);
+  };
+
+  const snapWave = await getDocs(
+    query(
+      collection(db, 'daily_timesheets'),
+      where('waveId', '==', review.waveId),
+      where('date', '>=', start),
+      where('date', '<=', end),
+    ),
   );
-  const snap = await getDocs(q);
+  snapWave.docs.forEach(consider);
+
+  let poId = (review.poId || '').trim();
+  if (!poId) {
+    const wvSnap = await getDoc(doc(db, 'waves', review.waveId));
+    if (wvSnap.exists()) {
+      poId = String((wvSnap.data() as { poId?: string }).poId || '').trim();
+    }
+  }
+
+  if (poId) {
+    const mobSnap = await getDocs(
+      query(collection(db, 'mobilizations'), where('waveId', '==', review.waveId)),
+    );
+    const workerIdsOnWave = new Set(
+      mobSnap.docs
+        .map((x) => (x.data() as Assignment).workerId)
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0),
+    );
+
+    if (workerIdsOnWave.size > 0) {
+      const scopeWaveId = poTimesheetScopeId(poId);
+      const snapPoScope = await getDocs(
+        query(
+          collection(db, 'daily_timesheets'),
+          where('waveId', '==', scopeWaveId),
+          where('date', '>=', start),
+          where('date', '<=', end),
+        ),
+      );
+      for (const d of snapPoScope.docs) {
+        const data = d.data();
+        const wid = data.workerId as string | undefined;
+        if (!wid || !workerIdsOnWave.has(wid)) continue;
+        const tsPo = String(data.purchaseOrderId || '').trim();
+        if (tsPo && tsPo !== poId) continue;
+        consider(d);
+      }
+    }
+  }
+
   let batch = writeBatch(db);
   let n = 0;
   let updated = 0;
 
-  for (const d of snap.docs) {
-    const data = d.data();
-    if (data.status === 'LOCKED') continue;
-
-    batch.update(d.ref, {
+  for (const ref of refsById.values()) {
+    batch.update(ref, {
       readyForPayroll: true,
       readyForBilling: true,
       updatedAt: Date.now(),

@@ -16,13 +16,12 @@ import {
   ShieldAlert, 
   Info,
   HardHat,
-  Waves,
   Calendar,
   Briefcase,
   Loader2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Assignment, Worker, User, Position, Wave, PurchaseOrder, DeploymentStatus } from '@/lib/types';
+import { Assignment, Worker, Position, Wave, PurchaseOrder, DeploymentStatus, Customer } from '@/lib/types';
 import { MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES } from '@/lib/store/mobilization-fulfillment';
 import { Badge } from '@/components/ui/badge';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -31,6 +30,9 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { collection } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
+import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 
 function MobilizationPageContent() {
   const router = useRouter();
@@ -63,6 +65,12 @@ function MobilizationPageContent() {
   const poQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null), [firestore, isAuthorized]);
   const { data: allPOs } = useCollection<PurchaseOrder>(poQuery as any);
 
+  const customersQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'customers') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
+
   const [mobTableSearch, setMobTableSearch] = useState('');
   const filterPoId = (searchParams.get('poId') || '').trim() || null;
   const filterPO = useMemo(
@@ -70,31 +78,45 @@ function MobilizationPageContent() {
     [filterPoId, allPOs]
   );
 
-  // คิวเตรียมส่งตัว — รวม DRAFT (หลังสร้างจาก Assignments) ถึงก่อน ACTIVE
+  // คิวเตรียมส่งตัว — DRAFT…MOBILIZING (ไม่รวม ACTIVE / DEMOBILIZED — ดู mobilization-fulfillment)
   const mobilizationList = useMemo(() => {
     if (!assignments) return [];
-    return assignments.filter((a) =>
-      MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)
-    );
+    return assignments.filter((a) => {
+      if (!MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)) return false;
+      if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
+      return true;
+    });
   }, [assignments]);
 
   const displayedMobilization = useMemo(() => {
     let list = mobilizationList;
     if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
     const q = mobTableSearch.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((a) => {
-      const worker = allWorkers?.find((w) => w.id === a.workerId);
-      const wave = allWaves?.find((w) => w.id === a.waveId);
-      const name = `${worker?.firstName || ''} ${worker?.lastName || ''}`.toLowerCase();
-      return (
-        name.includes(q) ||
-        (a.projectName || '').toLowerCase().includes(q) ||
-        (wave?.waveCode || '').toLowerCase().includes(q) ||
-        (a.assignmentNo || '').toLowerCase().includes(q)
-      );
-    });
-  }, [mobilizationList, filterPoId, mobTableSearch, allWorkers, allWaves]);
+    const filtered = !q
+      ? list
+      : list.filter((a) => {
+          const worker = allWorkers?.find((w) => w.id === a.workerId);
+          const wave = allWaves?.find((w) => w.id === a.waveId);
+          const poRow = allPOs?.find((p) => p.id === a.poId);
+          const cust = poRow ? allCustomers?.find((c) => c.id === poRow.customerId) : undefined;
+          const bundleKey = a.poActiveBundleId
+            ? normalizePoActiveBundleId(a.poActiveBundleId)
+            : poRow
+              ? normalizePoActiveBundleId(resolvePoActiveBundleKeyForPo(poRow))
+              : '';
+          const name = `${worker?.firstName || ''} ${worker?.lastName || ''}`.toLowerCase();
+          return (
+            name.includes(q) ||
+            (a.projectName || '').toLowerCase().includes(q) ||
+            (wave?.waveCode || '').toLowerCase().includes(q) ||
+            (poRow?.poCode || '').toLowerCase().includes(q) ||
+            bundleKey.toLowerCase().includes(q) ||
+            (cust?.name || '').toLowerCase().includes(q) ||
+            (a.assignmentNo || '').toLowerCase().includes(q)
+          );
+        });
+    return [...filtered].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, allWorkers));
+  }, [mobilizationList, filterPoId, mobTableSearch, allWorkers, allWaves, allPOs, allCustomers]);
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
@@ -107,7 +129,11 @@ function MobilizationPageContent() {
   const getDeploymentStatusBadge = (status: DeploymentStatus | string | undefined) => {
     switch (status) {
       case 'DRAFT':
-        return <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 uppercase font-bold">DRAFT</Badge>;
+        return (
+          <Badge variant="outline" className="bg-sky-50 text-sky-900 border-sky-200 font-bold">
+            Waiting MOB
+          </Badge>
+        );
       case 'READINESS_CHECK':
         return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">READINESS</Badge>;
       case 'CLIENT_SUBMITTED':
@@ -120,6 +146,12 @@ function MobilizationPageContent() {
         return <Badge className="bg-blue-600 uppercase font-bold">READY TO MOB</Badge>;
       case 'MOBILIZING':
         return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 uppercase font-bold">MOBILIZING</Badge>;
+      case 'DEMOBILIZED':
+        return (
+          <Badge variant="outline" className="bg-sky-50 text-sky-900 border-sky-200 font-bold">
+            DMOB · Waiting MOB
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">{status || '—'}</Badge>;
     }
@@ -133,7 +165,9 @@ function MobilizationPageContent() {
             <Truck className="h-8 w-8" /> การเตรียมความพร้อม (Mobilization Management)
           </h1>
           <p className="text-muted-foreground text-lg">
-            ใช้ตรวจสอบความพร้อมขั้นสุดท้ายก่อนส่งคนลงงาน โดยรวมข้อมูลจาก Worker, Position, Assignment และ Store
+            ใช้ตรวจสอบความพร้อมขั้นสุดท้ายก่อนส่งคนลงงาน โดยรวมข้อมูลจาก Worker, Position, Assignment และ Store · คิวนี้ไม่แสดงสถานะ
+            DMOB (DEMOBILIZED) จากการปิดงานแบบเก่าใน Assignments — รอบส่งตัวใหม่หลังจบงานจริงให้ใช้ปุ่มจบงานบน Wave Board (จะเป็น Waiting MOB /
+            DRAFT)
           </p>
         </div>
 
@@ -165,7 +199,7 @@ function MobilizationPageContent() {
                 <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="ค้นหาคนงาน, โครงการ หรือรหัสเวฟ..."
+                    placeholder="ค้นหาคนงาน, PO, ชุด PO Active, ลูกค้า หรือโครงการ..."
                     className="pl-9 h-11"
                     value={mobTableSearch}
                     onChange={(e) => setMobTableSearch(e.target.value)}
@@ -189,7 +223,7 @@ function MobilizationPageContent() {
                     <TableHeader className="bg-muted/50">
                       <TableRow>
                         <TableHead className="font-bold py-4">รหัส / คนงาน & ตำแหน่ง</TableHead>
-                        <TableHead className="font-bold">เวฟ & โครงการ</TableHead>
+                        <TableHead className="font-bold">PO · ชุด PO Active · โครงการ</TableHead>
                         <TableHead className="font-bold">กำหนดเดินทาง</TableHead>
                         <TableHead className="font-bold text-center">Compliance (ความพร้อม)</TableHead>
                         <TableHead className="font-bold">สถานะ Mobilization</TableHead>
@@ -201,6 +235,13 @@ function MobilizationPageContent() {
                         const worker = allWorkers?.find(w => w.id === asgn.workerId);
                         const pos = allPositions?.find(p => p.id === asgn.positionId);
                         const wave = allWaves?.find(w => w.id === asgn.waveId);
+                        const poRow = allPOs?.find((p) => p.id === asgn.poId);
+                        const cust = poRow ? allCustomers?.find((c) => c.id === poRow.customerId) : undefined;
+                        const bundleKey = asgn.poActiveBundleId
+                          ? normalizePoActiveBundleId(asgn.poActiveBundleId)
+                          : poRow
+                            ? normalizePoActiveBundleId(resolvePoActiveBundleKeyForPo(poRow))
+                            : '—';
 
                         return (
                           <TableRow 
@@ -216,9 +257,18 @@ function MobilizationPageContent() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-bold text-sm text-primary flex items-center gap-1"><Waves className="h-3.5 w-3.5" /> {wave?.waveCode || 'N/A'}</span>
-                                <span className="text-[10px] text-muted-foreground font-mono uppercase truncate max-w-[150px]">{asgn.projectName}</span>
+                              <div className="flex flex-col gap-0.5 max-w-[280px]">
+                                <span className="font-mono text-[11px] font-bold text-primary">{poRow?.poCode || '—'}</span>
+                                <span className="text-[10px] text-muted-foreground line-clamp-2" title={bundleKey}>
+                                  ชุด: {bundleKey}
+                                </span>
+                                {cust?.name ? (
+                                  <span className="text-[10px] font-medium text-foreground/80">{cust.name}</span>
+                                ) : null}
+                                <span className="text-[10px] text-muted-foreground truncate">{asgn.projectName}</span>
+                                {asgn.waveId && !isPoTimesheetScopeId(asgn.waveId) && wave?.waveCode ? (
+                                  <span className="text-[9px] text-amber-800/90">Wave (legacy): {wave.waveCode}</span>
+                                ) : null}
                               </div>
                             </TableCell>
                             <TableCell>
@@ -251,7 +301,8 @@ function MobilizationPageContent() {
                           <TableCell colSpan={6} className="text-center py-20 text-muted-foreground text-sm">
                             {mobilizationList.length === 0 ? (
                               <span className="italic">
-                                ยังไม่มีรายการเตรียมความพร้อมในขณะนี้ — หลังมอบหมายจาก Assignments (สถานะ DRAFT) รายการจะปรากฏที่นี่
+                                ยังไม่มีรายการเตรียมความพร้อมในขณะนี้ — หลังมอบหมายหรือหลังกดจบงานจาก Wave Board (สถานะ Waiting MOB /
+                                DRAFT) รายการจะปรากฏที่นี่ · สถานะ DMOB จากเมนู Assignments แบบเก่าไม่แสดงในตารางนี้
                               </span>
                             ) : (
                               <span>

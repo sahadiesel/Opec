@@ -48,11 +48,12 @@ export function LaborCostPositionSection({
           <Wallet className="h-5 w-5 text-amber-800" />
           <CardTitle className="text-lg text-amber-900">ต้นทุนค่าแรง (OPEC ฝั่งจ่าย)</CardTitle>
           <Badge variant="outline" className="text-[10px] border-amber-700/30 text-amber-900">
-            ฐานทั่วไป — ดูตารางต่อสัญญาด้านล่าง
+            ค่าแรงมาตรฐาน OPEC — กำหนดที่นี่เท่านั้น
           </Badge>
         </div>
         <CardDescription className="text-amber-900/80">
-          ฐานมาตรฐานต่อวันเมื่อไม่มีราคาเฉพาะสัญญาในแถวตารางด้านล่าง — payroll จับคู่ timesheet กับสัญญาแล้วใช้ทะเบียนต่อสัญญาก่อน จากนั้นจึง fallback มาที่สองช่องนี้
+          ตัวเลขสองช่องนี้คือฐานบาท/วันตามโหมดงานของตำแหน่ง — ไม่ดึงจากสัญญา payroll จะใช้เมื่อ timesheet ไม่เข้าแถวเฉพาะสัญญาในตารางด้านล่าง
+          (ลำดับ: ทะเบียนต่อสัญญาบนตำแหน่ง × contractId จาก timesheet → ค่ามาตรฐานสองช่องนี้)
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -85,8 +86,8 @@ export function LaborCostPositionSection({
         {bothEmpty && canEdit && (
           <p className="text-sm text-amber-900/80 md:col-span-2">
             {!isEditing
-              ? 'ยังไม่มีตัวเลขบน position — กด แก้ไขข้อมูลหลัก มุมขวาด้านบน แล้วกรอก หรือย้ายราคาเดิมจากสัญญาด้วยสคริปต์เฟส 1 ก่อนรันเฟส 5 ที่ลบ field ฝั่งสัญญา'
-              : 'สัญญาเดิมมีแค่ตัวเลขเดียว (cost baseline) ระบบ backfill ใส่ onshore+offshore เท่ากัน คุณแก้แยกได้ที่นี่'}
+              ? 'ยังไม่มีค่ามาตรฐาน — กดแก้ไขแล้วกรอก Onshore/Offshore ตามนโยบายต้นทุนภายใน'
+              : 'แนะนำกรอกอย่างน้อยหนึ่งโหมด (หรือทั้งคู่) เพื่อให้ payroll มีฐานเมื่อไม่มีราคาต่อสัญญาในตารางด้านล่าง'}
           </p>
         )}
         {bothEmpty && !canEdit && (

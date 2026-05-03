@@ -38,6 +38,17 @@ export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
   );
 }
 
+/** ปฏิทิน + ตัวคูณวันหยุดสำหรับ payroll ลูกจ้าง — จาก HR Settings */
+export type PayrollRestDaySchedule = {
+  weeklyRestPattern: 'none' | 'sat_sun' | 'sunday_only';
+  calendarHolidays: { date: string; label: string }[];
+  costMultipliers: {
+    publicHoliday: number;
+    sunday: number;
+    sundayOt: number;
+  };
+};
+
 export interface RestDayResolution {
   active: boolean;
   kind: 'none' | 'public_holiday' | 'weekly_rest';
@@ -57,17 +68,13 @@ export interface RestDayResolution {
 }
 
 /**
- * วันหยุดตามปฏิทินสัญญา (contractCostCalendarHolidays) หรือ weekly rest (contractCostWeeklyRestPattern)
- * ตัวคูณอ่านจาก rateMultiplierPolicy.cost ตามที่กำหนดในหน้าสัญญา
+ * วันหยุดตามปฏิทินกลาง (HR Settings) + รูปแบบวันหยุดประจำสัปดาห์
  */
-export function resolveCostRestDay(
-  dateStr: string,
-  contract: MainContract | undefined,
-): RestDayResolution {
-  const cost = contract?.rateMultiplierPolicy?.cost;
-  if (!cost) return { active: false, kind: 'none' };
+export function resolvePayrollRestDay(dateStr: string, schedule: PayrollRestDaySchedule | undefined): RestDayResolution {
+  if (!schedule) return { active: false, kind: 'none' };
 
-  const holidays = contract.contractCostCalendarHolidays || [];
+  const cost = schedule.costMultipliers;
+  const holidays = schedule.calendarHolidays || [];
   if (holidays.some((h) => h.date === dateStr)) {
     return {
       active: true,
@@ -85,7 +92,7 @@ export function resolveCostRestDay(
   const local = new Date(y, m - 1, d);
   const dow = local.getDay();
 
-  const pattern = contract.contractCostWeeklyRestPattern || 'none';
+  const pattern = schedule.weeklyRestPattern || 'none';
   const sunday = Number(cost.sunday ?? 1);
   const sundayOt = Number(cost.sundayOt ?? cost.sunday ?? 1);
 
@@ -106,8 +113,6 @@ export function resolveCostRestDay(
     };
   }
 
-  // วันอาทิตย์ที่ทำงาน: ใช้ตัวคูณ payroll (cost.sunday) จากสัญญา แม้เลือก "ไม่มีวันหยุดประจำสัปดาห์"
-  // — ไม่ให้คิดเป็นวันธรรมดาเมื่อไม่ได้ตั้ง sunday_only / sat_sun
   if (dow === 0) {
     return {
       active: true,
@@ -118,6 +123,21 @@ export function resolveCostRestDay(
   }
 
   return { active: false, kind: 'none' };
+}
+
+/** @deprecated ใช้ resolvePayrollRestDay + ตารางจาก HR Settings — คงไว้สำหรับโค้ดที่ยังอ้างสัญญา */
+export function resolveCostRestDay(dateStr: string, contract: MainContract | undefined): RestDayResolution {
+  const cost = contract?.rateMultiplierPolicy?.cost;
+  if (!cost) return { active: false, kind: 'none' };
+  return resolvePayrollRestDay(dateStr, {
+    weeklyRestPattern: contract?.contractCostWeeklyRestPattern || 'none',
+    calendarHolidays: contract?.contractCostCalendarHolidays || [],
+    costMultipliers: {
+      publicHoliday: Number(cost.publicHoliday ?? 1),
+      sunday: Number(cost.sunday ?? 1),
+      sundayOt: Number(cost.sundayOt ?? cost.sunday ?? 1),
+    },
+  });
 }
 
 function roundMoney(n: number): number {
@@ -136,7 +156,8 @@ export interface WorkDayPackageCostInput {
   costPackagePerDay: number;
   statedHours: StatedPackageHours;
   otAfterShiftMultiplier: number;
-  mainContract: MainContract | undefined;
+  /** ปฏิทิน/ตัวคูณวันหยุดลูกจ้างจาก HR Settings */
+  payrollRestSchedule: PayrollRestDaySchedule;
 }
 
 export interface WorkDayPackageCostResult {
@@ -192,7 +213,7 @@ export function computeWorkDayCostFromPackage(
 
   const w = parseWorkDayHours(input.timesheet);
   const T = Math.min(24, w.nh + w.o15 + w.o20 + w.o30);
-  const rest = resolveCostRestDay(input.timesheet.date, input.mainContract);
+  const rest = resolvePayrollRestDay(input.timesheet.date, input.payrollRestSchedule);
   const otContract = Math.max(0, input.otAfterShiftMultiplier);
 
   let baseAmount: number;
