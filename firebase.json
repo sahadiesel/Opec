@@ -16,7 +16,8 @@
         ".next",
         "firebase-debug.log",
         "firebase-debug.*.log"
-      ]
+      ],
+      "alwaysDeployFromSource": true
     }
   ]
 }

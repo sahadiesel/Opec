@@ -10,6 +10,9 @@ declare global {
 }
 
 const FIRESTORE_UNREACHABLE = /Could not reach Cloud Firestore backend/i;
+/** Spark / quota — เขียนถี่เกินไป SDK จะ backoff; ลด overlay บังหน้าใน dev */
+const FIRESTORE_RESOURCE_EXHAUSTED =
+  /resource-exhausted|maximum bandwidth for writes|Using maximum backoff delay/i;
 /** ข้อความจาก Firestore เมื่อ query ต้องการ composite index — URL ในนี้เปิด Console แล้วกดสร้างดัชนีได้ */
 const FIRESTORE_INDEX_NEEDED =
   /(?:requires an index|Missing composite index|The query requires an index)/i;
@@ -38,6 +41,12 @@ export function installFirestoreDevConsoleFilter(): void {
       if (FIRESTORE_UNREACHABLE.test(text)) {
         console.warn(
           '[Firestore] เชื่อมต่อ Cloud ชั่วคราวไม่ได้ — ทำงานแบบ offline จนกว่าเครือข่ายจะพร้อม (ตรวจ VPN/ไฟร์วอลล์ แล้วรีเฟรช)',
+        );
+        return;
+      }
+      if (FIRESTORE_RESOURCE_EXHAUSTED.test(text)) {
+        console.warn(
+          '[Firestore] เขียนข้อมูลถี่เกินโควต้า (resource-exhausted) — รอ 1–2 นาทีแล้วลองใหม่ หรืออัปเกรดแผน Firebase / ลดปริมาณเขียนต่อครั้ง',
         );
         return;
       }

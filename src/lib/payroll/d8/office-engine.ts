@@ -1,5 +1,9 @@
 import { D8_ENGINE_VERSION } from './constants';
-import { fixedDeductionsFromPolicy, pitFromPolicy, socialSecurityFromPolicy } from './deductions-from-policy';
+import {
+  fixedDeductionsFromPolicy,
+  pitFromMonthlyGross,
+  socialSecurityFromPolicy,
+} from './deductions-from-policy';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
 import type { OfficePayrollPitMode, PayrollLineD8Snapshot } from '@/lib/types';
 
@@ -54,7 +58,7 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
     pit = Math.max(0, Math.round((Number(input.pitManualAmountBaht) || 0) * 100) / 100);
     if (pit > grossPay) pit = Math.round(grossPay * 100) / 100;
   } else {
-    pit = pitFromPolicy(grossPay, input.policies.tax);
+    pit = pitFromMonthlyGross(grossPay, input.policies.tax, input.policies.sso);
   }
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 

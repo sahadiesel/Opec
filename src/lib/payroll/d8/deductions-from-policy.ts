@@ -17,6 +17,42 @@ export function socialSecurityFromPolicy(grossForSS: number, policy: PayrollPoli
   return Math.round(base * rate * 100) / 100;
 }
 
+/**
+ * ฐานรายเดือนที่นำไป ×12 ในสูตร `th_pit_monthly_annualized`
+ * — ต้องเป็นยอด **หลังหักประกันสังคมฝั่งลูกจ้างแล้ว** ให้ตรงกล่องทดสอบ HR /
+ * `pitDemoCalc` (ไม่ใช่ gross ก่อนหัก ปสง.)
+ */
+export function monthlyPitAnnualizationBaseFromGross(
+  grossMonthlyBeforeSs: number,
+  ssoPolicy: PayrollPolicyRecord | null,
+): number {
+  const ss = socialSecurityFromPolicy(grossMonthlyBeforeSs, ssoPolicy);
+  return Math.max(0, grossMonthlyBeforeSs - ss);
+}
+
+/** ภงด. จาก gross รายเดือน + policies — ภายในหัก ปสง. ก่อน annualize (สอดคล้องหน้า HR ทดสอบสูตร) */
+export function pitFromMonthlyGross(
+  grossMonthly: number,
+  taxPolicy: PayrollPolicyRecord | null,
+  ssoPolicy: PayrollPolicyRecord | null,
+): number {
+  return pitFromPolicy(monthlyPitAnnualizationBaseFromGross(grossMonthly, ssoPolicy), taxPolicy);
+}
+
+export function pitFromMonthlyGrossWithMarginalCeiling(
+  grossMonthly: number,
+  taxPolicy: PayrollPolicyRecord | null,
+  ssoPolicy: PayrollPolicyRecord | null,
+  maxMarginalRatePercent: number,
+): number {
+  return pitFromPolicyWithMarginalCeiling(
+    monthlyPitAnnualizationBaseFromGross(grossMonthly, ssoPolicy),
+    taxPolicy,
+    maxMarginalRatePercent,
+  );
+}
+
+/** @param monthlyTaxableGross ฐานหลังหัก ปสง. แล้ว — ถ้ามีแค่ gross เต็มให้ใช้ {@link pitFromMonthlyGross} */
 export function pitFromPolicy(monthlyTaxableGross: number, policy: PayrollPolicyRecord | null): number {
   if (!policy) return 0;
   const mode = String(policy.config.mode ?? 'none');

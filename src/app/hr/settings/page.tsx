@@ -177,7 +177,7 @@ function buildPitSettingsDemoPrintHtml(p: {
     <span class="p-res-lb">ภาษีหัก ณ ที่จ่าย ภงด.1 ต่อเดือน (นำส่ง)</span>
     <span class="p-res-amt">${fmtBahtTh(c.monthlyPit, 2, 2)} บาท</span>
   </div>
-  <p class="p-foot">หมายเหตุ: รัน payroll ออฟฟิศ (D8) อาจคำนวณ ภงด.1 จากฐานก่อนหักประกันสังคม — กล่องทดสอบนี้ใช้ “ฐานรายเดือนหลังหัก ปสง. ก่อน × 12” ตามสูตรบนหน้านี้</p>
+  <p class="p-foot">หมายเหตุ: payroll D8 (office/worker) ใช้ฐานเดียวกับกล่องนี้ — หักประกันสังคมฝั่งลูกจ้างจาก gross รายเดือนก่อนนำไป ×12</p>
 </div>`;
 }
 

@@ -1,5 +1,9 @@
 import { D8_ENGINE_VERSION } from './constants';
-import { fixedDeductionsFromPolicy, pitFromPolicy, socialSecurityFromPolicy } from './deductions-from-policy';
+import {
+  fixedDeductionsFromPolicy,
+  pitFromMonthlyGross,
+  socialSecurityFromPolicy,
+} from './deductions-from-policy';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
 import type { PayrollLineD8Snapshot } from '@/lib/types';
 
@@ -23,7 +27,7 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   const gross = Math.max(0, input.grossFromTimesheets);
 
   const ss = socialSecurityFromPolicy(gross, input.policies.sso);
-  const pit = pitFromPolicy(gross, input.policies.tax);
+  const pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso);
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
   const deductionsBreakdown: Record<string, number> = {

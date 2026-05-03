@@ -32,28 +32,29 @@ export default function AccountingCashAdvancesPayoutQueuePage() {
 
   const ok = useMemo(() => !!currentUser && canView(currentUser, 'cash_advances'), [currentUser]);
 
+  /** ไม่ใช้ where(status)+orderBy — ต้อง composite index; ดึงล่าสุดแล้วกรอง PENDING_PAYMENT ฝั่ง client */
   const q = useMemoFirebase(() => {
     if (!firestore || !ok) return null;
-    return query(
-      collection(firestore, 'cash_advance_requests'),
-      where('status', '==', 'PENDING_PAYMENT'),
-      orderBy('createdAt', 'desc'),
-    );
+    return query(collection(firestore, 'cash_advance_requests'), orderBy('createdAt', 'desc'), limit(250));
   }, [firestore, ok]);
 
   const { data: rows, isLoading } = useCollection<CashAdvanceRequest>(q as any);
 
+  const pendingRows = useMemo(
+    () => (rows ?? []).filter((r) => r.status === 'PENDING_PAYMENT'),
+    [rows],
+  );
+
   const filtered = useMemo(() => {
-    const list = rows ?? [];
     const s = search.trim().toLowerCase();
-    if (!s) return list;
-    return list.filter(
+    if (!s) return pendingRows;
+    return pendingRows.filter(
       (r) =>
         (r.requestNo || '').toLowerCase().includes(s) ||
         (r.subjectNameSnapshot || '').toLowerCase().includes(s) ||
         (r.reason || '').toLowerCase().includes(s),
     );
-  }, [rows, search]);
+  }, [pendingRows, search]);
 
   if (userLoading || !currentUser) return null;
 
@@ -120,7 +121,7 @@ export default function AccountingCashAdvancesPayoutQueuePage() {
                     <TableRow
                       key={r.id}
                       className="cursor-pointer hover:bg-muted/30"
-                      onClick={() => router.push(`/hr/cash-advances/${r.id}`)}
+                      onClick={() => router.push(`/accounting/cash-advances-payout/${r.id}`)}
                     >
                       <TableCell className="font-mono font-semibold text-primary">{r.requestNo}</TableCell>
                       <TableCell>{r.subjectNameSnapshot}</TableCell>
@@ -134,7 +135,7 @@ export default function AccountingCashAdvancesPayoutQueuePage() {
                           variant="ghost"
                           size="icon"
                           aria-label="เปิดจ่าย"
-                          onClick={() => router.push(`/hr/cash-advances/${r.id}`)}
+                          onClick={() => router.push(`/accounting/cash-advances-payout/${r.id}`)}
                         >
                           <ChevronRight className="h-5 w-5" />
                         </Button>

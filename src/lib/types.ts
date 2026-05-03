@@ -1747,6 +1747,10 @@ export interface CashAdvanceRequest {
   pettyCashBankAccountId?: string;
   pettyCashEntryId?: string;
   pettyCashEntryNo?: string;
+  /** จ่ายจากบัญชีธนาคารหลัก — บันทึกใน cashbook_entries (ไม่ใช่ Petty) */
+  paymentBankAccountId?: string;
+  cashbookEntryId?: string;
+  cashbookEntryNo?: string;
   /** เมื่อสร้าง Payroll Batch แล้วหักเบิกล่วงหน้าในสลิป — อ้าง batch ที่ผูกการหัก */
   payrollRecoveryBatchId?: string | null;
 }

@@ -66,7 +66,10 @@ import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
 } from '@/lib/payroll/d8';
-import { pitFromPolicy, pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
+import {
+  pitFromMonthlyGross,
+  pitFromMonthlyGrossWithMarginalCeiling,
+} from '@/lib/payroll/d8/deductions-from-policy';
 import {
   buildLaborCostResolutionSnapshot,
   resolveWorkerLaborBaseRate,
@@ -94,6 +97,16 @@ import {
 function round2Payroll(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+/** หน่วงระหว่าง commit ชุดเขียน Firestore — ลด burst ที่ทำให้ Spark / quota ได้ resource-exhausted */
+const PAYROLL_FS_COMMIT_GAP_MS = 280;
+
+function payrollSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** ต่ำกว่า 500 (limit ของ writeBatch) และเหลือที่ว่างสำหรับ doc อื่นในชุดเดียวกัน */
+const PAYROLL_FS_WRITE_CHUNK = 380;
 
 export interface PayrollPreflightZeroWorker {
   workerId: string;
@@ -408,7 +421,6 @@ export class PayrollService {
     let batchGross = 0;
     let batchDeductions = 0;
     let batchNet = 0;
-    const writeOp = writeBatch(this.db);
     const advanceIdsToLinkToBatch: string[] = [];
 
     const policyRecords = await loadPayrollPoliciesFromFirestore(this.db);
@@ -569,17 +581,6 @@ export class PayrollService {
       batchGross += workerGross;
     }
 
-    // SAFEGUARD: Lock the source timesheets using atomic WriteBatch
-    for (const ts of timesheets) {
-      const tsRef = doc(this.db, 'daily_timesheets', ts.id);
-      writeOp.update(tsRef, { 
-        status: 'LOCKED', 
-        lockedAt: Date.now(),
-        lockedBy: user.displayName,
-        updatedAt: Date.now()
-      });
-    }
-
     const newBatch: PayrollBatch = {
       id: batchId,
       payrollPeriodId: periodId,
@@ -596,13 +597,37 @@ export class PayrollService {
       updatedAt: Date.now(),
     };
 
-    writeOp.set(batchRef, PayrollBatchSchema.parse(newBatch));
-    lines.forEach(line => {
+    /**
+     * เขียน batch + lines ก่อน แล้วค่อยล็อก timesheet เป็นช่วงๆ
+     * — กันเกิน 500 ops ต่อ batch และลด burst เขียนที่ทำให้ได้ resource-exhausted (quota)
+     */
+    const parsedBatch = PayrollBatchSchema.parse(newBatch);
+    const headerWb = writeBatch(this.db);
+    headerWb.set(batchRef, parsedBatch);
+    for (const line of lines) {
       const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', line.id);
-      writeOp.set(lineRef, PayrollBatchLineSchema.parse(line));
-    });
+      headerWb.set(lineRef, PayrollBatchLineSchema.parse(line));
+    }
+    await headerWb.commit();
+    await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
 
-    await writeOp.commit();
+    const lockFields = {
+      status: 'LOCKED' as const,
+      lockedAt: Date.now(),
+      lockedBy: user.displayName,
+      updatedAt: Date.now(),
+    };
+    for (let i = 0; i < timesheets.length; i += PAYROLL_FS_WRITE_CHUNK) {
+      const slice = timesheets.slice(i, i + PAYROLL_FS_WRITE_CHUNK);
+      const lockWb = writeBatch(this.db);
+      for (const ts of slice) {
+        lockWb.update(doc(this.db, 'daily_timesheets', ts.id), lockFields);
+      }
+      await lockWb.commit();
+      if (i + PAYROLL_FS_WRITE_CHUNK < timesheets.length) {
+        await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
+      }
+    }
 
     /** ผูกคำขอเบิกแยก batch — กันเกิน limit 500 ops ของ Firestore เมื่อมี timesheet จำนวนมาก */
     if (advanceIdsToLinkToBatch.length > 0) {
@@ -619,6 +644,7 @@ export class PayrollService {
           await wbAdv.commit();
           wbAdv = writeBatch(this.db);
           advOps = 0;
+          await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
         }
       }
       if (advOps > 0) await wbAdv.commit();
@@ -654,6 +680,7 @@ export class PayrollService {
         });
       }
       await wb.commit();
+      if (i + chunkSize < unique.length) await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
     }
   }
 
@@ -667,6 +694,7 @@ export class PayrollService {
         wb.delete(r);
       }
       await wb.commit();
+      if (i + chunkSize < refs.length) await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
     }
     await deleteDoc(doc(this.getBatchCollection(), batchId));
   }
@@ -720,6 +748,7 @@ export class PayrollService {
         await wb.commit();
         wb = writeBatch(this.db);
         n = 0;
+        await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
       }
     }
     if (n > 0) await wb.commit();
@@ -1106,13 +1135,18 @@ export class PayrollService {
       deductions.pit_withholding = p;
     } else if (mode === 'auto_salary_base') {
       const base = Math.max(0, Number(input.pitAutoSalaryBaseBaht) || 0);
-      deductions.pit_withholding = pitFromPolicy(base, resolved.tax);
+      deductions.pit_withholding = pitFromMonthlyGross(base, resolved.tax, resolved.sso);
     } else {
       if (mr != null && Number.isFinite(mr)) {
         const clamped = Math.max(0, Math.min(35, Number(mr)));
-        deductions.pit_withholding = pitFromPolicyWithMarginalCeiling(effectiveGross, resolved.tax, clamped);
+        deductions.pit_withholding = pitFromMonthlyGrossWithMarginalCeiling(
+          effectiveGross,
+          resolved.tax,
+          resolved.sso,
+          clamped,
+        );
       } else {
-        deductions.pit_withholding = pitFromPolicy(effectiveGross, resolved.tax);
+        deductions.pit_withholding = pitFromMonthlyGross(effectiveGross, resolved.tax, resolved.sso);
       }
     }
     input.deductionItems.forEach((d, idx) => {

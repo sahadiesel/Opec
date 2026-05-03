@@ -53,8 +53,12 @@ import {
   resolvePayrollPoliciesForDate,
   computeWorkerPayrollLineD8,
 } from '@/lib/payroll/d8';
-import { pitFromPolicy, pitFromPolicyWithMarginalCeiling } from '@/lib/payroll/d8/deductions-from-policy';
+import {
+  pitFromMonthlyGross,
+  pitFromMonthlyGrossWithMarginalCeiling,
+} from '@/lib/payroll/d8/deductions-from-policy';
 import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand';
+import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
 import {
   Select,
   SelectContent,
@@ -98,13 +102,20 @@ function deductionDisplayRows(line: PayrollBatchLine): Array<{ label: string; am
   rows.push({ label: 'ประกันสังคม', amount: ss });
   const pit = Number(d.pit_withholding) || 0;
   rows.push({ label: 'ภาษี ณ ที่จ่าย (ภงด.)', amount: pit });
+  const caAmt = Number(d[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
+  if (caAmt > 0) {
+    rows.push({
+      label: 'หักคืนเบิกล่วงหน้า (อัตโนมัติ · จ่ายแล้วรอหักสลิป)',
+      amount: caAmt,
+    });
+  }
   const manual = line.hrLineAdjustments?.deductionItems ?? [];
   manual.forEach((item, idx) => {
     const key = `manual_ded_${idx}`;
     const amt = Number(d[key]);
     if (amt > 0) rows.push({ label: item.label?.trim() || `หักพิเศษ (${idx + 1})`, amount: amt });
   });
-  const known = new Set<string>(['social_security', 'pit_withholding']);
+  const known = new Set<string>(['social_security', 'pit_withholding', CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]);
   manual.forEach((_, idx) => known.add(`manual_ded_${idx}`));
   for (const [k, v] of Object.entries(d)) {
     if (known.has(k)) continue;
@@ -364,6 +375,11 @@ export default function PayrollBatchWorkerLinePage({
     [dailyDisplay.total, allowancePreviewTotal],
   );
 
+  const cashAdvanceRecoveryAmount = useMemo(
+    () => Math.max(0, Number(line?.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0),
+    [line?.deductionsBreakdown],
+  );
+
   const [previewNet, setPreviewNet] = useState<number | null>(null);
   const [previewNetLoading, setPreviewNetLoading] = useState(false);
   /** ภงด. จากสูตร HR ณ ยอดตาราง+เบี้ยเลี้ยงปัจจุบัน (ไม่ใช่แค่ค่าที่บันทึกในงวด) */
@@ -407,18 +423,20 @@ export default function PayrollBatchWorkerLinePage({
           if (workerPitMode === 'manual_baht') {
             p = Math.max(0, Number(pitManualBaht) || 0);
           } else if (workerPitMode === 'auto_salary_base') {
-            p = pitFromPolicy(
+            p = pitFromMonthlyGross(
               Math.max(0, Number(pitAutoSalaryBase) || 0),
               resolved.tax,
+              resolved.sso,
             );
           } else if (workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable) {
-            p = pitFromPolicyWithMarginalCeiling(
+            p = pitFromMonthlyGrossWithMarginalCeiling(
               eg,
               resolved.tax,
+              resolved.sso,
               Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
             );
           } else {
-            p = pitFromPolicy(eg, resolved.tax);
+            p = pitFromMonthlyGross(eg, resolved.tax, resolved.sso);
           }
           if (!cancelled) {
             setPreviewPitAuto(p);
@@ -429,24 +447,30 @@ export default function PayrollBatchWorkerLinePage({
         if (workerPitMode === 'manual_baht') {
           deductions.pit_withholding = Math.max(0, Number(pitManualBaht) || 0);
         } else if (workerPitMode === 'auto_salary_base') {
-          deductions.pit_withholding = pitFromPolicy(
+          deductions.pit_withholding = pitFromMonthlyGross(
             Math.max(0, Number(pitAutoSalaryBase) || 0),
             resolved.tax,
+            resolved.sso,
           );
         } else if (workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable) {
-          deductions.pit_withholding = pitFromPolicyWithMarginalCeiling(
+          deductions.pit_withholding = pitFromMonthlyGrossWithMarginalCeiling(
             eg,
             resolved.tax,
+            resolved.sso,
             Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
           );
         } else {
-          deductions.pit_withholding = pitFromPolicy(eg, resolved.tax);
+          deductions.pit_withholding = pitFromMonthlyGross(eg, resolved.tax, resolved.sso);
         }
         deductionRows
           .filter((r) => r.label.trim() && Number(r.amount) > 0)
           .forEach((d, idx) => {
             deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
           });
+        const caRecovery = Number(line.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
+        if (caRecovery > 0) {
+          deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = caRecovery;
+        }
         const dedTotal = Object.values(deductions).reduce((a, b) => a + (Number(b) || 0), 0);
         const netAmount = Math.round((eg - dedTotal) * 100) / 100;
         if (!cancelled) setPreviewNet(netAmount);
@@ -795,7 +819,8 @@ export default function PayrollBatchWorkerLinePage({
               <Link href="/hr/settings" className="underline font-medium">
                 HR settings
               </Link>{' '}
-              จากยอดรวมหลังเบี้ยเลี้ยง — สามารถกำหนดยอดหัก ภงด. เองได้ถ้าจำเป็น
+              จากยอดรวมหลังเบี้ยเลี้ยง — สามารถกำหนดยอดหัก ภงด. เองได้ถ้าจำเป็น — ยอดหักคืนเบิกล่วงหน้า (ถ้ามี)
+              ลด NET เท่านั้น ไม่ลดฐานคำนวณ ภงด.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -864,6 +889,21 @@ export default function PayrollBatchWorkerLinePage({
 
             <div className="space-y-3">
               <Label className="font-bold">รายการหักเพิ่ม (นอกเหนือจาก SS / ภงด. อัตโนมัติ)</Label>
+              {cashAdvanceRecoveryAmount > 0 ? (
+                <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2 space-y-1">
+                  <div className="flex flex-wrap justify-between gap-2 items-center text-sm">
+                    <span className="font-medium text-foreground">
+                      หักคืนเบิกล่วงหน้า (อัตโนมัติ · จ่ายแล้วรอหักสลิป)
+                    </span>
+                    <span className="font-mono tabular-nums shrink-0">
+                      −฿{cashAdvanceRecoveryAmount.toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    ดึงจากงานเบิกล่วงหน้าที่ผูกหักในงวดนี้ — แก้ไขยอดได้ที่เมนูเบิกล่วงหน้า / บันทึกงวดใหม่เท่านั้น
+                  </p>
+                </div>
+              ) : null}
               {deductionRows.map((row, i) => (
                 <div key={i} className="flex gap-2 items-end">
                   <div className="flex-1">
@@ -980,8 +1020,8 @@ export default function PayrollBatchWorkerLinePage({
                         2) อัตโนมัติ — ตามรายได้/ลงเวลา &quot;งวดนี้&quot;
                       </Label>
                       <p className="text-[11px] text-muted-foreground">
-                        ฐานคำนวณ ภงด. = ยอด &quot;Gross หลังเบี้ยเลี้ยง&quot; บนหน้านี้ (ตาราง + เบี้ยเลี้ยง) สอดคล้อง snapshot
-                        งวดเมื่อกดบันทึก
+                        ฐานคำนวณ ภงด. = ยอด &quot;Gross หลังเบี้ยเลี้ยง&quot; บนหน้านี้ (ตาราง + เบี้ยเลี้ยง) —{' '}
+                        <strong>ไม่หักเบิกล่วงหน้าก่อนคิดภาษี</strong> สอดคล้อง snapshot งวดเมื่อกดบันทึก
                       </p>
                     </div>
                   </div>

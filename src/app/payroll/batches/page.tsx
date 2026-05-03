@@ -271,7 +271,12 @@ function PayrollBatchesPageContent() {
       toast({ title: "สร้าง Payroll Batch สำเร็จ", description: "ข้อมูลกำลังถูกประมวลผล" });
       router.push(`/payroll/batches/${batchId}`);
     } catch (e: any) {
-      toast({ variant: 'destructive', title: 'สร้าง Batch ไม่สำเร็จ', description: e.message });
+      let desc = e?.message ?? String(e);
+      if (/resource-exhausted|maximum bandwidth for writes/i.test(String(desc))) {
+        desc =
+          'Firestore เขียนข้อมูลเกินโควต้าช่วงสั้น — รอ 1–2 นาทีแล้วลองใหม่ หรือตรวจแผน Firebase';
+      }
+      toast({ variant: 'destructive', title: 'สร้าง Batch ไม่สำเร็จ', description: desc });
     } finally {
       setIsGenerating(false);
     }
@@ -303,7 +308,11 @@ function PayrollBatchesPageContent() {
       setRegenTarget(null);
       router.push(`/payroll/batches/${newBatchId}`);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      let msg = e instanceof Error ? e.message : String(e);
+      if (/resource-exhausted|maximum bandwidth for writes/i.test(msg)) {
+        msg =
+          'Firestore เขียนข้อมูลเกินโควต้าช่วงสั้น — รอ 1–2 นาทีแล้วกดสร้างใหม่อีกครั้ง (หรือตรวจแผน Firebase). ถ้ายังไม่ได้ให้ลดจำนวนใบงานต่อรอบหรืออัปเกรดโปรเจ็กต์.';
+      }
       toast({ variant: 'destructive', title: 'สร้างใหม่ไม่สำเร็จ', description: msg });
     } finally {
       setAdminBusy(false);
