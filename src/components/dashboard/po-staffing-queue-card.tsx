@@ -8,8 +8,8 @@ export interface PoStaffingQueueCardProps {
 }
 
 /**
- * แดชบอร์ดลำดับที่ 1 — อ่านอย่างเดียว: PO สถานะ active (สายสัญญา + สัญญาหลัก active) ที่ยังมีโควต้าว่าง
- * ใช้ logic เดียวกับการ์ดบนหน้า PO (po-fulfillment-read-model) และหน้า /po-active-quota-queue
+ * แดชบอร์ด — PO สายสัญญา active + สัญญาหลัก active จัดกลุ่มเป็นชุดลูกค้า×Onshore/Offshore (แสดงครบทุกชุดที่มีโควต้า)
+ * ใช้ logic เดียวกับหน้า /po-active-quota-queue
  */
 export function PoStaffingQueueCard({ enabled }: PoStaffingQueueCardProps) {
   const { queueRows, customers, allPositions, loading } = usePoQuotaQueueRows(enabled);

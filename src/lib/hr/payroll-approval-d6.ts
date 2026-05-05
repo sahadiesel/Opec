@@ -192,7 +192,7 @@ export function validateOfficePayrollRun(
 export const WORKER_FREEZE_BULLETS: string[] = [
   'Source timesheets ที่ถูกล็อกตอน generate batch จะคงสถานะ LOCKED',
   'บรรทัด batch (PayrollBatchLine) ถือเป็น snapshot หลังอนุมัติ — แก้ตรงไม่ได้ ต้องใช้ correction workflow',
-  'สถานะ batch จะเปลี่ยนเป็น HR_APPROVED แล้วดำเนินการต่อที่บัญชีตาม workflow',
+  'หลังผู้จัดการกดอนุมัติจ่ายเงิน สถานะ batch → FINANCE_PREPARED (คิวบัญชีรอจ่าย) — ไม่มีขั้น HR_APPROVED + ส่งบัญชีแยก',
 ];
 
 export const OFFICE_FREEZE_BULLETS: string[] = [

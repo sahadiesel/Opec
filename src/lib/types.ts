@@ -442,6 +442,8 @@ export interface Worker {
   jobMode: JobMode;
   workerStatus: WorkerStatus;
   readinessStatus: ReadinessStatus;
+  /** HR ปิด «พร้อม» ชั่วคราว — เอกสารยังเขียวแต่ไม่ให้มอบหมายจนกว่าจะเปิดสวิตช์ */
+  readinessManualHold?: boolean;
   /** สรุปจากงานมอบหมายที่เปิด: คลังยังต้องเบิก PPE/อุปกรณ์หรือไม่ */
   storeEquipmentReadiness?: WorkerStoreEquipmentReadiness;
   complianceAlertLevel?: 'ok' | 'warning' | 'blocked';
@@ -474,6 +476,11 @@ export interface Worker {
   laborCostUsePositionDefault?: boolean;
   laborCostCustomOnshore?: number;
   laborCostCustomOffshore?: number;
+  /**
+   * ค่าตำแหน่งเพิ่มเติม (บาท/วัน) ฝั่งต้นทุนจ่าย — หลังได้ฐานต้นทุนต่อวันตามเส้นทาง payroll เดิมแล้ว จะบวกจำนวนนี้เข้าไป (ไม่เกี่ยวราคาขายลูกค้า)
+   * ไม่ระบุหรือ 0 = ไม่บวกเพิ่ม · ไม่บวกเมื่อใช้ override ต้นทุนรายคน (`laborCostCustom*`)
+   */
+  positionAllowanceDailyBaht?: number;
   /** audit — migration เฟส 1 จาก main contract เดียว */
   laborCostMigratedFromMainContractId?: string;
   laborCostMigratedAt?: number;
@@ -881,6 +888,60 @@ export interface POLine {
   status: 'active' | 'cancelled' | 'completed';
 }
 
+/** ส่วนที่มาจากแต่ละ PO ต่อตำแหน่ง — เอกสารโควต้า Demo (รวมจำนวนข้าม PO) */
+export interface EmployeeQuotaDocumentLineContribution {
+  poId: string;
+  poCode: string;
+  quantity: number;
+}
+
+/** บรรทัดรวมโควต้าตามตำแหน่ง */
+export interface EmployeeQuotaDocumentLine {
+  positionId: string;
+  positionName: string;
+  quantity: number;
+  contributions: EmployeeQuotaDocumentLineContribution[];
+}
+
+/**
+ * เอกสารโควต้ารวมจากหลาย Customer PO — เก็บ `quotaJobMode` เพื่ออ้างอิงราคา Onshore/Offshore ในขั้นถัดไป
+ * (คอลเลกชัน `employee_quota_documents`; เฉพาะผู้ดูแลระบบ)
+ */
+export interface EmployeeQuotaDocument {
+  id: string;
+  /** เลขที่อ่านง่าย เช่น QT2026-00001 — จากระบบเลขที่เอกสาร (เอกสารเก่าอาจไม่มี) */
+  quotaDocumentNo?: string;
+  customerId: string;
+  customerName: string;
+  quotaJobMode: JobMode;
+  purchaseOrderIds: string[];
+  lines: EmployeeQuotaDocumentLine[];
+  createdAt: number;
+  updatedAt: number;
+  createdByUserId: string;
+  createdByDisplayName?: string;
+  updatedByUserId?: string;
+  updatedByDisplayName?: string;
+}
+
+/** การจองลูกจ้างลงในเอกสารโควต้า (Demo) — คอลเลกชัน `employee_quota_slots` */
+export interface EmployeeQuotaSlot {
+  id: string;
+  quotaDocumentId: string;
+  positionId: string;
+  workerId: string;
+  workerCode: string;
+  workerDisplayName: string;
+  /** ราคาขายตาม quotaJobMode + อัตราในสัญญาที่ดึงได้ */
+  sellRateSnapshot: number;
+  billingUnitSnapshot: string;
+  contractIdForRate: string;
+  quotaJobModeSnapshot: JobMode;
+  createdAt: number;
+  createdByUserId: string;
+  createdByDisplayName?: string;
+}
+
 export type SalesContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'CANCELLED';
 
 export interface SalesContractTerm {
@@ -1223,6 +1284,18 @@ export interface MonthlyTimesheetDocument {
   createdAt: number;
   updatedAt: number;
   createdByUserId?: string;
+}
+
+/**
+ * แนบรูป/PDF คู่เอกสาร timesheet รวมรายเดือน (เลข TS-) — ไม่ผูก PO
+ * `monthly_timesheet_photo_bundles/{yyyy-MM}`
+ */
+export interface MonthlyTimesheetPhotoBundle {
+  id: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  attachments: WaveMonthTimesheetPhotoAttachment[];
+  updatedAt: number;
 }
 
 /**
@@ -1936,6 +2009,14 @@ export interface PayrollBatch {
 /** รูปแบบคำนวณ ภงด.1 หัก ณ ที่จ่าย สำหรับ worker line */
 export type WorkerPitCalculationMode = 'manual_baht' | 'auto_timesheet' | 'auto_salary_base';
 
+/** แยกค่าแรง work_day แพ็กสำหรับสลิป — snapshot ตอน generate/recalc (ผลรวมเท่า earningsBreakdown.work_day_package) */
+export interface PayslipWorkDaySplit {
+  normalDays: number;
+  normalAmount: number;
+  holidayDays: number;
+  holidayAmount: number;
+}
+
 /** ปรับยอดรายคนใน batch (เงินพิเศษ / หักเพิ่ม / ภาษี ณ ที่จ่าย) — คำนวณ net ใหม่ตาม HR settings */
 /**
  * แยกยอดเงินได้ตาม PO (และลูกค้า) ในงวดเดียว — ใช้แสดงสลิปใบเดียวหลายอัตรา/โครงการ (เฟส 3 payroll)
@@ -1948,6 +2029,7 @@ export interface PayrollBatchIncomeSegment {
   grossAmount: number;
   eventBreakdown: Record<string, number>;
   earningsBreakdown: Record<string, number>;
+  payslipWorkDaySplit?: PayslipWorkDaySplit | null;
 }
 
 export interface HrPayrollLineAdjustments {
@@ -1997,6 +2079,8 @@ export interface PayrollBatchLine {
   hrLineAdjustments?: HrPayrollLineAdjustments | null;
   /** มีหลาย PO ที่มียอดในคนเดียว — แสดงรายได้แยกบนสลิป (ยังเป็นบรรทัดเดียวต่อคนต่อ batch) */
   incomeSegments?: PayrollBatchIncomeSegment[];
+  /** เมื่อมี PO เดียว — แยกค่าแรงวันปกติ/วันหยุดสำหรับสลิป */
+  payslipWorkDaySplit?: PayslipWorkDaySplit | null;
 }
 
 /**
@@ -2558,6 +2642,9 @@ export interface PurchaseVendorBill {
   /** หลักฐานการจ่าย (URL จาก Storage — มักเป็น PDF) */
   paymentProofUrl?: string;
   paymentProofFileName?: string;
+  /** หลักฐานแนบหัก ณ ที่จ่าย (PDF) — เมื่อมีการหัก ณ ที่จ่ายในบิลนี้ */
+  whtPaymentProofUrl?: string;
+  whtPaymentProofFileName?: string;
   notes?: string;
   /** ลิงก์หนังสือรับรองหัก ณ ที่จ่าย (withholding_certificate_documents) */
   whtCertificateDocumentId?: string;

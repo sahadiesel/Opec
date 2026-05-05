@@ -21,6 +21,7 @@ import {
   CalendarDays,
   Settings,
   Calculator,
+  RefreshCw,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -59,6 +60,7 @@ import {
 } from '@/lib/payroll/d8/deductions-from-policy';
 import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand';
 import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
+import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
   Select,
   SelectContent,
@@ -66,6 +68,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const TH_WEEKDAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
 
@@ -204,6 +215,8 @@ export default function PayrollBatchWorkerLinePage({
   const [grossByTsId, setGrossByTsId] = useState<Record<string, number>>({});
   const [grossByTsLoading, setGrossByTsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recalcOpen, setRecalcOpen] = useState(false);
+  const [recalcBusy, setRecalcBusy] = useState(false);
 
   const [allowanceRows, setAllowanceRows] = useState<Array<{ label: string; amount: string }>>([
     { label: '', amount: '' },
@@ -287,15 +300,16 @@ export default function PayrollBatchWorkerLinePage({
     setTsLoading(true);
     void (async () => {
       try {
+        const uniqueTids = [...new Set(line.sourceTimesheetIds.filter(Boolean))];
         const snaps = await Promise.all(
-          line.sourceTimesheetIds.map((tid) => getDoc(doc(firestore, 'daily_timesheets', tid))),
+          uniqueTids.map((tid) => getDoc(doc(firestore, 'daily_timesheets', tid))),
         );
         const rows: DailyTimesheet[] = [];
         for (const s of snaps) {
           if (s.exists()) rows.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
         }
         rows.sort((a, b) => a.date.localeCompare(b.date));
-        if (!cancelled) setTimesheets(rows);
+        if (!cancelled) setTimesheets(normalizeTimesheetsForPayrollLine(rows));
       } catch {
         if (!cancelled) setTimesheets([]);
       } finally {
@@ -573,6 +587,30 @@ export default function PayrollBatchWorkerLinePage({
     toast,
   ]);
 
+  const handleRecalculateFromTimesheets = useCallback(async () => {
+    if (!firestore || !currentUser || !canSaveAdjustments) return;
+    setRecalcBusy(true);
+    try {
+      const svc = new PayrollService(firestore);
+      await svc.recalculateWorkerPayrollLinePreserveHrAdjustments(batchId, workerId, currentUser as User);
+      setRecalcOpen(false);
+      toast({
+        title: 'คำนวณใหม่รายคนแล้ว',
+        description:
+          'ยอดจากใบงานรายวันและสูตรปัจจุบัน — เบี้ยเลี้ยง หักพิเศษ ภงด. และหักเบิกล่วงหน้าที่บันทึกไว้ยังคงอยู่ (คนอื่นในงวดไม่เปลี่ยน)',
+      });
+      router.refresh();
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'คำนวณใหม่ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRecalcBusy(false);
+    }
+  }, [firestore, currentUser, canSaveAdjustments, batchId, workerId, toast, router]);
+
   /** ต้องอยู่ก่อน early return — ห้ามเรียก hooks หลัง return แบบมีเงื่อนไข */
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
@@ -635,6 +673,12 @@ export default function PayrollBatchWorkerLinePage({
                 HR settings (ภาษี · ประกันสังคม)
               </Link>
             </Button>
+            {canSaveAdjustments ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => setRecalcOpen(true)}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)
+              </Button>
+            ) : null}
             {slipModel ? <PayslipDialog model={slipModel} /> : null}
           </div>
         </div>
@@ -647,8 +691,9 @@ export default function PayrollBatchWorkerLinePage({
               </CardTitle>
               {dailyDisplay.snapshotMismatch ? (
                 <CardDescription className="text-[11px] leading-snug text-amber-900">
-                  ในงวด (snapshot ตอนสร้าง batch): ฿{line.grossAmount.toLocaleString()} — ต่างจากสูตร/PO ปัจจุบัน
-                  ให้ใช้ <strong>Regenerate</strong> งวดเมื่อต้องการให้ snapshot ตรงยอดนี้
+                  ในงวด (snapshot ตอนสร้าง batch): ฿{line.grossAmount.toLocaleString()} — ต่างจากสูตร/PO ปัจจุบัน — ใช้ปุ่ม{' '}
+                  <strong>คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)</strong> เพื่ออัปเดตเฉพาะคนนี้โดยไม่ล้างการปรับยอดคนอื่น
+                  หรือ Regenerate ทั้งงวดเมื่อต้องการให้ทุกคนตรงสูตรพร้อมกัน
                 </CardDescription>
               ) : (
                 <CardDescription className="text-[11px] text-muted-foreground">
@@ -1164,6 +1209,37 @@ export default function PayrollBatchWorkerLinePage({
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={recalcOpen} onOpenChange={setRecalcOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>คำนวณใหม่จากใบงาน — เฉพาะคนนี้</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  ระบบจะดึงใบงานรายวันตาม <span className="font-mono">sourceTimesheetIds</span> แล้วคำนวณ Gross /
+                  ประกันสังคม / ภงด. ชุดใหม่ตามสูตรและ HR settings <strong className="text-foreground">ปัจจุบัน</strong>
+                </p>
+                <p>
+                  <strong className="text-foreground">จะคงไว้:</strong> รายการเบี้ยเลี้ยงและรายได้เพิ่ม รายการหักพิเศษ การตั้งค่า ภงด.
+                  และยอดหักคืนเบิกล่วงหน้าที่บันทึกในงวดนี้แล้ว —{' '}
+                  <strong className="text-foreground">ไม่กระทบ</strong> บรรทัดลูกจ้างคนอื่นในงวดเดียวกัน
+                </p>
+                <p className="text-xs opacity-90">
+                  ถ้าต้องการล็อก timesheet ใหม่หรือดึงใบงานชุดใหม่ทั้งงวด ยังต้องใช้ Regenerate ทั้ง batch (ผู้ดูแลระบบ)
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={recalcBusy}>ยกเลิก</AlertDialogCancel>
+            <Button type="button" disabled={recalcBusy} onClick={() => void handleRecalculateFromTimesheets()}>
+              {recalcBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              ยืนยันคำนวณใหม่
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

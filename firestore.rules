@@ -34,7 +34,7 @@ service cloud.firestore {
         && !isCustomerPortalData(d)
         && (
           ('user_type' in d && (d.user_type == 'internal' || d.user_type == 'INTERNAL'))
-          || ('userType' in d && d.userType == 'internal')
+          || ('userType' in d && d.userType is string && d.userType.lower() == 'internal')
           || (!('user_type' in d) && !('userType' in d))
         );
     }
@@ -69,6 +69,24 @@ service cloud.firestore {
         && d.assignedRoleKeys[0].size() > 0
         ? d.assignedRoleKeys[0].lower()
         : '';
+    }
+
+    /**
+     * ลำดับเดียวกับ getPrimaryLegacyRole ฝั่งแอป (assignedRoleKey -> assignedRoleKeys[0] -> role scalar)
+     * แก้กรณี UI เป็น system_admin แต่ effectiveRole() ในกฎอ่าน role เก่าก่อนจึงทำให้ isAdmin() เป็น false
+     */
+    function primaryBusinessRoleForAdminGate(d) {
+      return d == null
+        ? ''
+        : (
+            effectiveRoleFromAssignedKey(d).size() > 0
+              ? effectiveRoleFromAssignedKey(d)
+              : (
+                  effectiveRoleFromAssignedKeysFirst(d).size() > 0
+                    ? effectiveRoleFromAssignedKeysFirst(d)
+                    : effectiveRoleFromRoleField(d)
+                )
+          );
     }
 
     function permissionProfileIndicatesOperationsManager(d) {
@@ -112,12 +130,154 @@ service cloud.firestore {
         && !isCustomerPortalData(userData());
     }
 
+    /** โปรไฟล์ payroll_officer บน user doc — บางบัญชีมีแค่ permissionProfileKey(s) โดยไม่มี role scalar */
+    function permissionProfileIndicatesPayrollOfficer(d) {
+      return d != null && (
+        (
+          'permissionProfileKey' in d
+          && d.permissionProfileKey is string
+          && d.permissionProfileKey.lower() == 'payroll_officer'
+        )
+        || (
+          'permissionProfileKeys' in d
+          && d.permissionProfileKeys is list
+          && d.permissionProfileKeys.hasAny(['payroll_officer', 'PAYROLL_OFFICER'])
+        )
+      );
+    }
+
+    /** เจ้าหน้าที่เงินเดือน — เทียบ cashAdvancePrivilegedReader (บทบาท scalar / assigned keys / profile / roleIds) */
+    function payrollOfficerRoleOrProfile(d) {
+      return d != null
+        && !isCustomerPortalData(d)
+        && (
+          effectiveRoleFromAssignedKey(d) == 'payroll_officer'
+          || effectiveRoleFromAssignedKeysFirst(d) == 'payroll_officer'
+          || effectiveRoleFromRoleField(d) == 'payroll_officer'
+          || permissionProfileIndicatesPayrollOfficer(d)
+          || (
+            'roleIds' in d
+            && d.roleIds is list
+            && d.roleIds.hasAny(['payroll_officer', 'PAYROLL_OFFICER'])
+          )
+        );
+    }
+
+    /** สอดคล้อง getEffectivePermissionProfileKey — primary key ก่อน permissionProfileKeys[0] */
+    function userPrimaryPermissionProfileIdString() {
+      let d = userData();
+      return ('permissionProfileKey' in d && d.permissionProfileKey is string && d.permissionProfileKey.size() > 0)
+        ? d.permissionProfileKey
+        : (
+          ('permissionProfileKeys' in d && d.permissionProfileKeys is list && d.permissionProfileKeys.size() > 0 && d.permissionProfileKeys[0] is string && d.permissionProfileKeys[0].size() > 0)
+            ? d.permissionProfileKeys[0]
+            : ''
+        );
+    }
+
+    /** โปรไฟล์ที่เป็นบทบาท payroll_officer / เปิด worker_payroll.view — บางแถวเก็บแค่ profileKey ไม่มีเมทริกซ์ครบ */
+    function workerPayrollProfileIndicatesPayrollAccess(profileData) {
+      return profileData != null && (
+        (
+          'permissions' in profileData
+          && profileData.permissions is map
+          && 'worker_payroll' in profileData.permissions
+          && profileData.permissions.worker_payroll is map
+          && 'view' in profileData.permissions.worker_payroll
+          && profileData.permissions.worker_payroll.view == true
+        )
+        || (
+          'primaryRoleTemplateKey' in profileData
+          && profileData.primaryRoleTemplateKey is string
+          && profileData.primaryRoleTemplateKey.lower() == 'payroll_officer'
+        )
+        || (
+          'profileKey' in profileData
+          && profileData.profileKey is string
+          && profileData.profileKey.lower() == 'payroll_officer'
+        )
+      );
+    }
+
+    /**
+     * UI ใช้เมทริกซ์ใน permission_profiles — บทบาท scalar บน user doc อาจไม่ใช่ payroll_officer
+     */
+    function workerPayrollViewGrantedViaAssignedPermissionProfile() {
+      let pid = userPrimaryPermissionProfileIdString();
+      return hasUserDoc()
+        && !isCustomerPortalData(userData())
+        && pid.size() > 0
+        && exists(/databases/$(database)/documents/permission_profiles/$(pid))
+        && (
+          workerPayrollProfileIndicatesPayrollAccess(get(/databases/$(database)/documents/permission_profiles/$(pid)).data)
+          || pid.lower() == 'payroll_officer'
+        );
+    }
+
+    /**
+     * เมนูธนาคาร/cashbook ในแอปมาจาก permission_profiles.permissions — เดิม bank_accounts อนุญาตแค่บัญชี·ผู้จัดการปฏิบัติการ
+     * ทำให้ผู้ใช้ที่ได้ bank_accounts.view / cashbook.view จากโปรไฟล์แต่ไม่ใช่บทบาทบัญชีถูก deny list ที่หน้า payroll batch
+     */
+    function bankAccountsOrCashbookViewTrue(profileData) {
+      return profileData != null && (
+        (
+          'permissions' in profileData
+          && profileData.permissions is map
+          && 'bank_accounts' in profileData.permissions
+          && profileData.permissions.bank_accounts is map
+          && 'view' in profileData.permissions.bank_accounts
+          && profileData.permissions.bank_accounts.view == true
+        )
+        || (
+          'permissions' in profileData
+          && profileData.permissions is map
+          && 'cashbook' in profileData.permissions
+          && profileData.permissions.cashbook is map
+          && 'view' in profileData.permissions.cashbook
+          && profileData.permissions.cashbook.view == true
+        )
+      );
+    }
+
+    function bankAccountsViewGrantedViaAssignedPermissionProfile() {
+      let pid = userPrimaryPermissionProfileIdString();
+      return hasUserDoc()
+        && !isCustomerPortalData(userData())
+        && pid.size() > 0
+        && exists(/databases/$(database)/documents/permission_profiles/$(pid))
+        && bankAccountsOrCashbookViewTrue(get(/databases/$(database)/documents/permission_profiles/$(pid)).data);
+    }
+
+    /** อ่าน permission_profiles/{id} เฉพาะแถวที่ผูกกับ user — ไม่เปิด list ทั้งชุด */
+    function profileDocIsAssignedToCurrentUser(profileId) {
+      return hasUserDoc()
+        && profileId is string
+        && profileId.size() > 0
+        && (
+          ('permissionProfileKey' in userData() && userData().permissionProfileKey == profileId)
+          || (
+            'permissionProfileKeys' in userData()
+            && userData().permissionProfileKeys is list
+            && userData().permissionProfileKeys.size() > 0
+            && userData().permissionProfileKeys[0] is string
+            && userData().permissionProfileKeys[0] == profileId
+          )
+        );
+    }
+
     /**
      * อ่านข้อมูล payroll / exception / monthly docs — ให้สอดคล้อง workers·daily_timesheets (มี isInternalStaffDoc)
      * เพื่อให้ payroll_officer และบัญชี internal ที่สถานะยังไม่ active ครบเปิด HR dashboard / list งวดได้
      */
     function internalPayrollDataReader() {
-      return isInternalUser() || isInternalStaffDoc();
+      return isInternalUser()
+        || isInternalStaffDoc()
+        || (
+          hasUserDoc()
+          && !isCustomerPortalData(userData())
+          && payrollOfficerRoleOrProfile(userData())
+        )
+        || workerPayrollViewGrantedViaAssignedPermissionProfile();
     }
 
     /**
@@ -151,8 +311,8 @@ service cloud.firestore {
 
     function userDocIndicatesSystemAdmin(d) {
       return d != null && (
-        effectiveRole(d) == 'system_admin'
-        || effectiveRole(d) == 'admin_admin'
+        primaryBusinessRoleForAdminGate(d) == 'system_admin'
+        || primaryBusinessRoleForAdminGate(d) == 'admin_admin'
         || permissionProfileKeyIndicatesSystemAdmin(d)
         || permissionProfileKeysListIndicatesSystemAdmin(d)
         || (
@@ -261,6 +421,12 @@ service cloud.firestore {
             effectiveRoleFromAssignedKey(userData()) == 'payroll_officer'
             || effectiveRoleFromAssignedKeysFirst(userData()) == 'payroll_officer'
             || effectiveRoleFromRoleField(userData()) == 'payroll_officer'
+            || permissionProfileIndicatesPayrollOfficer(userData())
+            || (
+              'roleIds' in userData()
+              && userData().roleIds is list
+              && userData().roleIds.hasAny(['payroll_officer', 'PAYROLL_OFFICER'])
+            )
           )
         );
     }
@@ -669,7 +835,10 @@ service cloud.firestore {
     }
 
     match /permission_profiles/{id} {
-      allow read: if isInternalUser() || clientPortalUserActive();
+      allow get: if isInternalUser()
+        || clientPortalUserActive()
+        || isInternalStaffDoc()
+        || profileDocIsAssignedToCurrentUser(id);
       allow list: if isInternalUser() || clientPortalUserActive();
       allow write: if isAdmin();
     }
@@ -680,6 +849,16 @@ service cloud.firestore {
       allow create: if isInternalUser()
         || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
       allow update, delete: if isAdmin();
+    }
+
+    /** Demo: เอกสารโควต้ารวมจากหลาย PO — UI อยู่ภายใต้ /system-admin/employee-demo */
+    match /employee_quota_documents/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    /** Demo: จองลูกจ้างตามเอกสารโควต้า */
+    match /employee_quota_slots/{id} {
+      allow read, write: if isAdmin();
     }
 
     // Document codes (customers, workers, POs, vendor bills, etc.) — active internal + staff doc (pending activation).
@@ -802,8 +981,12 @@ service cloud.firestore {
       allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
+    /** อ่านบัญชีธนาคารสำหรับเลือกบัญชีตัดจ่าย payroll — รวมเมทริกซ์โปรไฟล์ bank_accounts/cashbook.view */
     match /bank_accounts/{id} {
-      allow read, write: if canAccessBankAccountsAndCashbook();
+      allow read: if canAccessBankAccountsAndCashbook()
+        || internalPayrollDataReader()
+        || bankAccountsViewGrantedViaAssignedPermissionProfile();
+      allow write: if canAccessBankAccountsAndCashbook();
     }
 
     match /cashbook_entries/{id} {
@@ -1087,6 +1270,12 @@ service cloud.firestore {
       allow write: if isInternalUser();
     }
 
+    /** ใบหัก ณ ที่จ่ายจาก payroll ลูกจ้าง — แยกจาก withholding_certificate_documents (คู่ค้า) */
+    match /payroll_wht_certificates/{id} {
+      allow read: if internalPayrollDataReader();
+      allow write: if isInternalUser();
+    }
+
     match /office_payroll_runs/{id} {
       allow read: if internalPayrollDataReader();
       allow write: if isInternalUser();
@@ -1128,8 +1317,8 @@ service cloud.firestore {
 
     /** งวด timesheet รอบเดือนต่อ PO (หลาย wave) — ใช้ /draft-invoices, /timesheets/po-month, ศูนย์อนุมัติ */
     match /po_month_timesheet_reviews/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalPoMonthTimesheetReviewReadable();
-      allow write: if isInternalUser() || isInternalStaffDoc();
+      allow read: if internalPayrollDataReader() || portalPoMonthTimesheetReviewReadable();
+      allow write: if internalPayrollDataReader();
     }
 
     match /po_month_timesheet_photo_bundles/{id} {
@@ -1145,6 +1334,12 @@ service cloud.firestore {
     match /monthly_timesheet_documents/{id} {
       allow read: if internalPayrollDataReader();
       allow write: if isInternalUser();
+    }
+
+    /** แนบรูป/PDF คู่เอกสาร timesheet รายเดือน (TS-) — id = yyyy-MM */
+    match /monthly_timesheet_photo_bundles/{id} {
+      allow read: if isInternalStaffDoc();
+      allow write: if isInternalStaffDoc();
     }
 
     /** เฟส 2 — หัวเอกสาร timesheet รายเดือนต่อลูกค้า × Onshore/Offshore */

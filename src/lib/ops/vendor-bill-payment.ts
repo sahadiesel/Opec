@@ -42,6 +42,9 @@ export async function executeVendorBillPayment(params: {
   currentUser: User;
   paymentProofUrl?: string;
   paymentProofFileName?: string;
+  /** แนบเมื่อมีหัก ณ ที่จ่าย */
+  whtPaymentProofUrl?: string;
+  whtPaymentProofFileName?: string;
 }): Promise<{ cashbookEntryNo: string; createdWhtCertificateId?: string }> {
   const {
     firestore,
@@ -145,6 +148,17 @@ export async function executeVendorBillPayment(params: {
       ? {
           paymentProofUrl,
           ...(paymentProofFileName?.trim() ? { paymentProofFileName: paymentProofFileName.trim() } : {}),
+        }
+      : {}),
+    ...(whtBreakdown &&
+    whtBreakdown.wht > 0.005 &&
+    whtPaymentProofUrl &&
+    String(whtPaymentProofUrl).trim()
+      ? {
+          whtPaymentProofUrl: String(whtPaymentProofUrl).trim(),
+          ...(whtPaymentProofFileName?.trim()
+            ? { whtPaymentProofFileName: whtPaymentProofFileName.trim() }
+            : {}),
         }
       : {}),
     updatedAt: now,

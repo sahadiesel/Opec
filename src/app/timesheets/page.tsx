@@ -1,14 +1,16 @@
 'use client';
 
-import { Suspense, useMemo } from 'react';
+import { Suspense, useMemo, useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CalendarDays, ChevronRight, Info, FileText, MapPin, Users, Layers } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, collectionGroup, limit, query, where } from 'firebase/firestore';
@@ -99,7 +101,18 @@ function PoMonthHubDocLink({
 
 function TimesheetHubContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const showAllLegacy = searchParams.get('all') === '1';
+  const monthFromUrl = (searchParams.get('month') || '').trim();
+  const [hubMonthFilter, setHubMonthFilter] = useState<string>(() =>
+    /^\d{4}-\d{2}$/.test(monthFromUrl) ? monthFromUrl : currentYearMonth(),
+  );
+
+  useEffect(() => {
+    if (/^\d{4}-\d{2}$/.test(monthFromUrl)) {
+      setHubMonthFilter(monthFromUrl);
+    }
+  }, [monthFromUrl]);
 
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
@@ -187,6 +200,50 @@ function TimesheetHubContent() {
     [pos, allPOLines, allMobs, allWaves, landingMainContractIdSet, contractsLoading],
   );
 
+  const hubMonthOptions = useMemo(() => {
+    const u = new Set<string>();
+    const cur = currentYearMonth();
+    u.add(cur);
+    if (showAllLegacy) {
+      for (const po of pos ?? []) {
+        for (const ym of yearMonthsForPoAssignments(allMobs ?? [], po.id)) u.add(ym);
+      }
+    } else {
+      for (const row of bundleRows) {
+        const poIds = row.pos.map((p) => p.id);
+        for (const ym of yearMonthsForBundleAssignments(allMobs ?? [], poIds, cur)) u.add(ym);
+      }
+    }
+    if (/^\d{4}-\d{2}$/.test(hubMonthFilter)) u.add(hubMonthFilter);
+    return [...u].sort((a, b) => b.localeCompare(a));
+  }, [showAllLegacy, pos, bundleRows, allMobs, hubMonthFilter]);
+
+  const bundleRowsVisibleForMonth = useMemo(
+    () =>
+      bundleRows.filter((row) => {
+        const poIds = row.pos.map((p) => p.id);
+        const yms = yearMonthsForBundleAssignments(allMobs ?? [], poIds, currentYearMonth());
+        return yms.some((ym) => ym === hubMonthFilter);
+      }),
+    [bundleRows, allMobs, hubMonthFilter],
+  );
+
+  const legacyPosVisibleForMonth = useMemo(
+    () =>
+      (pos ?? []).filter((po) => {
+        const yms = yearMonthsForPoHub(allMobs ?? [], po.id);
+        return yms.some((ym) => ym === hubMonthFilter);
+      }),
+    [pos, allMobs, hubMonthFilter],
+  );
+
+  const applyHubMonthFilter = (ym: string) => {
+    setHubMonthFilter(ym);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('month', ym);
+    router.replace(`/timesheets?${params.toString()}`, { scroll: false });
+  };
+
   const loadingLegacy = userLoading || poLoading || mobLoading || polinesLoading || poMonthReviewsLoading;
   const loadingBundle = loadingLegacy || contractsLoading || customersLoading || wavesLoading;
 
@@ -237,18 +294,19 @@ function TimesheetHubContent() {
           <div className="flex flex-wrap gap-2 shrink-0">
             {!showAllLegacy ? (
               <Button variant="outline" asChild>
-                <Link href="/timesheets?all=1">โหมดแสดงทั้งหมดตาม PO</Link>
+                <Link href={`/timesheets?all=1&month=${encodeURIComponent(hubMonthFilter)}`}>
+                  โหมดแสดงทั้งหมดตาม PO
+                </Link>
               </Button>
             ) : (
               <Button variant="outline" asChild>
-                <Link href="/timesheets">กลับโหมดชุด PO Active</Link>
+                <Link href={`/timesheets?month=${encodeURIComponent(hubMonthFilter)}`}>กลับโหมดชุด PO Active</Link>
               </Button>
             )}
             <Button variant="outline" asChild>
-              <Link href="/timesheets/customer-month">สรุปตามลูกค้า × On/Offshore</Link>
             </Button>
             <Button asChild>
-              <Link href="/timesheets/po-month">เอกสาร Timesheet รายเดือน</Link>
+              <Link href="/timesheets/wave-month">สรุปรายเดือน + เอกสาร PO+เดือน</Link>
             </Button>
           </div>
         </div>
@@ -270,6 +328,30 @@ function TimesheetHubContent() {
           }
         />
 
+        <div className="flex flex-col gap-3 rounded-lg border border-primary/15 bg-muted/30 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div className="space-y-1.5">
+            <Label htmlFor="hub-month-filter" className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              กรองงวดเดือน
+            </Label>
+            <Select value={hubMonthFilter} onValueChange={applyHubMonthFilter}>
+              <SelectTrigger id="hub-month-filter" className="w-[min(100%,260px)] bg-background">
+                <SelectValue placeholder="เลือกเดือน" />
+              </SelectTrigger>
+              <SelectContent>
+                {hubMonthOptions.map((ym) => (
+                  <SelectItem key={ym} value={ym}>
+                    {formatThaiYearMonthLabel(ym, 'th-TH')} <span className="text-muted-foreground font-mono text-xs">({ym})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground max-w-xl leading-relaxed">
+            แสดงเฉพาะแถวของเดือนที่เลือกในแต่ละการ์ด · การ์ดที่ไม่มีข้อมูลในเดือนนั้นจะถูกซ่อน · พารามิเตอร์{' '}
+            <span className="font-mono">?month=YYYY-MM</span> ซิงก์กับตัวเลือกนี้
+          </p>
+        </div>
+
         <Alert className="border-primary/30 bg-primary/5">
           <Info className="h-4 w-4" />
           <AlertTitle>โฟลว์สั้นๆ</AlertTitle>
@@ -290,15 +372,19 @@ function TimesheetHubContent() {
           <div className="space-y-8">
             {(pos ?? []).length === 0 ? (
               <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">ไม่มีคำสั่งจ้างที่ Active</p>
+            ) : legacyPosVisibleForMonth.length === 0 ? (
+              <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
+                ไม่มีคำสั่งจ้างที่มีงวดในเดือนที่เลือก ({formatThaiYearMonthLabel(hubMonthFilter, 'th-TH')}) — ลองเปลี่ยนเดือนในกรองด้านบน
+              </p>
             ) : (
-              (pos ?? []).map((po) => {
+              legacyPosVisibleForMonth.map((po) => {
                 const lines = (allPOLines ?? []).filter((l) => l.poId === po.id);
                 const fulfillment = buildPoFulfillmentByLine(lines, allMobs ?? [], [], po.id);
                 const { assigned: poAssigned, required: poPlanned } = aggregateActiveLineTotals(fulfillment);
                 const mobsOnPo = (allMobs ?? []).filter((m) => m.poId === po.id);
                 const rosterActiveCount = pickRosterLinePerWorker(mobsOnPo).filter((m) => isAssignmentActiveOnWaveRoster(m)).length;
 
-                const yms = yearMonthsForPoHub(allMobs ?? [], po.id);
+                const yms = yearMonthsForPoHub(allMobs ?? [], po.id).filter((ym) => ym === hubMonthFilter);
 
                 return (
                   <Card key={po.id} className="overflow-hidden shadow-sm">
@@ -361,7 +447,7 @@ function TimesheetHubContent() {
                             const phase = aggregateTimesheetHubPoMonthPhase([po.id], ym, poMonthReviewByDocId);
                             const docStarted = anyPoMonthTimesheetDocStarted([po.id], ym, poMonthReviewByDocId);
                             const phaseUi = timesheetHubPoMonthPhaseUi(phase);
-                            const docHref = `/timesheets/po-month?month=${encodeURIComponent(ym)}&highlightPo=${encodeURIComponent(po.id)}`;
+                            const docHref = `/timesheets/wave-month?month=${encodeURIComponent(ym)}&highlightPo=${encodeURIComponent(po.id)}`;
 
                             return (
                               <TableRow key={`${po.id}-${ym}`}>
@@ -434,19 +520,25 @@ function TimesheetHubContent() {
               คิวเติมโควต้า
             </Link>
           </p>
+        ) : bundleRowsVisibleForMonth.length === 0 ? (
+          <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
+            ไม่มีชุด PO Active ที่มีงวดในเดือนที่เลือก ({formatThaiYearMonthLabel(hubMonthFilter, 'th-TH')}) — ลองเปลี่ยนเดือนในกรองด้านบน
+          </p>
         ) : (
           <div className="space-y-8">
-            {bundleRows.map((row) => {
+            {bundleRowsVisibleForMonth.map((row) => {
               const poIds = row.pos.map((p) => p.id);
               const poCodes = row.pos.map((p) => p.poCode);
               const mobsOnBundle = (allMobs ?? []).filter((m) => poIds.includes(m.poId));
               const rosterActiveCount = pickRosterLinePerWorker(mobsOnBundle).filter((m) => isAssignmentActiveOnWaveRoster(m)).length;
-              const yms = yearMonthsForBundleAssignments(allMobs ?? [], poIds, currentYearMonth());
+              const yms = yearMonthsForBundleAssignments(allMobs ?? [], poIds, currentYearMonth()).filter(
+                (ym) => ym === hubMonthFilter,
+              );
               const cust = customers?.find((c) => c.id === row.customerId);
               const bundleHrefBoard = (ym: string) =>
                 `/timesheets/wave-board?poActiveBundleId=${encodeURIComponent(row.bundleKey)}&month=${encodeURIComponent(ym)}`;
               const bundleHrefPoMonth = (ym: string) =>
-                `/timesheets/po-month?month=${encodeURIComponent(ym)}&poActiveBundleId=${encodeURIComponent(row.bundleKey)}`;
+                `/timesheets/wave-month?month=${encodeURIComponent(ym)}&poActiveBundleId=${encodeURIComponent(row.bundleKey)}`;
 
               return (
                 <Card key={row.bundleKey} className="overflow-hidden shadow-sm border-primary/15">

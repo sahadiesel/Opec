@@ -27,8 +27,12 @@ import {
   FileSpreadsheet,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payroll-wht-single-dialog';
+import { WorkerPayrollWhtBatchDialog } from '@/components/payroll/worker-payroll-wht-batch-dialog';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
+import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
+import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, getDoc, query, where } from 'firebase/firestore';
 import { BankAccount, PayrollBatch, PayrollBatchLine, User, PayrollPeriod, Worker } from '@/lib/types';
@@ -40,11 +44,17 @@ import {
   canAccess,
   canConfirmWorkerPayrollPaid,
   canGeneratePayslips,
-  canHandoffWorkerPayrollToAccounting,
   canView,
   isMatrixControlledRole,
 } from '@/lib/permissions';
-import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import {
+  canApproveWorkerPayrollBatchAsManager,
+  isHrManager,
+  isOperationManager,
+  isPayrollOfficer,
+  isSystemAdmin,
+} from '@/lib/permission-core';
+import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 import { isSimpleAdmin, isSimpleAccounting } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -98,7 +108,8 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const [payoutBankId, setPayoutBankId] = useState('');
   const [payoutActionBusy, setPayoutActionBusy] = useState(false);
   const canEditBatch = payrollPerm('payroll_worker', 'edit_batch');
-  const canApproveWorker = payrollPerm('payroll_worker', 'approve');
+  /** อนุมัติยอดหลัง HR_REVIEWED — เฉพาะผู้จัดการ (ไม่ใช่ payroll_officer) */
+  const canManagerApproveWorkerBatch = canApproveWorkerPayrollBatchAsManager(currentUser as User);
   const canOpenPayrollApprovalCenter = canViewHrApprovalSubsection(
     currentUser as User,
     isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)
@@ -116,6 +127,16 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
     }
     return canView(currentUser, 'worker_payroll');
   }, [currentUser, useMatrixGuards]);
+
+  /**
+   * list bank_accounts — จำกัด subscribe เพื่อลด permission-deny; ผู้จัดการ HR/Ops และ payroll ควรได้เลือกบัญชีตัดจ่าย
+   */
+  const canListBankAccountsMasterList = useMemo(() => {
+    if (!currentUser) return false;
+    if (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser) || isSimpleAccounting(currentUser)) return true;
+    if (isPayrollOfficer(currentUser) || isHrManager(currentUser) || isOperationManager(currentUser)) return true;
+    return canAccess(currentUser, 'bank_accounts', 'view') || canAccess(currentUser, 'cashbook', 'view');
+  }, [currentUser]);
 
   const batchRef = useMemoFirebase(() => (firestore && canViewBatch ? doc(firestore, 'payroll_batches', id) : null), [firestore, id, canViewBatch]);
   const { data: batch, isLoading: isBatchLoading } = useDoc<PayrollBatch>(batchRef as any);
@@ -138,9 +159,18 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
   const { profile: companyProfile } = useCompanyDocumentProfile();
 
+  const companyProfileRef = useMemoFirebase(
+    () => (firestore && canViewBatch ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore, canViewBatch],
+  );
+  const { data: companyProfileForWht } = useDoc<CompanyDocumentProfileForPayrollWht>(companyProfileRef as any);
+
   const bankAccountsQuery = useMemoFirebase(
-    () => (firestore && canViewBatch ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE')) : null),
-    [firestore, canViewBatch]
+    () =>
+      firestore && canViewBatch && canListBankAccountsMasterList
+        ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'))
+        : null,
+    [firestore, canViewBatch, canListBankAccountsMasterList]
   );
   const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
   const activeBanks = useMemo(() => {
@@ -225,16 +255,14 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
 
   const handleManagerApprovePayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
+    if (!canApproveWorkerPayrollBatchAsManager(currentUser as User)) return;
     setPayoutActionBusy(true);
     try {
       const svc = new PayrollService(firestore);
-      const willHandoff = canHandoffWorkerPayrollToAccounting(currentUser);
       await svc.managerApprovePayoutAndNotifyAccounting(batch.id, currentUser as User);
       toast({
-        title: willHandoff ? 'อนุมัติและส่งบัญชีแล้ว' : 'อนุมัติแล้ว',
-        description: willHandoff
-          ? 'สถานะ → FINANCE_PREPARED (ฝ่ายบัญชีทำจ่ายต่อไป)'
-          : 'สถานะ → HR_APPROVED ให้คนที่มีสิทธิ์ส่งต่อบัญชี',
+        title: 'อนุมัติจ่ายเงินแล้ว',
+        description: 'สถานะ → FINANCE_PREPARED (คิวบัญชีรอจ่าย — ไม่มีขั้นส่งบัญชีแยก)',
       });
     } catch (e) {
       toast({ variant: 'destructive', title: 'อนุมัติไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
@@ -288,6 +316,15 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
   const isLocked = batch.status === 'LOCKED' || batch.status === 'PAID';
   const canGenerateWorkerPayslips = canGeneratePayslips(currentUser, batch.status);
   const canBankCheckCsv = ['FINANCE_PREPARED', 'PAYMENT_EXPORTED', 'PAID', 'LOCKED'].includes(batch.status);
+
+  const canWhtPreview =
+    canPreviewWorkerPayrollWht(currentUser as User, batch.status) && linesSorted.length > 0;
+  const whtDisabledReason =
+    linesSorted.length === 0
+      ? 'ยังไม่สามารถพิมพ์ใบหัก ณ ที่จ่ายได้ เพราะยังไม่มีรายการจ่ายลูกจ้าง'
+      : !canPreviewWorkerPayrollWht(currentUser as User, batch.status)
+        ? 'งวดนี้ยังไม่พร้อมใบหัก ณ ที่จ่าย'
+        : undefined;
   const showAccountingConfirm =
     canConfirmWorkerPayrollPaid(currentUser) &&
     (batch.status === 'FINANCE_PREPARED' || batch.status === 'PAYMENT_EXPORTED');
@@ -311,15 +348,38 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {firestore ? (
+              <WorkerPayrollWhtBatchDialog
+                firestore={firestore}
+                batch={batch}
+                linesSorted={linesSorted}
+                periodLabel={period?.label || batch.payrollPeriodId}
+                companyProfile={companyProfileForWht ?? null}
+                currentUser={currentUser as User}
+                disabled={!canWhtPreview}
+                disabledTitle={whtDisabledReason}
+              />
+            ) : null}
             <Button variant="outline" size="sm" asChild className="gap-1">
               <Link href={`/payroll/batches/${id}/print`}>
                 <Printer className="h-4 w-4" />
                 สลิปทั้ง batch
               </Link>
             </Button>
-            <Badge variant={isLocked ? 'default' : 'outline'} className={isLocked ? 'bg-primary py-1.5 px-4' : 'py-1.5 px-4'}>
+            <Badge
+              variant={isLocked ? 'default' : 'outline'}
+              title={batch.status}
+              className={
+                isLocked
+                  ? 'bg-primary py-1.5 px-4'
+                  : batch.status === 'HR_REVIEWED'
+                    ? 'border-amber-500/70 bg-amber-50 py-1.5 px-4 text-amber-950 dark:bg-amber-950/35 dark:text-amber-50'
+                    : 'py-1.5 px-4'
+              }
+            >
               {isLocked && <Lock className="h-3 w-3 mr-2" />}
-              STATUS: {batch.status}
+              {workerPayrollBatchStatusLabelTh(batch.status)}
+              <span className="ml-1.5 font-mono text-[10px] opacity-70">({batch.status})</span>
             </Badge>
           </div>
         </div>
@@ -388,12 +448,24 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
           </Card>
         )}
 
-        {batch.status === 'HR_REVIEWED' && canApproveWorker && (
+        {batch.status === 'HR_REVIEWED' && !canManagerApproveWorkerBatch && (
+          <Card className="border-l-4 border-l-slate-400/90 bg-muted/15">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">รอผู้จัดการอนุมัติ</CardTitle>
+              <CardDescription>
+                ฝ่ายเงินเดือนส่งขออนุมัติแล้ว — งวดนี้อยู่ในคิวของผู้จัดการปฏิบัติการ/HR ที่ศูนย์อนุมัติ (Payroll D6)
+                ไม่แสดงในคิวอนุมัติของ payroll officer
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+
+        {batch.status === 'HR_REVIEWED' && canManagerApproveWorkerBatch && (
           <Card className="border-l-4 border-l-emerald-600/80">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">ผู้จัดการ/ศูนย์อนุมัติ</CardTitle>
               <CardDescription>
-                งวด: {period?.label || batch.payrollPeriodId} — ตรวจยอดรวมแล้ว อนุมัติเพื่อแจ้งฝ่ายบัญชีจัดเตรียมจ่าย
+                งวด: {period?.label || batch.payrollPeriodId} — ตรวจยอดรวมแล้ว กดอนุมัติจ่ายเงินเพื่อส่งเข้าคิวบัญชีรอจ่าย (FINANCE_PREPARED) โดยตรง
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-2">
@@ -405,8 +477,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                 onClick={() => void handleManagerApprovePayout()}
               >
                 {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
-                อนุมัติยอดเงิน
-                {canHandoffWorkerPayrollToAccounting(currentUser) ? ' (ส่งบัญชีทำจ่าย)' : ''}
+                อนุมัติจ่ายเงิน
               </Button>
               {canOpenPayrollApprovalCenter && (
                 <Button variant="outline" size="sm" asChild>
@@ -548,6 +619,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                       <TableHead className="w-[92px] text-right tabular-nums align-middle">Gross</TableHead>
                       <TableHead className="w-[96px] text-right tabular-nums align-middle">Deductions</TableHead>
                       <TableHead className="w-[100px] text-right font-bold tabular-nums align-middle">Net Amount</TableHead>
+                      <TableHead className="w-[88px] text-center align-middle px-1">ใบหักฯ</TableHead>
                       <TableHead className="w-[76px] text-right align-middle pr-2">สลิป</TableHead>
                       <TableHead className="w-11 pr-5 text-right align-middle">
                         <span className="sr-only">รายละเอียด</span>
@@ -605,6 +677,18 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                         <TableCell className="text-right font-black text-primary tabular-nums align-middle py-3 text-sm">
                           ฿{safeNum(line.netAmount).toLocaleString()}
                         </TableCell>
+                        <TableCell className="text-center align-middle py-3 px-1">
+                          <WorkerPayrollWhtSingleDialog
+                            firestore={firestore}
+                            batch={batch}
+                            line={line}
+                            periodLabel={periodLabel}
+                            companyProfile={companyProfileForWht ?? null}
+                            currentUser={currentUser as User}
+                            disabled={!canWhtPreview}
+                            disabledTitle={whtDisabledReason}
+                          />
+                        </TableCell>
                         <TableCell className="text-right align-middle py-3 pr-2">
                           {canGenerateWorkerPayslips && slipModel ? (
                             <PayslipDialog model={slipModel} />
@@ -629,7 +713,7 @@ export default function PayrollBatchDetailPage({ params }: { params: Promise<{ i
                     );})}
                     {linesSorted.length === 0 && !isLinesLoading && (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
+                        <TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>

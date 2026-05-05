@@ -5,6 +5,7 @@ import type {
   PayrollBatchIncomeSegment,
   PayrollBatchLine,
   PayrollLineD8Snapshot,
+  PayslipWorkDaySplit,
 } from '@/lib/types';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
@@ -108,6 +109,73 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function formatThaiMoneyAmount(n: number): string {
+  return new Intl.NumberFormat('th-TH', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+function workDaySplitIncomeLine(titleWithOptionalPrefix: string, days: number, amount: number): PayslipLineItem | null {
+  if (days <= 0 || amount <= 0.005) return null;
+  const rate = round2(amount / days);
+  const product = round2(days * rate);
+  const consistent = Math.abs(product - amount) <= 0.02;
+  /** ยอดรวมแสดงเฉพาะคอลัมน์จำนวนเงิน — ไม่ซ้ำในข้อความรายการ */
+  const label = consistent
+    ? `${titleWithOptionalPrefix} ${days} วัน × ${formatThaiMoneyAmount(rate)}`
+    : `${titleWithOptionalPrefix} ${days} วัน (เฉลี่ยวันละ ${formatThaiMoneyAmount(rate)} บาท)`;
+  return { label, amount: round2(amount) };
+}
+
+function standbyDaysFromEventBreakdown(ev: Record<string, number> | undefined): number {
+  const n = Number(ev?.standby_day ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function isStandbyDayPolicyKey(key: string): boolean {
+  return key.replace(/_policy$/i, '').replace(/_package$/i, '') === 'standby_day';
+}
+
+function standbyPayslipLine(
+  labelPrefix: string,
+  earningsKey: string,
+  amount: number,
+  eventBreakdown: Record<string, number> | undefined,
+): PayslipLineItem {
+  let days = standbyDaysFromEventBreakdown(eventBreakdown);
+  if (days <= 0 && amount > 0.005) days = 1;
+  const title = humanizeWorkerEarningsKey(earningsKey);
+  const base = labelPrefix.trim() ? `${labelPrefix.trim()} ${title}` : title;
+  const rate = round2(amount / days);
+  const product = round2(days * rate);
+  const consistent = Math.abs(product - amount) <= 0.02;
+  const label = consistent
+    ? `${base} ${days} วัน × ${formatThaiMoneyAmount(rate)}`
+    : `${base} ${days} วัน (เฉลี่ยวันละ ${formatThaiMoneyAmount(rate)} บาท)`;
+  return { label, amount: round2(amount) };
+}
+
+/** true ถ้าใส่บรรทัดแทน work_day_package แล้ว */
+function tryPushWorkDayPackageSplitLines(
+  lines: PayslipLineItem[],
+  pkgAmount: number,
+  split: PayslipWorkDaySplit | null | undefined,
+  labelPrefix: string,
+): boolean {
+  if (!split) return false;
+  const sum = round2(split.normalAmount + split.holidayAmount);
+  if (Math.abs(sum - pkgAmount) > 0.05) return false;
+  const pfx = labelPrefix.trim();
+  const baseNormal = pfx ? `${pfx} ค่าแรงวันปกติ` : 'ค่าแรงวันปกติ';
+  const baseHoliday = pfx ? `${pfx} ค่าแรงวันหยุด` : 'ค่าแรงวันหยุด';
+  const n = workDaySplitIncomeLine(baseNormal, split.normalDays, split.normalAmount);
+  const h = workDaySplitIncomeLine(baseHoliday, split.holidayDays, split.holidayAmount);
+  if (n) lines.push(n);
+  if (h) lines.push(h);
+  return !!(n || h);
+}
+
 function payslipIncomeSegmentPrefix(seg: PayrollBatchIncomeSegment): string {
   const po =
     seg.poCodeSnapshot?.trim() ||
@@ -147,6 +215,13 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
       for (const k of keys) {
         const amt = round2(Number(eb[k]) || 0);
         if (Math.abs(amt) < 0.005) continue;
+        if (k === 'work_day_package' && tryPushWorkDayPackageSplitLines(lines, amt, seg.payslipWorkDaySplit, prefix)) {
+          continue;
+        }
+        if (isStandbyDayPolicyKey(k)) {
+          lines.push(standbyPayslipLine(prefix, k, amt, seg.eventBreakdown));
+          continue;
+        }
         lines.push({ label: `${prefix} ${humanizeWorkerEarningsKey(k)}`, amount: amt });
       }
     }
@@ -164,6 +239,13 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
   for (const k of keys) {
     const amt = round2(Number(baseEb[k]) || 0);
     if (Math.abs(amt) < 0.005) continue;
+    if (k === 'work_day_package' && tryPushWorkDayPackageSplitLines(lines, amt, line.payslipWorkDaySplit, '')) {
+      continue;
+    }
+    if (isStandbyDayPolicyKey(k)) {
+      lines.push(standbyPayslipLine('', k, amt, line.eventBreakdown));
+      continue;
+    }
     lines.push({ label: humanizeWorkerEarningsKey(k), amount: amt });
   }
 

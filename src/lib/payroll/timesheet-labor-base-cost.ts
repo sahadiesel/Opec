@@ -14,6 +14,41 @@ import type {
   LaborCostWorkMode,
 } from '@/lib/types';
 
+function workerPositionAllowanceDaily(worker: Worker | null | undefined): number {
+  if (!worker) return 0;
+  const n = Number(worker.positionAllowanceDailyBaht);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * หลังได้ฐานต้นทุนต่อวันจากเส้นทางเดิม (custom → ทะเบียนต่อสัญญา → default ตำแหน่ง → snapshot PO) — บวกค่าตำแหน่งรายคนถ้ามี
+ * ต้นทุนฝั่ง OPEC เท่านั้น — ไม่ใช้ราคาขาย · ไม่บวกเมื่อ override รายคน · ค่าว่าง/0 = ไม่บวก
+ */
+function applyWorkerPositionAllowanceToResolvedBase(input: {
+  worker: Worker | null | undefined;
+  baseCost: number;
+  resolution: { rate: number; source: LaborCostSourceKind; workMode: LaborCostWorkMode } | null;
+}): {
+  baseCost: number;
+  resolution: { rate: number; source: LaborCostSourceKind; workMode: LaborCostWorkMode } | null;
+} {
+  const add = workerPositionAllowanceDaily(input.worker);
+  if (add <= 0 || input.baseCost <= 0) return input;
+  if (input.resolution?.source === 'worker_custom') return input;
+
+  if (input.resolution) {
+    return {
+      baseCost: input.baseCost + add,
+      resolution: {
+        ...input.resolution,
+        rate: input.resolution.rate + add,
+      },
+    };
+  }
+  /* ฐานจาก PO snapshot — ยังบวกค่าตำแหน่งได้ */
+  return { baseCost: input.baseCost + add, resolution: null };
+}
+
 /**
  * ตัวแทน “บาท/วัน” ฝั่ง OPEC สำหรับ PO snapshot / แสดงผล — ไม่อ้าง main_contract/position_rates
  * (onshore ก่อน, ไม่มีค่อย offshore, รุ่น migration กำหนดเท่าหรือกำหนดข้างเดียว)
@@ -169,17 +204,27 @@ export function resolveBaseCostForPayrollTimesheet(input: {
     mainContract: input.mainContract,
   });
   if (inner.baseCost > 0) {
-    return {
+    const adj = applyWorkerPositionAllowanceToResolvedBase({
+      worker: input.worker,
       baseCost: inner.baseCost,
-      fromPositionModel: inner.fromPositionModel,
       resolution: inner.resolution,
+    });
+    return {
+      baseCost: adj.baseCost,
+      fromPositionModel: inner.fromPositionModel,
+      resolution: adj.resolution,
     };
   }
   const line = input.poLine || {};
   const base = Number(
     (line as { costBaselineSnapshot?: number }).costBaselineSnapshot ?? 0,
   ) || 0;
-  return { baseCost: base, fromPositionModel: false, resolution: null };
+  const adj = applyWorkerPositionAllowanceToResolvedBase({
+    worker: input.worker,
+    baseCost: base,
+    resolution: null,
+  });
+  return { baseCost: adj.baseCost, fromPositionModel: false, resolution: adj.resolution };
 }
 
 export async function loadWorkersAndPositionsForPayroll(

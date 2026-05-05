@@ -52,29 +52,29 @@ export function resolvePoMonthPeriodBounds(
 }
 
 /**
- * หลังล็อกงวดหรืออนุมัติ PO+เดือน — ตั้ง ready ให้ daily_timesheets ทุก wave ใต้ PO
+ * รวบรวมใบงานรายวันในเดือนปฏิทินของ PO ที่ยังไม่ LOCKED (ใช้ทั้งตั้งและล้าง ready flags)
  *
  * ใช้ขอบเขต **ทั้งเดือนปฏิทิน** (`yearMonth`) ไม่ใช่แค่ periodStart–periodEnd บนเอกสาร —
- * กันช่วงงวดในเอกสารถูกตั้งแคบ (เช่นผิดพลาดหนึ่งวัน) แล้ว Payroll / Pre-flight เหลือ 1 ใบงาน ทั้งที่ตารางสรุปเดือนมีหลายคน
- * (รอบจ่าย `worker_ym_*` และการสร้าง Batch ยังอิงเต็มเดือนปฏิทินตาม payroll_period)
+ * สอดคล้องกับ markTimesheetsReadyForPayrollAfterPoMonthApproval เดิม
  */
-export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
+async function gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(
   db: Firestore,
-  review: PoMonthTimesheetReview,
-): Promise<{ updated: number }> {
-  const ym = (review.yearMonth || '').trim();
-  if (!/^\d{4}-\d{2}$/.test(ym)) return { updated: 0 };
+  poId: string,
+  yearMonth: string,
+): Promise<DocumentReference[]> {
+  const ym = (yearMonth || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(ym)) return [];
+  const pid = (poId || '').trim();
+  if (!pid) return [];
+
   const monthFirst = `${ym}-01`;
   const monthLast = lastDayOfCalendarMonth(ym);
-  const poId = (review.poId || '').trim();
-  if (!poId) return { updated: 0 };
-
   const refsById = new Map<string, DocumentReference>();
 
   const snapByPo = await getDocs(
     query(
       collection(db, 'daily_timesheets'),
-      where('purchaseOrderId', '==', poId),
+      where('purchaseOrderId', '==', pid),
       where('date', '>=', monthFirst),
       where('date', '<=', monthLast),
     ),
@@ -85,11 +85,10 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
     refsById.set(d.id, d.ref);
   }
 
-  /** ใบงานจากกระดาน PO ที่ waveId = scope แต่ยังไม่ได้ใส่ purchaseOrderId — query เดิมไม่ครอบคลุม */
   const snapScope = await getDocs(
     query(
       collection(db, 'daily_timesheets'),
-      where('waveId', '==', poTimesheetScopeId(poId)),
+      where('waveId', '==', poTimesheetScopeId(pid)),
       where('date', '>=', monthFirst),
       where('date', '<=', monthLast),
     ),
@@ -98,15 +97,11 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
     const data = d.data();
     if (data.status === 'LOCKED') continue;
     const tsPo = String(data.purchaseOrderId || '').trim();
-    if (tsPo && tsPo !== poId) continue;
+    if (tsPo && tsPo !== pid) continue;
     refsById.set(d.id, d.ref);
   }
 
-  /**
-   * ใบงานจากกระดาน Wave (waveId = รหัส Wave จริง) ที่ยังไม่มี purchaseOrderId หรือระบบเก่าไม่ได้ใส่ —
-   * query ด้านบนไม่ครอบคลุม จึงตามทุก Wave ที่ poId ตรงกันแล้วตั้ง ready ในเดือนนั้น
-   */
-  const wavesSnap = await getDocs(query(collection(db, 'waves'), where('poId', '==', poId)));
+  const wavesSnap = await getDocs(query(collection(db, 'waves'), where('poId', '==', pid)));
   const waveIdsUnderPo = wavesSnap.docs.map((w) => w.id);
   for (const waveChunk of chunkIds(waveIdsUnderPo, FIRESTORE_IN_MAX)) {
     if (waveChunk.length === 0) continue;
@@ -122,20 +117,74 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
       const data = d.data();
       if (data.status === 'LOCKED') continue;
       const tsPo = String(data.purchaseOrderId || '').trim();
-      if (tsPo && tsPo !== poId) continue;
+      if (tsPo && tsPo !== pid) continue;
       refsById.set(d.id, d.ref);
     }
   }
 
+  return [...refsById.values()];
+}
+
+/**
+ * หลังล็อกงวดหรืออนุมัติ PO+เดือน — ตั้ง ready ให้ daily_timesheets ทุก wave ใต้ PO
+ *
+ * ใช้ขอบเขต **ทั้งเดือนปฏิทิน** (`yearMonth`) ไม่ใช่แค่ periodStart–periodEnd บนเอกสาร —
+ * กันช่วงงวดในเอกสารถูกตั้งแคบ (เช่นผิดพลาดหนึ่งวัน) แล้ว Payroll / Pre-flight เหลือ 1 ใบงาน ทั้งที่ตารางสรุปเดือนมีหลายคน
+ * (รอบจ่าย `worker_ym_*` และการสร้าง Batch ยังอิงเต็มเดือนปฏิทินตาม payroll_period)
+ */
+export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
+  db: Firestore,
+  review: PoMonthTimesheetReview,
+): Promise<{ updated: number }> {
+  const ym = (review.yearMonth || '').trim();
+  const poId = (review.poId || '').trim();
+  const refs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, poId, ym);
+  if (refs.length === 0) return { updated: 0 };
+
   let batch = writeBatch(db);
   let n = 0;
   let updated = 0;
+  const ts = Date.now();
 
-  for (const ref of refsById.values()) {
+  for (const ref of refs) {
     batch.update(ref, {
       readyForPayroll: true,
       readyForBilling: true,
-      updatedAt: Date.now(),
+      updatedAt: ts,
+    });
+    updated++;
+    n++;
+    if (n >= FIRESTORE_BATCH_LIMIT) {
+      await batch.commit();
+      batch = writeBatch(db);
+      n = 0;
+    }
+  }
+  if (n > 0) await batch.commit();
+  return { updated };
+}
+
+/**
+ * Admin ปลดล็อก PO+เดือน — ล้าง ready บนใบงานในเดือนปฏิทินนี้ของ PO (ไม่แตะ daily ที่สถานะ LOCKED)
+ */
+export async function clearReadyPayrollFlagsForPoCalendarMonth(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+): Promise<{ updated: number }> {
+  const refs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, poId, yearMonth);
+  if (refs.length === 0) return { updated: 0 };
+
+  let batch = writeBatch(db);
+  let n = 0;
+  let updated = 0;
+  const ts = Date.now();
+
+  for (const ref of refs) {
+    batch.update(ref, {
+      readyForPayroll: false,
+      readyForBilling: false,
+      updatedAt: ts,
     });
     updated++;
     n++;

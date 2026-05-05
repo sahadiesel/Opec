@@ -1,5 +1,8 @@
 import type { Assignment, DailyTimesheet, RateConditionEventType, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
-import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
+import {
+  isHtmlDateAfterMobLocationEnd,
+  isYmdWithinAssignmentMobTimesheetWindow,
+} from '@/lib/constants/timesheet-ui';
 
 /** คืน yyyy-mm-dd สำหรับวันสุดท้ายของเดือน yyyy-mm */
 /** แนบเป็น PDF หรือไม่ (รองรับข้อมูลเก่าที่ไม่มี contentType) */
@@ -188,8 +191,24 @@ export function resolveTimesheetForWaveMonthCell(
     return undefined;
   };
 
-  /** รอบแรก: เคารพช่วง mobilization — รอบสอง: ถ้ายังไม่เจอ ให้แสดงตาม daily_timesheets จริง (กันฟิลด์ mobilization ไม่ตรงกับที่บันทึกแล้วจนตารางว่างทั้งแถว) */
-  return lookupIgnoringMobWindow(true) ?? lookupIgnoringMobWindow(false);
+  /** รอบแรก: เคารพช่วง mobilization */
+  const strict = lookupIgnoringMobWindow(true);
+  if (strict !== undefined) return strict;
+
+  /**
+   * รอบสอง: ผ่อนเมื่อฟิลด์ mobilization ไม่ตรงใบงาน — แต่ห้ามดึงใบงานหลังวันจบไซต์ที่บันทึกแล้ว
+   * (กัน auto/sync สร้าง work_day เกินวันจบงานแล้วไปโผล่สรุปรายเดือน)
+   */
+  const outsideMobWindow =
+    !!assignmentWindow &&
+    !isYmdWithinAssignmentMobTimesheetWindow(assignmentWindow, date);
+  const mobEndStr = (assignmentWindow?.mobLocationEndDate || '').trim().slice(0, 10);
+  const hasConfirmedMobEnd = /^\d{4}-\d{2}-\d{2}$/.test(mobEndStr);
+  const afterRecordedSiteEnd =
+    !!assignmentWindow && hasConfirmedMobEnd && isHtmlDateAfterMobLocationEnd(assignmentWindow, date);
+  if (outsideMobWindow && afterRecordedSiteEnd) return undefined;
+
+  return lookupIgnoringMobWindow(false);
 }
 
 export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {

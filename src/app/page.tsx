@@ -854,7 +854,7 @@ export default function Home() {
                       <ShortcutLink
                         href="/po-active-quota-queue"
                         label="คิวเติมโควต้า (PO Active)"
-                        sub="PO ยังไม่ครบโควต้า"
+                        sub="ชุดลูกค้า×Onshore/Offshore จากสัญญา"
                       />
                     )}
                     {check('workers', 'view') && (
@@ -908,7 +908,7 @@ export default function Home() {
             {showOpsUi && (
               <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
                 {(check('waves', 'view') || check('assignments', 'view')) && (
-                  <ShortcutLink href="/po-active-quota-queue" label="คิวเติมโควต้า (PO Active)" sub="PO ยังไม่ครบโควต้า" />
+                  <ShortcutLink href="/po-active-quota-queue" label="คิวเติมโควต้า (PO Active)" sub="ชุดลูกค้า×งานจากสัญญา" />
                 )}
                 {check('assignments', 'view') && (
                   <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />

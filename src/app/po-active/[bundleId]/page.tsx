@@ -161,7 +161,7 @@ export default function PoActiveBundleDetailPage({
       <div className="space-y-6 p-4 md:p-6 max-w-[100rem] mx-auto">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/po-active">
+            <Link href="/po-active-quota-queue">
               <ArrowLeft className="h-5 w-5" />
             </Link>
           </Button>

@@ -4,6 +4,7 @@ import type { Assignment, DeploymentStatus, Worker } from '@/lib/types';
 export const TERMINAL_ASSIGNMENT_DEPLOYMENT_STATUSES: DeploymentStatus[] = ['CLOSED', 'DEMOBILIZED'];
 
 export function isAssignmentBlockingDelete(a: Assignment): boolean {
+  if (a.unassignedAt != null && Number(a.unassignedAt) > 0) return false;
   return !TERMINAL_ASSIGNMENT_DEPLOYMENT_STATUSES.includes(a.deploymentStatus);
 }
 

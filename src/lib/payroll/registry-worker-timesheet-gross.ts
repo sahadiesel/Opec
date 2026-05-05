@@ -69,6 +69,8 @@ export interface RegistryWorkerTimesheetGrossResult {
   usedPackageLaborCost: boolean;
   usedPolicyFallback: boolean;
   fromPositionModel: boolean;
+  /** เฉพาะ work_day แพ็ก — true เมื่อเป็นวันหยุดตามปฏิทิน/weekly rest (ใช้แยกบรรทัดสลิป) */
+  workDayRestDay?: boolean;
 }
 
 /**
@@ -118,6 +120,7 @@ export function computeRegistryWorkerTimesheetGross(
       usedPackageLaborCost: true,
       usedPolicyFallback: false,
       fromPositionModel,
+      workDayRestDay: pkg.restDay.active,
     };
   }
 

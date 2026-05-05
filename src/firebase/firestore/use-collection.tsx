@@ -9,10 +9,10 @@ import {
   QuerySnapshot,
   CollectionReference,
 } from 'firebase/firestore';
-import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { isPermissionDeniedWhileLoggedOut } from '@/firebase/firestore/suppress-logout-permission-error';
 import { isFirestoreMissingIndexError } from '@/firebase/firestore/firestore-index-error';
+import { isFirebaseMemoRegistered } from '@/firebase/firestore/memo-registry';
 
 /** Utility type to add an 'id' field to a given type T. */
 export type WithId<T> = T & { id: string };
@@ -54,7 +54,7 @@ export interface InternalQuery extends Query<DocumentData> {
  * @returns {UseCollectionResult<T>} Object with data, isLoading, error.
  */
 export function useCollection<T = any>(
-    memoizedTargetRefOrQuery: ((CollectionReference<DocumentData> | Query<DocumentData>) & {__memo?: boolean})  | null | undefined,
+  memoizedTargetRefOrQuery: (CollectionReference<DocumentData> | Query<DocumentData>) | null | undefined,
 ): UseCollectionResult<T> {
   type ResultItemType = WithId<T>;
   type StateDataType = ResultItemType[] | null;
@@ -115,7 +115,7 @@ export function useCollection<T = any>(
           path,
         });
         setError(contextualError);
-        errorEmitter.emit('permission-error', contextualError);
+        /** ไม่ emit ไป FirebaseErrorListener — การ throw ทำให้ทั้งแอปเป็น Next.js "Application error" */
       }
     );
 
@@ -124,8 +124,8 @@ export function useCollection<T = any>(
       unsubscribe();
     };
   }, [memoizedTargetRefOrQuery]); // Re-run if the target query/reference changes.
-  if(memoizedTargetRefOrQuery && !memoizedTargetRefOrQuery.__memo) {
-    throw new Error(memoizedTargetRefOrQuery + ' was not properly memoized using useMemoFirebase');
+  if (memoizedTargetRefOrQuery && !isFirebaseMemoRegistered(memoizedTargetRefOrQuery as object)) {
+    throw new Error(String(memoizedTargetRefOrQuery) + ' was not properly memoized using useMemoFirebase');
   }
   return { data, isLoading, error };
 }

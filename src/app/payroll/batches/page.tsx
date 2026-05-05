@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { PayrollBatch, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, User } from '@/lib/types';
 import { isSystemAdmin } from '@/lib/permission-core';
+import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
@@ -320,13 +321,50 @@ function PayrollBatchesPageContent() {
   };
 
   const getStatusBadge = (status: string) => {
+    const label = workerPayrollBatchStatusLabelTh(status);
     switch (status) {
-      case 'GENERATED': return <Badge variant="outline" className="bg-blue-50 text-blue-700">GENERATED</Badge>;
-      case 'HR_APPROVED': return <Badge variant="outline" className="bg-green-50 text-green-700">HR APPROVED</Badge>;
-      case 'FINANCE_PREPARED': return <Badge className="bg-amber-500">FINANCE PREPARED</Badge>;
-      case 'PAID': return <Badge className="bg-green-600">PAID (ชำระแล้ว)</Badge>;
-      case 'LOCKED': return <Badge variant="secondary">LOCKED (Snapshot)</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      case 'GENERATED':
+        return (
+          <Badge variant="outline" className="bg-blue-50 text-blue-700" title={status}>
+            {label}
+          </Badge>
+        );
+      case 'HR_REVIEWED':
+        return (
+          <Badge variant="outline" className="border-amber-500/60 bg-amber-50 text-amber-950" title={status}>
+            {label}
+          </Badge>
+        );
+      case 'HR_APPROVED':
+        return (
+          <Badge variant="outline" className="bg-green-50 text-green-700" title={status}>
+            {label}
+          </Badge>
+        );
+      case 'FINANCE_PREPARED':
+        return (
+          <Badge className="bg-amber-500" title={status}>
+            {label}
+          </Badge>
+        );
+      case 'PAID':
+        return (
+          <Badge className="bg-green-600" title={status}>
+            {label}
+          </Badge>
+        );
+      case 'LOCKED':
+        return (
+          <Badge variant="secondary" title={status}>
+            {label}
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="outline" title={status}>
+            {label}
+          </Badge>
+        );
     }
   };
 
@@ -355,8 +393,7 @@ function PayrollBatchesPageContent() {
             {accountingPayoutQueueOnly && (
               <p className="text-sm text-blue-800 bg-blue-50/80 border border-blue-200 rounded-md px-3 py-2 max-w-3xl">
                 <strong>มุมมองบัญชี (เฉพาะทำจ่าย):</strong> แสดงเฉพาะงวดที่ <strong>ส่งถึงฝ่ายบัญชีแล้ว (FINANCE_PREPARED ขึ้นไป)</strong> —
-                หลังผู้จัดการปฏิบัติการ/OPS อนุมัติแล้ว ฝ่ายอื่นต้องกด「ส่งต่อบัญชี」หรือขั้น equivalent ก่อน งวดจะไม่ปรากฏที่นี่
-                ถ้ายังเป็น <span className="font-mono">HR_APPROVED</span> อย่างเดียว แปลว่ารอส่งมาคิวบัญชี ยังไม่ใช่รายการที่ควรตัดเงิน
+                หลังผู้จัดการ HR / ผู้จัดการปฏิบัติการกดอนุมัติจ่ายเงินที่ศูนย์อนุมัติ (หรือหน้ารายละเอียด batch) ระบบจะตั้งสถานะเป็น FINANCE_PREPARED โดยตรง — ไม่มีขั้นส่งบัญชีแยก
               </p>
             )}
           </div>
@@ -506,7 +543,7 @@ function PayrollBatchesPageContent() {
           title="นโยบายการเบิกจ่าย (Disbursement Policy)"
           tips={[
             'รายการที่เข้า Payroll Batch ต้องเป็นใบงานรายวันที่ระบบตั้ง readyForPayroll แล้ว — เกิดหลังล็อกงวด/ปิดงวดที่เอกสารสรุปลงเวลารายเดือน (PO + เดือน) ซึ่งจะส่งต่อไปยังพอร์ทัลลูกค้า และเป็นฐานทำใบแจ้งหนี้จากสรุปรายเดือน (แทนการอ้าง Wave เดิม)',
-            "ลำดับการอนุมัติภายใน: HR เตรียมงวด → HR Manager / ผู้จัดการที่เกี่ยวข้องอนุมัติ batch → บัญชีเตรียมจ่ายเงิน (FINANCE_PREPARED) → บัญชีกด «ยืนยันจ่าย» ในหน้ารายละเอียด batch (ไม่ใช่จากตารางนี้) พร้อมเลือกบัญชีธนาคารตัดจ่าย — จึงจะมีสถานะ PAID + ลง cashbook",
+            "ลำดับการอนุมัติภายใน: ฝ่ายเงินเดือนส่งขออนุมัติ → ผู้จัดการ HR / ผู้จัดการปฏิบัติการกดอนุมัติจ่ายเงินครั้งเดียว → สถานะ FINANCE_PREPARED (คิวบัญชีรอจ่าย) → บัญชีกด «ยืนยันจ่าย» ในหน้ารายละเอียด batch พร้อมเลือกบัญชีธนาคารตัดจ่าย — จึงจะมีสถานะ PAID + ลง cashbook",
             "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน",
           ]}
         />

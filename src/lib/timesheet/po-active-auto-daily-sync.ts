@@ -25,6 +25,12 @@ import {
   isAssignmentEligibleForPoActiveAutoDaily,
   poActiveDailyTimesheetDocId,
 } from '@/lib/timesheet/po-active-auto-daily-build';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+
+export type PoActiveAutoDailySyncOptions = {
+  /** เติมเฉพาะ yyyy-mm-dd ปัจจุบันในเขตไทย — ใช้หลังเที่ยงคืนหรือเปิดกระดาน */
+  todayOnly?: boolean;
+};
 
 function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
   const out = { ...obj };
@@ -63,6 +69,7 @@ export async function syncPoActiveAutoDailyForAssignment(
   db: Firestore,
   assignmentId: string,
   user: User,
+  options?: PoActiveAutoDailySyncOptions,
 ): Promise<{ created: number; updated: number; skipped: number }> {
   assertPayrollPermission(user, 'timesheet', 'edit');
 
@@ -89,6 +96,10 @@ export async function syncPoActiveAutoDailyForAssignment(
   if (!range) {
     return { created: 0, updated: 0, skipped: 0 };
   }
+
+  const rangeDates = [...eachYmdInRange(range.start, range.end)];
+  const todayYmd = thailandTodayYmd();
+  const datesToSync = options?.todayOnly ? rangeDates.filter((d) => d === todayYmd) : rangeDates;
 
   let workerName = (assignment.workerName || '').trim();
   if (!workerName) {
@@ -118,7 +129,7 @@ export async function syncPoActiveAutoDailyForAssignment(
     batchCount = 0;
   };
 
-  for (const date of eachYmdInRange(range.start, range.end)) {
+  for (const date of datesToSync) {
     const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, date);
     const dRef = doc(tsCol, id);
     const existing = await getDoc(dRef);

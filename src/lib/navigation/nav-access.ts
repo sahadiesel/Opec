@@ -148,6 +148,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounts-payable', 'accounts_payable'],
   ['/accounting/outgoing-review', 'accounts_payable'],
   ['/accounting/withholding-tax', 'withholding_tax_items'],
+  ['/accounting/withholding-payroll', 'worker_payroll'],
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
   ['/receipts', 'receipts'],
@@ -211,6 +212,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     '/bank-accounts',
     '/accounting/executive-payroll',
     '/accounting/withholding-tax',
+    '/accounting/withholding-payroll',
     '/accounting/dashboard',
   ];
   if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {

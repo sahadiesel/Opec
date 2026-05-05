@@ -70,7 +70,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { uploadVendorBillPaymentProofPdf, validateVendorBillPaymentProofPdf } from '@/lib/storage/vendor-bill-payment-proofs';
+import {
+  uploadVendorBillPaymentProofPdf,
+  uploadVendorBillWhtProofPdf,
+  validateVendorBillPaymentProofPdf,
+} from '@/lib/storage/vendor-bill-payment-proofs';
 
 function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
@@ -180,6 +184,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [payoutEntryDate, setPayoutEntryDate] = useState('');
   const [paying, setPaying] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
+  const [whtPaymentProofFile, setWhtPaymentProofFile] = useState<File | null>(null);
   const [createWhtBusy, setCreateWhtBusy] = useState(false);
   const [submittedWhtBusy, setSubmittedWhtBusy] = useState(false);
   const [whtPrintBusy, setWhtPrintBusy] = useState(false);
@@ -564,6 +569,17 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       toast({ variant: 'destructive', title: 'ไฟล์ไม่ถูกต้อง', description: proofErr });
       return;
     }
+    if (
+      withholdingPreview &&
+      withholdingPreview.wht > 0.005 &&
+      whtPaymentProofFile
+    ) {
+      const whtErr = validateVendorBillPaymentProofPdf(whtPaymentProofFile);
+      if (whtErr) {
+        toast({ variant: 'destructive', title: 'ไฟล์หัก ณ ที่จ่ายไม่ถูกต้อง', description: whtErr });
+        return;
+      }
+    }
     setPaying(true);
     try {
       const proof = await uploadVendorBillPaymentProofPdf(
@@ -572,6 +588,19 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         currentUser.id,
         paymentProofFile
       );
+      let whtProof: { downloadUrl: string; fileName: string } | undefined;
+      if (
+        withholdingPreview &&
+        withholdingPreview.wht > 0.005 &&
+        whtPaymentProofFile
+      ) {
+        whtProof = await uploadVendorBillWhtProofPdf(
+          firebaseApp,
+          bill.id,
+          currentUser.id,
+          whtPaymentProofFile,
+        );
+      }
       const { cashbookEntryNo, createdWhtCertificateId } = await executeVendorBillPayment({
         firestore,
         billRef,
@@ -585,6 +614,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         currentUser,
         paymentProofUrl: proof.downloadUrl,
         paymentProofFileName: proof.fileName,
+        ...(whtProof
+          ? { whtPaymentProofUrl: whtProof.downloadUrl, whtPaymentProofFileName: whtProof.fileName }
+          : {}),
       });
       toast({
         title: 'บันทึกจ่ายแล้ว',
@@ -660,18 +692,35 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                 <p>
                   เลขที่รายการ: <span className="font-mono font-bold">{bill.cashbookEntryNo}</span>
                 </p>
-                {bill.paymentProofUrl && (
-                  <p>
-                    หลักฐานการจ่าย:{' '}
-                    <a
-                      href={bill.paymentProofUrl}
-                      className="font-semibold text-primary underline"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {bill.paymentProofFileName || 'เปิด PDF'}
-                    </a>
-                  </p>
+                {(bill.paymentProofUrl || bill.whtPaymentProofUrl) && (
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                    {bill.paymentProofUrl ? (
+                      <p className="m-0">
+                        หลักฐานการจ่าย:{' '}
+                        <a
+                          href={bill.paymentProofUrl}
+                          className="font-semibold text-primary underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {bill.paymentProofFileName || 'เปิด PDF'}
+                        </a>
+                      </p>
+                    ) : null}
+                    {bill.whtPaymentProofUrl ? (
+                      <p className="m-0">
+                        หลักฐานหัก ณ ที่จ่าย:{' '}
+                        <a
+                          href={bill.whtPaymentProofUrl}
+                          className="font-semibold text-primary underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {bill.whtPaymentProofFileName || 'เปิด PDF'}
+                        </a>
+                      </p>
+                    ) : null}
+                  </div>
                 )}
               </CardDescription>
             </CardHeader>
@@ -920,6 +969,23 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       <p className="text-xs text-muted-foreground">เลือก: {paymentProofFile.name}</p>
                     )}
                   </div>
+                  {withholdingPreview && withholdingPreview.wht > 0.005 ? (
+                    <div className="space-y-2 min-w-0 rounded-md border border-violet-200/80 bg-violet-50/40 px-3 py-3 dark:bg-violet-950/20 dark:border-violet-900/50">
+                      <Label>แนบหลักฐานหัก ณ ที่จ่าย (PDF) — ถ้ามี</Label>
+                      <p className="text-[11px] text-muted-foreground leading-snug">
+                        แยกจากสลิปโอน — เก็บคู่เลขที่รายการ cashbook เพื่อตรวจสอบภาษี
+                      </p>
+                      <Input
+                        type="file"
+                        accept="application/pdf"
+                        className="h-11 cursor-pointer bg-background"
+                        onChange={(e) => setWhtPaymentProofFile(e.target.files?.[0] ?? null)}
+                      />
+                      {whtPaymentProofFile && (
+                        <p className="text-xs text-muted-foreground">เลือก: {whtPaymentProofFile.name}</p>
+                      )}
+                    </div>
+                  ) : null}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2 min-w-0">
                       <Label>วันที่ทำรายการ (cashbook)</Label>

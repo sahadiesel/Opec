@@ -115,7 +115,193 @@ function payeeCategoryTh(c: WithholdingCertificateDocument['payee']['vendorCateg
   }
 }
 
-function withholdingCertificatePrintCss(extra = ''): string {
+/**
+ * สไตล์พิมพ์หนังสือรับรองหัก ณ ที่จ่าย — ลูกจ้าง (Payroll)
+ * - หนึ่งหน้า A4: ความสูงพิมพ์ได้ ~279mm (ขอบ 9mm) — ปรับตัวอักษร/ระยะสมดุล + zoom ตอนพิมพ์กันล้นหน้า
+ * - โซนเนื้อหาหลัก (.pwht-print-fill) ยืดตาม flex ~80% ความสูงที่เหลือ — ดันลายเซ็น/ฟุตเตอร์ลงล่างเมื่อเนื้อหาสั้น
+ */
+export function payrollWorkerWhtPrintCss(): string {
+  return withholdingCertificatePrintCss(`
+    @page { size: A4; margin: 9mm 10mm; }
+    html {
+      height: 100%;
+    }
+    body.payroll-wht-print {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-size: 10px;
+      line-height: 1.34;
+    }
+    body.payroll-wht-print .wht-print-page {
+      box-sizing: border-box;
+      min-height: 279mm;
+      display: flex;
+      flex-direction: column;
+    }
+    body.payroll-wht-print .copy-banner {
+      padding: 5px 9px;
+      margin-bottom: 6px;
+      font-size: 10px;
+      line-height: 1.32;
+      flex-shrink: 0;
+    }
+    body.payroll-wht-print .doc-top {
+      margin-bottom: 10px;
+      min-height: 72px;
+      flex-shrink: 0;
+    }
+    body.payroll-wht-print .doc-title-wrap {
+      padding: 0 120px;
+    }
+    body.payroll-wht-print h1 {
+      font-size: 13px;
+      margin: 0 0 3px;
+      line-height: 1.22;
+    }
+    body.payroll-wht-print .sub {
+      font-size: 9.5px;
+      margin: 0 0 2px;
+      line-height: 1.32;
+    }
+    body.payroll-wht-print .doc-meta {
+      font-size: 9.5px;
+      max-width: 210px;
+      padding-bottom: 4px;
+      line-height: 1.38;
+    }
+    body.payroll-wht-print .doc-meta div {
+      margin-bottom: 3px;
+    }
+    body.payroll-wht-print .pwht-print-fill {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      max-width: 100%;
+    }
+    body.payroll-wht-print .pwht-print-fill > .sec:first-child {
+      margin-top: 0;
+    }
+    body.payroll-wht-print .sec {
+      margin-top: 8px;
+      margin-bottom: 3px;
+      font-size: 10.5px;
+      padding-bottom: 1px;
+      line-height: 1.28;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    body.payroll-wht-print .sec.pwht-inline-sec {
+      margin-top: 0;
+      margin-bottom: 3px;
+      font-size: 10px;
+    }
+    body.payroll-wht-print .field {
+      margin: 2px 0;
+      font-size: 9.75px;
+      line-height: 1.36;
+    }
+    body.payroll-wht-print .muted {
+      font-size: 8.75px;
+      line-height: 1.32;
+    }
+    body.payroll-wht-print table.amounts {
+      margin: 3px 0 5px;
+      font-size: 9.5px;
+    }
+    body.payroll-wht-print table.amounts td {
+      padding: 2px 5px;
+      line-height: 1.32;
+    }
+    body.payroll-wht-print table.amounts tr {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    body.payroll-wht-print .checkbox-row {
+      margin: 2px 0;
+      font-size: 9.75px;
+      line-height: 1.32;
+    }
+    body.payroll-wht-print .certify-block {
+      margin-top: 6px;
+      font-size: 9.75px;
+      line-height: 1.4;
+    }
+    body.payroll-wht-print .sign-grid {
+      display: block;
+      width: 100%;
+      margin-top: 8px;
+      flex-shrink: 0;
+    }
+    body.payroll-wht-print .sign-cell {
+      display: block;
+      width: 100%;
+      padding-right: 0;
+      font-size: 9.75px;
+      line-height: 1.38;
+    }
+    body.payroll-wht-print .sign-img {
+      max-height: 36px;
+      max-width: 160px;
+      margin-top: 4px;
+    }
+    body.payroll-wht-print .pwht-after-sign {
+      margin-top: auto;
+      padding-top: 10px;
+      flex-shrink: 0;
+    }
+    body.payroll-wht-print .footer-sys {
+      margin-top: 6px;
+      flex-shrink: 0;
+      padding-top: 5px;
+      margin-bottom: 0;
+      font-size: 8.5px;
+      line-height: 1.38;
+    }
+    body.payroll-wht-print .draft-watermark {
+      margin-bottom: 4px;
+      font-size: 9.5px;
+      line-height: 1.32;
+      flex-shrink: 0;
+    }
+    body.payroll-wht-print .pwht-earn-ded-wrap {
+      display: table;
+      width: 100%;
+      margin-top: 5px;
+      table-layout: fixed;
+    }
+    body.payroll-wht-print .pwht-earn-ded-col {
+      display: table-cell;
+      width: 50%;
+      vertical-align: top;
+      padding-right: 7px;
+    }
+    body.payroll-wht-print .pwht-earn-ded-col:last-child {
+      padding-right: 0;
+      padding-left: 7px;
+    }
+    body.payroll-wht-print .pwht-tax-conds {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 12px;
+      row-gap: 3px;
+      margin-top: 5px;
+    }
+    body.payroll-wht-print .pwht-tax-conds .checkbox-row {
+      margin: 0;
+    }
+    @media print {
+      body.payroll-wht-print {
+        zoom: 96%;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  `);
+}
+
+export function withholdingCertificatePrintCss(extra = ''): string {
   return `
     @page { size: A4; margin: 10mm 12mm; }
     body {

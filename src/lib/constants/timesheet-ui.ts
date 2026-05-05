@@ -1,6 +1,7 @@
 import type { Assignment, POLine, PositionRate, Wave } from '@/lib/types';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
+import { addDaysToYmd } from '@/lib/ops/mobilization-final-clearance';
 
 /** ชั่วโมงทำงานต่อวันตามมาตรฐานสัญญาที่ใช้ใน Wave Board (ลงเวลาเท่านั้น — OT คิดแยกใน payroll / billing) */
 export const DEFAULT_CONTRACT_DAILY_HOURS = 12;
@@ -315,7 +316,39 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
   } else if (hasAssignEnd) {
     ceil = assignEnd;
   }
+
+  /**
+   * เพดาน endDate บนมอบหมายบางครั้งสั้นกว่าวันเริ่มปฏิบัติงานจริง — หลัง mobWorkingStartDate อย่าใช้ endDate เป็นตัวตัด
+   * (กันลูกจ้าง ACTIVE หลัง Mobilization «เริ่มวันทำงาน» หายจากกระดาน PO Active)
+   */
+  if (
+    !splitPriorAndNewCycleOnDoc &&
+    hasMobStart &&
+    hasAssignEnd &&
+    mobStart > assignEnd &&
+    d >= mobStart
+  ) {
+    ceil = hasMobEnd ? mobEnd : undefined;
+  }
+
   if (ceil !== undefined && d > ceil) return false;
 
   return true;
+}
+
+/**
+ * มีอย่างน้อยหนึ่งวันในเดือนปฏิทินที่อยู่ในหน้าต่าง mobilization สำหรับลงเวลา
+ * — ไม่แสดงแถวว่างในเดือนใหม่สำหรับคนที่จบงานแล้วรอ Mob รอบใหม่ (ยังไม่มี SB/W ในเดือนนั้น)
+ */
+export function assignmentHasAnyMobTimesheetDayInCalendarMonth(a: Assignment, yearMonth: string): boolean {
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) return false;
+  const [y, mo] = yearMonth.split('-').map(Number);
+  const lastD = new Date(y, mo, 0).getDate();
+  const monthEnd = `${yearMonth}-${String(lastD).padStart(2, '0')}`;
+  let d = `${yearMonth}-01`;
+  while (d <= monthEnd) {
+    if (isYmdWithinAssignmentMobTimesheetWindow(a, d)) return true;
+    d = addDaysToYmd(d, 1);
+  }
+  return false;
 }

@@ -2,13 +2,7 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import Link from 'next/link';
-import {
-  collection,
-  doc,
-  addDoc,
-  updateDoc,
-  getDocs,
-} from 'firebase/firestore';
+import { collection, doc, addDoc, getDocs } from 'firebase/firestore';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canEdit, canDelete } from '@/lib/permissions';
@@ -35,7 +29,7 @@ import {
 } from '@/components/ui/select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
-import { Plus, Pencil, Trash2, Loader2, Calendar, CheckCircle2 } from 'lucide-react';
+import { Plus, ChevronRight, Loader2, Calendar, CheckCircle2 } from 'lucide-react';
 import type {
   Assignment,
   MainContract,
@@ -55,8 +49,6 @@ import {
 } from '@/lib/commercial/position-rate-sell';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useToast } from '@/hooks/use-toast';
-import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-
 function AddLineBody({
   po,
   allPositions,
@@ -252,7 +244,6 @@ export function PoActiveBundleLinesPanel({
   const { currentUser } = useAppUser();
   const { toast } = useToast();
   const canEditPo = useMemo(() => canEdit(currentUser, 'customer_pos'), [currentUser]);
-  const canDeletePo = useMemo(() => canDelete(currentUser, 'customer_pos'), [currentUser]);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [selectedPoForAdd, setSelectedPoForAdd] = useState<PurchaseOrder | null>(null);
@@ -387,71 +378,15 @@ export function PoActiveBundleLinesPanel({
     }
   };
 
-  const handleSaveEditedLine = async () => {
-    if (!canEditPo || !firestore || !currentUser || !editDraft) return;
-    const qty = Math.max(1, Math.floor(Number(editDraft.quantity) || 1));
-    const lineRef = doc(firestore, 'purchase_orders', editDraft.poId, 'po_lines', editDraft.id);
-    setIsSavingLine(true);
-    try {
-      await updateDoc(lineRef, {
-        quantity: qty,
-        workLocation: (editDraft.workLocation || '').trim(),
-        startDate: editDraft.startDate,
-        endDate: editDraft.endDate,
-        status: editDraft.status,
-        updatedAt: Date.now(),
-      });
-      writeAuditLog(firestore, currentUser, {
-        actionType: 'UPDATE',
-        entityType: 'POLine',
-        entityId: editDraft.id,
-        sourceModule: 'commercial',
-        purchaseOrderId: editDraft.poId,
-        afterSummary: 'Updated PO line (bundle)',
-      });
-      toast({ title: 'บันทึกบรรทัดแล้ว' });
-      setIsEditOpen(false);
-      setEditDraft(null);
-    } catch (e) {
-      console.error(e);
-      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ' });
-    } finally {
-      setIsSavingLine(false);
-    }
-  };
-
-  const deleteLine = (line: POLine) => {
-    if (!firestore || !currentUser) return;
-    if (!canEditPo && !canDeletePo) {
-      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์' });
-      return;
-    }
-    if (
-      !confirm(
-        'ยืนยันการลบรายการนี้? รายการมอบหมายที่เชื่อมโยงอยู่จะยังคงอยู่แต่จะเสียการอ้างอิง',
-      )
-    ) {
-      return;
-    }
-    deleteDocumentNonBlocking(doc(firestore, 'purchase_orders', line.poId, 'po_lines', line.id));
-    writeAuditLog(firestore, currentUser, {
-      actionType: 'DELETE',
-      entityType: 'POLine',
-      entityId: line.id,
-      sourceModule: 'commercial',
-      purchaseOrderId: line.poId,
-      afterSummary: 'Deleted PO line (bundle)',
-    });
-  };
-
   return (
     <Card className="border-primary/20 overflow-hidden">
       <CardHeader className="border-b bg-muted/30">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle>บรรทัดโควต้า (จัดการที่ PO Active)</CardTitle>
+            <CardTitle>บรรทัดโควต้า (อ่านจาก Customer PO)</CardTitle>
             <CardDescription>
-              เพิ่ม / แก้ไข / ลบบรรทัดของทุก PO ในกลุ่มนี้ — มอบหมายได้จากปุ่ม Assign (ไม่ต้องสร้าง Wave)
+              จำนวนและตำแหน่งตามบรรทัดใน PO — แก้ที่หน้า Customer PO เท่านั้น · ปุ่มลูกศรดูรายชื่อที่มอบหมายในบรรทัดนี้ ·
+              ถ้ายังว่างใช้ Assign เพื่อเติมคน
             </CardDescription>
           </div>
           {canEditPo && bundlePos.length > 0 && (
@@ -527,12 +462,13 @@ export function PoActiveBundleLinesPanel({
                     (a) =>
                       a.poId === line.poId &&
                       a.poLineId === line.id &&
-                      assignmentCountsTowardQuota(a.deploymentStatus),
+                      assignmentCountsTowardQuota(a),
                   ).length ?? 0;
                 const vacant =
                   line.status === 'active' ? Math.max(0, line.quantity - assignedCount) : 0;
                 const q = encodeURIComponent(line.poId);
                 const assignHref = `/assignments?poId=${q}&poLineId=${encodeURIComponent(line.id)}&openDialog=1`;
+                const rosterHref = `/assignments?poId=${q}&poLineId=${encodeURIComponent(line.id)}`;
 
                 return (
                   <TableRow key={`${line.poId}-${line.id}`}>
@@ -578,36 +514,24 @@ export function PoActiveBundleLinesPanel({
                       </span>
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                      <div className="flex justify-end gap-1 flex-wrap">
-                        {line.status === 'active' && (
-                          <Button size="sm" variant="secondary" className="h-8 text-xs" asChild>
+                      <div className="flex justify-end items-center gap-1 flex-wrap">
+                        {line.status === 'active' && vacant > 0 && (
+                          <Button size="sm" variant="secondary" className="h-8 text-xs font-semibold" asChild>
                             <Link href={assignHref}>Assign</Link>
                           </Button>
                         )}
-                        {canEditPo && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            title="แก้ไข"
-                            onClick={() => {
-                              setEditDraft({ ...line });
-                              setIsEditOpen(true);
-                            }}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {(canEditPo || canDeletePo) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive"
-                            onClick={() => deleteLine(line)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 shrink-0"
+                          title="ดูรายการมอบหมายในบรรทัดนี้"
+                          asChild
+                        >
+                          <Link href={rosterHref}>
+                            <ChevronRight className="h-4 w-4" aria-hidden />
+                            <span className="sr-only">ดูผู้ถูกมอบหมายในบรรทัดนี้</span>
+                          </Link>
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -617,101 +541,6 @@ export function PoActiveBundleLinesPanel({
           </TableBody>
         </Table>
       </CardContent>
-
-      <Dialog
-        open={isEditOpen}
-        onOpenChange={(o) => {
-          setIsEditOpen(o);
-          if (!o) setEditDraft(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>แก้ไขบรรทัด PO</DialogTitle>
-            <DialogDescription>จำนวน สถานที่ วันที่ และสถานะบรรทัด</DialogDescription>
-          </DialogHeader>
-          {editDraft && (
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label className="font-bold">จำนวน (Quantity)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={editDraft.quantity}
-                  onChange={(e) =>
-                    setEditDraft({
-                      ...editDraft,
-                      quantity: Math.max(1, Number(e.target.value) || 1),
-                    })
-                  }
-                  className="h-11"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label className="font-bold">สถานที่ปฏิบัติงาน</Label>
-                <Input
-                  value={editDraft.workLocation || ''}
-                  onChange={(e) => setEditDraft({ ...editDraft, workLocation: e.target.value })}
-                  className="h-11"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label className="text-xs font-bold">วันเริ่ม</Label>
-                  <DatePickerThaiBE
-                    value={editDraft.startDate}
-                    onChange={(ms) => setEditDraft({ ...editDraft, startDate: ms })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label className="text-xs font-bold">วันสิ้นสุด</Label>
-                  <DatePickerThaiBE
-                    value={editDraft.endDate}
-                    onChange={(ms) => setEditDraft({ ...editDraft, endDate: ms })}
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label className="font-bold">สถานะบรรทัด</Label>
-                <Select
-                  value={editDraft.status}
-                  onValueChange={(v) =>
-                    setEditDraft({ ...editDraft, status: v as POLine['status'] })
-                  }
-                >
-                  <SelectTrigger className="h-11">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsEditOpen(false);
-                setEditDraft(null);
-              }}
-            >
-              ยกเลิก
-            </Button>
-            <Button
-              className="bg-primary font-bold"
-              onClick={() => void handleSaveEditedLine()}
-              disabled={isSavingLine || !editDraft}
-            >
-              {isSavingLine ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-              บันทึก
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </Card>
   );
 }

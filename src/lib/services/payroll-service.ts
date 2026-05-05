@@ -14,12 +14,14 @@ import {
   deleteField,
   deleteDoc,
   CollectionReference,
-  limit
+  limit,
+  type DocumentData,
 } from 'firebase/firestore';
 import { 
   PayrollBatch,
   PayrollBatchIncomeSegment,
   PayrollBatchLine,
+  HrPayrollLineAdjustments,
   PayrollPeriod,
   DailyTimesheet,
   User,
@@ -36,7 +38,7 @@ import {
   OfficePayrollLineHrAdjustments,
   OfficePayrollPitMode,
 } from '@/lib/types';
-import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { canApproveWorkerPayrollBatchAsManager, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
 import {
   assertPayrollPermission,
@@ -89,10 +91,12 @@ import {
   aggregateDailyTimesheetsPayrollChunk,
   mergePayrollTimesheetAggChunks,
 } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
+import { computeWorkDayPackagePayslipSplit } from '@/lib/payroll/work-day-payslip-split';
 import {
   CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
   fetchWorkerCashAdvancesPendingSalaryRecovery,
 } from '@/lib/payroll/cash-advance-recovery';
+import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 
 function round2Payroll(n: number): number {
   return Math.round(n * 100) / 100;
@@ -427,7 +431,7 @@ export class PayrollService {
     const asOf = period.endDate;
 
     for (const workerId in workerMap) {
-      const workerTs = workerMap[workerId];
+      const workerTs = normalizeTimesheetsForPayrollLine(workerMap[workerId]);
       
       // Snapshot Worker Payment Profile
       const ppQuery = query(
@@ -476,6 +480,7 @@ export class PayrollService {
         incomeSegments = payingPoChunks.map(({ poId, chunk }) => {
           const po = poById.get(poId);
           const cid = (po?.customerId || '').trim() || undefined;
+          const listForPo = byPo.get(poId) ?? [];
           return {
             purchaseOrderId: poId,
             customerId: cid,
@@ -484,6 +489,7 @@ export class PayrollService {
             grossAmount: round2Payroll(chunk.gross),
             eventBreakdown: { ...chunk.eventBreakdown },
             earningsBreakdown: { ...chunk.earningsBreakdown },
+            payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(listForPo, aggDeps),
           };
         });
       }
@@ -541,6 +547,7 @@ export class PayrollService {
               laborCostUsePositionDefault: wkLine.laborCostUsePositionDefault,
               laborCostCustomOnshore: wkLine.laborCostCustomOnshore,
               laborCostCustomOffshore: wkLine.laborCostCustomOffshore,
+              positionAllowanceDailyBaht: wkLine.positionAllowanceDailyBaht,
             },
             posLine ?? undefined,
             firstWm,
@@ -574,7 +581,9 @@ export class PayrollService {
         d8Snapshot: d8Line.snapshot,
         laborCostResolutionSnapshot,
         exportStatus: 'pending',
-        ...(incomeSegments ? { incomeSegments } : {}),
+        ...(incomeSegments
+          ? { incomeSegments }
+          : { payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(workerTs, aggDeps) }),
       };
 
       lines.push(line);
@@ -823,14 +832,19 @@ export class PayrollService {
   }
 
   /**
-   * ผู้จัดการ/HR: อนุมัติยอด + ส่งงานต่อบัญชีจัดจ่าย (HR_REVIEWED → FINANCE_PREPARED) หรือ
-   * กรณีไม่มีสิทธิ์ handoff: HR_REVIEWED → HR_APPROVED เท่านั้น
+   * ผู้จัดการ HR / ผู้จัดการปฏิบัติการ (+แอดมิน): อนุมัติจ่ายครั้งเดียว → คิวบัญชีรอจ่าย (HR_REVIEWED → FINANCE_PREPARED)
+   * ไม่มีขั้น HR_APPROVED + ปุ่มส่งบัญชีแยก — payroll officer ไม่เรียกเมธอดนี้ (ใช้ส่งขออนุมัติเท่านั้น)
    */
   async managerApprovePayoutAndNotifyAccounting(id: string, user: User) {
     if (!canApprovePayroll(user)) {
       throw new Error('Permission denied: approve payroll');
     }
     assertPayrollPermission(user, 'payroll_worker', 'approve');
+    if (!canApproveWorkerPayrollBatchAsManager(user)) {
+      throw new Error(
+        'อนุมัติจ่ายได้เฉพาะผู้จัดการ HR / ผู้จัดการปฏิบัติการหรือผู้ดูแลระบบ',
+      );
+    }
     const docRef = doc(this.getBatchCollection(), id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) throw new Error('Payroll batch not found');
@@ -838,27 +852,23 @@ export class PayrollService {
     if (st !== 'HR_REVIEWED') {
       throw new Error('อนุมัติยอดทำจ่ายได้เฉพาะงวดที่ฝ่ายเงินเดือนส่งขออนุมัติแล้ว (รอ — HR_REVIEWED)');
     }
-    if (canHandoffWorkerPayrollToAccounting(user)) {
-      await updateDoc(docRef, {
-        status: 'FINANCE_PREPARED',
-        d8LifecycleStatus: batchStatusToD8Lifecycle('FINANCE_PREPARED'),
-        hrApprovedBy: user.displayName,
-        hrApprovedAt: Date.now(),
-        financePreparedBy: user.displayName,
-        financePreparedAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      await writeAuditLog(this.db, user, {
-        actionType: 'APPROVE',
-        entityType: 'PayrollBatch',
-        entityId: id,
-        payrollBatchId: id,
-        sourceModule: 'hr',
-        afterSummary: 'Manager approved worker payout; handed off to finance (FINANCE_PREPARED)',
-      });
-      return;
-    }
-    await this.approveBatch(id, user);
+    await updateDoc(docRef, {
+      status: 'FINANCE_PREPARED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('FINANCE_PREPARED'),
+      hrApprovedBy: user.displayName,
+      hrApprovedAt: Date.now(),
+      financePreparedBy: user.displayName,
+      financePreparedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(this.db, user, {
+      actionType: 'APPROVE',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      payrollBatchId: id,
+      sourceModule: 'hr',
+      afterSummary: 'Manager approved worker payout; handed off to finance (FINANCE_PREPARED)',
+    });
   }
 
   /**
@@ -1037,6 +1047,388 @@ export class PayrollService {
       payrollBatchId: id,
       sourceModule: 'accounting',
       afterSummary: 'Payroll Batch Permanently Locked'
+    });
+  }
+
+  /**
+   * คำนวณใหม่เฉพาะคนงานหนึ่งคนจากใบงานที่ผูกไว้ (`sourceTimesheetIds`) — **คง** เบี้ยเลี้ยง/หักพิเศษ/ภงด. และยอดหักเบิกล่วงหน้าที่บันทึกแล้ว
+   * ไม่แตะบรรทัดคนอื่น — ใช้แทน Regenerate ทั้ง batch เมื่อแก้สูตร/ซ้ำวันแล้วไม่ต้องเสียการปรับยอดทุกคน
+   */
+  async recalculateWorkerPayrollLinePreserveHrAdjustments(
+    batchId: string,
+    workerId: string,
+    user: User,
+  ): Promise<void> {
+    assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    const lineId = `${batchId}_${workerId}`;
+    const batchRef = doc(this.getBatchCollection(), batchId);
+    const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', lineId);
+
+    const [batchSnap, lineSnap] = await Promise.all([getDoc(batchRef), getDoc(lineRef)]);
+    if (!batchSnap.exists()) throw new Error('ไม่พบ payroll batch');
+    if (!lineSnap.exists()) throw new Error('ไม่พบบรรทัดลูกจ้างในงวดนี้');
+
+    const batch = batchSnap.data() as PayrollBatch;
+    const line = lineSnap.data() as PayrollBatchLine;
+
+    const blocked = ['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
+    if ((blocked as readonly string[]).includes(batch.status)) {
+      throw new Error(
+        'คำนวณใหม่รายคนได้เฉพาะก่อนส่งต่อบัญชี (สถานะ GENERATED / HR_REVIEWED / HR_APPROVED)',
+      );
+    }
+
+    const periodSnap = await getDoc(doc(this.db, 'payroll_periods', batch.payrollPeriodId));
+    const periodFromLineEnd =
+      typeof line.periodEndDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(line.periodEndDate)
+        ? line.periodEndDate
+        : null;
+    if (!periodSnap.exists() && !periodFromLineEnd) {
+      throw new Error('ไม่พบรอบบัญชีและไม่มี periodEndDate บนบรรทัด');
+    }
+    const period = periodSnap.exists()
+      ? (periodSnap.data() as PayrollPeriod)
+      : ({
+          startDate: line.periodStartDate,
+          endDate: periodFromLineEnd!,
+        } as PayrollPeriod);
+
+    const rawIds = [...new Set((line.sourceTimesheetIds ?? []).filter(Boolean))];
+    if (rawIds.length === 0) throw new Error('ไม่มี sourceTimesheetIds — ไม่สามารถคำนวณใหม่ได้');
+
+    const loaded: DailyTimesheet[] = [];
+    for (const tid of rawIds) {
+      const s = await getDoc(doc(this.db, 'daily_timesheets', tid));
+      if (!s.exists()) continue;
+      loaded.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
+    }
+    if (loaded.length === 0) throw new Error('โหลดใบงานรายวันไม่ได้ — เอกสารอาจถูกลบ');
+
+    const workerTs = normalizeTimesheetsForPayrollLine(loaded);
+    for (const ts of workerTs) {
+      if (ts.workerId !== workerId) {
+        throw new Error('พบใบงานที่ไม่ใช่ของลูกจ้างรายนี้ใน sourceTimesheetIds');
+      }
+    }
+
+    const contractMap = new Map<string, MainContract>();
+    const contractIds = Array.from(new Set(workerTs.map((ts) => ts.contractId).filter(Boolean)));
+    await Promise.all(
+      contractIds.map(async (contractId) => {
+        const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
+        if (contractSnap.exists()) {
+          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        }
+      }),
+    );
+    const inheritIds = Array.from(
+      new Set(
+        Array.from(contractMap.values())
+          .filter((c) => (c.contractType || 'master') === 'supplemental')
+          .map((c) => c.inheritTermsFromContractId || c.parentContractId)
+          .filter(Boolean) as string[],
+      ),
+    );
+    await Promise.all(
+      inheritIds.map(async (contractId) => {
+        if (contractMap.has(contractId)) return;
+        const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
+        if (contractSnap.exists()) {
+          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        }
+      }),
+    );
+
+    const poLineById = new Map<string, unknown>();
+    const poIds = Array.from(new Set(workerTs.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
+        linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data()));
+      }),
+    );
+
+    const poById = new Map<string, PurchaseOrder>();
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
+        if (poSnap.exists()) {
+          poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
+        }
+      }),
+    );
+
+    const customerIdsForPo = [...new Set([...poById.values()].map((p) => p.customerId).filter(Boolean))];
+    const customerNameById = new Map<string, string>();
+    await Promise.all(
+      customerIdsForPo.map(async (cid) => {
+        const s = await getDoc(doc(this.db, 'customers', cid));
+        if (s.exists()) {
+          const c = s.data() as Customer;
+          customerNameById.set(cid, (c.name || '').trim() || cid);
+        }
+      }),
+    );
+
+    const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, workerTs);
+    const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+
+    const ppQuery = query(
+      collection(this.db, 'worker_payment_profiles'),
+      where('workerId', '==', workerId),
+      where('status', '==', 'ACTIVE'),
+      limit(1),
+    );
+    const ppSnap = await getDocs(ppQuery);
+    const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' as const } : ppSnap.docs[0].data();
+
+    const aggDeps = {
+      poLineById,
+      workerById,
+      posById,
+      contractMap,
+      workerGlobalLabor,
+    };
+
+    const byPo = new Map<string, DailyTimesheet[]>();
+    for (const ts of workerTs) {
+      const pid = (ts.purchaseOrderId || '').trim() || '_unknown_po';
+      if (!byPo.has(pid)) byPo.set(pid, []);
+      byPo.get(pid)!.push(ts);
+    }
+
+    const chunksOrdered: Array<{ poId: string; chunk: ReturnType<typeof aggregateDailyTimesheetsPayrollChunk> }> =
+      [];
+    for (const [poId, list] of byPo) {
+      chunksOrdered.push({ poId, chunk: aggregateDailyTimesheetsPayrollChunk(list, aggDeps) });
+    }
+
+    const mergedChunk = mergePayrollTimesheetAggChunks(chunksOrdered.map((c) => c.chunk));
+    const workerGross = mergedChunk.gross;
+    const eventBreakdown = mergedChunk.eventBreakdown;
+    const earningsBreakdown = mergedChunk.earningsBreakdown;
+    const usedPackageLaborCost = mergedChunk.usedPackageLaborCost;
+    const usedContractFallback = mergedChunk.usedContractFallback;
+    const anyOpecPositionLaborBase = mergedChunk.anyOpecPositionLaborBase;
+
+    const laborTermIds: string[] = [];
+    const conditionIds: string[] = [];
+
+    const payingPoChunks = chunksOrdered.filter((c) => c.chunk.gross > 0);
+    let incomeSegments: PayrollBatchIncomeSegment[] | undefined;
+    if (payingPoChunks.length > 1) {
+      incomeSegments = payingPoChunks.map(({ poId, chunk }) => {
+        const po = poById.get(poId);
+        const cid = (po?.customerId || '').trim() || undefined;
+        return {
+          purchaseOrderId: poId,
+          customerId: cid,
+          poCodeSnapshot: po?.poCode,
+          customerNameSnapshot: cid ? customerNameById.get(cid) : undefined,
+          grossAmount: round2Payroll(chunk.gross),
+          eventBreakdown: { ...chunk.eventBreakdown },
+          earningsBreakdown: { ...chunk.earningsBreakdown },
+        };
+      });
+    }
+
+    const rateParts: string[] = [
+      'registry: ฐานค่าแรงจากทะเบียน (ตำแหน่ง/กำหนดรายคน) — ไม่อาศัย labor cost term',
+    ];
+    if (anyOpecPositionLaborBase) {
+      rateParts.push('OPEC: worker + ฐานรายสัญญา/ตำแหน่ง/PO snapshot');
+    }
+    if (usedPackageLaborCost) {
+      rateParts.push(
+        'work_day: package (8h+OT; ตัวคูณ OT จาก PO snapshot + วันหยุด/ตัวคูณจาก HR)',
+      );
+    }
+    if (usedContractFallback) {
+      rateParts.push('event: ตัวคูณจาก HR Settings (standby/travel/ฯลฯ)');
+    }
+    const rateSummary = rateParts.join(' | ');
+
+    const policyRecords = await loadPayrollPoliciesFromFirestore(this.db);
+    const asOf = period.endDate;
+    const resolvedPolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'worker');
+    const d8Line = computeWorkerPayrollLineD8({
+      asOfDate: asOf,
+      policies: resolvedPolicies,
+      grossFromTimesheets: workerGross,
+      rate: {
+        summary: rateSummary,
+        conditionIds: [...conditionIds],
+        laborTermIds: [...laborTermIds],
+      },
+      earningsBreakdown,
+    });
+
+    const hrStored: HrPayrollLineAdjustments | null | undefined = line.hrLineAdjustments;
+    const allowanceItems = (hrStored?.allowanceItems ?? []).map((x) => ({
+      label: String(x.label || '').trim(),
+      amount: Math.max(0, Number(x.amount) || 0),
+    }));
+    const deductionItems = (hrStored?.deductionItems ?? []).map((x) => ({
+      label: String(x.label || '').trim(),
+      amount: Math.max(0, Number(x.amount) || 0),
+    }));
+
+    const allowanceTotal = allowanceItems.reduce((s, x) => s + x.amount, 0);
+    const effectiveGross = Math.max(0, workerGross + allowanceTotal);
+
+    const rateSnap = d8Line.snapshot.rate;
+    const d8WithAllowances = computeWorkerPayrollLineD8({
+      asOfDate: asOf,
+      policies: resolvedPolicies,
+      grossFromTimesheets: effectiveGross,
+      rate: rateSnap
+        ? {
+            summary: rateSnap.summary,
+            conditionIds: rateSnap.conditionIds,
+            laborTermIds: rateSnap.laborTermIds,
+          }
+        : { summary: 'hr_line_recalc' },
+      earningsBreakdown: {
+        ...earningsBreakdown,
+        hr_allowances: allowanceTotal,
+      },
+    });
+
+    const pitOv = hrStored?.pitWithholdingOverride;
+    const mr = hrStored?.pitWithholdingOverrideMaxMarginalRatePercent;
+    const mode: WorkerPitCalculationMode =
+      hrStored?.workerPitMode ??
+      (mr != null && Number.isFinite(mr)
+        ? 'auto_timesheet'
+        : pitOv != null && Number.isFinite(pitOv)
+          ? 'manual_baht'
+          : 'auto_timesheet');
+
+    const deductions: Record<string, number> = { ...d8WithAllowances.deductionsBreakdown };
+    if (mode === 'manual_baht') {
+      deductions.pit_withholding = Math.max(0, Number(pitOv) || 0);
+    } else if (mode === 'auto_salary_base') {
+      const base = Math.max(0, Number(hrStored?.pitAutoSalaryBaseBaht) || 0);
+      deductions.pit_withholding = pitFromMonthlyGross(base, resolvedPolicies.tax, resolvedPolicies.sso);
+    } else {
+      if (mr != null && Number.isFinite(mr)) {
+        const clamped = Math.max(0, Math.min(35, Number(mr)));
+        deductions.pit_withholding = pitFromMonthlyGrossWithMarginalCeiling(
+          effectiveGross,
+          resolvedPolicies.tax,
+          resolvedPolicies.sso,
+          clamped,
+        );
+      } else {
+        deductions.pit_withholding = pitFromMonthlyGross(
+          effectiveGross,
+          resolvedPolicies.tax,
+          resolvedPolicies.sso,
+        );
+      }
+    }
+    deductionItems.forEach((d, idx) => {
+      deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
+    });
+
+    const caRecover = Number(line.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
+    if (caRecover > 0) {
+      deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = Math.round(caRecover * 100) / 100;
+    }
+
+    const dedTotal = Object.values(deductions).reduce((a, b) => a + (Number(b) || 0), 0);
+    const netAmount = Math.round((effectiveGross - dedTotal) * 100) / 100;
+
+    const d8Snapshot: PayrollLineD8Snapshot = {
+      ...d8WithAllowances.snapshot,
+      gross: effectiveGross,
+      deductions: { ...deductions },
+      net: netAmount,
+      earningsComponents: {
+        ...(d8WithAllowances.snapshot.earningsComponents || {}),
+        hr_allowances: allowanceTotal,
+      },
+    };
+
+    const trimmedNotes = hrStored?.notes?.trim();
+    const storeMr =
+      mode === 'auto_timesheet' && mr != null && Number.isFinite(mr) && Math.max(0, Math.min(35, Number(mr))) < 35
+        ? Math.max(0, Math.min(35, Number(mr)))
+        : null;
+    const hrLineAdjustments: HrPayrollLineAdjustments = {
+      allowanceItems,
+      deductionItems,
+      workerPitMode: mode,
+      pitAutoSalaryBaseBaht:
+        mode === 'auto_salary_base' ? Math.max(0, Number(hrStored?.pitAutoSalaryBaseBaht) || 0) : null,
+      pitWithholdingOverride:
+        mode === 'manual_baht' ? (Number.isFinite(Number(pitOv)) ? Math.max(0, Number(pitOv)) : null) : null,
+      pitWithholdingOverrideMaxMarginalRatePercent: storeMr,
+      notes: trimmedNotes ? trimmedNotes : null,
+      updatedAt: Date.now(),
+      updatedBy: user.displayName || user.email || user.id,
+    };
+
+    const wkLine = workerById.get(workerId);
+    const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
+    const firstWm = timesheetToLaborWorkMode(workerTs[0]);
+    const snapRes = wkLine
+      ? resolveWorkerLaborBaseRate(
+          {
+            laborCostUsePositionDefault: wkLine.laborCostUsePositionDefault,
+            laborCostCustomOnshore: wkLine.laborCostCustomOnshore,
+            laborCostCustomOffshore: wkLine.laborCostCustomOffshore,
+            positionAllowanceDailyBaht: wkLine.positionAllowanceDailyBaht,
+          },
+          posLine ?? undefined,
+          firstWm,
+        )
+      : { rate: null as number | null, source: 'position_default' as const };
+    let laborCostResolutionSnapshot: LaborCostResolutionSnapshot | undefined;
+    if (wkLine?.currentPositionId && snapRes.rate != null && snapRes.rate > 0) {
+      laborCostResolutionSnapshot = buildLaborCostResolutionSnapshot({
+        positionId: wkLine.currentPositionId,
+        workMode: firstWm,
+        rate: snapRes.rate,
+        source: snapRes.source,
+      });
+    }
+
+    const patch: Record<string, unknown> = {
+      workerPaymentProfileSnapshot: ppSnapshot,
+      assignmentIds: Array.from(new Set(workerTs.map((ts) => ts.assignmentId))),
+      sourceTimesheetIds: workerTs.map((ts) => ts.id),
+      periodStartDate: period.startDate,
+      periodEndDate: period.endDate,
+      eventBreakdown,
+      earningsBreakdown,
+      grossAmount: workerGross,
+      deductionsBreakdown: deductions,
+      netAmount,
+      d8Snapshot,
+      hrLineAdjustments,
+      laborCostResolutionSnapshot: laborCostResolutionSnapshot ?? deleteField(),
+      updatedAt: Date.now(),
+    };
+    if (incomeSegments) {
+      patch.incomeSegments = incomeSegments;
+      patch.payslipWorkDaySplit = deleteField();
+    } else {
+      patch.incomeSegments = deleteField();
+      patch.payslipWorkDaySplit = computeWorkDayPackagePayslipSplit(workerTs, aggDeps);
+    }
+
+    await updateDoc(lineRef, patch as DocumentData);
+
+    await this.recalculateBatchTotalsFromLines(batchId, user);
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'PayrollBatchLine',
+      entityId: lineId,
+      payrollBatchId: batchId,
+      sourceModule: 'hr',
+      afterSummary: `Recalculate worker line from timesheets (preserve HR adjustments); gross ${workerGross.toFixed(2)}`,
     });
   }
 

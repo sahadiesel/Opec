@@ -33,6 +33,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff } from '@/lib/types';
+import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -97,7 +98,7 @@ export default function StoreDashboardPage() {
   const readyButStorePendingCount = useMemo(() => {
     if (!workers?.length) return 0;
     return workers.filter(
-      (w) => w.readinessStatus === 'READY' && w.storeEquipmentReadiness === 'pending',
+      (w) => isWorkerDispatchReady(w) && w.storeEquipmentReadiness === 'pending',
     ).length;
   }, [workers]);
 

@@ -3,7 +3,7 @@
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 
 const PAYSLIP_STYLES = `
-.payslip-root { font-family: "Sarabun", "Segoe UI", system-ui, sans-serif; color: #111827; font-size: 13px; line-height: 1.45; max-width: 640px; margin: 0 auto; background: #fff; }
+.payslip-root { font-family: "Sarabun", "Segoe UI", system-ui, sans-serif; color: #111827; font-size: 13px; line-height: 1.45; max-width: min(100%, 52rem); margin: 0 auto; background: #fff; }
 .payslip-root * { box-sizing: border-box; }
 .payslip-head { border-bottom: 3px solid #0f766e; padding-bottom: 14px; margin-bottom: 18px; }
 .payslip-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }

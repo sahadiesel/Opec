@@ -39,7 +39,7 @@ export default function PoActiveQuotaQueuePage() {
           <AlertDescription className="text-sm">
             แต่ละแถวคือ <strong className="font-semibold text-foreground">หนึ่งชุด PO Active</strong> (ลูกค้า + Onshore/Offshore)
             — โควต้ารวมจากทุก Customer PO ในชุดเดียวกัน มีปุ่มมอบหมายหนึ่งปุ่มต่อชุด ตารางย่อยแยกตาม PO แต่ละใบ
-            (สายสัญญาที่สัญญาหลักยัง active และยังมีช่องว่าง — ไม่บังคับสร้าง Wave)
+            (สายสัญญาที่สัญญาหลักยัง active — แสดงครบทุกชุดที่มีบรรทัดโควต้า แม้เต็มแล้ว เพื่อเข้าไปจัดการมอบหมายต่อ)
           </AlertDescription>
         </Alert>
 

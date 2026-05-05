@@ -31,6 +31,7 @@ import {
   ExceptionRequest,
   DailyTimesheet,
 } from '@/lib/types';
+import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit } from 'firebase/firestore';
 import { isFieldPositionMissingDefaultLabor } from '@/lib/payroll/timesheet-labor-base-cost';
@@ -177,9 +178,26 @@ export default function HRDashboardPage() {
         });
       });
 
+    // 5b. HR manual unready (documents OK but held off assignment list)
+    (workers || [])
+      .filter((w) => w.readinessManualHold && w.readinessStatus === 'READY')
+      .slice(0, 10)
+      .forEach((w) => {
+        tasks.push({
+          id: `worker-hold-${w.id}`,
+          type: 'Worker Readiness',
+          label: `${w.firstName} ${w.lastName}`,
+          sub: 'ปิดพร้อมชั่วคราว (สวิตช์ HR)',
+          status: 'PENDING',
+          link: `/workers/${w.id}?tab=info`,
+          priority: 'medium',
+          icon: AlertTriangle,
+        });
+      });
+
     // 6. Workers with expiry warning (assignable but close to expiry)
     (workers || [])
-      .filter((w) => w.readinessStatus === 'READY' && w.complianceAlertLevel === 'warning')
+      .filter((w) => isWorkerDispatchReady(w) && w.complianceAlertLevel === 'warning')
       .slice(0, 10)
       .forEach((w) => {
         tasks.push({
@@ -201,11 +219,11 @@ export default function HRDashboardPage() {
     if (!workers) return { total: 0, ready: 0, missingCert: 0, medExpired: 0, docExpired: 0, expiringSoon: 0, blocked: 0 };
     return {
       total: workers.length,
-      ready: workers.filter(w => w.readinessStatus === 'READY').length,
+      ready: workers.filter((w) => isWorkerDispatchReady(w)).length,
       missingCert: workers.filter(w => w.readinessStatus === 'MISSING_CERTIFICATE').length,
       medExpired: workers.filter(w => w.readinessStatus === 'MEDICAL_EXPIRED').length,
       docExpired: workers.filter(w => w.readinessStatus === 'DOCUMENT_EXPIRED').length,
-      expiringSoon: workers.filter(w => w.readinessStatus === 'READY' && w.complianceAlertLevel === 'warning').length,
+      expiringSoon: workers.filter((w) => isWorkerDispatchReady(w) && w.complianceAlertLevel === 'warning').length,
       blocked: workers.filter(w => w.readinessStatus === 'BLOCKED').length,
     };
   }, [workers]);

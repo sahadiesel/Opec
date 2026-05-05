@@ -10,7 +10,7 @@
     "free:9002": "npx --yes kill-port 9002",
     "genkit:dev": "genkit start -- tsx src/ai/dev.ts",
     "genkit:watch": "genkit start -- tsx --watch src/ai/dev.ts",
-    "build": "NODE_ENV=production next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
@@ -30,6 +30,8 @@
     "deploy:firestore": "npx firebase-tools deploy --only firestore",
     "deploy:storage": "npx firebase-tools deploy --only storage",
     "deploy:all": "npx firebase-tools deploy --only firestore,storage,apphosting:opecbackend --force",
+    "deploy:functions": "npx firebase-tools deploy --only functions",
+    "deploy:functions:indexes": "npx firebase-tools deploy --only firestore:indexes,functions",
     "deploy:rules-and-app": "npx firebase-tools deploy --only firestore:rules && npx firebase-tools deploy --only apphosting:opecbackend --force"
   },
   "dependencies": {

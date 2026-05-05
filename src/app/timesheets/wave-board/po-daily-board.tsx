@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CalendarDays, Save, Loader2, Zap, Lock, UserMinus, Pencil, Undo2 } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Lock, UserMinus, Pencil, Undo2, Sparkles } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,7 +13,7 @@ import {
   timestampToHtmlDateValue,
   formatYmdLocalThaiBE,
 } from '@/lib/date-thai';
-import { parseISO, isWithinInterval } from 'date-fns';
+import { parseISO } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import {
@@ -52,6 +52,7 @@ import {
   assignmentExcludedFromPoDailyBoardOnDate,
   isHtmlDateAfterMobLocationEnd,
   isAssignmentDraftAwaitingFirstMobOnly,
+  isYmdWithinAssignmentMobTimesheetWindow,
 } from '@/lib/constants/timesheet-ui';
 import { poTimesheetScopeId, isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import {
@@ -65,9 +66,14 @@ import {
 } from '@/components/ui/alert-dialog';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
-import { assignmentOverlapsYearMonth, formatThaiYearMonthLabel } from '@/lib/ops/timesheet-hub-po-month';
+import {
+  assignmentOverlapsYearMonthForPoDailyBoard,
+  formatThaiYearMonthLabel,
+} from '@/lib/ops/timesheet-hub-po-month';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import { syncPoActiveAutoDailyForAssignment } from '@/lib/timesheet/po-active-auto-daily-sync';
+import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -102,15 +108,6 @@ function isMonthReviewLocked(r: WaveMonthTimesheetReview | undefined | null): bo
   return (
     r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'
   );
-}
-
-/** วันที่ลงเวลา (yyyy-MM-dd) อยู่ในช่วง start–end ของมอบหมายหรือไม่ */
-function assignmentCoversHtmlDate(a: Pick<Assignment, 'startDate' | 'endDate'>, htmlDate: string): boolean {
-  const s = (a.startDate || '').slice(0, 10);
-  const e = (a.endDate || a.startDate || '').slice(0, 10);
-  const d = htmlDate.slice(0, 10);
-  if (!s || !d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-  return d >= s && d <= e;
 }
 
 /** ตรวจวันสิ้นสุดงานกับช่วงมอบหมาย — ใช้ทั้งจบงานครั้งแรกและแก้ไขวันที่ */
@@ -196,6 +193,9 @@ export function PoDailyBoardCard({
   const [cancelFinishTarget, setCancelFinishTarget] = useState<Assignment | null>(null);
   const [finishJobDateYmd, setFinishJobDateYmd] = useState('');
   const [demobSubmitting, setDemobSubmitting] = useState(false);
+  const [autoGenBusy, setAutoGenBusy] = useState(false);
+  const lastBangkokYmdRef = useRef(thailandTodayYmd());
+  const autoTodaySyncLockRef = useRef(false);
   const [reviewByWaveId, setReviewByWaveId] = useState<Map<string, WaveMonthTimesheetReview | null>>(
     () => new Map(),
   );
@@ -221,9 +221,9 @@ export function PoDailyBoardCard({
 
   const poMonthHref = useMemo(() => {
     if (isBundle && bundleKey) {
-      return `/timesheets/po-month?month=${encodeURIComponent(monthYm)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`;
+      return `/timesheets/wave-month?month=${encodeURIComponent(monthYm)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`;
     }
-    return `/timesheets/po-month?month=${encodeURIComponent(monthYm)}&highlightPo=${encodeURIComponent(canonicalPo.id)}`;
+    return `/timesheets/wave-month?month=${encodeURIComponent(monthYm)}&highlightPo=${encodeURIComponent(canonicalPo.id)}`;
   }, [isBundle, bundleKey, monthYm, canonicalPo.id]);
 
   useEffect(() => {
@@ -311,11 +311,10 @@ export function PoDailyBoardCard({
 
   const assignmentRows = useMemo(() => {
     if (!mobsForPo) return [] as Assignment[];
-    let target: Date | null = null;
     if (!rosterFilterYm || !/^\d{4}-\d{2}$/.test(rosterFilterYm)) {
       try {
-        target = parseISO(targetDate);
-        if (Number.isNaN(target.getTime())) return [];
+        const t = parseISO(targetDate);
+        if (Number.isNaN(t.getTime())) return [];
       } catch {
         return [];
       }
@@ -323,20 +322,19 @@ export function PoDailyBoardCard({
     const inScope = mobsForPo.filter((a) => {
       if (!assignmentIncludedInWaveTimesheetRoster(a)) return false;
       if (rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm)) {
-        return assignmentOverlapsYearMonth(a, rosterFilterYm);
+        return assignmentOverlapsYearMonthForPoDailyBoard(a, rosterFilterYm);
       }
       if (assignmentExcludedFromPoDailyBoardOnDate(a, targetDate)) return false;
-      try {
-        const start = parseISO(a.startDate);
-        const end = parseISO(a.endDate);
-        return target != null && isWithinInterval(target, { start, end });
-      } catch {
-        return false;
-      }
+      return isYmdWithinAssignmentMobTimesheetWindow(a, targetDate.slice(0, 10));
     });
     const roster = pickRosterLinePerWorker(inScope);
     return [...roster].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, workers));
   }, [mobsForPo, targetDate, workers, rosterFilterYm]);
+
+  const activeEligibleAssignmentIds = useMemo(
+    () => assignmentRows.filter((a) => isAssignmentEligibleForPoActiveAutoDaily(a)).map((a) => a.id),
+    [assignmentRows],
+  );
 
   const defaultHoursByAssignmentId = useMemo(() => {
     const m = new Map<string, number>();
@@ -409,6 +407,121 @@ export function PoDailyBoardCard({
     void loadRoster();
   }, [loadRoster]);
 
+  const runSilentTodayAutoSync = useCallback(async () => {
+    if (!firestore || !canEditTimesheets || anyMonthLocked || activeEligibleAssignmentIds.length === 0) return;
+    if (autoTodaySyncLockRef.current) return;
+    autoTodaySyncLockRef.current = true;
+    try {
+      for (const aid of activeEligibleAssignmentIds) {
+        try {
+          await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, { todayOnly: true });
+        } catch {
+          /* ไม่รบกวนผู้ใช้ — สิทธิ์/เครือข่ายรายแถว */
+        }
+      }
+      const todayYmd = thailandTodayYmd();
+      if (targetDate.slice(0, 10) === todayYmd) {
+        await loadRoster();
+      }
+    } finally {
+      autoTodaySyncLockRef.current = false;
+    }
+  }, [
+    firestore,
+    canEditTimesheets,
+    anyMonthLocked,
+    activeEligibleAssignmentIds,
+    currentUser,
+    targetDate,
+    loadRoster,
+  ]);
+
+  const handleAutoGenBackfill = useCallback(async () => {
+    if (!firestore || !canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่พร้อม', description: 'ไม่มีสิทธิ์แก้ไข timesheet หรือไม่ได้เชื่อมต่อ' });
+      return;
+    }
+    if (anyMonthLocked) {
+      toast({ variant: 'destructive', title: 'งวดล็อกแล้ว', description: 'ปลดล็อกงวดก่อนใช้ Auto gen' });
+      return;
+    }
+    if (activeEligibleAssignmentIds.length === 0) {
+      toast({
+        title: 'ไม่มีแถว ACTIVE',
+        description: 'ซิงก์อัตโนมัติเฉพาะคนที่สถานะปฏิบัติงานหน้างาน (on-site / ACTIVE) เท่านั้น',
+      });
+      return;
+    }
+    setAutoGenBusy(true);
+    let c = 0;
+    let u = 0;
+    let s = 0;
+    try {
+      for (const aid of activeEligibleAssignmentIds) {
+        const r = await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser);
+        c += r.created;
+        u += r.updated;
+        s += r.skipped;
+      }
+      toast({
+        title: 'Auto gen เสร็จแล้ว',
+        description: `สร้าง ${c} · อัปเดต ${u} · ข้าม ${s} (แถวแก้มือหรือล็อกการเงินจะไม่ถูกทับ)`,
+      });
+      await loadRoster();
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Auto gen ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setAutoGenBusy(false);
+    }
+  }, [
+    firestore,
+    canEditTimesheets,
+    anyMonthLocked,
+    activeEligibleAssignmentIds,
+    currentUser,
+    loadRoster,
+    toast,
+  ]);
+
+  useEffect(() => {
+    lastBangkokYmdRef.current = thailandTodayYmd();
+    void runSilentTodayAutoSync();
+  }, [runSilentTodayAutoSync]);
+
+  useEffect(() => {
+    if (!canEditTimesheets || !firestore) return;
+    const iv = window.setInterval(() => {
+      const y = thailandTodayYmd();
+      if (y !== lastBangkokYmdRef.current) {
+        lastBangkokYmdRef.current = y;
+        void runSilentTodayAutoSync();
+      }
+    }, 45_000);
+    return () => window.clearInterval(iv);
+  }, [canEditTimesheets, firestore, runSilentTodayAutoSync]);
+
+  useEffect(() => {
+    if (!canEditTimesheets || !firestore) return;
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      const y = thailandTodayYmd();
+      if (y !== lastBangkokYmdRef.current) {
+        lastBangkokYmdRef.current = y;
+        void runSilentTodayAutoSync();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+  }, [canEditTimesheets, firestore, runSilentTodayAutoSync]);
+
   const applyBulk = (field: keyof DailyTimesheet, value: unknown) => {
     if (anyMonthLocked) {
       toast({
@@ -423,7 +536,7 @@ export function PoDailyBoardCard({
     const service = new TimesheetService(firestore);
     for (const key of Object.keys(updated)) {
       const asgn = assignmentRows.find((x) => x.id === key);
-      if (!asgn || !assignmentCoversHtmlDate(asgn, targetDate)) continue;
+      if (!asgn || !isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10))) continue;
       if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
       const currentStatus = updated[key].status as DailyTimesheetStatus;
       if (service.canEdit(currentStatus)) {
@@ -453,7 +566,7 @@ export function PoDailyBoardCard({
       const payloads: Partial<DailyTimesheet>[] = [];
 
       for (const asgn of assignmentRows) {
-        if (!assignmentCoversHtmlDate(asgn, targetDate)) continue;
+        if (!isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10))) continue;
         const ts = rosterData[asgn.id];
         if (!ts?.workerId) continue;
         if (ts.status && service.isFinalized(ts.status as DailyTimesheetStatus)) continue;
@@ -743,19 +856,42 @@ export function PoDailyBoardCard({
                   onChange={onBoardDateChange}
                 />
               </div>
-              <div className="flex flex-col items-stretch gap-1 sm:items-end sm:min-w-[7rem]">
-                <Button
-                  size="sm"
-                  className="gap-1.5 bg-primary font-bold shadow-sm"
-                  onClick={() => void handleSaveDraft()}
-                  disabled={isSaving || !canEditTimesheets || anyMonthLocked}
-                >
-                  {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  บันทึก
-                </Button>
-                <span className="text-[10px] text-muted-foreground">
+              <div className="flex flex-col items-stretch gap-1 sm:items-end sm:min-w-[10rem]">
+                <div className="flex flex-wrap gap-1.5 justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 border-dashed bg-white/90 border-primary/25"
+                    onClick={() => void handleAutoGenBackfill()}
+                    disabled={
+                      autoGenBusy ||
+                      !canEditTimesheets ||
+                      anyMonthLocked ||
+                      activeEligibleAssignmentIds.length === 0
+                    }
+                    title="เติมช่วงวันที่ว่างให้คนที่ ACTIVE (on-site) — รายเก่าที่ยังไม่ถูกซิงก์; หลังเที่ยงคืนไทยระบบจะลงวันนี้ให้อัตโนมัติเมื่อมีผู้ใช้เปิดกระดาน"
+                  >
+                    {autoGenBusy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    )}
+                    Auto gen
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="gap-1.5 bg-primary font-bold shadow-sm"
+                    onClick={() => void handleSaveDraft()}
+                    disabled={isSaving || !canEditTimesheets || anyMonthLocked}
+                  >
+                    {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    บันทึก
+                  </Button>
+                </div>
+                <span className="text-[10px] text-muted-foreground text-right max-w-[14rem] leading-snug">
                   บันทึกเฉพาะแถวที่วันที่เลือกอยู่ในช่วงมอบหมาย
                   {rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm) ? ' (รายชื่อตามเดือนนี้)' : ''}
+                  · ACTIVE = ลง W อัตโนมัติถึงวันนี้ (ไทย); กดจบงานแล้วจะหยุดตั้งแต่วันถัดไป
                 </span>
               </div>
             </div>
@@ -798,25 +934,25 @@ export function PoDailyBoardCard({
                   const afterMobEnd = isHtmlDateAfterMobLocationEnd(asgn, targetDate);
                   const worker = workers?.find((x) => x.id === asgn.workerId);
                   const et = raw?.eventType ?? 'work_day';
-                  const row =
-                    afterMobEnd && !raw
-                      ? {
-                          eventType: 'work_day' as RateConditionEventType,
-                          normalHours: 0,
-                          ot15Hours: 0,
-                          remark: '',
-                          status: undefined as DailyTimesheetStatus | undefined,
-                        }
-                      : {
-                          ...raw,
-                          eventType: et,
-                          normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
-                          ot15Hours: raw?.ot15Hours ?? 0,
-                          remark: raw?.remark ?? '',
-                        };
+                  /** หลัง mobLocationEndDate — ไม่โชว์ชม./ประเภทจากใบงานใน Firestore (กัน sync เกินวันจบ) */
+                  const row = afterMobEnd
+                    ? {
+                        eventType: 'work_day' as RateConditionEventType,
+                        normalHours: 0,
+                        ot15Hours: 0,
+                        remark: '',
+                        status: undefined as DailyTimesheetStatus | undefined,
+                      }
+                    : {
+                        ...raw,
+                        eventType: et,
+                        normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
+                        ot15Hours: raw?.ot15Hours ?? 0,
+                        remark: raw?.remark ?? '',
+                      };
                   const tsService = new TimesheetService(firestore!);
                   const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
-                  const dateInAssignment = assignmentCoversHtmlDate(asgn, targetDate);
+                  const dateInAssignment = isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10));
                   const rowEditLocked =
                     isLocked || rowLocked || anyMonthLocked || !dateInAssignment || (afterMobEnd && !persisted);
                   const canFinishJob =
@@ -849,7 +985,7 @@ export function PoDailyBoardCard({
                             <span className="text-[9px] text-amber-800 dark:text-amber-200 mt-0.5">
                               วันที่เลือกอยู่นอกช่วงมอบหมาย — เปลี่ยนวันที่หรือรอถึงช่วงที่ทับ
                             </span>
-                          ) : afterMobEnd && !persisted ? (
+                          ) : afterMobEnd ? (
                             <span className="text-[9px] text-muted-foreground mt-0.5">
                               หลังวันจบงาน — ไม่สร้างลงเวลาอัตโนมัติ (ดูประวัติวันก่อนหน้าในตารางเดือน)
                             </span>
@@ -874,7 +1010,7 @@ export function PoDailyBoardCard({
                         </span>
                       </TableCell>
                       <TableCell className="w-[148px] max-w-[160px] align-top py-4 shrink-0">
-                        {afterMobEnd && !persisted ? (
+                        {afterMobEnd ? (
                           <span className="text-xs text-muted-foreground">—</span>
                         ) : (
                           <Select
@@ -912,7 +1048,7 @@ export function PoDailyBoardCard({
                         )}
                       </TableCell>
                       <TableCell>
-                        {afterMobEnd && !persisted ? (
+                        {afterMobEnd ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
@@ -938,8 +1074,8 @@ export function PoDailyBoardCard({
                             title={
                               !dateInAssignment
                                 ? 'วันนี้อยู่นอกช่วงมอบหมาย — ไม่บันทึกจากแถวนี้'
-                                : afterMobEnd && !persisted
-                                  ? 'หลังวันจบงาน — ไม่มีช่องลงเวลาอัตโนมัติ'
+                                : afterMobEnd
+                                  ? 'หลังวันจบงาน — ไม่แสดงลงเวลาหลังวันจบไซต์ที่บันทึกแล้ว'
                                   : persisted
                                     ? `บันทึกแล้ว · ${row.eventType}`
                                     : 'ยังไม่มีการบันทึก timesheet สำหรับวันนี้'
@@ -947,7 +1083,7 @@ export function PoDailyBoardCard({
                           >
                             {!dateInAssignment
                               ? '—'
-                              : afterMobEnd && !persisted
+                              : afterMobEnd
                                 ? '—'
                                 : waveBoardStatusCode(persisted, row.eventType)}
                           </span>

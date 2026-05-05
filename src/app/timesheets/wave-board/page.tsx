@@ -288,7 +288,7 @@ function WaveTimesheetBoardContent() {
               </>
             )}{' '}
             บันทึกร่าง DRAFT ที่นี่ ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
-            <Link href="/timesheets/po-month" className="text-primary font-semibold underline">
+            <Link href="/timesheets/wave-month" className="text-primary font-semibold underline">
               เอกสาร timesheet ราย PO+เดือน
             </Link>
             .
@@ -303,6 +303,7 @@ function WaveTimesheetBoardContent() {
             'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
             'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
             'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
+            'คนที่สถานะ ACTIVE (on-site): ระบบซิงก์วันทำงานอัตโนมัติถึงวันนี้ตามเวลาไทยเมื่อมีผู้เปิดกระดานหรือหลังเที่ยงคืน (แท็บเปิดอยู่); ปุ่ม Auto gen เติมช่วงข้อมูลเก่าที่ขาด — กดจบงานแล้วจะไม่ถูกซิงก์ต่อ',
           ]}
         />
 

@@ -15,7 +15,7 @@ export function countMobTimesheetSlotsForPoScope(
   let mobWaiting = 0;
   for (const a of assignments ?? []) {
     if (!poIdSet.has(a.poId)) continue;
-    if (!assignmentCountsTowardQuota(a.deploymentStatus)) continue;
+    if (!assignmentCountsTowardQuota(a)) continue;
     if (assignmentReadyForWaveTimesheet(a)) mobPassed++;
     else mobWaiting++;
   }

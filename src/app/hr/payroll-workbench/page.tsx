@@ -36,7 +36,7 @@ import {
   PayrollRunStatus,
 } from '@/lib/types';
 import { isHRStaff, canView } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -383,7 +383,7 @@ export default function HrPayrollWorkbenchPage() {
         yearMonth,
         label: `${name} · ${formatPayrollYearMonthEnAbbrev(yearMonth, yearMonth)}`,
         workers: wset.size,
-        href: `/timesheets/po-month?month=${encodeURIComponent(yearMonth)}&highlightPo=${encodeURIComponent(poId)}`,
+        href: `/timesheets/wave-month?month=${encodeURIComponent(yearMonth)}&highlightPo=${encodeURIComponent(poId)}`,
       });
     }
     poMonthRows.sort((a, b) => (a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : a.label.localeCompare(b.label, 'th')));
@@ -429,7 +429,19 @@ export default function HrPayrollWorkbenchPage() {
       });
     });
     (payrollBatches || [])
-      .filter((b) => (BATCH_INCOMPLETE as readonly string[]).includes(b.status))
+      .filter((b) => {
+        if (!(BATCH_INCOMPLETE as readonly string[]).includes(b.status)) return false;
+        if (
+          b.status === 'HR_REVIEWED' &&
+          currentUser &&
+          isPayrollOfficer(currentUser) &&
+          !isSystemAdmin(currentUser) &&
+          !isSimpleAdmin(currentUser)
+        ) {
+          return false;
+        }
+        return true;
+      })
       .slice(0, 8)
       .forEach((b) => {
         items.push({
@@ -502,6 +514,7 @@ export default function HrPayrollWorkbenchPage() {
     workers,
     periodTimesheets,
     waveMap,
+    currentUser,
   ]);
 
   const financeReady = useMemo(() => {
@@ -728,7 +741,7 @@ export default function HrPayrollWorkbenchPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="default" asChild>
-                  <Link href="/timesheets/po-month">
+                  <Link href="/timesheets/wave-month">
                     <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" /> งวด timesheet ราย PO+เดือน
                   </Link>
                 </Button>

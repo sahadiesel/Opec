@@ -690,13 +690,8 @@ function CustomerPOsPageContent() {
           </CardContent>
           <CardFooter className="pt-0 justify-end gap-2 flex-wrap">
             <Button variant="link" className="gap-2 text-primary font-bold" asChild>
-              <Link href="/po-active">
-                ไปยังรายการ PO Active <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button variant="link" className="gap-2 text-primary font-bold" asChild>
               <Link href="/po-active-quota-queue">
-                ไปยังคิวเติมโควต้า <ArrowRight className="h-4 w-4" />
+                ไปยังคิวเติมโควต้า (PO Active) <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
           </CardFooter>

@@ -4,13 +4,42 @@ import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 /**
- * ปล่อยโควต้าเฉพาะรายการปิดบัญชีแล้ว — DEMOBILIZED ยังนับเป็น "มอบหมายแล้ว" (รอรอบ Mob / DMOB)
- * เพื่อให้ตัวเลขชุด PO Active ตรงกับคนที่ยังผูก PO อยู่จริง
+ * ปล่อยโควต้าเมื่อปิดรายการ / ถอนมอบหมาย / จบงาน (Assignment)
+ * - Unassign: `unassignedAt` + มักเป็น deployment CLOSED — ไม่นับ
+ * - จบงานจากหน้า Assignment: deployment DEMOBILIZED — ไม่นับ (สอดคล้อง toast «ไม่นับโควต้า»)
+ * - รอบ Mob ใหม่หลังจบที่ Wave Board: deployment กลับเป็น DRAFT — ยังนับเป็นจองโควต้าต่อคนเดิม
+ * - CLOSED / DEMOBILIZED normalize (NFKC + trim + uppercase)
  */
-const DEPLOYMENT_RELEASED_FROM_QUOTA: DeploymentStatus[] = ['CLOSED'];
+const NORMALIZED_DEPLOYMENT_RELEASED_FROM_QUOTA = new Set(['CLOSED', 'DEMOBILIZED']);
 
-export function assignmentCountsTowardQuota(status: DeploymentStatus): boolean {
-  return !DEPLOYMENT_RELEASED_FROM_QUOTA.includes(status);
+function normalizeDeploymentToken(status: unknown): string {
+  if (status === undefined || status === null) return '';
+  try {
+    return String(status).trim().normalize('NFKC').toUpperCase();
+  } catch {
+    return String(status).trim().toUpperCase();
+  }
+}
+
+function deploymentStatusCountsTowardQuota(status: DeploymentStatus | string | undefined): boolean {
+  const normalized = normalizeDeploymentToken(status);
+  if (!normalized) return true;
+  return !NORMALIZED_DEPLOYMENT_RELEASED_FROM_QUOTA.has(normalized);
+}
+
+/** ส่งทั้งเอกสาร mobilization เพื่อให้ถอนมอบหมาย (`unassignedAt`) ปล่อยโควต้าได้ถูกต้อง */
+export function assignmentCountsTowardQuota(
+  assignmentOrStatus:
+    | DeploymentStatus
+    | Pick<Assignment, 'deploymentStatus' | 'unassignedAt'>
+    | undefined,
+): boolean {
+  if (assignmentOrStatus !== null && typeof assignmentOrStatus === 'object') {
+    const a = assignmentOrStatus as Pick<Assignment, 'deploymentStatus' | 'unassignedAt'>;
+    if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
+    return deploymentStatusCountsTowardQuota(a.deploymentStatus);
+  }
+  return deploymentStatusCountsTowardQuota(assignmentOrStatus as DeploymentStatus | undefined);
 }
 
 export interface PoLineFulfillmentRow {
@@ -41,7 +70,7 @@ export function buildPoFulfillmentByLine(
       (a) =>
         a.poId === poId &&
         a.poLineId === line.id &&
-        assignmentCountsTowardQuota(a.deploymentStatus)
+        assignmentCountsTowardQuota(a),
     ).length;
     const lineWaves = wv.filter(
       (w) =>

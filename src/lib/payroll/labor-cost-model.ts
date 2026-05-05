@@ -73,11 +73,19 @@ function customRateForMode(
 export function resolveWorkerLaborBaseRate(
   worker: Pick<
     Worker,
-    'laborCostUsePositionDefault' | 'laborCostCustomOnshore' | 'laborCostCustomOffshore'
+    | 'laborCostUsePositionDefault'
+    | 'laborCostCustomOnshore'
+    | 'laborCostCustomOffshore'
+    | 'positionAllowanceDailyBaht'
   >,
   position: Position | null | undefined,
   workMode: LaborCostWorkMode,
 ): { rate: number | null; source: LaborCostSourceKind } {
+  const allowanceAdd = (): number => {
+    const a = Number(worker.positionAllowanceDailyBaht);
+    return Number.isFinite(a) && a > 0 ? a : 0;
+  };
+
   const usePos =
     worker.laborCostUsePositionDefault !== false;
   if (!usePos) {
@@ -89,14 +97,16 @@ export function resolveWorkerLaborBaseRate(
     const fb = positionRateForMode(position, workMode);
     const fbN = fb !== undefined && fb !== null ? Number(fb) : NaN;
     if (Number.isFinite(fbN)) {
-      return { rate: fbN, source: 'position_default' };
+      const add = allowanceAdd();
+      return { rate: add > 0 ? fbN + add : fbN, source: 'position_default' };
     }
     return { rate: null, source: 'worker_custom' };
   }
   const p = positionRateForMode(position, workMode);
   const pn = p !== undefined && p !== null ? Number(p) : NaN;
   if (Number.isFinite(pn)) {
-    return { rate: pn, source: 'position_default' };
+    const add = allowanceAdd();
+    return { rate: add > 0 ? pn + add : pn, source: 'position_default' };
   }
   return { rate: null, source: 'position_default' };
 }
@@ -128,6 +138,7 @@ export function redactWorkerLaborFields<T extends Record<string, unknown>>(
     laborCostCustomOffshore: _c,
     laborCostMigratedFromMainContractId: _d,
     laborCostMigratedAt: _e,
+    positionAllowanceDailyBaht: _f,
     ...rest
   } = worker as T & {
     laborCostUsePositionDefault?: unknown;
@@ -135,6 +146,7 @@ export function redactWorkerLaborFields<T extends Record<string, unknown>>(
     laborCostCustomOffshore?: unknown;
     laborCostMigratedFromMainContractId?: unknown;
     laborCostMigratedAt?: unknown;
+    positionAllowanceDailyBaht?: unknown;
   };
   return rest as T;
 }

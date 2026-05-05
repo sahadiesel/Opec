@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
-import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment } from '@/lib/types';
+import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment, WorkerStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -69,6 +69,8 @@ import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/servic
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
+import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
+import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 
 type WorkerSortKey = 'name' | 'hours';
 type WorkerSortDir = 'asc' | 'desc';
@@ -96,6 +98,28 @@ function workerTotalHours(
 }
 
 /** ชั่วโมง: desc = มาก→น้อย, asc = น้อย→มาก — เทียบเท่ากันเรียงชื่อ A–Z */
+function jobStatusBadgeProps(status: WorkerStatus): {
+  variant: 'outline' | 'secondary' | 'default' | 'destructive';
+  className: string;
+} {
+  switch (status) {
+    case 'AVAILABLE':
+      return { variant: 'outline', className: 'text-green-600 border-green-200' };
+    case 'ON_SITE':
+      return { variant: 'default', className: 'bg-emerald-700 hover:bg-emerald-700 text-white' };
+    case 'ASSIGNED':
+      return { variant: 'secondary', className: 'bg-amber-100 text-amber-950 border border-amber-200' };
+    case 'ON_LEAVE':
+      return { variant: 'outline', className: 'text-blue-700 border-blue-200' };
+    case 'INACTIVE':
+      return { variant: 'secondary', className: 'text-muted-foreground' };
+    case 'BLACKLISTED':
+      return { variant: 'destructive', className: '' };
+    default:
+      return { variant: 'secondary', className: '' };
+  }
+}
+
 function compareWorkersByHours(
   a: Worker,
   b: Worker,
@@ -164,11 +188,11 @@ export default function WorkersPage() {
     return check('workers', 'delete');
   }, [currentUser, check]);
 
-  const assignmentsQuery = useMemoFirebase(() => {
-    if (!firestore || !firebaseUser || !canDeleteWorkerRecord) return null;
+  const mobilizationsQuery = useMemoFirebase(() => {
+    if (!firestore || !firebaseUser || !canViewWorkers) return null;
     return collection(firestore, 'mobilizations');
-  }, [firestore, firebaseUser, canDeleteWorkerRecord]);
-  const { data: allAssignments } = useCollection<Assignment>(assignmentsQuery as any);
+  }, [firestore, firebaseUser, canViewWorkers]);
+  const { data: allMobilizations } = useCollection<Assignment>(mobilizationsQuery as any);
 
   const workerHoursById = useMemo(() => {
     const bucket = new Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>();
@@ -214,6 +238,26 @@ export default function WorkersPage() {
       }
     });
   }, [firestore, workers, workerHoursById]);
+
+  useEffect(() => {
+    if (!firestore || !workers?.length || allMobilizations == null) return;
+    for (const w of workers) {
+      const derived = effectiveWorkerJobStatus(w, allMobilizations);
+      if (derived === w.workerStatus) continue;
+      const frozen: WorkerStatus[] = ['BLACKLISTED', 'INACTIVE', 'ON_LEAVE'];
+      if (frozen.includes(w.workerStatus)) continue;
+      const upgrades: Partial<Record<WorkerStatus, WorkerStatus[]>> = {
+        AVAILABLE: ['ASSIGNED', 'ON_SITE'],
+        ASSIGNED: ['ON_SITE'],
+      };
+      const allowed = upgrades[w.workerStatus];
+      if (!allowed?.includes(derived)) continue;
+      updateDocumentNonBlocking(doc(firestore, 'workers', w.id), {
+        workerStatus: derived,
+        updatedAt: Date.now(),
+      });
+    }
+  }, [firestore, workers, allMobilizations]);
 
   const [deleteTarget, setDeleteTarget] = useState<Worker | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
@@ -312,7 +356,7 @@ export default function WorkersPage() {
     if (!firestore || !currentUser || !deleteTarget) return;
     setIsDeletingWorker(true);
     try {
-      const check = await assertWorkerCanBeDeleted(firestore, deleteTarget, allAssignments ?? null);
+      const check = await assertWorkerCanBeDeleted(firestore, deleteTarget, allMobilizations ?? null);
       if (!check.ok) {
         toast({ variant: 'destructive', title: 'ลบไม่ได้', description: check.message });
         setIsDeletingWorker(false);
@@ -352,11 +396,17 @@ export default function WorkersPage() {
       kind === 'partial';
     return (
       <div className="flex flex-col gap-1 items-start max-w-[240px]">
-        {getReadinessBadge(worker.readinessStatus)}
+        {worker.readinessManualHold && worker.readinessStatus === 'READY' ? (
+          <Badge variant="outline" className="border-amber-600 text-amber-900 bg-amber-50 font-semibold">
+            <AlertCircle className="h-3 w-3 mr-1" /> UNREADY (HR)
+          </Badge>
+        ) : (
+          getReadinessBadge(worker.readinessStatus)
+        )}
         {showDrugHint && drugText ? (
           <span className="text-[10px] leading-snug text-destructive font-medium">{drugText}</span>
         ) : null}
-        {worker.readinessStatus === 'READY' && worker.storeEquipmentReadiness === 'pending' ? (
+        {isWorkerDispatchReady(worker) && worker.storeEquipmentReadiness === 'pending' ? (
           <Link
             href="/store/issue"
             className="text-[10px] leading-snug font-semibold text-amber-800 inline-flex items-center gap-1 hover:underline underline-offset-2"
@@ -579,6 +629,8 @@ export default function WorkersPage() {
                   {filteredWorkers?.map((worker) => {
                     const position = positions?.find(p => p.id === worker.currentPositionId);
                     const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
+                    const displayJobStatus = effectiveWorkerJobStatus(worker, allMobilizations ?? []);
+                    const jobBadge = jobStatusBadgeProps(displayJobStatus);
                     return (
                       <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group transition-colors" onClick={() => router.push(`/workers/${worker.id}`)}>
                         <TableCell className="py-4 pl-6">
@@ -598,8 +650,8 @@ export default function WorkersPage() {
                         </TableCell>
                         <TableCell onClick={(e) => e.stopPropagation()}>{renderReadinessCell(worker)}</TableCell>
                         <TableCell>
-                          <Badge variant={worker.workerStatus === 'AVAILABLE' ? 'outline' : 'secondary'} className={worker.workerStatus === 'AVAILABLE' ? 'text-green-600 border-green-200' : ''}>
-                            {worker.workerStatus.toUpperCase()}
+                          <Badge variant={jobBadge.variant} className={jobBadge.className}>
+                            {displayJobStatus.toUpperCase()}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">

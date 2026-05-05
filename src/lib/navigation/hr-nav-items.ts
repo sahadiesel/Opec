@@ -20,7 +20,6 @@ import {
   HeartPulse,
   FileQuestion,
   Banknote,
-  Columns2,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -65,17 +64,11 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
       { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
       {
         key: 'timesheets',
-        title: 'ลงเวลา (ศูนย์ตามชุด PO Active → Wave Board)',
+        title: 'ลงเวลารายวัน(Auto/Manual)',
         href: '/timesheets',
         icon: Grid3X3,
       },
       { key: 'timesheets', title: 'สรุปลงเวลารายเดือน (Wave)', href: '/timesheets/wave-month', icon: CalendarDays },
-      {
-        key: 'timesheets',
-        title: 'สรุปตามลูกค้า × Onshore/Offshore (เดือน)',
-        href: '/timesheets/customer-month',
-        icon: Columns2,
-      },
       { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (สร้างชุด · HR)', href: '/payroll/batches', icon: Coins },
       { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
     ],

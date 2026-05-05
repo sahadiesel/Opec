@@ -481,12 +481,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             <CardHeader className="pb-2">
               <CardTitle className="text-base">ยังไม่ผูก PO Active bundle</CardTitle>
               <CardDescription className="text-xs">
-                ใบนี้ยังไม่ผูกเอกสาร PO Active bundle — ลองบันทึกหัว PO หรือรีเฟรชหน้า / เปิดรายการ PO Active เพื่อให้ระบบซิงก์กลุ่มหลังอนุมัติ
+                ใบนี้ยังไม่ผูกเอกสาร PO Active bundle — ลองบันทึกหัว PO หรือรีเฟรชหน้า / เปิดคิวเติมโควต้าเพื่อให้ระบบซิงก์กลุ่มหลังอนุมัติ
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0 flex flex-wrap gap-2">
               <Button size="sm" variant="outline" asChild>
-                <Link href="/po-active">รายการ PO Active</Link>
+                <Link href="/po-active-quota-queue">คิวเติมโควต้า (PO Active)</Link>
               </Button>
             </CardContent>
           </Card>
@@ -646,12 +646,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 <CardHeader>
                   <CardTitle className="text-base">บรรทัดโควต้า (จัดการที่ PO Active)</CardTitle>
                   <CardDescription>
-                    หลังอนุมัติ PO เป็น Active และสัญญาหลักพร้อม — เพิ่ม แก้ไข และลบบรรทัดตำแหน่งได้จากเอกสาร PO Active ของลูกค้า (รวมหลายใบ PO ตามโหมด Onshore/Offshore) หน้านี้เหลือหัว PO และตารางมอบหมายด้านล่าง
+                    หลังอนุมัติ PO เป็น Active และสัญญาหลักพร้อม — จัดการโควต้าและมอบหมายได้จากคิวเติมโควต้า (PO Active) และเอกสารกลุ่มต่อลูกค้า หน้านี้เหลือหัว PO และตารางมอบหมายด้านล่าง
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2 pt-0">
                   <Button variant="outline" size="sm" asChild>
-                    <Link href="/po-active">รายการ PO Active</Link>
+                    <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -738,10 +738,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                         <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
                           <div className="max-w-xl mx-auto space-y-3 text-sm not-italic">
                             <p>
-                              ยังไม่มีการมอบหมายคนงานใน PO นี้ — ใช้ปุ่ม Assign / เอกสาร{' '}
-                              <Link className="text-primary underline font-medium" href="/po-active">PO Active</Link>{' '}
-                              หรือ{' '}
-                              <Link className="text-primary underline font-medium" href="/po-active-quota-queue">คิวเติมโควต้า</Link>{' '}
+                              ยังไม่มีการมอบหมายคนงานใน PO นี้ — ใช้ปุ่ม Assign หรือ{' '}
+                              <Link className="text-primary underline font-medium" href="/po-active-quota-queue">
+                                คิวเติมโควต้า (PO Active)
+                              </Link>{' '}
                               (ไม่ต้องสร้าง Wave)
                             </p>
                             <div className="flex flex-wrap justify-center gap-2 pt-1">
@@ -749,7 +749,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                                 <Link href={`/assignments?poId=${encodeURIComponent(id)}&openDialog=1`}>เปิด Assign</Link>
                               </Button>
                               <Button variant="outline" size="sm" asChild>
-                                <Link href="/po-active">เอกสาร PO Active</Link>
+                                <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
                               </Button>
                             </div>
                           </div>

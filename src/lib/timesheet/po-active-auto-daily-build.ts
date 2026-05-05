@@ -23,15 +23,15 @@ export function isAssignmentEligibleForPoActiveAutoDaily(a: Assignment): boolean
 }
 
 /**
- * ช่วงสร้างรายวัน: เริ่ม mobWorkingStartDate (หรือ startDate) ถึง min(เมื่อวาน Bangkok, จบงาน, endDate assignment, PO end)
- * — เที่ยงคืนของวันใหม่แล้วให้ลงเวลาวันก่อนหน้าได้ครบ (ไม่ปิดวันปัจจุบันแบบอัตโนมัติ)
+ * ช่วงสร้างรายวัน: เริ่ม mobWorkingStartDate (หรือ startDate) ถึง min(วันนี้ Bangkok, จบงาน, endDate assignment, PO end)
+ * — เมื่อเริ่มวันปฏิทินใหม่ที่ไทย (หลัง 00:00) ให้ซิงก์รายวันได้ถึงวันนี้ทันที (working day อัตโนมัติ)
  */
 export function computePoActiveAutoDailyRange(
   a: Assignment,
   po: Pick<PurchaseOrder, 'startDate' | 'endDate'>,
 ): { start: string; end: string } | null {
   const today = thailandTodayYmd();
-  const throughYmd = addDaysToYmd(today, -1);
+  const throughYmd = today;
   const startRaw = ((a.mobWorkingStartDate || a.startDate || '') as string).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw)) return null;
 

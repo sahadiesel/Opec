@@ -62,6 +62,13 @@ export const PayrollBatchSchema = z.object({
   updatedAt: z.number(),
 });
 
+const PayslipWorkDaySplitSchema = z.object({
+  normalDays: z.number(),
+  normalAmount: z.number(),
+  holidayDays: z.number(),
+  holidayAmount: z.number(),
+});
+
 const PayrollBatchIncomeSegmentSchema = z.object({
   purchaseOrderId: z.string().min(1),
   customerId: z.string().optional(),
@@ -70,6 +77,7 @@ const PayrollBatchIncomeSegmentSchema = z.object({
   grossAmount: z.number(),
   eventBreakdown: z.record(z.number()).default({}),
   earningsBreakdown: z.record(z.number()).default({}),
+  payslipWorkDaySplit: PayslipWorkDaySplitSchema.optional().nullable(),
 });
 
 /**
@@ -121,4 +129,5 @@ export const PayrollBatchLineSchema = z.object({
     .optional()
     .nullable(),
   incomeSegments: z.array(PayrollBatchIncomeSegmentSchema).optional(),
+  payslipWorkDaySplit: PayslipWorkDaySplitSchema.optional().nullable(),
 });

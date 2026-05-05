@@ -44,6 +44,22 @@ export function formatPoLocationMonthShellListLabel(
   return `TS·${poCode}·${yearMonth}·${locationLabel}`.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * ถ้ามีมากกว่าหนึ่งเอกสารใน Firestore สำหรับคู่ PO+เดือน+locationKey เดียวกัน (เช่น schema/id เก่า)
+ * ให้เหลือแถวเดียวโดยเลือก `updatedAt` ล่าสุด
+ */
+export function dedupePoLocationMonthShells(rows: PoLocationMonthTimesheet[]): PoLocationMonthTimesheet[] {
+  const m = new Map<string, PoLocationMonthTimesheet>();
+  for (const row of rows) {
+    const k = `${row.poId}|${row.yearMonth}|${row.locationKey}`;
+    const prev = m.get(k);
+    if (!prev || (row.updatedAt ?? 0) >= (prev.updatedAt ?? 0)) {
+      m.set(k, row);
+    }
+  }
+  return [...m.values()];
+}
+
 export function purchaseOrderOverlapsYearMonth(
   po: Pick<PurchaseOrder, 'startDate' | 'endDate'>,
   yearMonth: string,

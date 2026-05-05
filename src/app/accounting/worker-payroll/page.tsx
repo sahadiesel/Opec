@@ -119,7 +119,7 @@ export default function AccountingWorkerPayrollQueuePage() {
           <Info className="h-4 w-4" />
           <AlertTitle>แยกจากโฟลว์ HR</AlertTitle>
           <AlertDescription className="text-sm">
-            การสร้างชุดจ่าย / อนุมัติผู้จัดการ / ส่งต่อบัญชียังทำที่เมนู HR → งวดจ่ายลูกจ้าง — เมนูนี้สำหรับฝ่ายบัญชียืนยันจ่ายและสมุดรายรับรายจ่ายเท่านั้น
+            การสร้างชุดจ่ายและอนุมัติผู้จัดการทำที่เมนู HR → งวดจ่ายลูกจ้าง / ศูนย์อนุมัติ — เมื่ออนุมัติแล้วสถานะเป็น FINANCE_PREPARED โดยตรง — เมนูนี้สำหรับฝ่ายบัญชียืนยันจ่ายและสมุดรายรับรายจ่ายเท่านั้น
           </AlertDescription>
         </Alert>
 

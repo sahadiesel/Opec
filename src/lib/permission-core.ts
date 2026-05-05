@@ -500,6 +500,16 @@ export function canApproveOfficePayrollAsManager(user: User | null): boolean {
 }
 
 /**
+ * อนุมัติงวดจ่ายลูกจ้างหลังฝ่ายเงินเดือนส่งขออนุมัติ (GENERATED → HR_REVIEWED) —
+ * เฉพาะผู้จัดการ HR / ผู้จัดการปฏิบัติการ + แอดมิน — **ไม่รวม payroll_officer** (คิวอยู่ที่ศูนย์อนุมัติ/D6)
+ */
+export function canApproveWorkerPayrollBatchAsManager(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  return isHrManager(user) || isOperationManager(user);
+}
+
+/**
  * บันทึก "ลูกค้าอนุมัติ billing" บน draft tax invoice (แยกจาก payroll) —
  * ผู้จัดการปฏิบัติการ/HR/ขาย, บัญชี, แอดมิน; ไม่รวม payroll_officer เป็นค่าเริ่มต้น
  */

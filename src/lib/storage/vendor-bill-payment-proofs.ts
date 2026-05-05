@@ -37,3 +37,25 @@ export async function uploadVendorBillPaymentProofPdf(
   const downloadUrl = await getDownloadURL(r);
   return { downloadUrl, fileName: file.name, storagePath: path };
 }
+
+/** หลักฐาน PDF หัก ณ ที่จ่าย — แยก path จากสลิปโอนเงิน */
+export async function uploadVendorBillWhtProofPdf(
+  firebaseApp: FirebaseApp,
+  vendorBillId: string,
+  uploaderUid: string,
+  file: File,
+): Promise<{ downloadUrl: string; fileName: string; storagePath: string }> {
+  const err = validateVendorBillPaymentProofPdf(file);
+  if (err) throw new Error(err);
+  const id =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  const safeName = safeFileSegment(file.name.replace(/\.[^.]+$/, '') + '.pdf');
+  const path = `vendor_bill_wht_payment_proofs/${uploaderUid}/${vendorBillId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
+  const storage = getStorage(firebaseApp);
+  const r = ref(storage, path);
+  await uploadBytes(r, file, { contentType: 'application/pdf' });
+  const downloadUrl = await getDownloadURL(r);
+  return { downloadUrl, fileName: file.name, storagePath: path };
+}

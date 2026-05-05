@@ -16,7 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Plus, ChevronRight, FileText, Loader2, PackageSearch } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, query, orderBy, where, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -133,15 +133,6 @@ export default function StoreVendorBillsPage() {
     }
     setCreating(true);
     try {
-      const milestoneSnap = await getDocs(collection(firestore, 'purchases', selectedPurchaseId, 'payment_milestones'));
-      if (!milestoneSnap.empty) {
-        toast({
-          variant: 'destructive',
-          title: 'ใบสั่งซื้อนี้มีแผนงวดชำระ',
-          description: 'สร้างใบรับวางบิลทีละงวดจากหน้ารายละเอียดใบสั่งซื้อ (การซื้อ)',
-        });
-        return;
-      }
       const { code } = await generateNextDocumentCode(firestore, 'purchase_vendor_bill', {
         actor: currentUser.displayName,
       });

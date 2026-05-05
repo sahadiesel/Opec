@@ -35,6 +35,7 @@ import {
   OfficePayrollRun,
   Purchase,
 } from '@/lib/types';
+import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
@@ -236,7 +237,7 @@ export default function OperationsDashboardPage() {
       activeWaves: waves.filter(w => w.status === 'ACTIVE').length,
       pendingMob: assignments.filter(a => ['READY_TO_MOB', 'MOBILIZING'].includes(a.deploymentStatus)).length,
       changeReqs: pendingExceptions?.length || 0,
-      expiringSoon: (allWorkers || []).filter(w => w.readinessStatus === 'READY' && w.complianceAlertLevel === 'warning').length,
+      expiringSoon: (allWorkers || []).filter((w) => isWorkerDispatchReady(w) && w.complianceAlertLevel === 'warning').length,
       blocked: (allWorkers || []).filter(w => w.readinessStatus === 'BLOCKED').length,
     };
   }, [assignments, waves, pendingExceptions, allWorkers]);

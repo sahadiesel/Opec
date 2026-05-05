@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail } from 'lucide-react';
+import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail, CheckCircle2 } from 'lucide-react';
 import type { Worker, Position } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
@@ -26,6 +26,9 @@ interface WorkerInfoTabProps {
   currentPosition: Position | null;
   canViewLaborCost: boolean;
   canEditLaborCost: boolean;
+  /** แก้สวิตช์พร้อม/ไม่พร้อมที่หัวข้อมูลส่วนตัว */
+  canEditWorkerReadiness?: boolean;
+  onReadinessManualHoldChange?: (hold: boolean) => void;
   /** HR/ผู้มีสิทธิ์แก้ทะเบียน — แสดงปุ่มเปิดใช้บัญชี Firebase */
   canActivateWorkerLogin?: boolean;
   onActivateWorkerLogin?: () => void | Promise<void>;
@@ -54,6 +57,8 @@ export function WorkerInfoTab({
   currentPosition,
   canViewLaborCost,
   canEditLaborCost,
+  canEditWorkerReadiness = false,
+  onReadinessManualHoldChange,
   canActivateWorkerLogin = false,
   onActivateWorkerLogin,
   activateWorkerLoginBusy = false,
@@ -73,6 +78,7 @@ export function WorkerInfoTab({
           laborCostUsePositionDefault: wEff.laborCostUsePositionDefault,
           laborCostCustomOnshore: wEff.laborCostCustomOnshore,
           laborCostCustomOffshore: wEff.laborCostCustomOffshore,
+          positionAllowanceDailyBaht: wEff.positionAllowanceDailyBaht,
         },
         currentPosition,
         'onshore',
@@ -84,6 +90,7 @@ export function WorkerInfoTab({
           laborCostUsePositionDefault: wEff.laborCostUsePositionDefault,
           laborCostCustomOnshore: wEff.laborCostCustomOnshore,
           laborCostCustomOffshore: wEff.laborCostCustomOffshore,
+          positionAllowanceDailyBaht: wEff.positionAllowanceDailyBaht,
         },
         currentPosition,
         'offshore',
@@ -98,14 +105,67 @@ export function WorkerInfoTab({
     ? (editedWorker.laborCostCustomOffshore !== undefined ? editedWorker.laborCostCustomOffshore : worker.laborCostCustomOffshore)
     : worker.laborCostCustomOffshore;
 
+  const readinessOnHold = worker.readinessManualHold === true;
+  const readinessComplianceOk = worker.readinessStatus === 'READY';
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-6">
         <Card className="shadow-sm">
-          <CardHeader className="bg-primary/5 border-b">
-            <CardTitle className="text-lg flex items-center gap-2 text-primary">
-              <User className="h-5 w-5" /> ข้อมูลส่วนตัว (Personal Details)
-            </CardTitle>
+          <CardHeader className="bg-primary/5 border-b space-y-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <CardTitle className="text-lg flex items-center gap-2 text-primary">
+                <User className="h-5 w-5 shrink-0" /> ข้อมูลส่วนตัว (Personal Details)
+              </CardTitle>
+              <div className="flex flex-col items-stretch gap-2 sm:items-end shrink-0">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <span
+                    className={`text-xs font-semibold whitespace-nowrap ${readinessOnHold ? 'text-amber-900' : 'text-muted-foreground'}`}
+                  >
+                    ไม่พร้อม (Unready)
+                  </span>
+                  <Switch
+                    checked={!readinessOnHold}
+                    disabled={!canEditWorkerReadiness}
+                    title={canEditWorkerReadiness ? undefined : 'ไม่มีสิทธิ์แก้ไขสถานะพร้อม'}
+                    aria-label="สลับสถานะพร้อมปฏิบัติงาน"
+                    onCheckedChange={(on) => onReadinessManualHoldChange?.(!on)}
+                  />
+                  <span
+                    className={`text-xs font-semibold whitespace-nowrap ${!readinessOnHold ? 'text-green-700' : 'text-muted-foreground'}`}
+                  >
+                    พร้อม (Ready)
+                  </span>
+                </div>
+                <p className="text-[10px] text-muted-foreground max-w-[280px] sm:text-right leading-snug">
+                  ปิดสวิตช์เมื่อพักงานหรือมีเหตุชั่วคราว — ระบบจะไม่ให้เลือกในการมอบหมายจนกว่าจะเปิดใหม่ (ไม่เปลี่ยนผลตรวจเอกสาร)
+                </p>
+              </div>
+            </div>
+            {readinessComplianceOk && worker.complianceAlertLevel === 'warning' && (
+              <p className="text-xs flex items-center gap-1.5 text-orange-800 bg-orange-50 border border-orange-200 rounded-md px-2 py-1.5 w-fit">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                เอกสารใกล้หมดอายุ (~{worker.nearestExpiryInDays ?? '-'} วัน) — ยังพร้อมมอบหมายได้แต่ควรต่ออายุ
+              </p>
+            )}
+            {!readinessComplianceOk && (
+              <p className="text-xs flex items-center gap-1.5 text-destructive bg-destructive/5 border border-destructive/20 rounded-md px-2 py-1.5 w-fit">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                ความพร้อมจากเอกสาร: <strong className="font-mono">{worker.readinessStatus}</strong> — แก้ที่แท็บ Cert / Medical / Drug ตามเกณฑ์
+              </p>
+            )}
+            {readinessComplianceOk && !readinessOnHold && (
+              <p className="text-xs flex items-center gap-1.5 text-green-800 bg-green-50 border border-green-200 rounded-md px-2 py-1.5 w-fit">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                ผ่านเกณฑ์ความพร้อม — เปิดสวิตช์พร้อมแล้วจะเข้าคิวมอบหมายได้
+              </p>
+            )}
+            {readinessComplianceOk && readinessOnHold && (
+              <p className="text-xs flex items-center gap-1.5 text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 w-fit">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                ปิดการพร้อมโดย HR — เอกสารยังครบแต่ไม่แสดงในรายการมอบหมาย
+              </p>
+            )}
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -182,7 +242,7 @@ export function WorkerInfoTab({
                   </Button>
                 ) : null}
               </div>
-              <div className="space-y-2 md:col-span-3">
+              <div className={canViewLaborCost ? 'space-y-2 md:col-span-2' : 'space-y-2 md:col-span-3'}>
                 <Label className="font-bold">ตำแหน่งงานหลัก (Primary Position) *</Label>
                 <Select
                   disabled={!isEditing}
@@ -207,6 +267,35 @@ export function WorkerInfoTab({
                   </SelectContent>
                 </Select>
               </div>
+              {canViewLaborCost ? (
+                <div className="space-y-2 md:col-span-1">
+                  <Label className="font-bold">ค่าตำแหน่ง (บาท/วัน)</Label>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    className="font-mono"
+                    disabled={!isEditing || !canEditLaborCost}
+                    placeholder="เช่น 150"
+                    value={numIn(
+                      isEditing
+                        ? editedWorker.positionAllowanceDailyBaht !== undefined
+                          ? editedWorker.positionAllowanceDailyBaht
+                          : worker.positionAllowanceDailyBaht
+                        : worker.positionAllowanceDailyBaht,
+                    )}
+                    onChange={(e) =>
+                      setEditedWorker({
+                        ...editedWorker,
+                        positionAllowanceDailyBaht: parseThaiMoneyInput(e.target.value),
+                      })
+                    }
+                  />
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    ต้นทุนจ่ายเท่านั้น (ไม่ใช่ราคาขาย): หลังระบบคำนวณฐานต้นทุนต่อวันตามเดิมแล้ว จะบวกจำนวนนี้เพิ่ม · ว่างหรือ 0 = ไม่บวก ·
+                    ไม่บวกเมื่อใช้ override ฐานรายคน
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -315,9 +404,12 @@ export function WorkerInfoTab({
               )}
               <div className="text-xs text-muted-foreground space-y-1 border-t pt-3">
                 <p>
-                  ฐานที่ resolve สำหรับโหมด: ออนชอร์{' '}
+                  ตัวอย่างฐานต้นทุนต่อวัน (รวมค่าตำแหน่งแล้วเมื่อใช้ default ตำแหน่ง — ไม่ใช่ราคาขาย): ออนชอร์{' '}
                   {onshoreEff?.rate != null ? `฿${onshoreEff.rate} (${onshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'} · ออฟชอร์{' '}
                   {offshoreEff?.rate != null ? `฿${offshoreEff.rate} (${offshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'}
+                </p>
+                <p className="text-[11px]">
+                  Payroll ใช้เส้นทางต้นทุนเดิมต่อใบ timesheet — มีแค่การบวกค่าตำแหน่งรายคนท้ายขั้นตอนนั้น (ถ้ามีค่ามากกว่า 0 และไม่ใช้ override รายคน)
                 </p>
               </div>
             </CardContent>

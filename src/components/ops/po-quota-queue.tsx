@@ -83,7 +83,7 @@ export function buildPoActiveBundleRows(
     }
     const totals = aggregateActiveLineTotals(lineRows);
     if (variant !== 'timesheet-hub' && totals.required <= 0) continue;
-    if (variant === 'quota-queue' && totals.openSlots <= 0) continue;
+    /** คิว PO Active: แสดงทุกชุดที่มีโควต้า (แม้เต็มแล้ว) — ให้เข้าไปมอบหมาย/ดูสถานะได้ตาม flow สัญญา→PO→ชุดลูกค้า×โหมด */
 
     const head = pos[0];
     const modeFromKey =
@@ -99,7 +99,12 @@ export function buildPoActiveBundleRows(
   }
 
   if (variant === 'quota-queue') {
-    rows.sort((a, b) => b.totals.openSlots - a.totals.openSlots);
+    rows.sort((a, b) => {
+      const ca = (a.customerId || '').localeCompare(b.customerId || '');
+      if (ca !== 0) return ca;
+      if (b.totals.openSlots !== a.totals.openSlots) return b.totals.openSlots - a.totals.openSlots;
+      return a.bundleKey.localeCompare(b.bundleKey);
+    });
   } else {
     rows.sort((a, b) => {
       const ca = (a.customerId || '').localeCompare(b.customerId || '');
@@ -242,8 +247,10 @@ export function PoQuotaQueueTable({
     return (
       <div className="py-14 px-6 text-center text-muted-foreground text-sm">
         <ShoppingCart className="h-10 w-10 mx-auto mb-3 opacity-30" />
-        <p>{emptyMessage ?? 'ไม่มี PO Active ที่ต้องเติมโควต้าในขณะนี้'}</p>
-        <p className="text-xs mt-2">เมื่อ PO เป็น active สัญญาหลัก active และมีบรรทัดโควต้ายังไม่เต็ม จะแสดงที่นี่</p>
+        <p>{emptyMessage ?? 'ไม่มีชุด PO Active จากสัญญาที่ active ในขณะนี้'}</p>
+        <p className="text-xs mt-2">
+          ต้องมี Customer PO สายสัญญา status active + สัญญาหลัก active + มีบรรทัดโควต้า — แสดงทุกชุดลูกค้า×Onshore/Offshore แม้โควต้าเต็มแล้ว
+        </p>
       </div>
     );
   }
@@ -400,7 +407,7 @@ export function PoQuotaQueueCardShell({
               แต่ละแถวคือ <strong className="font-semibold text-foreground">หนึ่งชุด PO Active</strong> (ลูกค้า + Onshore/Offshore)
               — รวมโควต้าจากทุก Customer PO ในชุดเดียวกัน มีปุ่ม{' '}
               <strong className="font-semibold text-foreground">มอบหมาย (Assign)</strong> เดียวต่อชุด ตารางย่อยแสดงบรรทัดแยกตาม PO
-              (สายสัญญาที่สัญญาหลัก active และยังมีช่องว่าง — ไม่บังคับผ่าน Wave)
+              (สายสัญญาที่สัญญาหลัก active — แสดงครบทุกชุด ไม่ซ่อนเมื่อโควต้าเต็ม)
             </CardDescription>
           </div>
           <Badge variant="secondary" className="shrink-0 w-fit">

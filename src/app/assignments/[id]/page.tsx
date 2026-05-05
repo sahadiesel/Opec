@@ -74,6 +74,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { ExceptionRequestService } from '@/lib/services/exception-request-service';
 
+/** yyyy-mm-dd จากค่าที่เก็บใน Firestore / ฟอร์ม */
+function normalizeStoredYmd(v: unknown): string {
+  if (v == null) return '';
+  const s = String(v).trim();
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  return m ? m[1] : '';
+}
+
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -140,6 +148,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   }, [currentUser]);
 
   const [workLocationDraft, setWorkLocationDraft] = useState('');
+  const [poCeilingDraft, setPoCeilingDraft] = useState('');
   const [deploymentEditing, setDeploymentEditing] = useState(false);
   const [isSavingDeployment, setIsSavingDeployment] = useState(false);
   const [isDemobilizing, setIsDemobilizing] = useState(false);
@@ -149,7 +158,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     setWorkLocationDraft(
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
-  }, [assignment?.id, assignment?.workLocation, poLine?.id, poLine?.workLocation, deploymentEditing]);
+    setPoCeilingDraft(normalizeStoredYmd(assignment.endDate));
+  }, [
+    assignment?.id,
+    assignment?.workLocation,
+    assignment?.endDate,
+    poLine?.id,
+    poLine?.workLocation,
+    deploymentEditing,
+  ]);
 
   const isDeploymentReleased = useMemo(
     () =>
@@ -164,6 +181,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     setWorkLocationDraft(
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
+    setPoCeilingDraft(normalizeStoredYmd(assignment.endDate));
     setDeploymentEditing(true);
   };
 
@@ -173,17 +191,56 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     setWorkLocationDraft(
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
+    setPoCeilingDraft(normalizeStoredYmd(assignment.endDate));
   };
 
   const handleSaveDeploymentSummary = async () => {
     if (!firestore || !currentUser || !canEditAssignments || !assignment || isDeploymentReleased) return;
 
     const trimmed = workLocationDraft.trim();
+    const ceiling = normalizeStoredYmd(poCeilingDraft);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ceiling)) {
+      toast({
+        variant: 'destructive',
+        title: 'เพดาน PO ไม่ถูกต้อง',
+        description: 'เลือกวันสุดท้ายของมอบหมาย (yyyy-mm-dd)',
+      });
+      return;
+    }
+    const startYmd = normalizeStoredYmd(assignment.startDate);
+    if (startYmd && ceiling < startYmd) {
+      toast({
+        variant: 'destructive',
+        title: 'เพดานสั้นเกินไป',
+        description: `วันสุดท้ายต้องไม่ก่อนวันเริ่มมอบหมาย (${formatYmdLocalThaiBE(startYmd)})`,
+      });
+      return;
+    }
+    const workStartYmd = normalizeStoredYmd(assignment.mobWorkingStartDate);
+    if (workStartYmd && ceiling < workStartYmd) {
+      toast({
+        variant: 'destructive',
+        title: 'เพดานสั้นเกินไป',
+        description: `วันสุดท้ายต้องไม่ก่อนวันเริ่มงานที่ไซต์ (${formatYmdLocalThaiBE(workStartYmd)}) — ขั้นตอน Mob คงเดิม`,
+      });
+      return;
+    }
+    const mobEndYmd = normalizeStoredYmd(assignment.mobLocationEndDate);
+    if (mobEndYmd && ceiling < mobEndYmd) {
+      toast({
+        variant: 'destructive',
+        title: 'เพดานสั้นเกินไป',
+        description: `วันสุดท้ายต้องไม่ก่อนวันจบงานที่ไซต์ที่บันทึกแล้ว (${formatYmdLocalThaiBE(mobEndYmd)})`,
+      });
+      return;
+    }
+
     const mobD = doc(firestore, 'mobilizations', id);
     setIsSavingDeployment(true);
     try {
       const patch: Record<string, unknown> = {
         updatedAt: Date.now(),
+        endDate: ceiling,
       };
       if (trimmed) {
         patch.workLocation = trimmed;
@@ -195,7 +252,10 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         patch.workLocationUpdatedByUserId = deleteField();
       }
       await updateDoc(mobD, patch as DocumentData);
-      toast({ title: 'บันทึกข้อมูลแล้ว', description: 'สถานที่ปฏิบัติงานอัปเดตแล้ว (วัน Standby/ทำงานตั้งที่ Mobilization)' });
+      toast({
+        title: 'บันทึกข้อมูลแล้ว',
+        description: 'สถานที่และเพดาน PO อัปเดตแล้ว — วัน Standby / เริ่มทำงานยังตั้งที่ Mobilization ตามเดิม',
+      });
       setDeploymentEditing(false);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -396,7 +456,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 <div className="space-y-1">
                   <CardTitle className="text-lg">Deployment Summary</CardTitle>
                   <CardDescription className="text-xs">
-                    แก้สถานที่ปฏิบัติงานได้ที่นี่ — <strong>วัน Standby / เริ่มทำงาน</strong> ตั้งที่ Mobilization เท่านั้น
+                    แก้<strong>สถานที่</strong>และ<strong>เพดาน PO</strong> (วันสุดท้ายของมอบหมาย) ได้เมื่อกดแก้ไข —{' '}
+                    <strong>วัน Standby / เริ่มทำงาน</strong> ยังตั้งที่ Mobilization เท่านั้น
                     {poLine?.workLocation ? ` · ฐานจาก PO line: ${poLine.workLocation}` : ''}
                   </CardDescription>
                 </div>
@@ -486,7 +547,28 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         <Link href={`/mobilization/${id}`} className="font-semibold text-primary underline">
                           Mobilization
                         </Link>{' '}
-                        เท่านั้น
+                        เท่านั้น — ขั้นตอน Mob ไม่เปลี่ยน
+                      </div>
+                      <div>
+                        <Label className="text-xs uppercase text-muted-foreground">วันเริ่มมอบหมาย (อ่านอย่างเดียว)</Label>
+                        <p className="font-bold mt-0.5">
+                          {formatYmdLocalThaiBE(
+                            (assignment.assignedDate || assignment.startDate || '').trim() || '—',
+                          )}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">เพดาน PO (วันสุดท้ายของมอบหมาย)</Label>
+                        <Input
+                          type="date"
+                          className="font-mono w-full max-w-[220px]"
+                          value={poCeilingDraft}
+                          min={normalizeStoredYmd(assignment.startDate) || undefined}
+                          onChange={(e) => setPoCeilingDraft(e.target.value)}
+                        />
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          ขยายเมื่อ PO / สัญญาต่ออายุ — ต้องไม่ก่อนวันเริ่มมอบหมาย และไม่ก่อนวันเริ่มงานที่ไซต์ (ถ้ามี)
+                        </p>
                       </div>
                       <div className="col-span-2 space-y-2">
                         <Label className="text-xs uppercase text-muted-foreground flex items-center gap-1">

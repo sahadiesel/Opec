@@ -59,3 +59,19 @@
     @apply font-headline tracking-tight;
   }
 }
+
+@layer utilities {
+  /** ศูนย์อนุมัติ — badge “New Request” */
+  @keyframes approval-new-request-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.28;
+    }
+  }
+  .animate-approval-new-request {
+    animation: approval-new-request-blink 1s ease-in-out infinite;
+  }
+}

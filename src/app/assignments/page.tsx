@@ -100,7 +100,7 @@ import {
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import { buildPoActiveBundleRows, PoAssignmentBundleLandingPanel } from '@/components/ops/po-quota-queue';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
-import { dedupeAssignmentsByWorkerAndWave } from '@/lib/ops/assignment-roster';
+import { dedupeAssignmentsByWorkerAndWave, pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { MOBILIZATION_FULFILLMENT_SUBCOLLECTION } from '@/lib/store/mobilization-fulfillment';
 import {
   compareAssignmentWorkerNamesTh,
@@ -109,6 +109,7 @@ import {
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { isPoTimesheetScopeId, poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
+import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 
 /** คีย์รวมใน dialog: poId + lineId — ใช้ U+001F หลีกเลี่ยงชนกับรหัส PO ที่มี "###" */
 const DIALOG_LINE_KEY_SEP = '\u001f';
@@ -392,12 +393,18 @@ function AssignmentsPageContent() {
 
   const displayedAssignments = useMemo(() => {
     let list = assignments || [];
-    if (filterPoId) list = list.filter((a) => a.poId === filterPoId);
-    else if (filterPoActiveBundleId) {
+    if (filterPoId) {
+      list = list.filter((a) => a.poId === filterPoId);
+      if (filterPoLineId) list = list.filter((a) => a.poLineId === filterPoLineId);
+    } else if (filterPoActiveBundleId) {
       const idSet = new Set(contractActivePOsForScope.map((p) => p.id));
       list = list.filter((a) => idSet.has(a.poId));
+      /** ชุด PO Active เดียวกัน: คนเดียวกันไม่ซ้อนหลายแถวจากหลาย wave */
+      list = pickRosterLinePerWorker(list);
     }
-    list = dedupeAssignmentsByWorkerAndWave(list);
+    if (!filterPoActiveBundleId) {
+      list = dedupeAssignmentsByWorkerAndWave(list);
+    }
     list = sortAssignmentsByWorkerName(list, allWorkers ?? undefined);
     const q = assignmentTableSearch.trim().toLowerCase();
     if (!q) return list;
@@ -419,6 +426,7 @@ function AssignmentsPageContent() {
   }, [
     assignments,
     filterPoId,
+    filterPoLineId,
     filterPoActiveBundleId,
     contractActivePOsForScope,
     assignmentTableSearch,
@@ -436,7 +444,7 @@ function AssignmentsPageContent() {
   const availableWorkers = useMemo(() => {
     if (!effectiveDialogPoId || !effectiveDialogLineId || !targetPositionIdForDialogLine) return [];
     return (allWorkers || []).filter((w) => {
-      if (w.readinessStatus !== 'READY') return false;
+      if (!isWorkerDispatchReady(w)) return false;
       if ((w.currentPositionId || '').trim() !== targetPositionIdForDialogLine) return false;
       const { hasOverlap } = checkWorkerAssignmentOverlap(assignments || [], w.id);
       return !hasOverlap;
@@ -576,9 +584,10 @@ function AssignmentsPageContent() {
     }
 
     // 2. Readiness Compliance Check
-    if (worker.readinessStatus !== 'READY') {
-      const policyHint =
-        worker.readinessStatus === 'BLOCKED'
+    if (!isWorkerDispatchReady(worker)) {
+      const policyHint = worker.readinessManualHold
+        ? 'HR ปิดสถานะพร้อมชั่วคราว — เปิดสวิตช์ «พร้อม» ที่แท็บข้อมูลประวัติ (ข้อมูลส่วนตัว)'
+        : worker.readinessStatus === 'BLOCKED'
           ? `เอกสารเข้าเงื่อนไขบล็อกการ Assign (ใกล้หมดอายุใน ${worker.nearestExpiryInDays ?? '-'} วัน)`
           : `คนงานมีสถานะ ${worker.readinessStatus}`;
       toast({ 
@@ -617,7 +626,7 @@ function AssignmentsPageContent() {
       (a) =>
         a.poId === dialogPoIdResolved &&
         a.poLineId === effectivePoLineId &&
-        assignmentCountsTowardQuota(a.deploymentStatus),
+        assignmentCountsTowardQuota(a),
     ).length;
 
     const poLine = resolvePoLineForWave(allPOLines, dialogPoIdResolved, effectivePoLineId);

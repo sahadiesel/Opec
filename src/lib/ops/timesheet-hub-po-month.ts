@@ -1,4 +1,8 @@
 import type { Assignment, PoMonthTimesheetReview, PurchaseOrder, Wave } from '@/lib/types';
+import {
+  assignmentReadyForWaveTimesheet,
+  isYmdWithinAssignmentMobTimesheetWindow,
+} from '@/lib/constants/timesheet-ui';
 import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-bridge';
 
 /** รายเดือน yyyy-MM ที่ช่วงวันที่ [start,end] ครอบคลุม */
@@ -73,6 +77,46 @@ export function assignmentOverlapsYearMonth(
   const monthStart = `${yearMonth}-01`;
   const monthEnd = `${yearMonth}-${String(lastD).padStart(2, '0')}`;
   return s <= monthEnd && e >= monthStart;
+}
+
+/**
+ * กระดาน PO รายวัน (โหมดกรองเดือน): รวมกรณี mobilization เริ่มงานในเดือนนั้น แต่ช่วงมอบหมาย start–end ไม่ทับเดือน
+ * (เช่น endDate สั้นกว่าวันเริ่มงานจริง — ข้อมูลยัง sync ไม่ทัน)
+ */
+export function assignmentOverlapsYearMonthForPoDailyBoard(
+  a: Pick<
+    Assignment,
+    | 'startDate'
+    | 'endDate'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'mobLocationEndDate'
+    | 'assignedDate'
+    | 'unassignedAt'
+    | 'readinessStatus'
+    | 'deploymentStatus'
+    | 'mobReadyToTravelAt'
+  >,
+  yearMonth: string,
+): boolean {
+  if (assignmentOverlapsYearMonth(a, yearMonth)) return true;
+  if (!/^\d{4}-\d{2}$/.test(yearMonth)) return false;
+  if (!assignmentReadyForWaveTimesheet(a)) return false;
+  const [y, mo] = yearMonth.split('-').map(Number);
+  const lastD = new Date(y, mo, 0).getDate();
+  const monthStart = `${yearMonth}-01`;
+  const monthEnd = `${yearMonth}-${String(lastD).padStart(2, '0')}`;
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && mobStart >= monthStart && mobStart <= monthEnd) {
+    if (isYmdWithinAssignmentMobTimesheetWindow(a, mobStart)) return true;
+  }
+  const sb = (a.mobStandbyDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(sb) && sb >= monthStart && sb <= monthEnd) {
+    if (isYmdWithinAssignmentMobTimesheetWindow(a, sb)) return true;
+  }
+  if (isYmdWithinAssignmentMobTimesheetWindow(a, monthStart)) return true;
+  if (isYmdWithinAssignmentMobTimesheetWindow(a, monthEnd)) return true;
+  return false;
 }
 
 export function yearMonthsForPoWaves(waves: Wave[]): string[] {

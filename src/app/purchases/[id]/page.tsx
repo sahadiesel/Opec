@@ -21,12 +21,8 @@ import {
   PackageCheck,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, query, orderBy, where, deleteField } from 'firebase/firestore';
-import {
-  milestonesCoverTotal,
-  roundMoney2,
-  supplierWithholdingOnMilestone,
-} from '@/lib/ops/purchase-payment-milestones';
+import { doc, collection, updateDoc, deleteField } from 'firebase/firestore';
+import { roundMoney2, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
 import {
   buildPurchaseOrderPrintHtml,
   openStandardPrintWindow,
@@ -38,8 +34,6 @@ import {
   Purchase,
   PurchaseRequest,
   PurchaseLine,
-  PurchasePaymentMilestone,
-  PurchaseVendorBill,
   PurchaseStatus,
   User,
   Vendor,
@@ -129,8 +123,6 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const canEditPurchases = useMemo(() => canEdit(currentUser, 'purchases'), [currentUser]);
   const canDeletePurchases = useMemo(() => canDelete(currentUser, 'purchases'), [currentUser]);
   const canApprove = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
-  const canViewStoreInventory = useMemo(() => canView(currentUser, 'store_inventory'), [currentUser]);
-
   const purchaseRef = useMemoFirebase(
     () => (firestore && canViewPurchases ? doc(firestore, 'purchases', id) : null),
     [firestore, id, canViewPurchases]
@@ -153,24 +145,6 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     [firestore, id, canViewPurchases]
   );
   const { data: lines } = useCollection<PurchaseLine>(linesQuery as any);
-
-  const milestonesQuery = useMemoFirebase(
-    () =>
-      firestore && canViewPurchases
-        ? query(collection(firestore, 'purchases', id, 'payment_milestones'), orderBy('sequence', 'asc'))
-        : null,
-    [firestore, id, canViewPurchases]
-  );
-  const { data: paymentMilestones } = useCollection<PurchasePaymentMilestone>(milestonesQuery as any);
-
-  const vendorBillsQuery = useMemoFirebase(
-    () =>
-      firestore && canViewPurchases
-        ? query(collection(firestore, 'purchase_vendor_bills'), where('purchaseId', '==', id))
-        : null,
-    [firestore, id, canViewPurchases]
-  );
-  const { data: purchaseVendorBills } = useCollection<PurchaseVendorBill>(vendorBillsQuery as any);
 
   type CompanyDocumentProfile = {
     companyNameTh?: string;
@@ -319,15 +293,6 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       return false;
     }
     if (!purchase) return false;
-    const ms = paymentMilestones || [];
-    if (!ms.length || !milestonesCoverTotal(ms, purchase.totalAmount)) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังไม่มีแผนงวดชำระ',
-        description: 'กำหนดแผนงวดให้ครบยอดสุทธิ PO ก่อนดำเนินการ',
-      });
-      return false;
-    }
     return true;
   };
 
@@ -345,7 +310,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         approvalRequestedAt: deleteField(),
         approvalDecisionByUid: uid,
         approvalDecisionByName: name,
-        approvalComment: 'อนุมัติทางธุรกิจตาม PR ที่อนุมัติแล้ว — ยืนยันข้อมูล/แผนงวด PO',
+        approvalComment: 'อนุมัติทางธุรกิจตาม PR ที่อนุมัติแล้ว — ยืนยันรายละเอียด PO',
         updatedAt: Date.now(),
       });
       toast({ title: 'ยืนยัน PO แล้ว', description: 'สามารถพิมพ์และยืนยันส่งคู่ค้าได้' });
@@ -476,17 +441,10 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     lineMode === 'SERVICE' &&
     !!purchase.supplierWithholdingEnabled &&
     (Number(purchase.supplierWithholdingRatePercent) || 0) > 0 &&
-    (paymentMilestones?.length ?? 0) > 0;
+    (purchase.totalAmount ?? 0) > 0;
 
   const handlePrintSupplierWithholding = () => {
-    if (!purchase || !paymentMilestones?.length) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังไม่มีแผนงวด',
-        description: 'สร้างแผนงวดก่อนพิมพ์สรุปหัก ณ ที่จ่าย',
-      });
-      return;
-    }
+    if (!purchase) return;
     if (!purchase.supplierWithholdingEnabled) {
       toast({ variant: 'destructive', title: 'ยังไม่เปิดใช้หัก ณ ที่จ่าย' });
       return;
@@ -496,35 +454,29 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       toast({ variant: 'destructive', title: 'กำหนดอัตราหัก ณ ที่จ่ายก่อน' });
       return;
     }
-    const ms = [...paymentMilestones].sort((a, b) => a.sequence - b.sequence);
+    const grossPo = roundMoney2(Number(purchase.totalAmount) || 0);
+    const { wht, netPaid: net, baseBeforeVat } = supplierWithholdingOnMilestone(grossPo, rate, purchase);
     const w = window.open('', '_blank');
     if (!w) {
       toast({ variant: 'destructive', title: 'เปิดหน้าต่างพิมพ์ไม่ได้', description: 'อนุญาตป๊อปอัปในเบราว์เซอร์' });
       return;
     }
-    const rows = ms
-      .map((m) => {
-        const { wht, netPaid: net } = supplierWithholdingOnMilestone(m.amount, rate, purchase);
-        return `<tr>
-      <td style="padding:6px;border:1px solid #ccc">${m.sequence}</td>
-      <td style="padding:6px;border:1px solid #ccc">${escapeHtml(m.label)}</td>
-      <td style="padding:6px;border:1px solid #ccc;text-align:right">${m.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+    const rows = `<tr>
+      <td style="padding:6px;border:1px solid #ccc">1</td>
+      <td style="padding:6px;border:1px solid #ccc">${escapeHtml('ยอดตามใบสั่งซื้อ (รวมภาษีมูลค่าเพิ่ม)')}</td>
+      <td style="padding:6px;border:1px solid #ccc;text-align:right">${grossPo.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
       <td style="padding:6px;border:1px solid #ccc;text-align:right">${wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
       <td style="padding:6px;border:1px solid #ccc;text-align:right;font-weight:bold">${net.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
     </tr>`;
-      })
-      .join('');
-    const totalBase = roundMoney2(ms.reduce((s, m) => s + m.amount, 0));
-    const totalWht = roundMoney2(
-      ms.reduce((s, m) => s + supplierWithholdingOnMilestone(m.amount, rate, purchase).wht, 0)
-    );
-    const totalNet = roundMoney2(totalBase - totalWht);
+    const totalBase = grossPo;
+    const totalWht = wht;
+    const totalNet = net;
     const vn = vendor?.vendorName || '—';
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปหัก ณ ที่จ่าย ${escapeHtml(purchase.purchaseNo)}</title>
   <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:900px;margin:0 auto} table{border-collapse:collapse;width:100%;margin-top:16px} th{background:#f3f4f6;text-align:left;padding:8px;border:1px solid #ccc}</style></head><body>
   <h1>สรุปหัก ณ ที่จ่าย — ผู้รับเงิน (คู่ค้า)</h1>
   <p><strong>เลขที่ PO:</strong> ${escapeHtml(purchase.purchaseNo)} &nbsp;|&nbsp; <strong>คู่ค้า:</strong> ${escapeHtml(vn)}</p>
-  <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ส่วนยอดก่อนภาษีมูลค่าเพิ่มของแต่ละงวด ตามสัดส่วนยอด PO — สุทธิจ่าย = ยอดงวดรวม VAT − หัก ณ ที่จ่าย)</p>
+  <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ส่วนยอดก่อนภาษีมูลค่าเพิ่มตามสัดส่วนยอดสุทธิ PO — สุทธิจ่าย = ยอดรวม VAT − หัก ณ ที่จ่าย; การแบ่งงวดจ่ายทำในเอกสารรับวางบิล ไม่ระบุใน PO)</p>
   <p><strong>พิมพ์เมื่อ:</strong> ${escapeHtml(formatDateThaiBE(Date.now()))}</p>
   <table>
     <thead><tr>
@@ -626,7 +578,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* โซนซ้าย: รายการ + สรุปยอด + หัก ณ ที่จ่าย + แผนงวด */}
+          {/* โซนซ้าย: รายการ + สรุปยอด + หัก ณ ที่จ่าย (การชำระผ่านใบรับวางบิล — ไม่จัดการใน PO) */}
           <div className="order-2 lg:order-1 lg:col-span-7 space-y-6 w-full min-w-0">
             <Card className="shadow-md">
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
@@ -805,7 +757,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 <CardHeader className="border-b bg-slate-50/60">
                   <CardTitle className="text-base">หัก ณ ที่จ่าย (งานจ้างเหมา)</CardTitle>
                   <CardDescription>
-                    กำหนดได้เฉพาะตอนสถานะฉบับร่างหรือส่งกลับแก้ไข — ตารางแผนงวดแสดงฐาน / หัก / สุทธิจ่าย
+                    กำหนดได้เฉพาะตอนสถานะฉบับร่างหรือส่งกลับแก้ไข — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO (ไม่จัดงวดชำระใน PO)
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-4 space-y-4">
@@ -818,7 +770,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                         disabled={!fiscalTermsEditable}
                       />
                       <Label htmlFor="wht-enabled" className="cursor-pointer">
-                        ใช้การคำนวณหัก ณ ที่จ่ายตามงวด
+                        ใช้การคำนวณหัก ณ ที่จ่ายตามยอด PO (ประกอบจ่ายผ่านใบรับวางบิล)
                       </Label>
                     </div>
                     <div className="flex flex-wrap items-end gap-2">
@@ -844,7 +796,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <div className="hidden print:block text-sm">
                     {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
                       <p>
-                        <strong>หัก ณ ที่จ่าย:</strong> อัตรา {purchase.supplierWithholdingRatePercent}% (ฐาน = ส่วนก่อน VAT ของแต่ละงวด — สุทธิ = ยอดงวดรวม VAT − หัก ณ ที่จ่าย)
+                        <strong>หัก ณ ที่จ่าย:</strong> อัตรา {purchase.supplierWithholdingRatePercent}% (ฐาน = ส่วนก่อน VAT ตามสัดส่วนยอดสุทธิ PO — สุทธิ = ยอดรวม VAT − หัก ณ ที่จ่าย)
                       </p>
                     ) : (
                       <p>ไม่มีการหัก ณ ที่จ่ายตามการตั้งค่าเอกสารนี้</p>
@@ -852,29 +804,15 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   </div>
                   {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
                     <p className="text-xs text-muted-foreground print:hidden">
-                      บันทึกแล้ว: หัก {purchase.supplierWithholdingRatePercent}% จากฐานก่อน VAT ของแต่ละงวด (สัดส่วนตามยอด PO)
+                      บันทึกแล้ว: หัก {purchase.supplierWithholdingRatePercent}% จากฐานก่อน VAT ตามสัดส่วนยอดสุทธิ PO
                     </p>
                   ) : (
-                    <p className="text-xs text-muted-foreground print:hidden">ยังไม่เปิดใช้ — แผนงวดจะแสดงเฉพาะยอดงวด</p>
+                    <p className="text-xs text-muted-foreground print:hidden">ยังไม่เปิดใช้หัก ณ ที่จ่ายตามเอกสารนี้</p>
                   )}
                 </CardContent>
               </Card>
             )}
 
-            {firestore && purchaseRef ? (
-              <PurchasePaymentPlanCard
-                firestore={firestore}
-                purchaseId={id}
-                purchase={purchase}
-                purchaseRef={purchaseRef}
-                vendor={vendor}
-                milestones={paymentMilestones}
-                vendorBills={purchaseVendorBills}
-                canEdit={canEditPurchases}
-                canCreateVendorBill={canViewStoreInventory || canEditPurchases}
-                currentUser={currentUser}
-              />
-            ) : null}
           </div>
 
           {/* โซนขวา: สถานะ + ความเห็นผู้จัดการ (บน) · การดำเนินการ (ล่าง) */}
@@ -1026,7 +964,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                       </Button>
                     )}
                     <p className="text-xs text-white/80 leading-relaxed">
-                      หลังส่งคู่ค้าแล้วระบบจะตั้งสถานะ ISSUED — การปิด PO (COMPLETED) เมื่อแผนงวดชำระครบทุกงวด
+                      หลังส่งคู่ค้าแล้วระบบจะตั้งสถานะ ISSUED — การชำระและปิดยอดทำผ่านเอกสารรับวางบิลอ้างอิง PO และขั้นตอนบัญชี (ไม่จัดการใน PO)
                     </p>
                   </>
                 )}
@@ -1042,13 +980,13 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                       <p className="text-white/70">รายการเก่า: ยังไม่มีวันที่บันทึกการส่ง</p>
                     )}
                     <p className="text-xs text-white/80 pt-2 leading-relaxed">
-                      ปิด PO เมื่อจ่ายเงินครบ — ยืนยันงวดผ่านใบรับวางบิลและเมนูตรวจสอบรายจ่าย
+                      การชำระและบันทึกจ่ายผ่านใบรับวางบิล / บัญชี — ไม่ผูกสถานะชำระกับหน้า PO นี้
                     </p>
                   </div>
                 )}
                 {purchase.status === 'COMPLETED' && (
                   <p className="text-sm text-white/90">
-                    PO ปิดแล้ว (COMPLETED) — งวดชำระครบตามแผน หรือรายการเก่าก่อนมีแผนงวด
+                    PO ปิดแล้ว (COMPLETED) — บันทึกตามขั้นตอนบัญชีหรือข้อมูลย้อนหลัง
                   </p>
                 )}
               </CardContent>

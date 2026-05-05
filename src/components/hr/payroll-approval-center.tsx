@@ -9,13 +9,16 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
 import {
   canAccess,
-  canApprovePayroll,
   canGeneratePayslips,
-  canHandoffWorkerPayrollToAccounting,
   canView,
   isMatrixControlledRole,
 } from '@/lib/permissions';
-import { canApproveOfficePayrollAsManager, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import {
+  canApproveOfficePayrollAsManager,
+  canApproveWorkerPayrollBatchAsManager,
+  isPayrollOfficer,
+  isSystemAdmin,
+} from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import type {
@@ -71,6 +74,7 @@ import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile'
 import { cn } from '@/lib/utils';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
+import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 
 /** รายการใน D6 รวมงวดย้อนหลังเพื่อเปิดสลิป */
 const WORKER_D6_STATUSES = new Set([
@@ -144,10 +148,8 @@ export function PayrollApprovalCenterD6({
     : canView(currentUser, 'worker_payroll');
   const canOffice = canView(currentUser, 'office_payroll');
 
-  const canWorkerApprove = payroll('payroll_worker', 'approve');
-  const canApproveWorkerFlow = useMatrixGuards
-    ? canApprovePayroll(currentUser)
-    : canApprovePayroll(currentUser) && canWorkerApprove;
+  /** อนุมัติ batch ลูกจ้างหลัง HR_REVIEWED — เฉพาะผู้จัดการ (ไม่ใช่ payroll_officer) */
+  const canManagerApproveWorkerBatch = canApproveWorkerPayrollBatchAsManager(currentUser);
   const canWorkerEditBatch = payroll('payroll_worker', 'edit_batch');
   const canOfficeApprove = payroll('payroll_office', 'approve');
   const canOfficeEdit = payroll('payroll_office', 'edit') || payroll('payroll_office', 'submit');
@@ -189,7 +191,12 @@ export function PayrollApprovalCenterD6({
   }, [officeStaff]);
 
   const workerBatches = useMemo(() => {
-    const list = (allBatches || []).filter((b) => WORKER_D6_STATUSES.has(b.status));
+    let list = (allBatches || []).filter((b) => WORKER_D6_STATUSES.has(b.status));
+    const officerOnly =
+      isPayrollOfficer(currentUser) && !isSystemAdmin(currentUser) && !isSimpleAdmin(currentUser);
+    if (officerOnly) {
+      list = list.filter((b) => b.status !== 'HR_REVIEWED');
+    }
     const rank = (s: string) => (s === 'HR_REVIEWED' ? 0 : s === 'GENERATED' ? 1 : 2);
     list.sort((a, b) => {
       const d = rank(a.status) - rank(b.status);
@@ -197,7 +204,7 @@ export function PayrollApprovalCenterD6({
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
     return list.slice(0, 60);
-  }, [allBatches]);
+  }, [allBatches, currentUser]);
 
   const officeRuns = useMemo(() => {
     const list = (allRuns || []).filter((r) => OFFICE_MANAGER_QUEUE_STATUSES.has(r.status));
@@ -321,6 +328,27 @@ export function PayrollApprovalCenterD6({
     return validateOfficePayrollRun(selectedRun, officeLines, staffById);
   }, [selectedRun, officeLines, staffById]);
 
+  /** แสดงในตารางสลิปเท่านั้น — เรียงชื่อ A–Z */
+  const workerLinesSortedForSlips = useMemo(() => {
+    if (!workerLines?.length) return null;
+    return [...workerLines].sort((a, b) =>
+      (a.workerNameSnapshot ?? '').localeCompare(b.workerNameSnapshot ?? '', undefined, {
+        sensitivity: 'base',
+        numeric: true,
+      })
+    );
+  }, [workerLines]);
+
+  const officeLinesSortedForSlips = useMemo(() => {
+    if (!officeLines?.length) return null;
+    return [...officeLines].sort((a, b) =>
+      (a.staffName ?? '').localeCompare(b.staffName ?? '', undefined, {
+        sensitivity: 'base',
+        numeric: true,
+      })
+    );
+  }, [officeLines]);
+
   const workerBlocking = hasBlockingRed(workerChecks);
   const officeBlocking = hasBlockingRed(officeChecks);
 
@@ -345,17 +373,14 @@ export function PayrollApprovalCenterD6({
   };
 
   const handleManagerApprovePayout = async () => {
-    if (!firestore || !selectedBatch || workerBlocking || !canApproveWorkerFlow) return;
+    if (!firestore || !selectedBatch || workerBlocking || !canManagerApproveWorkerBatch) return;
     setBusy(true);
     try {
       const svc = new PayrollService(firestore);
-      const beforeHandoff = canHandoffWorkerPayrollToAccounting(currentUser);
       await svc.managerApprovePayoutAndNotifyAccounting(selectedBatch.id, currentUser);
       toast({
-        title: beforeHandoff ? 'อนุมัติและส่งบัญชีแล้ว' : 'อนุมัติแล้ว (รอส่งบัญชี)',
-        description: beforeHandoff
-          ? `Batch ${selectedBatch.id} → FINANCE_PREPARED (ฝ่ายบัญชีทำจ่ายต่อไป)`
-          : `Batch ${selectedBatch.id} → HR_APPROVED ให้ฝ่ายที่มีสิทธิ์กด "ส่งต่อบัญชี"`,
+        title: 'อนุมัติจ่ายเงินแล้ว',
+        description: `Batch ${selectedBatch.id} → FINANCE_PREPARED (คิวบัญชีรอจ่าย — ไม่มีขั้นส่งบัญชีแยก)`,
       });
       setWorkerLines(null);
       await loadWorkerLines(selectedBatch.id);
@@ -377,22 +402,6 @@ export function PayrollApprovalCenterD6({
       await loadWorkerLines(selectedBatch.id);
     } catch (e) {
       toast({ variant: 'destructive', title: 'ส่งกลับไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleWorkerHandoff = async () => {
-    if (!firestore || !selectedBatch || !canHandoffWorkerPayrollToAccounting(currentUser)) return;
-    setBusy(true);
-    try {
-      const svc = new PayrollService(firestore);
-      await svc.financePrepareBatch(selectedBatch.id, currentUser);
-      toast({ title: 'ส่งต่อบัญชี', description: 'สถานะ → FINANCE_PREPARED' });
-      setWorkerLines(null);
-      await loadWorkerLines(selectedBatch.id);
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'ส่งต่อไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -474,9 +483,11 @@ export function PayrollApprovalCenterD6({
           <h1 className="text-3xl font-bold tracking-tight text-primary">ศูนย์อนุมัติ Payroll (D6)</h1>
         </div>
         <p className="text-muted-foreground text-lg">
-          Flow ลูกจ้าง: ฝ่ายเงินเดือนกดส่งขออนุมัติ (GENERATED → รอ) จากนั้นผู้จัดการ/HR
-          อนุมัติยอดและส่งบัญชีทำจ่าย (HR_REVIEWED → FINANCE_PREPARED) — งวดที่อนุมัติแล้วแก้ตรงไม่ได้ ต้องใช้ขั้นตอน
-          correction
+          Flow ลูกจ้าง: ฝ่ายเงินเดือนกดส่งขออนุมัติ → สถานะ{' '}
+          <strong className="text-foreground">รอผู้จัดการอนุมัติ</strong> (รหัส HR_REVIEWED)
+          จากนั้น <strong className="text-foreground">ผู้จัดการ HR / ผู้จัดการปฏิบัติการ</strong> กด{' '}
+          <strong className="text-foreground">อนุมัติจ่ายเงิน</strong> ครั้งเดียว → <span className="font-mono">FINANCE_PREPARED</span> (คิวบัญชีรอจ่าย) — ไม่มีขั้น
+          HR_APPROVED + ส่งบัญชีแยก หลังถึงบัญชีแล้วแก้ตรงไม่ได้ ต้องใช้ขั้นตอน correction
         </p>
       </div>
 
@@ -506,7 +517,8 @@ export function PayrollApprovalCenterD6({
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">งวดลูกจ้างที่เกี่ยวข้อง</CardTitle>
                     <CardDescription>
-                      งวดเดือน/รอบแสดงในคอลัมน์ &quot;งวด&quot; — HR_REVIEWED = รอคิวผู้จัดการ/ศูนย์อนุมัติ
+                      คอลัมน์สถานะแสดงความหมายเป็นภาษาไทย — HR_REVIEWED ={' '}
+                      <span className="font-medium text-foreground">รอผู้จัดการอนุมัติ</span>
                     </CardDescription>
                   </CardHeader>
                 <CardContent className="p-0">
@@ -542,7 +554,17 @@ export function PayrollApprovalCenterD6({
                               {periodById.get(b.payrollPeriodId)?.label || b.payrollPeriodId}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{b.status}</Badge>
+                              <Badge
+                                variant="outline"
+                                title={b.status}
+                                className={
+                                  b.status === 'HR_REVIEWED'
+                                    ? 'border-amber-500/60 bg-amber-50 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100'
+                                    : ''
+                                }
+                              >
+                                {workerPayrollBatchStatusLabelTh(b.status)}
+                              </Badge>
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{b.totalWorkers}</TableCell>
                             <TableCell className="text-right tabular-nums">{moneyTH(b.netAmount)}</TableCell>
@@ -582,7 +604,18 @@ export function PayrollApprovalCenterD6({
                       </div>
                       <div>
                         <div className="text-muted-foreground text-xs uppercase">สถานะ batch</div>
-                        <Badge>{selectedBatch.status}</Badge>
+                        <Badge
+                          title={selectedBatch.status}
+                          variant="outline"
+                          className={
+                            selectedBatch.status === 'HR_REVIEWED'
+                              ? 'border-amber-500/60 bg-amber-50 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100'
+                              : ''
+                          }
+                        >
+                          {workerPayrollBatchStatusLabelTh(selectedBatch.status)}
+                          <span className="ml-1 font-mono text-[10px] opacity-60">({selectedBatch.status})</span>
+                        </Badge>
                       </div>
                       <div>
                         <div className="text-muted-foreground text-xs uppercase">Gross</div>
@@ -644,11 +677,14 @@ export function PayrollApprovalCenterD6({
                       )}
                       <Button
                         disabled={
-                          busy || !canApproveWorkerFlow || workerBlocking || selectedBatch.status !== 'HR_REVIEWED'
+                          busy ||
+                          !canManagerApproveWorkerBatch ||
+                          workerBlocking ||
+                          selectedBatch.status !== 'HR_REVIEWED'
                         }
                         onClick={() => void handleManagerApprovePayout()}
                       >
-                        อนุมัติยอดเงิน{canHandoffWorkerPayrollToAccounting(currentUser) ? ' (ส่งบัญชีทำจ่าย)' : ''}
+                        อนุมัติจ่ายเงิน
                       </Button>
                       <Button
                         variant="secondary"
@@ -656,17 +692,6 @@ export function PayrollApprovalCenterD6({
                         onClick={() => void handleWorkerSendBack()}
                       >
                         ส่งกลับแก้ไข
-                      </Button>
-                      <Button
-                        variant="outline"
-                        disabled={
-                          busy ||
-                          !canHandoffWorkerPayrollToAccounting(currentUser) ||
-                          selectedBatch.status !== 'HR_APPROVED'
-                        }
-                        onClick={() => void handleWorkerHandoff()}
-                      >
-                        ส่งต่อบัญชี (กรณีอนุมัติแยก — FINANCE_PREPARED)
                       </Button>
                     </CardContent>
                   </Card>
@@ -700,8 +725,8 @@ export function PayrollApprovalCenterD6({
 
                   {WORKER_PAYSLIP_VISIBLE_STATUSES.has(selectedBatch.status) &&
                     canGeneratePayslips(currentUser, selectedBatch.status) &&
-                    workerLines &&
-                    workerLines.length > 0 && (
+                    workerLinesSortedForSlips &&
+                    workerLinesSortedForSlips.length > 0 && (
                       <Card>
                         <CardHeader>
                           <CardTitle className="text-base">สลิปเงินเดือน (จาก Payroll Line)</CardTitle>
@@ -725,7 +750,7 @@ export function PayrollApprovalCenterD6({
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {workerLines.map((line) => {
+                              {workerLinesSortedForSlips.map((line) => {
                                 const pl =
                                   periodById.get(selectedBatch.payrollPeriodId)?.label ||
                                   selectedBatch.payrollPeriodId;
@@ -980,8 +1005,8 @@ export function PayrollApprovalCenterD6({
                   </Card>
 
                   {OFFICE_PAYSLIP_AFTER_APPROVAL.has(selectedRun.status) &&
-                    officeLines &&
-                    officeLines.length > 0 && (
+                    officeLinesSortedForSlips &&
+                    officeLinesSortedForSlips.length > 0 && (
                       <Card>
                         <CardHeader>
                           <CardTitle className="text-base">สลิปเงินเดือน (จาก Payroll Line)</CardTitle>
@@ -1005,7 +1030,7 @@ export function PayrollApprovalCenterD6({
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {officeLines.map((line) => {
+                              {officeLinesSortedForSlips.map((line) => {
                                 const model = buildPayslipFromOfficeLine(line, selectedRun, companyProfile ?? undefined);
                                 return (
                                   <TableRow key={line.id}>

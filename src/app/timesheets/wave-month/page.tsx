@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AppShell } from '@/components/layout/app-shell';
@@ -9,7 +9,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { CalendarRange, ChevronLeft, FileText, Loader2, Waves } from 'lucide-react';
+import {
+  CalendarRange,
+  ChevronLeft,
+  FileText,
+  ImagePlus,
+  Loader2,
+  Lock,
+  Send,
+  Trash2,
+  Unlock,
+  Waves,
+} from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import type {
@@ -17,6 +28,7 @@ import type {
   DailyTimesheet,
   DailyTimesheetStatus,
   PoMonthTimesheetReview,
+  Position,
   PurchaseOrder,
   RateConditionEventType,
   User,
@@ -24,6 +36,7 @@ import type {
   WaveMonthTimesheetReview,
   Worker,
 } from '@/lib/types';
+import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -31,13 +44,18 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
   assignmentIncludedInWaveTimesheetRoster,
+  assignmentHasAnyMobTimesheetDayInCalendarMonth,
   isYmdWithinAssignmentMobTimesheetWindow,
   waveRoundMonthLabel,
 } from '@/lib/constants/timesheet-ui';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
-import { assignmentOverlapsYearMonth } from '@/lib/ops/timesheet-hub-po-month';
+import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
+import { syncPoActiveAutoDailyForAssignment } from '@/lib/timesheet/po-active-auto-daily-sync';
+import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import {
+  isWaveMonthAttachmentPdf,
   lastDayOfCalendarMonth,
   listDaysInMonth,
   resolveTimesheetForWaveMonthCell,
@@ -64,16 +82,25 @@ import {
   markTimesheetsReadyForPayrollAfterMonthApproval,
 } from '@/lib/timesheet/wave-month-payroll-bridge';
 import { ensureMonthlyTimesheetDocument } from '@/lib/timesheet/ensure-monthly-timesheet-document';
+import {
+  TimesheetPoMonthPanel,
+  type TimesheetPoMonthPanelHandle,
+  type TimesheetPoMonthToolbarSnapshot,
+} from '@/components/timesheet/timesheet-po-month-panel';
+import { isSystemAdmin } from '@/lib/permission-core';
 
 function ymNow(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** แถวสรุปรายเดือน = เดียวกับ Wave Board (รวมคนจบงานแล้วในเดือนนั้น) */
+/** แถวสรุปรายเดือน — เฉพาะคนที่มีอย่างน้อยหนึ่งวันในเดือนที่อยู่ในหน้าต่าง mobilization (ไม่โผล่แถวว่างเมื่อรอ Mob รอบใหม่) */
 function mobilizationsEligibleForWaveMonthGrid(mobs: Assignment[], monthYm: string): Assignment[] {
   const eligible = mobs.filter(
-    (m) => assignmentIncludedInWaveTimesheetRoster(m) && assignmentOverlapsYearMonth(m, monthYm),
+    (m) =>
+      assignmentIncludedInWaveTimesheetRoster(m) &&
+      assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
+      assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm),
   );
   return pickRosterLinePerWorker(eligible);
 }
@@ -159,6 +186,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   /** ยืนยันใน Dialog เดียว — ไม่ใช้ AlertDialog ซ้อน (กันค้าง overlay/focus) */
   const [cellSaveAwaitingConfirm, setCellSaveAwaitingConfirm] = useState(false);
   const payrollAutoHealRef = useRef<Set<string>>(new Set());
+  const poMonthPanelRef = useRef<TimesheetPoMonthPanelHandle>(null);
+  const [poToolbarSnapshot, setPoToolbarSnapshot] = useState<TimesheetPoMonthToolbarSnapshot | null>(null);
   const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
   const [monthlyDocLoading, setMonthlyDocLoading] = useState(false);
 
@@ -311,6 +340,76 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [poMonthRows]);
 
+  /** เติมรายวันอัตโนมัติของวันนี้ (เขตไทย) — เหมือน PO Daily Board เพื่อให้หน้ารายเดือนเห็นข้อมูลโดยไม่ต้องเปิดกระดานรายวัน */
+  const silentPoActiveAutoDailyIds = useMemo(() => {
+    const today = thailandTodayYmd();
+    if (!today.startsWith(monthYm)) return [];
+    const ids: string[] = [];
+    for (const a of mobAssignments) {
+      if (!isAssignmentEligibleForPoActiveAutoDaily(a)) continue;
+      if (!assignmentOverlapsYearMonthForPoDailyBoard(a, monthYm)) continue;
+      if (isWaveMonthReviewLocked(reviewByWaveId.get(a.waveId))) continue;
+      if (isPoMonthDocumentLockedForGrid(poMonthByPoId.get(a.poId))) continue;
+      ids.push(a.id);
+    }
+    return ids;
+  }, [mobAssignments, monthYm, reviewByWaveId, poMonthByPoId]);
+
+  const poActiveAutoDailySyncLockRef = useRef(false);
+  const lastBangkokYmdWaveMonthRef = useRef(thailandTodayYmd());
+
+  const runSilentTodayPoActiveAutoDaily = useCallback(async () => {
+    if (!firestore || !currentUser || !canEditTs || silentPoActiveAutoDailyIds.length === 0) return;
+    if (poActiveAutoDailySyncLockRef.current) return;
+    poActiveAutoDailySyncLockRef.current = true;
+    try {
+      for (const aid of silentPoActiveAutoDailyIds) {
+        try {
+          await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, { todayOnly: true });
+        } catch {
+          /* สิทธิ์/เครือข่ายรายแถว — ไม่รบกวนผู้ใช้ */
+        }
+      }
+    } finally {
+      poActiveAutoDailySyncLockRef.current = false;
+    }
+  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds]);
+
+  useEffect(() => {
+    lastBangkokYmdWaveMonthRef.current = thailandTodayYmd();
+    void runSilentTodayPoActiveAutoDaily();
+  }, [runSilentTodayPoActiveAutoDaily]);
+
+  useEffect(() => {
+    if (!canEditTs || !firestore) return;
+    const iv = window.setInterval(() => {
+      const y = thailandTodayYmd();
+      if (y !== lastBangkokYmdWaveMonthRef.current) {
+        lastBangkokYmdWaveMonthRef.current = y;
+        void runSilentTodayPoActiveAutoDaily();
+      }
+    }, 45_000);
+    return () => window.clearInterval(iv);
+  }, [canEditTs, firestore, runSilentTodayPoActiveAutoDaily]);
+
+  useEffect(() => {
+    if (!canEditTs || !firestore) return;
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      const y = thailandTodayYmd();
+      if (y !== lastBangkokYmdWaveMonthRef.current) {
+        lastBangkokYmdWaveMonthRef.current = y;
+        void runSilentTodayPoActiveAutoDaily();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+  }, [canEditTs, firestore, runSilentTodayPoActiveAutoDaily]);
+
   useEffect(() => {
     if (!firestore || !currentUser || !monthYm || !canViewTs) return;
     setMonthlyDocLoading(true);
@@ -402,12 +501,29 @@ export default function WaveMonthTimesheetSummaryPage() {
   );
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
+  const positionsQuery = useMemoFirebase(
+    () => (firestore && canViewTs ? collection(firestore, 'positions') : null),
+    [firestore, canViewTs],
+  );
+  const { data: positionsCatalog } = useCollection<Position>(positionsQuery as any);
+  const positionLabelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of positionsCatalog ?? []) {
+      m.set(p.id, positionListPrimaryName(p as PositionDoc));
+    }
+    return m;
+  }, [positionsCatalog]);
+
   const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
 
   const waveIdsWithEligibleMobInMonth = useMemo(() => {
     const s = new Set<string>();
     for (const m of mobAssignments) {
-      if (assignmentIncludedInWaveTimesheetRoster(m) && assignmentOverlapsYearMonth(m, monthYm)) {
+      if (
+        assignmentIncludedInWaveTimesheetRoster(m) &&
+        assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
+        assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm)
+      ) {
         s.add(m.waveId);
       }
     }
@@ -556,6 +672,80 @@ export default function WaveMonthTimesheetSummaryPage() {
       );
     }
     return m;
+  }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
+
+  /**
+   * คนละหนึ่งแถวในงวดเดือน: ถ้าพนักงานถูกดึงจากหลาย wave / หลาย mobilization ที่ชี้ชุดลงเวลาเดียวกัน
+   * (หรือมีหลายเอกสาร daily ซ้ำความหมาย) — เลือกแถวเดียวตามคะแนนจับคู่กับข้อมูลจริง + wave ที่ยังเปิดอยู่
+   */
+  const dedupedTableRows = useMemo(() => {
+    type Row = (typeof tableRows)[number];
+    type Scored = {
+      tr: Row;
+      waveMatchCount: number;
+      assignmentMatchCount: number;
+      poMatchCount: number;
+    };
+
+    const scoreRow = (tr: Row): Scored => {
+      const { wave, rw, rosterAssignment } = tr;
+      const alternateMobIds = mobAssignments
+        .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+        .map((m) => m.id);
+      const scope = poTimesheetScopeId(rosterAssignment.poId);
+      const poId = (rosterAssignment.poId || '').trim();
+      let waveMatchCount = 0;
+      let assignmentMatchCount = 0;
+      let poMatchCount = 0;
+      for (const d of days) {
+        const ts = resolveTimesheetForWaveMonthCell(
+          wave.id,
+          rw.workerId,
+          d,
+          rosterAssignment.id,
+          sheetsByWaveWorker,
+          monthSheetsForOpenPos,
+          scope,
+          rosterAssignment,
+          alternateMobIds,
+        );
+        if (ts?.waveId === wave.id) waveMatchCount++;
+        if (ts?.assignmentId === rosterAssignment.id) assignmentMatchCount++;
+        if (ts && (ts.purchaseOrderId || '').trim() === poId) poMatchCount++;
+      }
+      return { tr, waveMatchCount, assignmentMatchCount, poMatchCount };
+    };
+
+    const better = (a: Scored, b: Scored): boolean => {
+      if (a.waveMatchCount !== b.waveMatchCount) return a.waveMatchCount > b.waveMatchCount;
+      if (a.assignmentMatchCount !== b.assignmentMatchCount) return a.assignmentMatchCount > b.assignmentMatchCount;
+      if (a.poMatchCount !== b.poMatchCount) return a.poMatchCount > b.poMatchCount;
+      const aOpen = OPEN_WAVE_STATUSES_FOR_TIMESHEET.includes(a.tr.wave.status) ? 1 : 0;
+      const bOpen = OPEN_WAVE_STATUSES_FOR_TIMESHEET.includes(b.tr.wave.status) ? 1 : 0;
+      if (aOpen !== bOpen) return aOpen > bOpen;
+      if (a.tr.wave.updatedAt !== b.tr.wave.updatedAt) return a.tr.wave.updatedAt > b.tr.wave.updatedAt;
+      return (
+        `${a.tr.wave.id}\0${a.tr.rosterAssignment.id}`.localeCompare(
+          `${b.tr.wave.id}\0${b.tr.rosterAssignment.id}`,
+        ) < 0
+      );
+    };
+
+    const scored = tableRows.map(scoreRow);
+    const bestByWorker = new Map<string, Scored>();
+    for (const s of scored) {
+      const wid = s.tr.rw.workerId;
+      const cur = bestByWorker.get(wid);
+      if (!cur || better(s, cur)) bestByWorker.set(wid, s);
+    }
+
+    const out = scored.filter((s) => bestByWorker.get(s.tr.rw.workerId) === s).map((s) => s.tr);
+    out.sort((a, b) => {
+      const c = a.rw.name.localeCompare(b.rw.name, 'th', { sensitivity: 'base', numeric: true });
+      if (c !== 0) return c;
+      return `${a.wave.id}\0${a.rosterAssignment.id}`.localeCompare(`${b.wave.id}\0${b.rosterAssignment.id}`);
+    });
+    return out;
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
   const openCellEdit = useCallback(
@@ -770,7 +960,7 @@ export default function WaveMonthTimesheetSummaryPage() {
               ) : (
                 <span className="font-mono text-foreground font-semibold">{monthlyTimesheetNo ?? '—'}</span>
               )}{' '}
-              · ตารางรวมทุกคนที่ลงเวลาในเดือนที่เลือก — กดเซลล์เพื่อแก้รายวัน
+              · ตารางรวมคนที่มีช่วง mobilization ทับเดือนที่เลือก — กดเซลล์เพื่อแก้รายวัน
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -783,64 +973,181 @@ export default function WaveMonthTimesheetSummaryPage() {
         <PageGuidance
           title="คีย์การใช้งาน"
           tips={[
-            'ปิดงวด / ส่งตรวจ / แนบรูป—PDF / ออกเอกสาร (invoice+payroll): ทำที่เมนู «เอกสาร timesheet ราย PO+เดือน» ไม่อ้างอิง Wave',
-            'เลือกเดือน — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; ตารางด้านล่าง = รวมทุก wave เพื่อแก้รายวันจนกว่า PO+งวดจะถูกล็อก',
+            'ปิดงวดสร้าง Payroll / ส่งอนุมัติ Timesheet / แนบรูป—PDF: ใช้แถบเหนือตาราง — เลขหลักอ้างอิง TS- (ไม่ใช้รหัส PO เป็นชื่อเอกสารหลัก) — ไม่อ้างอิง Wave',
+            'เลือกเดือนที่หัวการ์ด «สรุปลงเวลารายเดือน» — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; แนบรูปคู่เลข TS- (ไม่ผูก PO)',
             'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
             'ตัวอักษรในเซลล์ = ประเภทวัน (W/SB/…) · « - » = ว่างหรือไม่จ่าย · คอลัมน์รวม = ชม.ทำงานสะสมในเดือน',
             'เซลล์จับคู่กับบันทึกรายวัน — รวมข้อมูลจาก Wave Board ที่เก็บ waveId แบบ PO scope (`po_ts_scope_…`) ให้ตรงกับแถว wave จริง',
             'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «จบงาน» ในเมนูลงเวลารายวัน (Wave Board) ที่แถวพนักงาน — หน้านี้เป็นตารางสรุปรายเดือนเท่านั้น',
+            'คนที่จบงานแล้วและรอ Mob รอบใหม่: ถ้าไม่มีวันใดในเดือนที่เลือกอยู่ในช่วง mobilization (ยังไม่ SB/ขึ้นไซต์) จะไม่แสดงชื่อในเดือนนั้นจนกว่าจะมีขั้นตอน Mob ใหม่',
             'ช่วง Standby / เริ่มงาน: สรุปรายเดือนใช้ทั้งวัน Standby และวันเริ่มทำงานจาก Mobilization — คนสถานะ MOBILIZING ที่ความพร้อม READY ขึ้นตารางเมื่อช่วงมอบหมายทับเดือนนั้น (ยังไม่ ACTIVE จะยังไม่มี work_day อัตโนมัติ — ต้องผ่านขั้น Mobilization)',
-            'ลงเวลาอัตโนมัติ ACTIVE (PO Active): ระบบสร้าง work_day ถึงเมื่อวานตามเวลาไทย — วันปัจจุบันให้บันทึกเมื่อปิดวัน',
+            'ลงเวลาอัตโนมัติ ACTIVE (PO Active): ซิงก์ work_day ได้ถึงวันนี้ตามเวลาไทย (หลังเที่ยงคืนเริ่มวันใหม่) เมื่อมีผู้เปิด Wave Board หรือใช้ปุ่ม Auto gen — กดจบงานแล้วหยุดซิงก์ตั้งแต่วันถัดไป',
           ]}
         />
-
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-base">ตัวกรอง</CardTitle>
-            <CardDescription>
-              กรองตามเดือนเท่านั้น — แสดงทุก PO ที่ยัง pending/active และ Wave ที่เกี่ยวข้อง (รวม Wave ปิดแล้วถ้ายังมีคนพร้อมลงเวลาทับเดือนนี้)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap items-end gap-4">
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold uppercase text-muted-foreground">เดือน (ปี-เดือน)</Label>
-              <Input type="month" value={monthYm} onChange={(e) => setMonthYm(e.target.value)} className="h-10 w-[200px]" />
-            </div>
-            <p className="text-sm text-muted-foreground pb-1">
-              พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
-              {pos != null ? ` · ${pos.length} PO (pending/active)` : ''}
-            </p>
-          </CardContent>
-        </Card>
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
         ) : (
           <div className="space-y-6">
             <Alert className="border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                <div className="min-w-0 flex-1 space-y-2">
-                  <AlertTitle>ปิดงวด &amp; ส่งตรวจ &amp; แนบ — ย้ายไปเอกสาร PO+เดือน</AlertTitle>
-                  <AlertDescription className="text-sm space-y-2">
-                    <p>
-                      ใช้{' '}
-                      <Link
-                        className="font-semibold text-primary underline"
-                        href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}
+              <div className="space-y-3">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between xl:gap-4">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <AlertTitle>ปิดงวดสร้าง Payroll · ส่งอนุมัติ Timesheet · แนบไฟล์</AlertTitle>
+                    <AlertDescription className="text-sm space-y-2">
+                      <p>
+                        <strong className="text-foreground">ปิดงวดสร้าง Payroll</strong> = ปิดงวดเดือนเพื่อตั้งพร้อมจ่ายลูกจ้าง{' '}
+                        <span className="text-foreground">โดยไม่ต้องรอผู้จัดการอนุมัติ timesheet</span>
+                        · <strong className="text-foreground">ส่งอนุมัติ Timesheet</strong> = ส่งคิวผู้จัดการ (มี popup ติ๊กยืนยัน + แนบรูป) เพื่อใช้เป็นฐานออก Invoice ตาม SB/W ใน timesheet
+                        · แนบรูป/PDF ใช้คู่<strong className="text-foreground">เลขเอกสาร TS-</strong> ในกรอบส้ม — เลือก PO ด้านขวาใช้กำหนด<strong className="text-foreground">ช่วงปิดงวดต่อ PO</strong>เท่านั้น
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        ตารางสรุป = ลงเวลารายวัน · การ์ด PO ใต้ตารางใช้แก้วันสุดท้ายของงวดต่อ PO
+                      </p>
+                    </AlertDescription>
+                  </div>
+                  <div className="flex flex-col gap-2 shrink-0 items-stretch sm:items-end">
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="gap-1"
+                        disabled={!poToolbarSnapshot || poToolbarSnapshot.lockDisabled}
+                        onClick={() => poMonthPanelRef.current?.lockPeriod()}
                       >
-                        เอกสาร timesheet ราย PO+เดือน
-                      </Link>{' '}
-                      เพื่อล็อกงวด แนบรูป/PDF สูงสุด 4 ไฟล์ (รูป &gt; ~500 KB บีบอัตโนมัติ) แล้วส่งผู้จัดการ — หลังอนุมัติใช้ทำ invoice + payroll
-                      (ไม่อ้างอิง Wave ในเอกสารจ่าย/วางบิล)
-                    </p>
-                    <p className="text-xs text-muted-foreground">ตารางด้านล่าง = ลงเวลารายวันต่อพนักงาน จนกว่า PO+งวดจะถูกล็อก</p>
-                  </AlertDescription>
+                        <Lock className="h-3.5 w-3.5" />
+                        ปิดงวดสร้าง Payroll
+                      </Button>
+                      {!poToolbarSnapshot?.sendHidden ? (
+                        <Button
+                          size="sm"
+                          className="gap-1"
+                          disabled={!poToolbarSnapshot || poToolbarSnapshot.sendDisabled}
+                          onClick={() => poMonthPanelRef.current?.openSubmitDialog()}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          ส่งอนุมัติ Timesheet
+                        </Button>
+                      ) : null}
+                      {currentUser && isSystemAdmin(currentUser) && poToolbarSnapshot && !poToolbarSnapshot.unlockHidden ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1 border-destructive/40 text-destructive hover:bg-destructive/10"
+                          disabled={poToolbarSnapshot.unlockDisabled}
+                          onClick={() => poMonthPanelRef.current?.openUnlockDialog()}
+                        >
+                          <Unlock className="h-3.5 w-3.5" />
+                          ปลดล็อก (Admin)
+                        </Button>
+                      ) : null}
+                    </div>
+                    {poToolbarSnapshot && poToolbarSnapshot.poOptions.length > 1 ? (
+                      <div className="flex flex-col gap-1 w-full max-w-[240px] sm:ml-auto">
+                        <Label className="text-[10px] uppercase text-muted-foreground">เลือก PO (ช่วงปิดงวด)</Label>
+                        <Select
+                          value={poToolbarSnapshot.selectedPoId ?? ''}
+                          onValueChange={(id) => poMonthPanelRef.current?.selectToolbarPo(id)}
+                        >
+                          <SelectTrigger className="h-9 bg-background">
+                            <SelectValue placeholder="เลือก PO" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {poToolbarSnapshot.poOptions.map((o) => (
+                              <SelectItem key={o.id} value={o.id}>
+                                <span className="font-mono text-xs">{o.code}</span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : poToolbarSnapshot?.selectedPoId ? (
+                      <p className="text-xs text-muted-foreground text-right sm:text-right">
+                        PO ล็อก/ส่งตรวจ:{' '}
+                        <span className="font-mono font-semibold text-foreground">
+                          {poToolbarSnapshot.poOptions.find((o) => o.id === poToolbarSnapshot.selectedPoId)?.code ?? '—'}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground text-right">ยังไม่มี PO ในงวดนี้สำหรับล็อก/ส่งตรวจ</p>
+                    )}
+                  </div>
                 </div>
-                <Button size="sm" className="shrink-0 self-stretch sm:self-center w-full sm:w-auto" asChild>
-                  <Link href={`/timesheets/po-month?month=${encodeURIComponent(monthYm)}`}>
-                    เอกสาร PO+งวด (ล็อก / ส่งตรวจ)
-                  </Link>
-                </Button>
+                <div className="rounded-lg border-2 border-orange-400/80 bg-orange-50/50 dark:bg-orange-950/25 dark:border-orange-700/70 px-3 py-3 space-y-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <div className="space-y-0.5 min-w-0">
+                      <p className="text-xs font-semibold text-orange-950 dark:text-orange-100">แนบไฟล์คู่เอกสาร timesheet รายเดือน</p>
+                      <p className="text-sm text-muted-foreground">
+                        เลขที่เอกสาร{' '}
+                        <span className="font-mono font-bold text-foreground">
+                          {poToolbarSnapshot?.monthlyTimesheetNo ?? monthlyTimesheetNo ?? '—'}
+                        </span>
+                        <span className="text-muted-foreground"> · งวด </span>
+                        <span className="font-mono text-foreground">{monthYm}</span>
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1 bg-background"
+                        disabled={!poToolbarSnapshot || poToolbarSnapshot.attachDisabled}
+                        onClick={() => poMonthPanelRef.current?.openAttachPicker()}
+                      >
+                        {poToolbarSnapshot?.monthlyAttachUploading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <ImagePlus className="h-3.5 w-3.5" />
+                        )}
+                        แนบรูป / PDF
+                      </Button>
+                      <span className="text-xs text-muted-foreground max-w-[18rem]">
+                        สูงสุด 4 ไฟล์ · รูป: ~500 KB — PDF: 10 MB · ผูกกับ TS- ไม่ผูก PO
+                      </span>
+                    </div>
+                  </div>
+                  {poToolbarSnapshot && poToolbarSnapshot.monthlyAttachments.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 pt-1 border-t border-orange-300/50 dark:border-orange-800/50">
+                      {poToolbarSnapshot.monthlyAttachments.map((att) => (
+                        <div key={att.id} className="relative">
+                          {isWaveMonthAttachmentPdf(att) ? (
+                            <a
+                              href={att.downloadUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex h-16 w-16 flex-col items-center justify-center rounded border bg-background text-[9px] hover:bg-muted"
+                            >
+                              <FileText className="h-6 w-6 text-primary" />
+                              <span>PDF</span>
+                            </a>
+                          ) : (
+                            <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="block">
+                              <img src={att.downloadUrl} alt={att.fileName} className="h-16 w-16 rounded border object-cover bg-background" />
+                            </a>
+                          )}
+                          {!poToolbarSnapshot.attachDisabled ? (
+                            <button
+                              type="button"
+                              className="absolute -right-1 -top-1 rounded-full bg-destructive p-0.5 text-destructive-foreground shadow"
+                              aria-label="ลบ"
+                              disabled={poToolbarSnapshot.monthlyAttachUploading}
+                              onClick={() =>
+                                poMonthPanelRef.current?.removeMonthlyAttachment(att.id, att.storagePath)
+                              }
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground border-t border-orange-300/40 pt-2 dark:border-orange-800/40">
+                      ยังไม่มีไฟล์แนบคู่เอกสาร TS ในเดือนนี้
+                    </p>
+                  )}
+                </div>
               </div>
             </Alert>
             {displayWaves.length === 0 ? (
@@ -848,19 +1155,44 @@ export default function WaveMonthTimesheetSummaryPage() {
                 ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
               </p>
             ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
-                <CardDescription>
-                  เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
-                  · แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ (โหลดจาก PO ที่เปิด สอดคล้องกระดานลงเวลา) ·{' '}
-                  <strong>รวมชม.</strong> = ชม.ทำงาน (วันทำงานเท่านั้น ไม่รวม standby) ตามแถวนี้เท่านั้น — จับคู่ timesheet แบบเดียวกับช่องวัน
-                  (ไม่รวมซ้ำจาก assignment/PO อื่นของคนเดียวกัน) · ช่องวันและชม.รวมนับเฉพาะช่วง mobilization จริง (วันเริ่มทำงานบนไซต์ / วันจบไซต์ จาก Mobilization)
-                  ไม่ใช่แค่วันที่มอบหมายเก่า
-                </CardDescription>
+            <Card id="wave-month-timesheet-grid">
+              <CardHeader className="space-y-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
+                    <CardDescription className="space-y-2">
+                      <p>
+                        เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
+                        · พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
+                        {pos != null ? ` · ${pos.length} PO (pending/active)` : ''}
+                      </p>
+                      <p>
+                        แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (ไม่รวม standby) — จับคู่ timesheet กับช่องวัน · ช่วงนับตาม mobilization จริง
+                      </p>
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-col gap-1.5 shrink-0 w-full max-w-[220px]">
+                    <Label className="text-xs font-semibold uppercase text-muted-foreground">เดือน (ปี-เดือน)</Label>
+                    <Input
+                      type="month"
+                      value={monthYm}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMonthYm(v);
+                        if (typeof window !== 'undefined' && /^\d{4}-\d{2}$/.test(v)) {
+                          const p = new URLSearchParams(window.location.search);
+                          p.set('month', v);
+                          window.history.replaceState(null, '', `${window.location.pathname}?${p.toString()}`);
+                        }
+                      }}
+                      className="h-10 font-mono"
+                    />
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
-                {tableRows.length === 0 ? (
+                {dedupedTableRows.length === 0 ? (
                   <p className="text-center text-muted-foreground py-10 px-4">
                     ยังไม่มีแถวในงวดนี้ — ไม่พบ mobilization ที่ผ่านเกณฑ์ลงเวลาและครอบคลุมเดือนนี้ (หรือยังไม่มี Wave ที่เกี่ยวข้อง)
                   </p>
@@ -869,8 +1201,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                     <Table className="min-w-max text-xs [&_th]:h-auto [&_th]:min-h-0 [&_th]:py-1.5 [&_th]:px-1.5 [&_tbody_td]:py-1.5 [&_tbody_td]:align-middle">
                       <TableHeader>
                         <TableRow className="bg-muted/50">
-                          <TableHead className="sticky left-0 z-20 w-[9rem] min-w-[7.5rem] max-w-[10rem] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)] px-2">
-                            พนักงาน
+                          <TableHead className="sticky left-0 z-20 w-[11rem] min-w-[9.5rem] max-w-[13rem] bg-muted/95 font-bold shadow-[2px_0_4px_rgba(0,0,0,0.06)] px-2">
+                            พนักงาน / ตำแหน่ง
                           </TableHead>
                           {days.map((d) => (
                             <TableHead key={d} className="px-0.5 text-center w-7 min-w-[1.75rem] font-mono text-[10px]" title={d}>
@@ -888,9 +1220,10 @@ export default function WaveMonthTimesheetSummaryPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {tableRows.map((tr, rowIdx) => {
+                        {dedupedTableRows.map((tr, rowIdx) => {
                           const { wave, po, rw, rosterAssignment } = tr;
-                          const isFirstInWave = rowIdx === 0 || tableRows[rowIdx - 1]!.wave.id !== wave.id;
+                          const isFirstInWave =
+                            rowIdx === 0 || dedupedTableRows[rowIdx - 1]!.wave.id !== wave.id;
                           const monthReview = reviewByWaveId.get(wave.id);
                           const waveMobs = eligibleMobsByWaveId.get(wave.id) ?? [];
                           const alternateMobIds = mobAssignments
@@ -910,13 +1243,21 @@ export default function WaveMonthTimesheetSummaryPage() {
                               id={isFirstInWave ? `wave-month-data-${wave.id}` : undefined}
                             >
                               <TableCell
-                                className="sticky left-0 z-10 bg-background shadow-[2px_0_4px_rgba(0,0,0,0.06)] max-w-[11rem] px-2 py-1.5"
+                                className="sticky left-0 z-10 bg-background shadow-[2px_0_4px_rgba(0,0,0,0.06)] max-w-[13rem] px-2 py-1.5"
                                 title={`${rw.name} · ${wave.waveCode?.trim() || wave.id}`}
                               >
                                 <div className="flex min-w-0 flex-col gap-0.5">
                                   <span className="truncate text-xs font-medium leading-tight">{rw.name}</span>
                                   <span className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
                                     {wave.waveCode?.trim() || wave.id}
+                                  </span>
+                                  <span
+                                    className="truncate text-[10px] leading-tight text-foreground/90"
+                                    title="ชื่อตำแหน่งจากการมอบหมาย (ทะเบียนตำแหน่ง)"
+                                  >
+                                    <span className="text-muted-foreground">ตำแหน่ง</span>{' '}
+                                    {positionLabelById.get((rosterAssignment.positionId || '').trim()) ||
+                                      (rosterAssignment.positionId ? rosterAssignment.positionId : '—')}
                                   </span>
                                 </div>
                               </TableCell>
@@ -1020,7 +1361,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                       <p>
                         <strong>ขอบสถานะ:</strong> วงแหวน <span className="text-amber-600">เหลืองทองหนา</span> = DRAFT —
-                        วงบางเทา = ส่งตรวจแล้ว / อื่นๆ
+                        วงบางเทา = ส่งอนุมัติ Timesheet แล้ว / อื่นๆ
                       </p>
                     </div>
                   </>
@@ -1028,6 +1369,24 @@ export default function WaveMonthTimesheetSummaryPage() {
               </CardContent>
             </Card>
             )}
+            <Suspense
+              fallback={<p className="text-center text-muted-foreground text-sm py-6 border border-dashed rounded-lg">กำลังโหลดเอกสาร PO+เดือน…</p>}
+            >
+              <TimesheetPoMonthPanel
+                ref={poMonthPanelRef}
+                embedded
+                linkedMonthYm={monthYm}
+                onEmbeddedToolbarSnapshot={setPoToolbarSnapshot}
+                onLinkedMonthYmChange={(ym) => {
+                  setMonthYm(ym);
+                  if (typeof window !== 'undefined' && /^\d{4}-\d{2}$/.test(ym)) {
+                    const p = new URLSearchParams(window.location.search);
+                    p.set('month', ym);
+                    window.history.replaceState(null, '', `${window.location.pathname}?${p.toString()}`);
+                  }
+                }}
+              />
+            </Suspense>
           </div>
         )}
       </div>

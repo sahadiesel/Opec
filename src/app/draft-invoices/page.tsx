@@ -642,7 +642,7 @@ export default function DraftInvoicesPage() {
                                   <div className="flex flex-wrap justify-end gap-2">
                                     <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
                                       <Link
-                                        href={`/timesheets/po-month?month=${encodeURIComponent(r.yearMonth)}&highlightPo=${encodeURIComponent(r.poId)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`}
+                                        href={`/timesheets/wave-month?month=${encodeURIComponent(r.yearMonth)}&highlightPo=${encodeURIComponent(r.poId)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`}
                                       >
                                         <ExternalLink className="h-3.5 w-3.5" />
                                         เอกสารรอบ PO

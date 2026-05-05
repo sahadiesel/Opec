@@ -52,7 +52,9 @@ export function aggregateDailyTimesheetsPayrollChunk(
       usedContractFallback = true;
     }
     gross += r.gross;
-    eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + 1;
+    const eventDelta =
+      ts.eventType === 'standby_day' ? Math.max(0, Number(ts.standbyUnits ?? 1)) : 1;
+    eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + eventDelta;
     if (r.usedPackageLaborCost) {
       earningsBreakdown.work_day_package = (earningsBreakdown.work_day_package || 0) + r.gross;
     } else {

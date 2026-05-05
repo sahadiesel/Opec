@@ -9,7 +9,6 @@ import { Badge } from '@/components/ui/badge';
 import {
   Save,
   ArrowLeft,
-  CheckCircle2,
   AlertTriangle,
   User,
   FileText,
@@ -330,6 +329,27 @@ function WorkerDetailContent({ id }: { id: string }) {
       });
   };
 
+  const handleReadinessManualHoldChange = (hold: boolean) => {
+    if (!canEditWorker || !workerRef) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์แก้ไข',
+        description: 'เฉพาะผู้มีสิทธิ์แก้ทะเบียนคนงานเท่านั้น',
+      });
+      return;
+    }
+    updateDocumentNonBlocking(workerRef, {
+      readinessManualHold: hold,
+      updatedAt: Date.now(),
+    });
+    toast({
+      title: hold ? 'ตั้งเป็นไม่พร้อม (Unready)' : 'ตั้งเป็นพร้อม (Ready)',
+      description: hold
+        ? 'คนงานจะไม่ปรากฏในรายการมอบหมายจนกว่าจะเปิดสวิตช์พร้อมอีกครั้ง'
+        : 'ระบบใช้เกณฑ์เอกสารและความพร้อมตามที่คำนวณได้',
+    });
+  };
+
   // --- Business logic: readiness calculation (unchanged) ---
   const calculateAndStoreReadiness = async () => {
     if (!firestore || !worker) return;
@@ -548,16 +568,10 @@ function WorkerDetailContent({ id }: { id: string }) {
               <Badge variant="secondary" className="font-mono">
                 ID: {worker.thaiNationalId}
               </Badge>
-              {worker.readinessStatus === 'READY' ? (
-                worker.complianceAlertLevel === 'warning' ? (
-                  <Badge variant="outline" className="gap-1 border-orange-500 text-orange-700 bg-orange-50">
-                    <AlertTriangle className="h-3 w-3" /> WARNING ({worker.nearestExpiryInDays ?? '-'} วัน)
-                  </Badge>
-                ) : (
-                  <Badge className="bg-green-600 gap-1 text-white"><CheckCircle2 className="h-3 w-3" /> READY</Badge>
-                )
-              ) : (
-                <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> {worker.readinessStatus}</Badge>
+              {worker.readinessStatus === 'READY' && worker.complianceAlertLevel === 'warning' && (
+                <Badge variant="outline" className="gap-1 border-orange-500 text-orange-700 bg-orange-50">
+                  <AlertTriangle className="h-3 w-3" /> WARNING ({worker.nearestExpiryInDays ?? '-'} วัน)
+                </Badge>
               )}
               {worker.readinessStatus === 'READY' && worker.storeEquipmentReadiness === 'pending' && (
                 <>
@@ -632,6 +646,8 @@ function WorkerDetailContent({ id }: { id: string }) {
               currentPosition={currentPositionForLabor}
               canViewLaborCost={canViewLaborCost}
               canEditLaborCost={canEditLaborCost}
+              canEditWorkerReadiness={canEditWorker}
+              onReadinessManualHoldChange={handleReadinessManualHoldChange}
               canActivateWorkerLogin={canEditWorker}
               onActivateWorkerLogin={handleActivateWorkerLogin}
               activateWorkerLoginBusy={activateLoginBusy}
