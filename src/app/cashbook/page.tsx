@@ -29,7 +29,6 @@ import { CashbookEntry, User, BankAccount } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, limit } from 'firebase/firestore';
-import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Dialog, 
@@ -43,7 +42,8 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { getPreviewPattern } from '@/lib/services/numbering-service';
+import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-movement';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
 import { cashbookPnlFromEntries } from '@/lib/cashbook-pnl-stats';
@@ -103,21 +103,21 @@ export default function CashbookPage() {
 
     setIsCreating(true);
     try {
-      // Atomic Document Number Generation
-      const { code: finalNo } = await generateNextDocumentCode(firestore, 'cashbook_entry', { 
-        actor: currentUser.displayName 
-      });
-
-      await addDocumentNonBlocking(collection(firestore, 'cashbook_entries'), {
-        ...newEntry,
-        entryNo: finalNo,
+      const { entryNo: finalNo } = await recordCashbookMovementWithBalance(firestore, currentUser as User, {
+        bankAccountId: String(newEntry.bankAccountId),
+        direction: newEntry.direction === 'IN' ? 'IN' : 'OUT',
         amount: Number(newEntry.amount),
-        createdAt: Date.now(),
-        updatedAt: Date.now()
+        entryDate: String(newEntry.entryDate || '').trim(),
+        description: String(newEntry.description || '').trim(),
+        paymentMethod: (newEntry.paymentMethod || 'TRANSFER') as import('@/lib/types').PaymentMethod,
+        entryType: (newEntry.entryType || 'OTHER') as import('@/lib/types').CashbookEntryType,
       });
 
       setIsDialogOpen(false);
-      toast({ title: "บันทึกรายการสำเร็จ", description: `เลขที่รายการ: ${finalNo}` });
+      toast({
+        title: 'บันทึกรายการสำเร็จ',
+        description: `เลขที่รายการ: ${finalNo} · ยอดบัญชีธนาคารอัปเดตแล้ว`,
+      });
     } catch (e) {
       toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
     } finally {
@@ -145,7 +145,7 @@ export default function CashbookPage() {
             <BookOpen className="h-8 w-8" /> รายรับรายจ่าย (Cashbook)
           </h1>
           <p className="text-muted-foreground text-lg">
-            รายละเอียดรายรายการด้านล่างคือความเคลื่อนไหวตามบัญชี — การ์ดสรุป 3 ใบด้านล่างคือ
+            รายละเอียดรายรายการด้านล่างคือความเคลื่อนไหวตามบัญชี — การ์ดสรุป 3 ใบด้านบนคือ
             รายรับ–รายจ่าย ตามรายงาน: ไม่นับ โอน ธ-ธ, ไม่นับ รับโอนเข้า Petty เป็นขาย
             (นับ โอน ธ-ฝ → Petty ฝั่ง ธ-ฝ เป็นรายจ่าย, นับ โอน คืน Petty → ธ-ฝ ฝั่ง ธ-ฝ เป็นรายรับ)
           </p>

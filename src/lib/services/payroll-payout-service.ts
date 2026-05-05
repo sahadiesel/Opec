@@ -20,6 +20,8 @@ export async function recordPayrollFinanceApprovalPayout(
     existingCashbookEntryId?: string;
     payoutBankAccountId?: string;
     kind: PayrollPayoutKind;
+    /** ต่อท้ายคำอธิบายรายการ cashbook (เช่น แบ่งจ่ายบางคน) */
+    descriptionSuffix?: string;
   }
 ): Promise<{ cashbookEntryId: string; bankAccountId: string }> {
   if (params.existingCashbookEntryId) {
@@ -62,7 +64,7 @@ export async function recordPayrollFinanceApprovalPayout(
     ? String(bankSnap.data()?.accountCode ?? '').trim() || bankAccountId
     : bankAccountId;
 
-  const description = `จ่ายเงินเดือน ${kindLabel} ${params.payrollRunNo} งวด ${params.payrollMonthLabel} · ตัดจากบัญชี ${bankCode}`;
+  const description = `จ่ายเงินเดือน ${kindLabel} ${params.payrollRunNo} งวด ${params.payrollMonthLabel} · ตัดจากบัญชี ${bankCode}${params.descriptionSuffix ?? ''}`;
 
   const cashbookRef = doc(collection(db, 'cashbook_entries'));
   const bankRef = doc(db, 'bank_accounts', bankAccountId);

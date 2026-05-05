@@ -130,4 +130,7 @@ export const PayrollBatchLineSchema = z.object({
     .nullable(),
   incomeSegments: z.array(PayrollBatchIncomeSegmentSchema).optional(),
   payslipWorkDaySplit: PayslipWorkDaySplitSchema.optional().nullable(),
+  financePayoutCashbookEntryId: z.string().optional(),
+  financePayoutBankAccountId: z.string().optional(),
+  financePaidAt: z.number().optional(),
 });

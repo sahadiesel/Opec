@@ -963,12 +963,12 @@ export class PayrollService {
   }
 
   /**
-   * บัญชียืนยันจ่ายแล้ว → PAID + สร้างรายการ cashbook (ครั้งเดียวต่องวด)
+   * บัญชียืนยันจ่าย → สร้าง cashbook ตามชุดแถวที่เลือก (แบ่งหลายบัญชีได้) · สถานะ PAID เมื่อทุกแถวจ่ายครบ
    */
   async financeConfirmWorkerBatchPaid(
     id: string,
     user: User,
-    options?: { payoutBankAccountId?: string }
+    options?: { payoutBankAccountId?: string; lineIds?: string[] },
   ) {
     if (!canConfirmWorkerPayrollPaid(user)) {
       throw new Error('ไม่มีสิทธิ์ยืนยันจ่าย — ใช้เฉพาะฝ่ายบัญชี');
@@ -984,6 +984,10 @@ export class PayrollService {
       throw new Error('ยืนยันจ่ายได้เมื่อสถานะ FINANCE_PREPARED หรือ PAYMENT_EXPORTED เท่านั้น');
     }
 
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', id, 'lines'));
+    const lineRows = linesSnap.docs.map((d) => ({ docId: d.id, ...(d.data() as PayrollBatchLine) }));
+    if (!lineRows.length) throw new Error('ไม่มีบรรทัดในงวดนี้');
+
     const periodRef = doc(this.db, 'payroll_periods', batch.payrollPeriodId);
     const periodSnap = await getDoc(periodRef);
     const periodLabel = periodSnap.exists() ? (periodSnap.data() as PayrollPeriod).label : batch.payrollPeriodId;
@@ -993,29 +997,71 @@ export class PayrollService {
       throw new Error('กรุณาเลือกบัญชีธนาคารสำหรับตัดจ่ายก่อนยืนยันจ่าย (หน้ารายละเอียด batch)');
     }
 
-    const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
-      this.db,
-      user,
-      {
-        runId: id,
-        netAmount: batch.netAmount,
-        payrollRunNo: batch.id,
-        payrollMonthLabel: periodLabel,
-        existingCashbookEntryId: batch.financeCashbookEntryId,
-        payoutBankAccountId: chosenBank,
-        kind: 'WORKER',
+    const requestedIds =
+      options?.lineIds && options.lineIds.length > 0 ? options.lineIds : lineRows.map((r) => r.docId);
+    const selected = lineRows.filter((r) => requestedIds.includes(r.docId));
+    if (selected.length !== requestedIds.length) {
+      throw new Error('บางแถวที่เลือกไม่พบในงวด');
+    }
+    for (const l of selected) {
+      const pid = (l as PayrollBatchLine).financePayoutCashbookEntryId;
+      if (pid) {
+        throw new Error(`แถว "${(l as PayrollBatchLine).workerNameSnapshot || l.docId}" ตัดบัญชีแล้ว`);
       }
-    );
+    }
 
-    await updateDoc(docRef, {
-      status: 'PAID',
-      d8LifecycleStatus: batchStatusToD8Lifecycle('PAID'),
-      financeCashbookEntryId: cashbookEntryId,
-      payoutBankAccountId: bankAccountId,
-      financeApprovedBy: user.displayName,
-      financeApprovedAt: Date.now(),
-      updatedAt: Date.now(),
+    const sumNet = Math.round(
+      selected.reduce((s, l) => s + (Number((l as PayrollBatchLine).netAmount) || 0), 0) * 100,
+    ) / 100;
+    if (!(sumNet > 0)) {
+      throw new Error('ยอดสุทธิของชุดที่เลือกไม่ถูกต้อง');
+    }
+
+    const unpaidBefore = lineRows.filter((r) => !(r as PayrollBatchLine).financePayoutCashbookEntryId);
+    const stillUnpaidAfter = unpaidBefore.filter((r) => !selected.some((s) => s.docId === r.docId));
+    const allPaidNow = stillUnpaidAfter.length === 0;
+
+    const chunkRef = `${id}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(this.db, user, {
+      runId: chunkRef,
+      netAmount: sumNet,
+      payrollRunNo: batch.id,
+      payrollMonthLabel: periodLabel,
+      existingCashbookEntryId: undefined,
+      payoutBankAccountId: chosenBank,
+      kind: 'WORKER',
+      descriptionSuffix:
+        selected.length < lineRows.length ? ` · แบ่งจ่าย ${selected.length}/${lineRows.length} คน` : '',
     });
+
+    const now = Date.now();
+    const wb = writeBatch(this.db);
+    for (const l of selected) {
+      wb.update(doc(this.db, 'payroll_batches', id, 'lines', l.docId), {
+        financePayoutCashbookEntryId: cashbookEntryId,
+        financePayoutBankAccountId: bankAccountId,
+        financePaidAt: now,
+        updatedAt: now,
+      } as DocumentData);
+    }
+
+    if (allPaidNow) {
+      wb.update(docRef, {
+        status: 'PAID',
+        d8LifecycleStatus: batchStatusToD8Lifecycle('PAID'),
+        financeCashbookEntryId: cashbookEntryId,
+        payoutBankAccountId: bankAccountId,
+        financeApprovedBy: user.displayName,
+        financeApprovedAt: now,
+        updatedAt: now,
+      } as DocumentData);
+    } else {
+      wb.update(docRef, {
+        payoutBankAccountId: bankAccountId,
+        updatedAt: now,
+      } as DocumentData);
+    }
+    await wb.commit();
 
     await writeAuditLog(this.db, user, {
       actionType: 'PAID',
@@ -1023,10 +1069,12 @@ export class PayrollService {
       entityId: id,
       payrollBatchId: id,
       sourceModule: 'accounting',
-      afterSummary: `Accounting confirmed payout; cashbook ${cashbookEntryId}`,
+      afterSummary: allPaidNow
+        ? `Accounting confirmed full payout; cashbook ${cashbookEntryId}`
+        : `Accounting partial payout ${selected.length} lines; cashbook ${cashbookEntryId}`,
     });
 
-    return { alreadyDone: false as const, cashbookEntryId };
+    return { alreadyDone: false as const, cashbookEntryId, allPaidNow };
   }
 
   async lockBatch(id: string, user: User) {

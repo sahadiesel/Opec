@@ -41,6 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { recordInterBankTransfer } from '@/lib/services/cashbook-bank-movement';
+import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
 
 function accountTypeLabel(t: BankAccountType | string): string {
   switch (t) {
@@ -78,6 +79,43 @@ export default function BankAccountsPage() {
     () => (currentUser ? canCreate(currentUser, 'bank_accounts') : false),
     [currentUser]
   );
+
+  const canReconcileBalances = useMemo(
+    () =>
+      !!currentUser &&
+      (canCreate(currentUser, 'bank_accounts') || canCreate(currentUser, 'cashbook')),
+    [currentUser],
+  );
+
+  const accountIdsKey = useMemo(() => (accounts ?? []).map((a) => a.id).sort().join(','), [accounts]);
+
+  useEffect(() => {
+    if (!firestore || !accountIdsKey || !canReconcileBalances) return;
+    const ids = accountIdsKey.split(',').filter(Boolean);
+    if (!ids.length) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let anyCorrected = false;
+        for (const id of ids) {
+          if (cancelled) break;
+          const { corrected } = await syncBankCurrentBalanceIfDrift(firestore, id);
+          if (corrected) anyCorrected = true;
+        }
+        if (!cancelled && anyCorrected) {
+          toast({
+            title: 'ซิงค์ยอดบัญชีแล้ว',
+            description: 'ปรับยอดเงินปัจจุบันในตารางให้ตรงกับรายการ cashbook / Petty',
+          });
+        }
+      } catch {
+        /* สิทธิ์หรือเครือข่าย — ไม่บล็อกหน้าจอ */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, accountIdsKey, canReconcileBalances, toast]);
 
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferSubmitting, setTransferSubmitting] = useState(false);

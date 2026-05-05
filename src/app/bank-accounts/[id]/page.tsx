@@ -28,6 +28,8 @@ import {
   PettyCashEntry,
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
+import { canCreate } from '@/lib/permissions';
+import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
@@ -103,6 +105,28 @@ function BankAccountDetailContent({ id }: { id: string }) {
       setFormData(accData);
     }
   }, [accData]);
+
+  useEffect(() => {
+    if (!firestore || isNew || !id || !currentUser) return;
+    if (!canCreate(currentUser, 'bank_accounts') && !canCreate(currentUser, 'cashbook')) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { corrected } = await syncBankCurrentBalanceIfDrift(firestore, id);
+        if (!cancelled && corrected) {
+          toast({
+            title: 'ซิงค์ยอดบัญชีแล้ว',
+            description: 'ปรับยอดเงินปัจจุบันให้ตรงกับรายการ cashbook / Petty',
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, id, isNew, currentUser, toast]);
 
   useEffect(() => {
     if (!isNew) return;

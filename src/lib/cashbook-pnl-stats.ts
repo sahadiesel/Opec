@@ -68,9 +68,13 @@ export function cashbookPnlFromEntries(
       continue;
     }
     const amt = Number(e.amount) || 0;
-    if (e.direction === 'IN' && e.entryType === 'CUSTOMER_RECEIPT') {
+    /** รับอื่น ๆ / เพิ่มทุน (manual cashbook entry มักเป็น OTHER + IN) — เดิมนับแค่ CUSTOMER_RECEIPT ทำให้การ์ดรายรับเป็น 0 */
+    if (e.direction === 'IN' && (e.entryType === 'CUSTOMER_RECEIPT' || e.entryType === 'OTHER')) {
       pnlIn += amt;
-    } else if (e.direction === 'OUT' && (e.entryType === 'SUPPLIER_PAYMENT' || e.entryType === 'PAYROLL' || e.entryType === 'TAX' || e.entryType === 'OTHER')) {
+    } else if (
+      e.direction === 'OUT' &&
+      (e.entryType === 'SUPPLIER_PAYMENT' || e.entryType === 'PAYROLL' || e.entryType === 'TAX' || e.entryType === 'OTHER')
+    ) {
       pnlOut += amt;
     }
   }

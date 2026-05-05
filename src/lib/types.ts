@@ -2090,6 +2090,10 @@ export interface PayrollBatchLine {
   incomeSegments?: PayrollBatchIncomeSegment[];
   /** เมื่อมี PO เดียว — แยกค่าแรงวันปกติ/วันหยุดสำหรับสลิป */
   payslipWorkDaySplit?: PayslipWorkDaySplit | null;
+  /** บัญชีตัดจ่ายแล้ว — ref cashbook ของชุดแถวนี้ (แบ่งจ่ายหลายบัญชีได้) */
+  financePayoutCashbookEntryId?: string;
+  financePayoutBankAccountId?: string;
+  financePaidAt?: number;
 }
 
 /**

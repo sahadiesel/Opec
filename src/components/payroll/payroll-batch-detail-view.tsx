@@ -35,6 +35,7 @@ import { formatDateTimeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-th
 import {
   canAccess,
   canConfirmWorkerPayrollPaid,
+  canCreate,
   canGeneratePayslips,
   canView,
   isMatrixControlledRole,
@@ -52,6 +53,7 @@ import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { useAppUser } from '@/hooks/use-app-user';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
+import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
 import { buildWorkerPayrollBankVerificationCsv } from '@/lib/payroll/worker-payroll-bank-csv';
 import { useToast } from '@/hooks/use-toast';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
@@ -73,6 +75,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 
 function lineDeductionsTotal(line: PayrollBatchLine): number {
   return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -105,6 +108,7 @@ export function PayrollBatchDetailView({
   );
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmPaidOpen, setConfirmPaidOpen] = useState(false);
+  const [confirmLineIds, setConfirmLineIds] = useState<Set<string>>(() => new Set());
   const [payoutBankId, setPayoutBankId] = useState('');
   const [payoutActionBusy, setPayoutActionBusy] = useState(false);
   const canEditBatch = payrollPerm('payroll_worker', 'edit_batch');
@@ -155,6 +159,20 @@ export function PayrollBatchDetailView({
     return list;
   }, [lines]);
 
+  const accountingPaidLineCount = useMemo(
+    () => linesSorted.filter((l) => !!(l as PayrollBatchLine).financePayoutCashbookEntryId).length,
+    [linesSorted],
+  );
+
+  const confirmSelectionLines = useMemo(
+    () => linesSorted.filter((l) => confirmLineIds.has(l.id)),
+    [linesSorted, confirmLineIds],
+  );
+  const confirmSelectionNetTotal = useMemo(
+    () => Math.round(confirmSelectionLines.reduce((s, l) => s + safeNum(l.netAmount), 0) * 100) / 100,
+    [confirmSelectionLines],
+  );
+
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
   const { profile: companyProfile } = useCompanyDocumentProfile();
@@ -178,6 +196,39 @@ export function PayrollBatchDetailView({
     list.sort((a, b) => (a.accountCode || '').localeCompare(b.accountCode || 'th-TH', 'th', { numeric: true }));
     return list;
   }, [bankAccounts]);
+
+  const bankIdsReconcileKey = useMemo(
+    () => activeBanks.map((b) => b.id).sort().join(','),
+    [activeBanks],
+  );
+
+  useEffect(() => {
+    if (shell !== 'accounting' || !firestore || !currentUser || !bankIdsReconcileKey) return;
+    const u = currentUser as User;
+    if (!canCreate(u, 'bank_accounts') && !canCreate(u, 'cashbook')) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let anyCorrected = false;
+        for (const b of activeBanks) {
+          if (cancelled) break;
+          const { corrected } = await syncBankCurrentBalanceIfDrift(firestore, b.id);
+          if (corrected) anyCorrected = true;
+        }
+        if (!cancelled && anyCorrected) {
+          toast({
+            title: 'ซิงค์ยอดบัญชีแล้ว',
+            description: 'ยอดในรายการเลือกบัญชีตัดจ่ายถูกปรับให้ตรงกับ cashbook / Petty',
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shell, firestore, currentUser, bankIdsReconcileKey, activeBanks, toast]);
 
   useEffect(() => {
     if (batch?.payoutBankAccountId) {
@@ -278,12 +329,33 @@ export function PayrollBatchDetailView({
       toast({ variant: 'destructive', title: 'ยังไม่ได้เลือกบัญชี', description: 'กรุณาเลือกบัญชีธนาคารที่ต้องการตัดจ่าย' });
       return;
     }
+    if (confirmLineIds.size === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้เลือกรายการ',
+        description: 'ติ๊กเลือกคนที่ต้องการตัดจากบัญชีนี้อย่างน้อย 1 แถว',
+      });
+      return;
+    }
     setConfirmBusy(true);
     try {
       const svc = new PayrollService(firestore);
-      await svc.financeConfirmWorkerBatchPaid(batch.id, currentUser as User, { payoutBankAccountId: bankId });
+      const result = await svc.financeConfirmWorkerBatchPaid(batch.id, currentUser as User, {
+        payoutBankAccountId: bankId,
+        lineIds: [...confirmLineIds],
+      });
       setConfirmPaidOpen(false);
-      toast({ title: 'ยืนยันจ่ายแล้ว', description: 'บันทึกสถานะ PAID และรายการ cashbook จากบัญชีที่เลือกแล้ว' });
+      if (result.alreadyDone) {
+        toast({ title: 'งวดนี้ปิดการจ่ายแล้ว', description: 'ระบบไม่ได้ตัดบัญชีซ้ำ' });
+        return;
+      }
+      const paidAll = result.allPaidNow === true;
+      toast({
+        title: paidAll ? 'ยืนยันจ่ายครบทุกคนแล้ว' : 'ตัดบัญชีชุดที่เลือกแล้ว',
+        description: paidAll
+          ? 'สถานะงวดเป็น PAID และลง cashbook แล้ว'
+          : `ลง cashbook แล้ว — ยังมีคนที่ยังไม่ตัดบัญชี · งวดจะเป็น PAID เมื่อตัดครบทุกแถว`,
+      });
     } catch (e) {
       toast({
         variant: 'destructive',
@@ -293,7 +365,7 @@ export function PayrollBatchDetailView({
     } finally {
       setConfirmBusy(false);
     }
-  }, [firestore, batch, currentUser, toast, payoutBankId]);
+  }, [firestore, batch, currentUser, toast, payoutBankId, confirmLineIds]);
 
   if (userLoading || isBatchLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
@@ -329,6 +401,8 @@ export function PayrollBatchDetailView({
     canConfirmWorkerPayrollPaid(currentUser) &&
     (batch.status === 'FINANCE_PREPARED' || batch.status === 'PAYMENT_EXPORTED');
 
+  const unpaidAccountingLines = linesSorted.filter((l) => !(l as PayrollBatchLine).financePayoutCashbookEntryId);
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-[1600px] mx-auto space-y-6">
@@ -350,8 +424,8 @@ export function PayrollBatchDetailView({
                   </Badge>
                   <h1 className="text-2xl font-bold tracking-tight">ยืนยันโอน · เลือกบัญชีตัดจ่าย · ลง cashbook</h1>
                   <p className="text-sm text-muted-foreground max-w-3xl leading-relaxed">
-                    ขั้นตอนฝ่ายบัญชี: ดาวน์โหลด CSV เพื่อตรวจกับธนาคาร → เมื่อโอนจริงแล้วกดยืนยันจ่ายและเลือกบัญชีธนาคารที่ตัดยอด
-                    ระบบจะบันทึกสถานะ PAID และสร้างรายการใน cashbook (หักยอดบัญชีที่เลือก)
+                    ขั้นตอนฝ่ายบัญชี: ดาวน์โหลด CSV เพื่อตรวจกับธนาคาร → ติ๊กเลือกคนที่โอนจากบัญชีเดียวกันในแต่ละรอบ → เลือกบัญชีตัดจ่าย → ยืนยัน
+                    (แบ่งจ่ายหลายบัญชีได้ เช่น 10 คนจากบัญชี A และอีก 4 คนจากบัญชี B) · งวดเป็น PAID เมื่อทุกแถวตัดบัญชีครบ
                   </p>
                 </>
               ) : (
@@ -517,12 +591,12 @@ export function PayrollBatchDetailView({
                   <>
                     หน้านี้เป็นหน้าทำจ่ายของบัญชี — หลังสถานะ{' '}
                     <span className="font-mono text-xs">FINANCE_PREPARED</span> ให้ดาวน์โหลด CSV ตรวจธนาคาร แล้วกดยืนยันจ่ายเพื่อเลือกบัญชีตัดจ่าย
-                    และบันทึก PAID + cashbook
+                    และบันทึก PAID + cashbook เมื่อครบทุกคน
                   </>
                 ) : (
                   <>
                     หลังส่งต่อบัญชี (FINANCE_PREPARED) ดาวน์โหลด CSV รายชุดเพื่อตรวจกับธนาคาร — เมื่อโอนจริงแล้วให้บัญชีกด ยืนยันจ่าย (จากเมนูบัญชี
-                    หรือหน้านี้) จะขึ้นหน้าต่างให้ <strong>เลือกบัญชีธนาคาร</strong> ก่อน — จึงบันทึก PAID + ตัด cashbook/ยอดบัญชี
+                    หรือหน้านี้) เลือกแถวที่ต้องการและ <strong>เลือกบัญชีธนาคาร</strong> — แบ่งจ่ายหลายบัญชีได้ · งวดเป็น PAID เมื่อทุกแถวตัดครบ
                   </>
                 )}
               </CardDescription>
@@ -530,7 +604,13 @@ export function PayrollBatchDetailView({
             <CardContent className="space-y-2">
               {batch.status === 'PAID' && payoutAccountLabel && (
                 <p className="text-sm text-muted-foreground">
-                  บัญชีที่ตัดจ่าย: <span className="font-medium text-foreground">{payoutAccountLabel}</span>
+                  บัญชีที่ตัดจ่าย (งวดปิด): <span className="font-medium text-foreground">{payoutAccountLabel}</span>
+                </p>
+              )}
+              {showAccountingConfirm && accountingPaidLineCount > 0 && (
+                <p className="text-sm rounded-md border border-emerald-200/80 bg-emerald-50/80 dark:bg-emerald-950/35 dark:border-emerald-800/60 px-3 py-2 text-emerald-900 dark:text-emerald-100">
+                  ตัดบัญชีแล้ว <strong>{accountingPaidLineCount}</strong> / {linesSorted.length} คน — งวดจะเป็น{' '}
+                  <span className="font-mono text-xs">PAID</span> เมื่อครบทุกแถว
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-2">
@@ -539,6 +619,30 @@ export function PayrollBatchDetailView({
                     <FileSpreadsheet className="h-4 w-4" />
                     ดาวน์โหลด CSV ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)
                   </Button>
+                )}
+                {showAccountingConfirm && unpaidAccountingLines.length > 0 && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      disabled={confirmBusy}
+                      onClick={() => setConfirmLineIds(new Set(unpaidAccountingLines.map((l) => l.id)))}
+                    >
+                      เลือกทั้งหมดที่ยังไม่จ่าย
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs"
+                      disabled={confirmBusy}
+                      onClick={() => setConfirmLineIds(new Set())}
+                    >
+                      ล้างการเลือก
+                    </Button>
+                  </>
                 )}
                 {showAccountingConfirm && (
                   <Button
@@ -554,6 +658,20 @@ export function PayrollBatchDetailView({
                         });
                         return;
                       }
+                      if (!unpaidAccountingLines.length) {
+                        toast({
+                          variant: 'destructive',
+                          title: 'ไม่มีแถวที่ยังไม่ได้ตัดบัญชี',
+                          description: 'ทุกคนในงวดนี้ตัดบัญชีครบแล้ว',
+                        });
+                        return;
+                      }
+                      setConfirmLineIds((prev) => {
+                        const unpaidIds = new Set(unpaidAccountingLines.map((l) => l.id));
+                        const kept = [...prev].filter((id) => unpaidIds.has(id));
+                        if (kept.length > 0) return new Set(kept);
+                        return new Set(unpaidAccountingLines.map((l) => l.id));
+                      });
                       setPayoutBankId((prev) => (prev && activeBanks.some((b) => b.id === prev) ? prev : (activeBanks[0]?.id ?? '')));
                       setConfirmPaidOpen(true);
                     }}
@@ -573,16 +691,17 @@ export function PayrollBatchDetailView({
         )}
 
         <AlertDialog open={confirmPaidOpen} onOpenChange={setConfirmPaidOpen}>
-          <AlertDialogContent className="max-w-md">
+          <AlertDialogContent className="max-w-lg">
             <AlertDialogHeader>
               <AlertDialogTitle>ยืนยันจ่าย — เลือกบัญชีตัดจ่าย</AlertDialogTitle>
               <AlertDialogDescription asChild>
                 <div className="space-y-3 text-sm text-left">
                   <p>
-                    งวด <span className="font-mono font-semibold">{batch.id}</span> ยอดสุทธิ{' '}
-                    <span className="font-semibold">฿{safeNum(batch.netAmount).toLocaleString()}</span> จะถูกลงรายจ่าย
-                    ใน <strong>สมุดบัญชีเงินสด/ธนาคาร (cashbook)</strong> และลดยอด <strong>current balance</strong> ของบัญชีที่เลือก
-                    ทันที — ตรวจสอบก่อนกดยืนยัน
+                    งวด <span className="font-mono font-semibold">{batch.id}</span> — ชุดที่เลือก{' '}
+                    <span className="font-semibold">{confirmLineIds.size}</span> คน · ยอดสุทธิรวม{' '}
+                    <span className="font-semibold">฿{confirmSelectionNetTotal.toLocaleString()}</span> จะถูกลงรายจ่ายใน{' '}
+                    <strong>cashbook</strong> และลดยอด <strong>current balance</strong> ของบัญชีที่เลือกทันที (ยอดรวมทั้งงวด{' '}
+                    ฿{safeNum(batch.netAmount).toLocaleString()})
                   </p>
                   {activeBanks.length === 0 ? (
                     <p className="text-destructive">ไม่พบบัญชีธนาคารสถานะ ACTIVE — ไปตั้งค่าเมนูบัญชี/ธนาคาร</p>
@@ -615,7 +734,7 @@ export function PayrollBatchDetailView({
             <AlertDialogFooter>
               <AlertDialogCancel disabled={confirmBusy}>ยกเลิก</AlertDialogCancel>
               <AlertDialogAction
-                disabled={confirmBusy || !payoutBankId || activeBanks.length === 0}
+                disabled={confirmBusy || !payoutBankId || activeBanks.length === 0 || confirmLineIds.size === 0}
                 onClick={(e) => {
                   e.preventDefault();
                   void handleConfirmPaid();
@@ -641,6 +760,24 @@ export function PayrollBatchDetailView({
                 <Table className="table-fixed min-w-[860px] w-full">
                   <TableHeader className="bg-muted/30">
                     <TableRow>
+                      {showAccountingConfirm ? (
+                        <TableHead className="w-11 pl-4 py-3 align-middle">
+                          <Checkbox
+                            checked={
+                              unpaidAccountingLines.length > 0 &&
+                              unpaidAccountingLines.every((l) => confirmLineIds.has(l.id))
+                            }
+                            onCheckedChange={(v) => {
+                              if (v === true) {
+                                setConfirmLineIds(new Set(unpaidAccountingLines.map((l) => l.id)));
+                              } else {
+                                setConfirmLineIds(new Set());
+                              }
+                            }}
+                            aria-label="เลือกทั้งหมดที่ยังไม่ได้ตัดบัญชี"
+                          />
+                        </TableHead>
+                      ) : null}
                       <TableHead className="pl-6 py-3 w-[26%] min-w-[160px] max-w-[300px] align-middle">
                         Worker (Snapshot)
                       </TableHead>
@@ -672,6 +809,29 @@ export function PayrollBatchDetailView({
                       }
                       return (
                       <TableRow key={line.id} className="hover:bg-muted/10">
+                        {showAccountingConfirm ? (
+                          <TableCell className="w-11 pl-4 align-middle py-3">
+                            {(line as PayrollBatchLine).financePayoutCashbookEntryId ? (
+                              <span className="text-muted-foreground text-xs tabular-nums" title="ตัดบัญชีแล้ว">
+                                ✓
+                              </span>
+                            ) : (
+                              <Checkbox
+                                checked={confirmLineIds.has(line.id)}
+                                onCheckedChange={(v) => {
+                                  const on = v === true;
+                                  setConfirmLineIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (on) next.add(line.id);
+                                    else next.delete(line.id);
+                                    return next;
+                                  });
+                                }}
+                                aria-label={`เลือก ${line.workerNameSnapshot || line.workerId}`}
+                              />
+                            )}
+                          </TableCell>
+                        ) : null}
                         <TableCell className="pl-6 align-top py-3 min-w-0 max-w-[300px]">
                           <div className="flex flex-col gap-0.5 min-w-0">
                             <span className="font-bold text-sm text-primary leading-snug break-words inline-flex flex-wrap items-center gap-1">
@@ -694,9 +854,27 @@ export function PayrollBatchDetailView({
                           </div>
                         </TableCell>
                         <TableCell className="align-middle py-3">
-                          <Badge variant="outline" className="text-[9px] uppercase font-bold whitespace-nowrap">
-                            {line.exportStatus}
-                          </Badge>
+                          <div className="flex flex-col gap-1 items-start">
+                            <Badge variant="outline" className="text-[9px] uppercase font-bold whitespace-nowrap">
+                              {line.exportStatus}
+                            </Badge>
+                            {(showAccountingConfirm || !!(line as PayrollBatchLine).financePayoutCashbookEntryId) &&
+                            (line as PayrollBatchLine).financePayoutCashbookEntryId ? (
+                              <Badge
+                                variant="default"
+                                className="text-[9px] bg-emerald-700 hover:bg-emerald-700 whitespace-nowrap font-semibold"
+                              >
+                                บัญชี: จ่ายแล้ว
+                              </Badge>
+                            ) : showAccountingConfirm ? (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] text-amber-900 border-amber-600 whitespace-nowrap font-semibold dark:text-amber-100"
+                              >
+                                บัญชี: รอตัด
+                              </Badge>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-3">
                           ฿{safeNum(line.grossAmount).toLocaleString()}
@@ -743,7 +921,12 @@ export function PayrollBatchDetailView({
                     );})}
                     {linesSorted.length === 0 && !isLinesLoading && (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">No settlement lines found in this batch.</TableCell>
+                        <TableCell
+                          colSpan={showAccountingConfirm ? 10 : 9}
+                          className="text-center py-20 text-muted-foreground italic"
+                        >
+                          No settlement lines found in this batch.
+                        </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
