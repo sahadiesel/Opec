@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { CalendarDays } from 'lucide-react';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useSearchParams } from 'next/navigation';
 import { collection, query, where, getDocs, type Firestore } from 'firebase/firestore';
@@ -58,7 +59,8 @@ function WaveTimesheetBoardContent() {
     [currentUser, useMatrixGuards],
   );
 
-  const [targetDate, setTargetDate] = useState(() => timestampToHtmlDateValue(Date.now()));
+  /** ใช้วันที่ปฏิทินตามเขต Asia/Bangkok ให้ตรงกับซิงก์ลงเวลาอัตโนมัติ — ไม่พึ่ง timezone เครื่องผู้ใช้อย่างเดียว */
+  const [targetDate, setTargetDate] = useState(() => thailandTodayYmd());
   const [dateConfirmOpen, setDateConfirmOpen] = useState(false);
   const [pendingDateChangeMs, setPendingDateChangeMs] = useState<number | null>(null);
 
@@ -75,9 +77,10 @@ function WaveTimesheetBoardContent() {
   }, [monthFromQuery, targetDate]);
 
   useEffect(() => {
-    if (monthFromQuery && /^\d{4}-\d{2}$/.test(monthFromQuery)) {
-      setTargetDate(`${monthFromQuery}-01`);
-    }
+    if (!monthFromQuery || !/^\d{4}-\d{2}$/.test(monthFromQuery)) return;
+    const today = thailandTodayYmd();
+    /** เดือนที่เปิดตรงเดือนปัจจุบัน → โฟกัสวันนี้; เดือนอื่น → วันแรกของเดือนนั้น */
+    setTargetDate(today.startsWith(monthFromQuery) ? today : `${monthFromQuery}-01`);
   }, [monthFromQuery]);
 
   const firestore = useFirestore();
@@ -303,7 +306,7 @@ function WaveTimesheetBoardContent() {
             'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
             'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
             'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
-            'คนที่สถานะ ACTIVE (on-site): ระบบซิงก์วันทำงานอัตโนมัติถึงวันนี้ตามเวลาไทยเมื่อมีผู้เปิดกระดานหรือหลังเที่ยงคืน (แท็บเปิดอยู่); ปุ่ม Auto gen เติมช่วงข้อมูลเก่าที่ขาด — กดจบงานแล้วจะไม่ถูกซิงก์ต่อ',
+            'คนที่สถานะ ACTIVE (on-site): Cloud Function + Scheduler เติม/รักษาวันนี้ (~00:10 Asia/Bangkok) และ UI ซิงก์เมื่อมีผู้เปิดกระดาน (~45 วินาที); ช่วงหยุดแบบ standby จะเป็น SB อัตโนมัติตามช่วงที่ตั้งไว้ · ปุ่ม Auto gen เติมช่วงที่ขาดด้วยมือ · ปุ่มหยุด = จบงานหรือพัก SB',
           ]}
         />
 

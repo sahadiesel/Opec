@@ -217,13 +217,13 @@ function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
   return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
 
-/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า» — PR ก่อน แล้วค่อย PO (ใบสั่งซื้อสร้างจาก PR) */
+/** ลำดับเมนูย่อยภายใต้ «จัดการเอกสารคลังสินค้า» — คู่ค้า → PR → PO → รับวางบิล → หน้าคลัง */
 const OPS_WAREHOUSE_SUB_PATHS = [
-  '/store/purchase-requests',
-  '/store',
-  '/store/vendor-bills',
   '/vendors',
+  '/store/purchase-requests',
   '/purchases',
+  '/store/vendor-bills',
+  '/store',
 ] as const;
 
 /** เมนู Demo ภายใต้ «การจัดการระบบ» — เฉพาะผู้ดูแลระบบ (สาขาแสดงใน renderer ไม่ใส่ใน items หลัก) */
@@ -329,13 +329,13 @@ const navGroups: NavGroup[] = [
         icon: FileQuestion,
       },
       { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
-      { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
       {
         key: 'store_inventory',
         title: 'รับวางบิล (Vendor billing)',
         href: '/store/vendor-bills',
         icon: FileText,
       },
+      { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
       {
         key: 'draft_invoices',
         title: 'รายการใบแจ้งหนี้ ( Invoice )',
@@ -413,20 +413,20 @@ function navGroupsForUser(user: User): NavGroup[] {
           ...g,
           /* หน้าหลักไป /store อยู่แล้วที่ภาพรวม — ไม่ซ้ำลิงก์คลังที่นี่ */
           items: [
+            { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
             {
               key: 'store_inventory',
               title: 'การขออนุมัติสั่งซื้อ (PR)',
               href: '/store/purchase-requests',
               icon: FileQuestion,
             },
+            { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
             {
               key: 'store_inventory',
               title: 'รับวางบิล (Vendor billing)',
               href: '/store/vendor-bills',
               icon: FileText,
             },
-            { key: 'vendors', title: UI_LABELS.VENDORS, href: '/vendors', icon: Store },
-            { key: 'purchases', title: UI_LABELS.PURCHASES, href: '/purchases', icon: PackageSearch },
           ],
         };
       }
@@ -870,11 +870,11 @@ export function SidebarNav({
                         <SidebarMenuItem>
                           <CollapsibleTrigger asChild>
                             <SidebarMenuButton
-                              tooltip="PR (ขออนุมัติ) · คลัง · รับวางบิล · คู่ค้า · ใบสั่งซื้อ (จาก PR)"
+                              tooltip="คู่ค้า · PR · ใบสั่งซื้อ · รับวางบิล · คลัง"
                               className="transition-all duration-200"
                             >
                               <Warehouse className="h-4 w-4 text-muted-foreground" />
-                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>การจัดการคลังสินค้า</span>
+                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>จัดการเอกสารคลังสินค้า</span>
                               <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                             </SidebarMenuButton>
                           </CollapsibleTrigger>

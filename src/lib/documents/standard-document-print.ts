@@ -403,6 +403,46 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     margin-top: 6px;
     padding-bottom: 0;
   }
+  /** ใบสั่งซื้อ (และเอกสารที่ใช้ variant เดียวกัน) — ลดระยะหัวข้อเงื่อนไข/งวดจ่ายให้ลายเซ็นอยู่หน้าเดียวได้บ่อยขึ้น */
+  .sd-page--commercial .sd-header {
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+  .sd-page--commercial .sd-section-title {
+    margin: 8px 0 4px 0;
+    font-size: 10pt;
+  }
+  .sd-page--commercial .sd-terms {
+    font-size: 9pt;
+    padding-left: 15px;
+    margin: 0;
+    line-height: 1.35;
+  }
+  .sd-page--commercial .sd-terms li {
+    margin-bottom: 2px;
+  }
+  .sd-page--commercial .sd-wht {
+    margin-top: 4px;
+    font-size: 9pt;
+    line-height: 1.35;
+  }
+  .sd-page--commercial .sd-purchase-type-line {
+    margin: 0 0 4px 0;
+    font-size: 9pt;
+  }
+  @media print {
+    body:has(.sd-page--commercial) {
+      padding: 5mm 11mm 16mm 11mm;
+      font-size: 10pt;
+    }
+    .sd-page--commercial .sd-sign-line {
+      margin: 16px 10px 4px 10px;
+    }
+    .sd-page--commercial .sd-sign-footer {
+      margin-top: 3mm;
+      padding-top: 2mm;
+    }
+  }
   .sd-print-stamp {
     position: fixed;
     left: 10mm;
@@ -1331,18 +1371,25 @@ export function buildPurchaseOrderPrintHtml(params: {
   const { company, purchase, vendor, lines, milestones, printedAtMs } = params;
   const L = params.locale ?? 'th';
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
+  const ymd = purchase.purchaseDate?.trim();
+  const poDateIso = ymd ? `${ymd}T12:00:00` : '';
   const poDateStr =
-    L === 'en'
-      ? formatStoredDateGregorian(`${purchase.purchaseDate}T12:00:00`)
-      : formatDateThaiBE(`${purchase.purchaseDate}T12:00:00`);
-  const ms = [...(milestones || [])].sort((a, b) => a.sequence - b.sequence);
+    (L === 'en' ? formatStoredDateGregorian(poDateIso, '') : formatDateThaiBE(poDateIso)) || '—';
+  const ms = [...(milestones || [])].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+
+  const amountBeforeTaxN = Number(purchase.amountBeforeTax ?? 0);
+  const vatAmountN = Number(purchase.vatAmount ?? 0);
+  const totalAmountN = Number(purchase.totalAmount ?? 0);
 
   const lineRows = (lines || [])
     .map((line, idx) => {
       const desc = escapeHtmlDoc(line.itemDescription || '—');
-      const qty = line.quantity.toLocaleString(loc);
-      const up = line.unitPrice.toLocaleString(loc, { minimumFractionDigits: 2 });
-      const am = line.amount.toLocaleString(loc, { minimumFractionDigits: 2 });
+      const qtyN = Number(line.quantity ?? 0);
+      const upN = Number(line.unitPrice ?? 0);
+      const amN = Number(line.amount ?? 0);
+      const qty = qtyN.toLocaleString(loc);
+      const up = upN.toLocaleString(loc, { minimumFractionDigits: 2 });
+      const am = amN.toLocaleString(loc, { minimumFractionDigits: 2 });
       return `<tr>
         <td class="sd-num">${idx + 1}</td>
         <td>${desc}</td>
@@ -1363,7 +1410,8 @@ export function buildPurchaseOrderPrintHtml(params: {
             : formatDateThaiBE(`${m.dueDate}T12:00:00`);
         due = ` (${printT(L, 'milestoneDue')} ${ds})`;
       }
-      return `<li>${printT(L, 'milestoneLabel')} ${m.sequence}: ${escapeHtmlDoc(m.label)} — ฿${m.amount.toLocaleString(loc, { minimumFractionDigits: 2 })}${due}</li>`;
+      const amt = Number(m.amount ?? 0);
+      return `<li>${printT(L, 'milestoneLabel')} ${m.sequence ?? '—'}: ${escapeHtmlDoc(m.label || '—')} — ฿${amt.toLocaleString(loc, { minimumFractionDigits: 2 })}${due}</li>`;
     })
     .join('');
 
@@ -1377,7 +1425,7 @@ export function buildPurchaseOrderPrintHtml(params: {
     : '';
 
   const totalWords =
-    L === 'en' ? amountToEnglishBahtText(purchase.totalAmount) : amountToThaiBahtText(purchase.totalAmount);
+    L === 'en' ? amountToEnglishBahtText(totalAmountN) : amountToThaiBahtText(totalAmountN);
 
   const showElectronicApprovalNotice = ['APPROVED', 'ISSUED', 'COMPLETED'].includes(purchase.status);
   const approvalNotice = showElectronicApprovalNotice
@@ -1390,7 +1438,7 @@ export function buildPurchaseOrderPrintHtml(params: {
     documentTitleEn: 'Purchase Order',
     metaRows: [
       { line: `${printT(L, 'docDate')}: ${poDateStr}` },
-      { line: `${printT(L, 'docNo')}: ${purchase.purchaseNo}` },
+      { line: `${printT(L, 'docNo')}: ${purchase.purchaseNo || '—'}` },
     ],
     locale: L,
   });
@@ -1425,15 +1473,15 @@ export function buildPurchaseOrderPrintHtml(params: {
     rows: [
       {
         label: printT(L, 'subtotal'),
-        value: purchase.amountBeforeTax.toLocaleString(loc, { minimumFractionDigits: 2 }),
+        value: amountBeforeTaxN.toLocaleString(loc, { minimumFractionDigits: 2 }),
       },
       {
         label: L === 'en' ? `${printT(L, 'vat')} 7%` : 'ภาษีมูลค่าเพิ่ม 7%',
-        value: purchase.vatAmount.toLocaleString(loc, { minimumFractionDigits: 2 }),
+        value: vatAmountN.toLocaleString(loc, { minimumFractionDigits: 2 }),
       },
       {
         label: printT(L, 'grandTotal'),
-        value: `฿ ${purchase.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+        value: `฿ ${totalAmountN.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
         grand: true,
       },
     ],
@@ -1462,6 +1510,8 @@ export function buildPurchaseOrderPrintHtml(params: {
     mainHtml,
     footerHtml,
     locale: L,
+    /** เลย์เอาต์กระชับ — เดียวกับใบแจ้งหนี้เรียกเก็บ (ตาราง/ลายเซ็น/ขอบกระดาษ) เพื่อให้ PO สั้นๆ พอดีหนึ่งหน้า */
+    pageVariant: 'commercial',
   });
 }
 

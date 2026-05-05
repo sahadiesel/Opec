@@ -2,7 +2,7 @@
   "name": "opec-functions",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "lib/index.js",
   "scripts": {
@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",
-    "firebase-functions": "^5.1.1",
+    "firebase-functions": "^7.2.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {

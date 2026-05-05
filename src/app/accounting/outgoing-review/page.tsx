@@ -123,6 +123,9 @@ export default function AccountingOutgoingReviewPage() {
                         <TableCell className="font-mono font-semibold">{b.receiptNo}</TableCell>
                         <TableCell>
                           <div className="text-sm font-medium">{b.purchaseNo || b.purchaseId}</div>
+                          {b.purchaseRequestNo ? (
+                            <div className="text-xs font-mono text-muted-foreground">PR {b.purchaseRequestNo}</div>
+                          ) : null}
                           {b.notes ? <div className="text-xs text-muted-foreground">{b.notes}</div> : null}
                         </TableCell>
                         <TableCell>

@@ -504,6 +504,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         mobilizationStatus: 'ACTIVE',
         deploymentStatus: 'ACTIVE',
         mobLocationPhase: 'active_at_location',
+        poActiveAutoWorkSuspended: deleteField(),
+        poActiveStandbyAutoStartYmd: deleteField(),
+        poActiveStandbyAutoEndYmd: deleteField(),
       });
       setClearanceEditMode(0);
       toast({

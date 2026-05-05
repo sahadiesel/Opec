@@ -22,6 +22,27 @@ export function isAssignmentEligibleForPoActiveAutoDaily(a: Assignment): boolean
   return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && a.waveId?.trim());
 }
 
+/** จำนวนวันที่ระบบเติม SB อัตโนมัติเมื่อหยุดแบบ standby (รวมวันเริ่ม) */
+export const PO_ACTIVE_STANDBY_STOP_AUTO_DAYS = 7;
+
+/**
+ * ว่าจะซิงก์ PO Active auto สำหรับวันนี้เป็น work / standby / ไม่ซิงก์
+ * — null = ไม่สร้างหรือไม่อัปเดตแถวอัตโนมัติสำหรับวันนั้น (ช่วงหลังจบ SB หรือข้อมูลระงับไม่ครบ)
+ */
+export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string): 'work_day' | 'standby_day' | null {
+  if (!isAssignmentEligibleForPoActiveAutoDaily(a)) return null;
+  const suspended = a.poActiveAutoWorkSuspended === true;
+  const sbStart = (a.poActiveStandbyAutoStartYmd || '').trim().slice(0, 10);
+  const sbEnd = (a.poActiveStandbyAutoEndYmd || '').trim().slice(0, 10);
+  const hasSeg = /^\d{4}-\d{2}-\d{2}$/.test(sbStart) && /^\d{4}-\d{2}-\d{2}$/.test(sbEnd);
+  if (suspended) {
+    if (!hasSeg) return null;
+    if (dateYmd >= sbStart && dateYmd <= sbEnd) return 'standby_day';
+    if (dateYmd > sbEnd) return null;
+  }
+  return 'work_day';
+}
+
 /**
  * ช่วงสร้างรายวัน: เริ่ม mobWorkingStartDate (หรือ startDate) ถึง min(วันนี้ Bangkok, จบงาน, endDate assignment, PO end)
  * — เมื่อเริ่มวันปฏิทินใหม่ที่ไทย (หลัง 00:00) ให้ซิงก์รายวันได้ถึงวันนี้ทันที (working day อัตโนมัติ)
@@ -105,5 +126,16 @@ export function buildPoActiveAutoDailyRowPayload(p: PoActiveAutoDailyRowParams):
     poActiveAutoDaily: true,
     remark: 'Auto — PO Active workflow',
     ...(laborCostContractTermId ? { laborCostContractTermId } : {}),
+  };
+}
+
+/** แถว SB อัตโนมัติช่วงหยุดแบบ standby — แก้มือได้เหมือนแถว auto อื่น */
+export function buildPoActiveAutoStandbyRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
+  const row = buildPoActiveAutoDailyRowPayload(p);
+  return {
+    ...row,
+    eventType: 'standby_day',
+    shiftType: 'STANDBY',
+    remark: 'Auto — PO Active standby stop',
   };
 }

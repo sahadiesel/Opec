@@ -955,8 +955,34 @@ service cloud.firestore {
       allow create, update, delete: if isAccountingOrAdmin();
     }
 
+    /**
+     * AP Bills — บัญชีเป็นหลัก; ฝั่งคลัง/จัดซื้อต้องลบแถวที่ผูก purchaseId ได้เมื่อลบ PO (cascade)
+     * (มิฉะนั้น getDocs(ap_bills where purchaseId==…) จะ permission-denied แม้ลบ purchases ได้)
+     */
+    function apBillHasPurchaseLink(data) {
+      return data != null
+        && 'purchaseId' in data
+        && (
+          (data.purchaseId is string && data.purchaseId.size() > 0)
+          /** Legacy/import rows may store DocumentReference instead of string — still tied to a PO */
+          || data.purchaseId is path
+        );
+    }
+
     match /ap_bills/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin()
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && resource.data != null
+          && apBillHasPurchaseLink(resource.data)
+        );
+      allow create, update: if isAccountingOrAdmin();
+      allow delete: if isAccountingOrAdmin()
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && resource.data != null
+          && apBillHasPurchaseLink(resource.data)
+        );
     }
 
     match /accounts_receivable/{id} {
@@ -1184,8 +1210,10 @@ service cloud.firestore {
       allow read, write: if isInternalUser();
     }
 
+    /** อ่านสำหรับหน้าคลัง (custody) — รองรับพนักงานภายในที่ยัง pending activation */
     match /office_staff/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || isInternalStaffDoc();
+      allow write: if isInternalUser();
     }
 
     match /worker_document_catalog/{id} {
@@ -1215,7 +1243,18 @@ service cloud.firestore {
       allow read: if isInternalUser() || isInternalStaffDoc();
       allow create: if isAccountingOrAdmin();
       allow update: if isAccountingOrAdmin();
-      allow delete: if isAdmin();
+      /**
+       * Delete: accounting/admin — plus internal cleanup when removing a purchase-linked cert during PO cascade
+       * (UI gate still blocks paid vendor bills / paid milestones).
+       */
+      allow delete: if isAccountingOrAdmin()
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && resource.data != null
+          && 'sourcePurchaseId' in resource.data
+          && resource.data.sourcePurchaseId is string
+          && resource.data.sourcePurchaseId.size() > 0
+        );
     }
 
     match /withholding_certificate_documents/{docId}/audit_logs/{logId} {
@@ -1415,6 +1454,9 @@ service cloud.firestore {
     match /purchase_requests/{id} {
       allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
+    match /purchase_requests/{prId}/{document=**} {
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
+    }
 
     // รายการซื้อ/ใบสั่งซื้อ: ฝ่ายคลัง + ผจก.ฝ่ายอนุมัติ — รองรับ isInternalStaffDoc (บัญชี internal ยัง pending activation)
     match /purchases/{purchaseId} {
@@ -1424,44 +1466,45 @@ service cloud.firestore {
       allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
+    // คลังสินค้า: เทียบ purchases / purchase_requests — รองรับ isInternalStaffDoc (บัญชียัง pending activation)
     match /store_items/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_transactions/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_receipts/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_issue_slips/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_return_slips/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_writeoffs/{id} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_receipts/{receiptId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_issue_slips/{slipId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_return_slips/{returnId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /store_writeoffs/{writeoffId}/{document=**} {
-      allow read, write: if isInternalUser();
+      allow read, write: if isInternalUser() || isInternalStaffDoc();
     }
 
     match /{path=**}/po_lines/{lineId} {

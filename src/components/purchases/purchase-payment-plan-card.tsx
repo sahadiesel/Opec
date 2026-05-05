@@ -8,6 +8,7 @@ import {
   deleteField,
   deleteDoc,
   doc,
+  getDoc,
   updateDoc,
   writeBatch,
   type DocumentReference,
@@ -37,6 +38,7 @@ import { useToast } from '@/hooks/use-toast';
 import type {
   Purchase,
   PurchasePaymentMilestone,
+  PurchaseRequest,
   PurchaseVendorBill,
   PurchaseVendorBillStatus,
   User,
@@ -316,11 +318,20 @@ export function PurchasePaymentPlanCard({
       actor: currentUser.displayName || currentUser.email || '',
     });
     const now = Date.now();
+    let purchaseRequestNo: string | undefined;
+    if (purchase.purchaseRequestId) {
+      const prSnap = await getDoc(doc(firestore, 'purchase_requests', purchase.purchaseRequestId));
+      if (prSnap.exists()) {
+        const rn = (prSnap.data() as Pick<PurchaseRequest, 'requestNo'>).requestNo?.trim();
+        if (rn) purchaseRequestNo = rn;
+      }
+    }
     const baseDate = m.dueDate?.trim() || purchase.purchaseDate || timestampToHtmlDateValue(now);
     const ref = await addDoc(collection(firestore, 'purchase_vendor_bills'), {
         receiptNo: code,
         purchaseId,
         purchaseNo: purchase.purchaseNo,
+        ...(purchaseRequestNo ? { purchaseRequestNo } : {}),
         purchaseType: purchase.purchaseType,
         vendorId: purchase.vendorId,
       milestoneId: m.id,

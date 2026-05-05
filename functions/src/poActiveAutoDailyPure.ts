@@ -22,6 +22,9 @@ export type AssignmentLike = {
   startDate?: string;
   mobLocationEndDate?: string;
   endDate?: string;
+  poActiveAutoWorkSuspended?: boolean;
+  poActiveStandbyAutoStartYmd?: string;
+  poActiveStandbyAutoEndYmd?: string;
 };
 
 export type PurchaseOrderLike = {
@@ -97,6 +100,24 @@ export function isAssignmentEligibleForPoActiveAutoDaily(a: AssignmentLike): boo
   return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && a.waveId?.trim());
 }
 
+/** sync กับ src/lib/timesheet/po-active-auto-daily-build.ts — resolvePoActiveAutoDailySyncKind */
+export function resolvePoActiveAutoDailySyncKind(
+  a: AssignmentLike,
+  dateYmd: string,
+): 'work_day' | 'standby_day' | null {
+  if (!isAssignmentEligibleForPoActiveAutoDaily(a)) return null;
+  const suspended = a.poActiveAutoWorkSuspended === true;
+  const sbStart = (a.poActiveStandbyAutoStartYmd || '').trim().slice(0, 10);
+  const sbEnd = (a.poActiveStandbyAutoEndYmd || '').trim().slice(0, 10);
+  const hasSeg = /^\d{4}-\d{2}-\d{2}$/.test(sbStart) && /^\d{4}-\d{2}-\d{2}$/.test(sbEnd);
+  if (suspended) {
+    if (!hasSeg) return null;
+    if (dateYmd >= sbStart && dateYmd <= sbEnd) return 'standby_day';
+    if (dateYmd > sbEnd) return null;
+  }
+  return 'work_day';
+}
+
 export function computePoActiveAutoDailyRange(
   a: AssignmentLike,
   po: Pick<PurchaseOrderLike, 'endDate'>,
@@ -166,5 +187,23 @@ export function buildPoActiveAutoDailyRowPayload(p: {
     poActiveAutoDaily: true,
     remark: 'Auto — PO Active workflow',
     ...(laborCostContractTermId ? { laborCostContractTermId } : {}),
+  };
+}
+
+export function buildPoActiveAutoStandbyRowPayload(p: {
+  assignment: AssignmentLike;
+  po: PurchaseOrderLike;
+  line: POLineLike;
+  date: string;
+  workerNameSnapshot: string;
+  poActiveBundleId: string;
+  laborCostContractTermId?: string;
+}): Record<string, unknown> {
+  const row = buildPoActiveAutoDailyRowPayload(p);
+  return {
+    ...row,
+    eventType: 'standby_day',
+    shiftType: 'STANDBY',
+    remark: 'Auto — PO Active standby stop',
   };
 }

@@ -11,10 +11,20 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { collection, doc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canApprovePurchaseAsManager } from '@/lib/permissions';
-import { PurchaseRequest, User, Vendor, Purchase, PurchaseRequestStatus } from '@/lib/types';
+import type {
+  PurchaseRequest,
+  User,
+  Vendor,
+  Purchase,
+  PurchaseRequestStatus,
+  PurchaseLineEntryMode,
+  PurchaseRequestVatTreatment,
+  PurchaseType,
+  PrPaymentMilestoneDraft,
+} from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
@@ -30,6 +40,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { VendorSearchSelect } from '@/components/store/vendor-search-select';
+import {
+  PurchaseRequestLinesEditor,
+  newLine,
+  type PrLineDraft,
+} from '@/components/store/purchase-request-lines-editor';
+import { Switch } from '@/components/ui/switch';
+import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
+import { replacePurchaseRequestLines } from '@/lib/purchase/pr-lines-repo';
+import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 function statusLabel(s: PurchaseRequestStatus) {
   const m: Record<PurchaseRequestStatus, string> = {
@@ -52,7 +82,17 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
   const [vendorId, setVendorId] = useState<string | undefined>(undefined);
-  const [estStr, setEstStr] = useState('');
+  const [needByDate, setNeedByDate] = useState('');
+  const [lineEntryMode, setLineEntryMode] = useState<PurchaseLineEntryMode>('SERVICE');
+  const [lines, setLines] = useState<PrLineDraft[]>([newLine()]);
+  const [vatTreatment, setVatTreatment] = useState<PurchaseRequestVatTreatment>('EXCLUSIVE');
+  const [purchasePaymentType, setPurchasePaymentType] = useState<PurchaseType>('CREDIT');
+  const [paymentInstallmentsEnabled, setPaymentInstallmentsEnabled] = useState(false);
+  const [milestones, setMilestones] = useState<PrPaymentMilestoneDraft[]>([
+    { sequence: 1, label: 'งวดที่ 1', amount: 0 },
+    { sequence: 2, label: 'งวดที่ 2', amount: 0 },
+  ]);
+
   const [saving, setSaving] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -70,6 +110,22 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   );
   const { data: pr, isLoading } = useDoc<PurchaseRequest>(prRef as any);
 
+  const linesQuery = useMemoFirebase(
+    () => (firestore && ok ? collection(firestore, 'purchase_requests', id, 'lines') : null),
+    [firestore, id, ok]
+  );
+  const { data: prLines } = useCollection<{
+    id: string;
+    itemDescription: string;
+    quantity: number;
+    unitPrice: number;
+    amount: number;
+    storeItemId?: string;
+  }>(linesQuery as any);
+
+  const storeItemsQuery = useMemoFirebase(() => (firestore && ok ? collection(firestore, 'store_items') : null), [firestore, ok]);
+  const { data: storeItems } = useCollection(storeItemsQuery as any);
+
   const poRef = useMemoFirebase(
     () => (firestore && pr?.linkedPurchaseId ? doc(firestore, 'purchases', pr.linkedPurchaseId) : null),
     [firestore, pr?.linkedPurchaseId]
@@ -79,34 +135,156 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const vendorsQuery = useMemoFirebase(() => (firestore && ok ? collection(firestore, 'vendors') : null), [firestore, ok]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
+  const isDraft = pr?.status === 'DRAFT';
+  const draftEditable = isDraft && okStore;
+
   useEffect(() => {
     if (!pr) return;
     setTitle(pr.title || '');
     setNotes(pr.notes || '');
     setVendorId(pr.vendorId);
-    setEstStr(
-      pr.estimatedAmount != null && pr.estimatedAmount > 0
-        ? String(pr.estimatedAmount)
-        : ''
-    );
+    setNeedByDate(pr.needByDate || '');
+    setLineEntryMode(pr.lineEntryMode || 'SERVICE');
+    setVatTreatment(pr.vatTreatment ?? 'EXCLUSIVE');
+    setPurchasePaymentType(pr.purchasePaymentType ?? 'CREDIT');
+    setPaymentInstallmentsEnabled(!!pr.paymentInstallmentsEnabled);
+    if (pr.paymentMilestoneDrafts?.length) {
+      setMilestones(pr.paymentMilestoneDrafts);
+    }
   }, [pr?.id, pr?.updatedAt]);
+
+  useEffect(() => {
+    if (!prLines || pr?.status !== 'DRAFT') return;
+    if (prLines.length === 0) {
+      setLines([newLine()]);
+      return;
+    }
+    setLines(
+      prLines.map((row) => ({
+        key: row.id,
+        itemDescription: row.itemDescription,
+        quantity: row.quantity,
+        unitPrice: row.unitPrice,
+        amount: row.amount,
+        storeItemId: row.storeItemId,
+      }))
+    );
+  }, [pr?.status, prLines, pr?.id]);
+
+  const lineSum = useMemo(
+    () => sumLineAmounts(lines.map((l) => ({ amount: l.amount }))),
+    [lines]
+  );
+  const totals = useMemo(
+    () => computePurchaseTotalsFromLines(lineSum, vatTreatment),
+    [lineSum, vatTreatment]
+  );
+
+  const readonlyLines: PrLineDraft[] = useMemo(() => {
+    if (!prLines?.length) return [];
+    return prLines.map((row) => ({
+      key: row.id,
+      itemDescription: row.itemDescription,
+      quantity: row.quantity,
+      unitPrice: row.unitPrice,
+      amount: row.amount,
+      storeItemId: row.storeItemId,
+    }));
+  }, [prLines]);
+
+  const validateSubmit = (submitForApproval: boolean): boolean => {
+    if (!title.trim()) {
+      toast({ variant: 'destructive', title: 'ระบุหัวข้อ' });
+      return false;
+    }
+    if (submitForApproval && !vendorId) {
+      toast({ variant: 'destructive', title: 'ระบุคู่ค้า' });
+      return false;
+    }
+    const badLine = lines.find(
+      (l) =>
+        !l.itemDescription.trim() ||
+        !(Number(l.quantity) > 0) ||
+        Number(l.unitPrice) < 0
+    );
+    if (submitForApproval && badLine) {
+      toast({ variant: 'destructive', title: 'รายการไม่ครบ', description: 'ตรวจทุกบรรทัดก่อนส่งอนุมัติ' });
+      return false;
+    }
+    if (
+      submitForApproval &&
+      purchasePaymentType === 'CREDIT' &&
+      paymentInstallmentsEnabled
+    ) {
+      const ms = milestones.slice().sort((a, b) => a.sequence - b.sequence);
+      const sum = roundMoney2(ms.reduce((s, m) => s + Number(m.amount || 0), 0));
+      if (ms.some((m) => !m.label.trim())) {
+        toast({ variant: 'destructive', title: 'ระบุชื่องวดทุกแถว' });
+        return false;
+      }
+      if (Math.abs(sum - totals.totalAmount) > 0.02) {
+        toast({
+          variant: 'destructive',
+          title: 'ยอดงวดไม่เท่ายอดสุทธิ',
+          description: `ผลรวมงวด ฿${sum.toFixed(2)} ต้องเท่า ฿${totals.totalAmount.toFixed(2)}`,
+        });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const persistDocAndLines = async (patch: Record<string, unknown>) => {
+    if (!firestore || !prRef) return;
+    await updateDoc(prRef, patch);
+    await replacePurchaseRequestLines(
+      firestore,
+      id,
+      lines
+        .filter((l) => l.itemDescription.trim())
+        .map((l) => ({
+          itemDescription: l.itemDescription,
+          quantity: Number(l.quantity) || 0,
+          unitPrice: Number(l.unitPrice) || 0,
+          amount: roundMoney2(Number(l.amount) || 0),
+          storeItemId: l.storeItemId,
+        }))
+    );
+  };
 
   const saveDraft = async () => {
     if (!okStore) return;
     if (!firestore || !pr || pr.status !== 'DRAFT' || !prRef) return;
-    const t = title.trim();
-    if (!t) {
-      toast({ variant: 'destructive', title: 'ระบุหัวข้อ' });
-      return;
-    }
+    if (!validateSubmit(false)) return;
     setSaving(true);
     try {
-      const est = parseFloat(estStr.replace(/,/g, ''));
-      await updateDoc(prRef, {
-        title: t,
+      const milestonePayload =
+        purchasePaymentType === 'CREDIT' && paymentInstallmentsEnabled
+          ? milestones
+              .slice()
+              .sort((a, b) => a.sequence - b.sequence)
+              .map((m, i) => ({
+                sequence: i + 1,
+                label: m.label.trim(),
+                amount: roundMoney2(Number(m.amount) || 0),
+                dueDate: m.dueDate?.trim() || undefined,
+              }))
+          : null;
+
+      await persistDocAndLines({
+        title: title.trim(),
         notes: notes.trim() || null,
         vendorId: vendorId || null,
-        estimatedAmount: Number.isFinite(est) && est > 0 ? est : null,
+        needByDate: needByDate || null,
+        estimatedAmount: totals.totalAmount,
+        amountBeforeTax: totals.amountBeforeTax,
+        vatAmount: totals.vatAmount,
+        totalAmount: totals.totalAmount,
+        lineEntryMode,
+        vatTreatment,
+        purchasePaymentType,
+        paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
+        paymentMilestoneDrafts: milestonePayload,
         updatedAt: Date.now(),
       });
       toast({ title: 'บันทึกแล้ว' });
@@ -121,24 +299,37 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const submitForApproval = async () => {
     if (!okStore) return;
     if (!firestore || !pr || pr.status !== 'DRAFT' || !prRef) return;
-    const t = title.trim();
-    if (!t) {
-      toast({ variant: 'destructive', title: 'ระบุหัวข้อ' });
-      return;
-    }
-    if (!vendorId) {
-      toast({ variant: 'destructive', title: 'ระบุคู่ค้า', description: 'ก่อนส่งอนุมัติ' });
-      return;
-    }
+    if (!validateSubmit(true)) return;
     setSaving(true);
     try {
-      const est = parseFloat(estStr.replace(/,/g, ''));
       const now = Date.now();
-      await updateDoc(prRef, {
-        title: t,
+      const milestonePayload =
+        purchasePaymentType === 'CREDIT' && paymentInstallmentsEnabled
+          ? milestones
+              .slice()
+              .sort((a, b) => a.sequence - b.sequence)
+              .map((m, i) => ({
+                sequence: i + 1,
+                label: m.label.trim(),
+                amount: roundMoney2(Number(m.amount) || 0),
+                dueDate: m.dueDate?.trim() || undefined,
+              }))
+          : null;
+
+      await persistDocAndLines({
+        title: title.trim(),
         notes: notes.trim() || null,
         vendorId,
-        estimatedAmount: Number.isFinite(est) && est > 0 ? est : null,
+        needByDate: needByDate || null,
+        estimatedAmount: totals.totalAmount,
+        amountBeforeTax: totals.amountBeforeTax,
+        vatAmount: totals.vatAmount,
+        totalAmount: totals.totalAmount,
+        lineEntryMode,
+        vatTreatment,
+        purchasePaymentType,
+        paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
+        paymentMilestoneDrafts: milestonePayload,
         status: 'PENDING_APPROVAL' as PurchaseRequestStatus,
         submittedAt: now,
         updatedAt: now,
@@ -154,6 +345,15 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const approve = async () => {
     if (!firestore || !pr || pr.status !== 'PENDING_APPROVAL' || !prRef || !currentUser) return;
+    const lineSnap = await getDocs(collection(firestore, 'purchase_requests', id, 'lines'));
+    if (lineSnap.empty) {
+      toast({
+        variant: 'destructive',
+        title: 'อนุมัติไม่ได้',
+        description: 'PR ต้องมีอย่างน้อยหนึ่งบรรทัดรายการ',
+      });
+      return;
+    }
     setSaving(true);
     try {
       const now = Date.now();
@@ -244,14 +444,15 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   }
 
   const v = vendors?.find((x) => x.id === pr.vendorId);
-  const isDraft = pr.status === 'DRAFT';
-  const draftEditable = isDraft && okStore;
   const showPoLink = pr.status === 'APPROVED' && !pr.linkedPurchaseId;
   const showPO = pr.linkedPurchaseId && linkedPo;
 
+  const displayLines = draftEditable ? lines : readonlyLines;
+  const displayMode = draftEditable ? lineEntryMode : pr.lineEntryMode || 'SERVICE';
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mx-auto max-w-5xl space-y-6 pb-16">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Button type="button" variant="ghost" size="icon" asChild>
@@ -260,7 +461,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               </Link>
             </Button>
             <div>
-              <h1 className="text-2xl font-mono font-bold text-primary">{pr.requestNo}</h1>
+              <h1 className="font-mono text-2xl font-bold text-primary">{pr.requestNo}</h1>
               <p className="text-sm text-muted-foreground">คำขออนุมัติสั่งซื้อ</p>
             </div>
           </div>
@@ -285,7 +486,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               <CardTitle className="text-base">ใบสั่งซื้อที่อ้างอิง</CardTitle>
               <CardDescription>
                 <Button type="button" variant="link" className="h-auto p-0 text-base font-mono" asChild>
-                  <Link href={`/purchases/${linkedPo.id}`}>{linkedPo.purchaseNo}</Link>
+                  <Link href={`/purchases/${linkedPo!.id}`}>{linkedPo!.purchaseNo}</Link>
                 </Button>
               </CardDescription>
             </CardHeader>
@@ -296,7 +497,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           <Card className="border-emerald-200 bg-emerald-50/40">
             <CardContent className="pt-4">
               <p className="mb-3 text-sm text-emerald-900">
-                PR อนุมัติแล้ว — ไปสร้างใบสั่งซื้อโดยเลือก PR นี้ในเมนู การซื้อ
+                PR อนุมัติแล้ว — สร้าง PO จากเมนูใบสั่งซื้อ ระบบจะดึงรายการและยอดจาก PR นี้ (แก้บรรทัดใน PO ไม่ได้)
               </p>
               <Button className="font-bold" asChild>
                 <Link href="/purchases">
@@ -309,7 +510,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
         <Card>
           <CardHeader>
-            <CardTitle>รายละเอียด</CardTitle>
+            <CardTitle>หัวเอกสาร</CardTitle>
             {pr.status === 'PENDING_APPROVAL' && v && (
               <CardDescription>รออนุมัติ — คู่ค้าเสนอ: {v.vendorName}</CardDescription>
             )}
@@ -317,66 +518,78 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>หัวข้อ</Label>
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                readOnly={!draftEditable}
-                disabled={!draftEditable}
-              />
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} readOnly={!draftEditable} disabled={!draftEditable} />
             </div>
-            {draftEditable && (
-              <div className="space-y-2">
-                <Label>คู่ค้า (เสนอ)</Label>
-                <Select
-                  value={vendorId || ''}
-                  onValueChange={(v) => setVendorId(v || undefined)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="เลือก" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {vendors?.map((ven) => (
-                      <SelectItem key={ven.id} value={ven.id}>
-                        {ven.vendorName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {!draftEditable && v && (
+
+            {draftEditable ? (
+              <VendorSearchSelect vendors={vendors} value={vendorId} onChange={setVendorId} disabled={saving} />
+            ) : (
               <div>
                 <Label>คู่ค้า (เสนอ)</Label>
-                <p className="pt-1 font-medium">{v.vendorName}</p>
+                <p className="pt-1 font-medium">{v?.vendorName || '—'}</p>
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>งบประมาณโดยประมาณ</Label>
-              {draftEditable ? (
-                <Input
-                  value={estStr}
-                  onChange={(e) => setEstStr(e.target.value)}
-                  inputMode="decimal"
-                />
-              ) : (
-                <p>
-                  {pr.estimatedAmount != null && pr.estimatedAmount > 0
-                    ? `฿${pr.estimatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                    : '—'}
-                </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>วันที่ต้องการของ (อ้างอิง)</Label>
+                {draftEditable ? (
+                  <DatePickerThaiBE
+                    className="h-11"
+                    value={htmlDateValueToTimestampMs(needByDate)}
+                    onChange={(ms) => setNeedByDate(timestampToHtmlDateValue(ms))}
+                  />
+                ) : (
+                  <p>{needByDate || '—'}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>ภาษีมูลค่าเพิ่ม</Label>
+                {draftEditable ? (
+                  <Select value={vatTreatment} onValueChange={(x) => setVatTreatment(x as PurchaseRequestVatTreatment)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NONE">ไม่มี VAT</SelectItem>
+                      <SelectItem value="EXCLUSIVE">ยังไม่รวม VAT (+7%)</SelectItem>
+                      <SelectItem value="INCLUSIVE">ราคาบรรทัดรวม VAT แล้ว</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p>{vatTreatment}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>การชำระเงิน</Label>
+                {draftEditable ? (
+                  <Select value={purchasePaymentType} onValueChange={(x) => setPurchasePaymentType(x as PurchaseType)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CASH">เงินสด</SelectItem>
+                      <SelectItem value="CREDIT">เครดิต</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p>{purchasePaymentType}</p>
+                )}
+              </div>
+              {purchasePaymentType === 'CREDIT' && draftEditable && (
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div className="text-sm font-medium">แบ่งจ่ายหลายงวด</div>
+                  <Switch checked={paymentInstallmentsEnabled} onCheckedChange={setPaymentInstallmentsEnabled} />
+                </div>
               )}
             </div>
 
             <div className="space-y-2">
-              <Label>รายละเอียด</Label>
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                readOnly={!draftEditable}
-                rows={4}
-                disabled={!draftEditable}
-              />
+              <Label>หมายเหตุ</Label>
+              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} readOnly={!draftEditable} rows={3} disabled={!draftEditable} />
             </div>
 
             {pr.status === 'REJECTED' && pr.rejectionReason && (
@@ -384,63 +597,193 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
                 {pr.rejectionReason}
               </div>
             )}
-
-            {isDraft && !okStore && (
-              <p className="text-sm text-muted-foreground">
-                ฉบับร่าง — แก้ไข/ส่งอนุมัติได้เฉพาะฝ่ายคลัง/จัดซื้อ
-              </p>
-            )}
-
-            {pr.status === 'DRAFT' && okStore && (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void saveDraft()}
-                  disabled={saving}
-                >
-                  บันทึกฉบับร่าง
-                </Button>
-                <Button
-                  type="button"
-                  className="font-bold"
-                  onClick={() => void submitForApproval()}
-                  disabled={saving}
-                >
-                  <Send className="mr-2 h-4 w-4" /> ส่งขออนุมัติ
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => void cancel()}
-                  disabled={saving}
-                >
-                  <Ban className="mr-2 h-4 w-4" /> ยกเลิก
-                </Button>
-              </div>
-            )}
-
-            {pr.status === 'PENDING_APPROVAL' && canApprove && (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  className="bg-green-600 font-bold hover:bg-green-700"
-                  onClick={() => void approve()}
-                  disabled={saving}
-                >
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-                  อนุมัติ
-                </Button>
-                <Button variant="destructive" onClick={() => setRejectOpen(true)} disabled={saving}>
-                  <XCircle className="mr-2 h-4 w-4" /> ไม่อนุมัติ
-                </Button>
-              </div>
-            )}
-
-            {pr.status === 'PENDING_APPROVAL' && canApprove && (
-              <p className="text-xs text-muted-foreground">คุณกำลังอนุมัติในฐานะผู้จัดการฝ่ายปฏิบัติการ</p>
-            )}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>รายการและยอดเงิน</CardTitle>
+            <CardDescription>
+              {draftEditable ? 'แก้ไขได้เฉพาะฉบับร่าง — หลังอนุมัติรายการถือเป็นผลสุดท้ายสำหรับสร้าง PO' : 'สรุปจาก PR'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!draftEditable && displayLines.length === 0 ? (
+              <p className="text-sm text-muted-foreground">ไม่มีรายการบรรทัดใน PR นี้ (เอกสารเก่าก่อนปรับระบบ)</p>
+            ) : (
+              <PurchaseRequestLinesEditor
+                lineEntryMode={displayMode}
+                onLineEntryModeChange={draftEditable ? setLineEntryMode : () => {}}
+                lines={displayLines.length > 0 ? displayLines : draftEditable ? [newLine()] : []}
+                onLinesChange={draftEditable ? setLines : () => {}}
+                storeItems={storeItems as any}
+                readOnly={!draftEditable}
+              />
+            )}
+
+            <div className="flex flex-wrap justify-end gap-6 rounded-lg bg-muted/30 p-4 text-sm">
+              <div className="text-right">
+                <div className="text-muted-foreground">ภาษี 7%</div>
+                <div className="font-mono font-semibold">
+                  ฿{(draftEditable ? totals.vatAmount : pr.vatAmount ?? 0).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                  })}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-muted-foreground">ยอดสุทธิ</div>
+                <div className="font-mono font-bold text-lg text-primary">
+                  ฿{(draftEditable ? totals.totalAmount : pr.totalAmount ?? pr.estimatedAmount ?? 0).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {purchasePaymentType === 'CREDIT' && paymentInstallmentsEnabled && draftEditable && (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <Label>แผนงวดชำระ (ร่าง)</Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setMilestones((prev) => [
+                        ...prev,
+                        { sequence: prev.length + 1, label: `งวดที่ ${prev.length + 1}`, amount: 0 },
+                      ])
+                    }
+                  >
+                    เพิ่มงวด
+                  </Button>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-24">งวด</TableHead>
+                      <TableHead>ชื่อเรียก</TableHead>
+                      <TableHead className="w-36">ครบกำหนด</TableHead>
+                      <TableHead className="w-36 text-right">ยอดงวด</TableHead>
+                      <TableHead className="w-12" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {milestones
+                      .slice()
+                      .sort((a, b) => a.sequence - b.sequence)
+                      .map((m, idx) => (
+                        <TableRow key={m.sequence}>
+                          <TableCell>{idx + 1}</TableCell>
+                          <TableCell>
+                            <Input
+                              value={m.label}
+                              onChange={(e) =>
+                                setMilestones((rows) =>
+                                  rows.map((r) => (r.sequence === m.sequence ? { ...r, label: e.target.value } : r))
+                                )
+                              }
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="date"
+                              value={m.dueDate || ''}
+                              onChange={(e) =>
+                                setMilestones((rows) =>
+                                  rows.map((r) =>
+                                    r.sequence === m.sequence ? { ...r, dueDate: e.target.value } : r
+                                  )
+                                )
+                              }
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              className="text-right tabular-nums"
+                              inputMode="decimal"
+                              value={m.amount || ''}
+                              onChange={(e) =>
+                                setMilestones((rows) =>
+                                  rows.map((r) =>
+                                    r.sequence === m.sequence
+                                      ? { ...r, amount: parseFloat(e.target.value) || 0 }
+                                      : r
+                                  )
+                                )
+                              }
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              disabled={milestones.length <= 1}
+                              onClick={() => setMilestones((rows) => rows.filter((r) => r.sequence !== m.sequence))}
+                            >
+                              ×
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            {!draftEditable && pr.paymentInstallmentsEnabled && pr.paymentMilestoneDrafts?.length ? (
+              <div className="rounded-md border p-3 text-sm">
+                <div className="font-medium mb-2">แผนงวด (ตาม PR)</div>
+                <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+                  {pr.paymentMilestoneDrafts
+                    .slice()
+                    .sort((a, b) => a.sequence - b.sequence)
+                    .map((m) => (
+                      <li key={m.sequence}>
+                        {m.label} — ฿{m.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}{' '}
+                        {m.dueDate ? `(กำหนด ${m.dueDate})` : ''}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        {isDraft && !okStore && (
+          <p className="text-sm text-muted-foreground">ฉบับร่าง — แก้ไข/ส่งอนุมัติได้เฉพาะฝ่ายคลัง/จัดซื้อ</p>
+        )}
+
+        {pr.status === 'DRAFT' && okStore && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => void saveDraft()} disabled={saving}>
+              บันทึกฉบับร่าง
+            </Button>
+            <Button type="button" className="font-bold" onClick={() => void submitForApproval()} disabled={saving}>
+              <Send className="mr-2 h-4 w-4" /> ส่งขออนุมัติ
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => void cancel()} disabled={saving}>
+              <Ban className="mr-2 h-4 w-4" /> ยกเลิก
+            </Button>
+          </div>
+        )}
+
+        {pr.status === 'PENDING_APPROVAL' && canApprove && (
+          <div className="flex flex-wrap gap-2">
+            <Button className="bg-green-600 font-bold hover:bg-green-700" onClick={() => void approve()} disabled={saving}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              อนุมัติ
+            </Button>
+            <Button variant="destructive" onClick={() => setRejectOpen(true)} disabled={saving}>
+              <XCircle className="mr-2 h-4 w-4" /> ไม่อนุมัติ
+            </Button>
+          </div>
+        )}
+
+        {pr.status === 'PENDING_APPROVAL' && canApprove && (
+          <p className="text-xs text-muted-foreground">คุณกำลังอนุมัติในฐานะผู้จัดการฝ่ายปฏิบัติการ</p>
+        )}
       </div>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
@@ -450,11 +793,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </DialogHeader>
           <div className="space-y-2">
             <Label>เหตุผล (ส่งถึงผู้ขอ)</Label>
-            <Textarea
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              rows={3}
-            />
+            <Textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3} />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setRejectOpen(false)} disabled={saving}>

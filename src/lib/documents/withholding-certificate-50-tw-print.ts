@@ -536,13 +536,20 @@ export function buildWithholdingCertificatePayeeCopies12Html(
 </body></html>`;
 }
 
-/** เปิดหน้าต่างพิมพ์หลังสร้าง HTML */
-export function openWithholdingCertificatePrintWindow(html: string): void {
+/** เปิดแท็บแสดง HTML เต็มหน้า — ไม่เรียกกล่องพิมพ์ (ใช้พรีวิวในแอปหรือพิมพ์จากเมนูเบราว์เซอร์) */
+export function openWithholdingCertificatePreviewTab(html: string): Window | null {
   const w = window.open('', '_blank');
-  if (!w) return;
+  if (!w) return null;
   w.document.write(html);
   w.document.close();
   w.focus();
+  return w;
+}
+
+/** เปิดหน้าต่างพิมพ์หลังสร้าง HTML */
+export function openWithholdingCertificatePrintWindow(html: string): void {
+  const w = openWithholdingCertificatePreviewTab(html);
+  if (!w) return;
   requestAnimationFrame(() => {
     w.print();
   });

@@ -8,14 +8,48 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { FileQuestion, Plus, ChevronRight, Loader2, PackageSearch, Search } from 'lucide-react';
+import { FileQuestion, Plus, ChevronRight, Loader2, PackageSearch, Search, Trash2 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { collection, orderBy, query } from 'firebase/firestore';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  type Firestore,
+} from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canApprovePurchaseAsManager } from '@/lib/permissions';
+import { canView, canApprovePurchaseAsManager, isSystemAdmin } from '@/lib/permissions';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { PurchaseRequest, PurchaseRequestStatus, User, Vendor } from '@/lib/types';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
+
+async function deletePurchaseRequestCascade(firestore: Firestore, prId: string) {
+  const linesSnap = await getDocs(collection(firestore, 'purchase_requests', prId, 'lines'));
+  for (const d of linesSnap.docs) {
+    await deleteDoc(d.ref);
+  }
+  await deleteDoc(doc(firestore, 'purchase_requests', prId));
+}
 
 function statusBadge(s: PurchaseRequestStatus) {
   const map: Record<PurchaseRequestStatus, { label: string; className: string }> = {
@@ -42,7 +76,10 @@ export default function StorePurchaseRequestsPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
   const [q, setQ] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<PurchaseRequest | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const okStore = useMemo(
     () => !!currentUser && canView(currentUser, 'store_inventory'),
@@ -50,6 +87,53 @@ export default function StorePurchaseRequestsPage() {
   );
   const canApprove = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
   const ok = okStore || canApprove;
+
+  const showAdminDelete = useMemo(
+    () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)),
+    [currentUser]
+  );
+  /** คอลัมน์ลบ: แอดมิน หรือผู้มีสิทธิ์คลัง (ลบฉบับร่างได้เอง) */
+  const showPrDeleteColumn = showAdminDelete || okStore;
+
+  const handleConfirmDeletePr = async () => {
+    if (!firestore || !deleteTarget) return;
+    if (deleteTarget.linkedPurchaseId) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่ได้',
+        description: 'PR นี้ผูกกับใบสั่งซื้อแล้ว — ต้องถอนหรือจัดการ PO ก่อน',
+      });
+      setDeleteTarget(null);
+      return;
+    }
+    if (!showAdminDelete && deleteTarget.status !== 'DRAFT') {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่ได้',
+        description: 'ผู้ใช้คลังลบได้เฉพาะ PR ฉบับร่าง',
+      });
+      setDeleteTarget(null);
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      await deletePurchaseRequestCascade(firestore, deleteTarget.id);
+      toast({
+        title: 'ลบ PR แล้ว',
+        description: deleteTarget.requestNo,
+      });
+      setDeleteTarget(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: 'ตรวจสิทธิ์หรือสถานะเอกสาร',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const prQuery = useMemoFirebase(() => {
     if (!firestore || !ok) return null;
@@ -61,11 +145,29 @@ export default function StorePurchaseRequestsPage() {
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const [tab, setTab] = useState('all');
+  const [monthYm, setMonthYm] = useState<string>('all');
+
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>();
+    (list || []).forEach((r) => {
+      const d = new Date(r.createdAt);
+      if (!Number.isFinite(d.getTime())) return;
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      set.add(ym);
+    });
+    return [...set].sort().reverse();
+  }, [list]);
 
   const rows = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return (list || [])
       .filter((r) => tabFilter(tab, r.status))
+      .filter((r) => {
+        if (monthYm === 'all') return true;
+        const d = new Date(r.createdAt);
+        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        return ym === monthYm;
+      })
       .filter((r) => {
         if (!qq) return true;
         return (
@@ -74,7 +176,7 @@ export default function StorePurchaseRequestsPage() {
           (vendors?.find((v) => v.id === r.vendorId)?.vendorName || '').toLowerCase().includes(qq)
         );
       });
-  }, [list, q, tab, vendors]);
+  }, [list, q, tab, vendors, monthYm]);
 
   if (isUserLoading || userLoading || !currentUser) {
     return (
@@ -134,14 +236,29 @@ export default function StorePurchaseRequestsPage() {
               <TabsTrigger value="pending">รออนุมัติ</TabsTrigger>
               <TabsTrigger value="approved">สรุปผล</TabsTrigger>
             </TabsList>
-            <div className="relative w-full sm:max-w-sm">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="h-10 pl-9"
-                placeholder="ค้นหาเลขที่ หัวข้อ หรือคู่ค้า..."
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative w-full sm:max-w-sm">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="h-10 pl-9"
+                  placeholder="ค้นหาเลขที่ หัวข้อ หรือคู่ค้า..."
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+              </div>
+              <Select value={monthYm} onValueChange={setMonthYm}>
+                <SelectTrigger className="h-10 w-full sm:w-[200px]">
+                  <SelectValue placeholder="เดือน" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">ทุกเดือน</SelectItem>
+                  {monthOptions.map((ym) => (
+                    <SelectItem key={ym} value={ym}>
+                      {ym}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </Tabs>
@@ -162,12 +279,19 @@ export default function StorePurchaseRequestsPage() {
                     <TableHead>คู่ค้า (เสนอ)</TableHead>
                     <TableHead className="text-right">ประมาณการ</TableHead>
                     <TableHead>สถานะ</TableHead>
+                    {showPrDeleteColumn && (
+                      <TableHead className="w-14 px-2 text-center text-muted-foreground">ลบ</TableHead>
+                    )}
                     <TableHead className="pr-6 text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((r) => {
                     const v = vendors?.find((x) => x.id === r.vendorId);
+                    const prTrashVisible =
+                      showAdminDelete ||
+                      (okStore && r.status === 'DRAFT' && !r.linkedPurchaseId);
+                    const prTrashDisabled = showAdminDelete ? Boolean(r.linkedPurchaseId) : false;
                     return (
                       <TableRow
                         key={r.id}
@@ -181,14 +305,48 @@ export default function StorePurchaseRequestsPage() {
                         </TableCell>
                         <TableCell>{v?.vendorName || '—'}</TableCell>
                         <TableCell className="text-right font-mono text-sm">
-                          {r.estimatedAmount != null && r.estimatedAmount > 0
-                            ? `฿${r.estimatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                            : '—'}
+                          {(() => {
+                            const amt = r.totalAmount ?? r.estimatedAmount;
+                            return amt != null && amt > 0
+                              ? `฿${amt.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              : '—';
+                          })()}
                         </TableCell>
                         <TableCell>{statusBadge(r.status)}</TableCell>
-                        <TableCell className="pr-6 text-right">
-                          <Button type="button" size="icon" variant="ghost">
-                            <ChevronRight className="h-5 w-5" />
+                        {showPrDeleteColumn && (
+                          <TableCell
+                            className="w-14 px-2 text-center"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {prTrashVisible ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                title={
+                                  prTrashDisabled
+                                    ? 'ผูกใบสั่งซื้อแล้ว — ลบจากที่นี่ไม่ได้'
+                                    : showAdminDelete
+                                      ? 'ลบ PR (ผู้ดูแลระบบ)'
+                                      : 'ลบ PR ฉบับร่าง'
+                                }
+                                disabled={prTrashDisabled}
+                                onClick={() => setDeleteTarget(r)}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        )}
+                        <TableCell
+                          className="pr-6 text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button type="button" size="icon" variant="ghost" asChild>
+                            <Link href={`/store/purchase-requests/${r.id}`}>
+                              <ChevronRight className="h-5 w-5" />
+                            </Link>
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -196,7 +354,7 @@ export default function StorePurchaseRequestsPage() {
                   })}
                   {rows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-16 text-center text-muted-foreground">
+                      <TableCell colSpan={showPrDeleteColumn ? 7 : 6} className="py-16 text-center text-muted-foreground">
                         ไม่มีรายการ
                       </TableCell>
                     </TableRow>
@@ -206,6 +364,35 @@ export default function StorePurchaseRequestsPage() {
             )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !isDeleting && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบ PR นี้ถาวร?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {deleteTarget && (
+                  <>
+                    จะลบ <span className="font-mono font-semibold">{deleteTarget.requestNo}</span> และบรรทัดรายการทั้งหมด
+                    การกระทำนี้ไม่สามารถย้อนกลับได้ — ใช้เมื่อข้อมูลผิดหรือทดสอบระบบเท่านั้น
+                  </>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting} type="button">
+                ยกเลิก
+              </AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isDeleting}
+                onClick={() => void handleConfirmDeletePr()}
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ลบ'}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

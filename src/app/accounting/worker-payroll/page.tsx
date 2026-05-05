@@ -111,7 +111,7 @@ export default function AccountingWorkerPayrollQueuePage() {
             <Coins className="h-8 w-8 shrink-0" /> ลูกจ้าง · ทำจ่าย (บัญชี)
           </h1>
           <p className="text-muted-foreground">
-            คิวหลังส่งถึงฝ่ายบัญชีแล้ว (FINANCE_PREPARED ขึ้นไป) — เลือกบัญชีธนาคารตัดจ่ายและบันทึก cashbook ได้ที่หน้ารายละเอียดชุดจ่าย (ไม่ใช่หน้าสร้างชุดของ HR)
+            คิวหลังส่งถึงฝ่ายบัญชีแล้ว (FINANCE_PREPARED ขึ้นไป) — กดเปิดแถวด้านล่างเพื่อเข้าหน้าทำจ่ายบัญชี (เลือกบัญชีตัดจ่าย + ลง cashbook) ไม่ใช่หน้าสร้างชุดของ HR
           </p>
         </div>
 
@@ -162,7 +162,7 @@ export default function AccountingWorkerPayrollQueuePage() {
                       <TableRow
                         key={b.id}
                         className="cursor-pointer hover:bg-muted/30"
-                        onClick={() => router.push(`/payroll/batches/${b.id}`)}
+                        onClick={() => router.push(`/accounting/worker-payroll/${b.id}`)}
                       >
                         <TableCell className="font-mono font-bold text-primary">{b.id}</TableCell>
                         <TableCell>
@@ -186,7 +186,7 @@ export default function AccountingWorkerPayrollQueuePage() {
                             variant="ghost"
                             size="icon"
                             aria-label="เปิดหน้าทำจ่าย"
-                            onClick={() => router.push(`/payroll/batches/${b.id}`)}
+                            onClick={() => router.push(`/accounting/worker-payroll/${b.id}`)}
                           >
                             <ChevronRight className="h-5 w-5" />
                           </Button>

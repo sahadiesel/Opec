@@ -14,13 +14,14 @@ const db = getFirestore();
 db.settings({ ignoreUndefinedProperties: true });
 
 /**
- * เติม PO Active auto daily (work_day) ให้ครบทุก mobilization ที่ ACTIVE — เฉพาะวันที่ปัจจุบันเขต Asia/Bangkok
+ * เติม PO Active auto daily (work_day / ช่วง SB หลังหยุดแบบ standby) — เฉพาะวันที่ปัจจุบันเขต Asia/Bangkok
  *
- * Cloud Scheduler (สร้างอัตโนมัติเมื่อ deploy): cron 00:20 น. ไทยทุกวัน
+ * Cloud Scheduler (สร้างเมื่อ deploy — หรือผูก job HTTP/cron ใน GCP Console): cron 00:10 น. ไทยทุกวัน
+ * ไม่ต้องมีผู้เปิดเว็บ — คู่กับ client-side sync ~45 วินาทีเมื่อมีผู้ใช้เปิดกระดาน
  */
 export const poActiveAutoDailySchedule = onSchedule(
   {
-    schedule: '20 0 * * *',
+    schedule: '10 0 * * *',
     timeZone: 'Asia/Bangkok',
     region: REGION,
     memory: '512MiB',

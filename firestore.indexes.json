@@ -69,14 +69,6 @@
       "collectionGroup": "mobilizations",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "deploymentStatus", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "mobilizations",
-      "queryScope": "COLLECTION",
-      "fields": [
         { "fieldPath": "poActiveBundleId", "order": "ASCENDING" },
         { "fieldPath": "deploymentStatus", "order": "ASCENDING" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }

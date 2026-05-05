@@ -8,9 +8,11 @@ import { logger } from 'firebase-functions';
 import { DailyTimesheetSchema } from './dailyTimesheetSchema';
 import {
   buildPoActiveAutoDailyRowPayload,
+  buildPoActiveAutoStandbyRowPayload,
   computePoActiveAutoDailyRange,
   isAssignmentEligibleForPoActiveAutoDaily,
   poActiveDailyTimesheetDocId,
+  resolvePoActiveAutoDailySyncKind,
   resolvePoActiveBundleKeyForPo,
   thailandTodayYmd,
   type AssignmentLike,
@@ -101,6 +103,12 @@ export async function syncTodayOnlyForMobilization(
     return;
   }
 
+  const syncKind = resolvePoActiveAutoDailySyncKind(assignment, today);
+  if (!syncKind) {
+    totals.skipped++;
+    return;
+  }
+
   let workerName = (assignment.workerName || '').trim();
   if (!workerName) {
     const wSnap = await db.collection('workers').doc(assignment.workerId!).get();
@@ -120,7 +128,7 @@ export async function syncTodayOnlyForMobilization(
   const existing = await dRef.get();
 
   const now = Date.now();
-  const basePayload = buildPoActiveAutoDailyRowPayload({
+  const rowParams = {
     assignment,
     po,
     line,
@@ -128,7 +136,11 @@ export async function syncTodayOnlyForMobilization(
     workerNameSnapshot: workerName,
     poActiveBundleId: bundleId,
     laborCostContractTermId,
-  });
+  };
+  const basePayload =
+    syncKind === 'standby_day'
+      ? buildPoActiveAutoStandbyRowPayload(rowParams)
+      : buildPoActiveAutoDailyRowPayload(rowParams);
 
   if (existing.exists) {
     const cur = existing.data() as DailyTimesheetLike;

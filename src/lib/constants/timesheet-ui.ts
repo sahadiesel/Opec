@@ -194,15 +194,37 @@ export function assignmentIncludedInWaveTimesheetRoster(
   return assignmentReadyForWaveTimesheet(a);
 }
 
-/** วันลงเวลา (yyyy-MM-dd) อยู่หลังวันจบไซต์ที่ยืนยันแล้ว — ไม่สร้างช่องอัตโนมัติ / ล็อกแก้ไข */
+/**
+ * วันลงเวลา (yyyy-MM-dd) อยู่หลังวันจบไซต์ที่ยืนยันแล้ว — ไม่สร้างช่องอัตโนมัติ / ล็อกแก้ไข
+ * เมื่อจบไซต์รอบเก่าและเริ่มรอบใหม่ใน mobilization เดียวกัน (วันจบไซต์ที่บันทึกไว้ก่อนวันเริ่มรอบใหม่ตามฟิลด์)
+ * ค่า mobLocationEndDate ยังเป็นของรอบเก่า — ห้ามถือว่าหลังจบไซต์ในช่วง gap remob หรือวันรอบใหม่จนกว่าจะบันทึกจบไซต์รอบใหม่
+ */
 export function isHtmlDateAfterMobLocationEnd(
-  a: Pick<Assignment, 'mobLocationEndDate'>,
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'>,
   htmlDate: string,
 ): boolean {
   const end = (a.mobLocationEndDate || '').trim().slice(0, 10);
   const d = htmlDate.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(end) || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-  return d > end;
+  if (!(d > end)) return false;
+
+  const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
+  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
+  /** บันทึกจบไซต์รอบก่อนบนเอกสารเดียวกับวันเริ่มรอบใหม่ */
+  const splitPriorEndBeforeNewCycleStart = hasMobStart && end < mobStart;
+
+  if (!splitPriorEndBeforeNewCycleStart) return true;
+
+  let mobSegmentStart: string | undefined;
+  if (hasStandby && hasMobStart) mobSegmentStart = mobStandby <= mobStart ? mobStandby : mobStart;
+  else if (hasStandby) mobSegmentStart = mobStandby;
+  else if (hasMobStart) mobSegmentStart = mobStart;
+
+  if (mobSegmentStart) return false;
+
+  return true;
 }
 
 /**
@@ -255,6 +277,22 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
 
   const segmentForMonthCompare = mobSegmentStart ?? mobStart;
 
+  /**
+   * เอกสาร mobilization เดียวที่เก็บทั้งจบไซต์รอบเก่า (mobEnd) กับเริ่มรอบใหม่ (mobStart) — mobEnd < mobStart
+   * (ใช้ทั้งขอบล่างและเพดานด้านล่าง)
+   */
+  const splitPriorAndNewCycleOnDoc = hasMobEnd && hasMobStart && mobEnd < mobStart;
+
+  /**
+   * ช่วง remob ระหว่างจบไซต์รอบก่อนกับวัน Standby/เริ่มงานของรอบใหม่ — เดิมใช้ mobSegmentStart เป็นขอบล่าง
+   * ทำให้ทุกวันใน gap ถูกตัดจนลงเวลาไม่ได้ แม้ยัง ACTIVE และอยู่ในช่วงมอบหมาย
+   */
+  const remobGapBetweenCycles =
+    splitPriorAndNewCycleOnDoc &&
+    !!mobSegmentStart &&
+    d > mobEnd &&
+    d < mobSegmentStart;
+
   /** วันนี้อยู่ในรอบที่ปิดแล้ว (ก่อนเริ่มรอบใหม่ที่สะสมใน mobilization เดียวกัน) */
   const inClosedPriorCycle =
     hasMobEnd && hasMobStart && mobEnd < mobStart && d <= mobEnd;
@@ -266,6 +304,10 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
 
   let floor: string | undefined;
   if (inClosedPriorCycle || inEarlierCalendarMonthThanMobSegment) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) floor = assignStart;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;
+  } else if (remobGapBetweenCycles) {
+    /** Gap remob: อนุญาตตั้งแต่วันมอบหมาย — ไม่ดึงขอบล่างไปที่วัน SB/W รอบใหม่ */
     if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) floor = assignStart;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;
   } else if (mobSegmentStart) {
@@ -295,12 +337,11 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
   if (floor !== undefined && d < floor) return false;
 
   /**
-   * เอกสาร mobilization เดียวที่เก็บทั้งจบไซต์รอบเก่า (mobEnd) กับเริ่มรอบใหม่ (mobStart) — mobEnd < mobStart
+   * splitPriorAndNewCycleOnDoc — ดูด้านบน
    * - วัน ≤ mobEnd = ช่วงรอบเก่า → เพดานตาม mobEnd / endDate มอบหมาย
-   * - วัน > mobEnd = ช่วงหลังจบรอบเก่า (รวมวัน Standby ก่อนเริ่มงานรอบใหม่ และวันทำงานรอบใหม่)
+   * - วัน > mobEnd = ช่วงหลังจบรอบเก่า (รวม gap remob ก่อน SB รอบใหม่ และวันทำงานรอบใหม่)
    *   ห้ามใช้ mobLocationEndDate รอบเก่าเป็นเพดาน — ไม่เช่นนั้นทุกวันหลังสิ้นเดือนเก่าถูกตัดจนหาย SB/W
    */
-  const splitPriorAndNewCycleOnDoc = hasMobEnd && hasMobStart && mobEnd < mobStart;
 
   let ceil: string | undefined;
   if (splitPriorAndNewCycleOnDoc && d <= mobEnd) {

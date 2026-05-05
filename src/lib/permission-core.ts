@@ -496,17 +496,30 @@ export function isPayrollOfficer(user: User | null): boolean {
 export function canApproveOfficePayrollAsManager(user: User | null): boolean {
   if (!user) return false;
   if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
-  return isHrManager(user) || isOperationManager(user);
+  if (isPayrollOfficer(user)) return false;
+  if (isHrManager(user) || isOperationManager(user)) return true;
+  const rk = getPrimaryLegacyRole(user);
+  if (rk === 'sales_manager' || rk === 'sales_officer') return false;
+  const g = getEffectiveAccessGroup(user);
+  const lvl = getEffectiveAccessLevel(user);
+  return g === 'operations' && lvl === 'manager';
 }
 
 /**
- * อนุมัติงวดจ่ายลูกจ้างหลังฝ่ายเงินเดือนส่งขออนุมัติ (GENERATED → HR_REVIEWED) —
- * เฉพาะผู้จัดการ HR / ผู้จัดการปฏิบัติการ + แอดมิน — **ไม่รวม payroll_officer** (คิวอยู่ที่ศูนย์อนุมัติ/D6)
+ * อนุมัติงวดจ่ายลูกจ้างหลังฝ่ายเงินเดือนส่งขออนุมัติ (HR_REVIEWED → FINANCE_PREPARED) —
+ * ผู้จัดการ HR / ผู้จัดการปฏิบัติการ + แอดมิน — **ไม่รวม payroll_officer**
+ * รองรับผู้ที่แสดงเป็นผู้จัดการฝ่ายปฏิบัติการใน matrix แต่ user doc ยังไม่มี assignedRoleKey = operations_manager (legacy)
  */
 export function canApproveWorkerPayrollBatchAsManager(user: User | null): boolean {
   if (!user) return false;
   if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
-  return isHrManager(user) || isOperationManager(user);
+  if (isPayrollOfficer(user)) return false;
+  if (isHrManager(user) || isOperationManager(user)) return true;
+  const rk = getPrimaryLegacyRole(user);
+  if (rk === 'sales_manager' || rk === 'sales_officer') return false;
+  const g = getEffectiveAccessGroup(user);
+  const lvl = getEffectiveAccessLevel(user);
+  return g === 'operations' && lvl === 'manager';
 }
 
 /**

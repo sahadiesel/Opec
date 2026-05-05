@@ -8,9 +8,28 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, ExternalLink, Loader2, Send, Banknote, ClipboardCheck, FileText, Printer } from 'lucide-react';
+import {
+  ArrowLeft,
+  ExternalLink,
+  Loader2,
+  Send,
+  Banknote,
+  ClipboardCheck,
+  FileText,
+  Printer,
+  Eye,
+} from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection, useFirebaseApp } from '@/firebase';
-import { collection, doc, limit, query, setDoc, where, writeBatch } from 'firebase/firestore';
+import {
+  collection,
+  deleteField,
+  doc,
+  limit,
+  query,
+  setDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useAppUser } from '@/hooks/use-app-user';
 import {
@@ -24,19 +43,23 @@ import {
   PaymentMethod,
   Purchase,
   PurchasePaymentMilestone,
+  PurchaseRequest,
   PurchaseVendorBill,
   PurchaseVendorBillStatus,
   User,
   Vendor,
+  VendorBillSupportingDocumentLink,
+  VendorBillVatTreatmentOverride,
   WithholdingCertificateCopyVariant,
   WithholdingCertificateDocument,
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
-import { supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
+import { roundMoney2, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
 import {
   buildWithholdingCertificateDocumentHtml,
   buildWithholdingCertificatePayeeCopies12Html,
   openWithholdingCertificatePrintWindow,
+  openWithholdingCertificatePreviewTab,
 } from '@/lib/documents/withholding-certificate-50-tw-print';
 import {
   buildWithholdingCertificateDraft,
@@ -69,7 +92,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   uploadVendorBillPaymentProofPdf,
   uploadVendorBillWhtProofPdf,
@@ -80,6 +114,58 @@ function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
   if (s === 'SUBMITTED') return 'รอจ่ายเงิน';
   return 'จ่ายแล้ว';
+}
+
+type SupportingFormRow = { attached: boolean; documentNo: string; documentDate: string };
+
+function supportingFromBill(link?: VendorBillSupportingDocumentLink): SupportingFormRow {
+  return {
+    attached: !!link?.attached,
+    documentNo: link?.documentNo ?? '',
+    documentDate: link?.documentDate ?? '',
+  };
+}
+
+function supportingToFirestore(row: SupportingFormRow): VendorBillSupportingDocumentLink {
+  if (!row.attached) return { attached: false };
+  return {
+    attached: true,
+    documentNo: row.documentNo.trim(),
+    documentDate: row.documentDate.trim(),
+  };
+}
+
+function validateSupportingRow(label: string, row: SupportingFormRow): string | null {
+  if (!row.attached) return null;
+  if (!row.documentNo.trim() || !row.documentDate.trim()) {
+    return `${label}: ต้องระบุเลขที่และวันที่เมื่อติ๊กแนบเอกสาร`;
+  }
+  return null;
+}
+
+type VatModeUi = 'AUTO' | VendorBillVatTreatmentOverride;
+
+function SupportingDocReadOnly({
+  title,
+  link,
+}: {
+  title: string;
+  link?: VendorBillSupportingDocumentLink;
+}) {
+  if (!link?.attached) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{title}:</span> ไม่แนบ — อ้างอิงเฉพาะ PO ภายในระบบ
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm">
+      <span className="font-medium">{title}:</span> เลขที่{' '}
+      <span className="font-mono font-semibold">{link.documentNo?.trim() || '—'}</span>
+      {' · '}วันที่ {link.documentDate?.trim() || '—'}
+    </p>
+  );
 }
 
 export default function StoreVendorBillDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -112,6 +198,15 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     [firestore, bill?.purchaseId]
   );
   const { data: purchase } = useDoc<Purchase>(purchaseRef as any);
+
+  const purchaseRequestRef = useMemoFirebase(
+    () =>
+      firestore && purchase?.purchaseRequestId
+        ? doc(firestore, 'purchase_requests', purchase.purchaseRequestId)
+        : null,
+    [firestore, purchase?.purchaseRequestId],
+  );
+  const { data: purchaseRequest } = useDoc<PurchaseRequest>(purchaseRequestRef as any);
 
   const vendorRef = useMemoFirebase(
     () => (firestore && bill?.vendorId ? doc(firestore, 'vendors', bill.vendorId) : null),
@@ -189,12 +284,28 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [submittedWhtBusy, setSubmittedWhtBusy] = useState(false);
   const [whtPrintBusy, setWhtPrintBusy] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
+  /** พรีวิว + เลือกชุดพิมพ์หัก ณ ที่จ่าย (หลังจ่ายแล้ว) */
+  const [whtHubOpen, setWhtHubOpen] = useState(false);
+  const [vatMode, setVatMode] = useState<VatModeUi>('AUTO');
+  const [supportingDelivery, setSupportingDelivery] = useState<SupportingFormRow>(() =>
+    supportingFromBill(undefined),
+  );
+  const [supportingTaxInv, setSupportingTaxInv] = useState<SupportingFormRow>(() =>
+    supportingFromBill(undefined),
+  );
+  const [supportingReceipt, setSupportingReceipt] = useState<SupportingFormRow>(() =>
+    supportingFromBill(undefined),
+  );
 
   useEffect(() => {
     if (!bill) return;
     setBillingDate(bill.billingReceivedDate || '');
     setPayDate(bill.plannedPaymentDate || '');
     setNotes(bill.notes || '');
+    setVatMode(bill.billVatTreatment ?? 'AUTO');
+    setSupportingDelivery(supportingFromBill(bill.supportingDeliveryNote));
+    setSupportingTaxInv(supportingFromBill(bill.supportingTaxInvoice));
+    setSupportingReceipt(supportingFromBill(bill.supportingMoneyReceipt));
     if (bill.status === 'SUBMITTED') {
       setPayoutEntryDate((d) => d || timestampToHtmlDateValue(Date.now()));
     }
@@ -228,11 +339,76 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   const canPrintWithholdingSummary = !!withholdingPreview && withholdingPreview.wht > 0.005;
 
+  /** เอกสารหัก ฯ สำหรับพิมพ์/พรีวิว — ใช้ของจริงจาก Firestore หรือประกอบจาก cashbook ถ้ายังไม่มีเลขเอกสาร */
+  const effectiveWhtPrintDoc = useMemo((): WithholdingCertificateDocument | null => {
+    if (
+      !purchase ||
+      !bill ||
+      !vendor ||
+      !currentUser ||
+      !canPrintWithholdingSummary ||
+      !withholdingPreview
+    ) {
+      return null;
+    }
+    if (whtCertificate) return whtCertificate;
+    if (bill.status !== 'PAID' || !payoutCashbook) return null;
+    const draftCore = buildWithholdingCertificateDraft({
+      bill,
+      purchase,
+      vendor,
+      company: companyProfile ?? undefined,
+      milestone: linkedMilestone ?? undefined,
+      cashbook: payoutCashbook,
+      bank: payoutBankAccount ?? undefined,
+      paymentDateYmd: payoutCashbook.entryDate,
+      paymentIssueDateYmd: payoutCashbook.entryDate,
+      paymentMethod: payoutCashbook.paymentMethod,
+      sourceWithholdingAtSourceItemId: whtAtSourceItem?.id,
+    });
+    return {
+      id: '_synthetic_preview',
+      ...draftCore,
+      createdByUid: currentUser.id,
+    };
+  }, [
+    purchase,
+    bill,
+    vendor,
+    currentUser,
+    canPrintWithholdingSummary,
+    withholdingPreview,
+    whtCertificate,
+    payoutCashbook,
+    payoutBankAccount,
+    linkedMilestone,
+    companyProfile,
+    whtAtSourceItem?.id,
+  ]);
+
   /** ตรงกับ executeVendorBillPayment: ตัดธนาคารเฉพาะสุทธิจ่ายคู่ค้า — หัก ณ ที่จ่ายไม่ผ่านบัญชี */
   const bankDebitAmount = useMemo(() => {
     if (withholdingPreview && withholdingPreview.wht > 0.005) return withholdingPreview.netPaid;
     return grossInclVatForBill || grossForPayment;
   }, [withholdingPreview, grossForPayment, grossInclVatForBill]);
+
+  const billFinancialSlice = useMemo(() => {
+    if (!purchase || !bill) return null;
+    const gross = grossInclVatForBill;
+    const poTotal = Number(purchase.totalAmount) || 0;
+    const ratio = poTotal > 0.0001 ? Math.min(1, gross / poTotal) : 1;
+    const beforeTax = roundMoney2((Number(purchase.amountBeforeTax) || 0) * ratio);
+    const vat = roundMoney2((Number(purchase.vatAmount) || 0) * ratio);
+    return { gross, beforeTax, vat, ratio };
+  }, [purchase, bill, grossInclVatForBill]);
+
+  const displayedVatTreatment = useMemo((): VendorBillVatTreatmentOverride => {
+    if (!purchase) return 'NONE';
+    const inferred: VendorBillVatTreatmentOverride =
+      (Number(purchase.vatAmount) || 0) > 0.005 ? 'VAT_7' : 'NONE';
+    if (bill?.status === 'DRAFT') return vatMode === 'AUTO' ? inferred : vatMode;
+    return bill?.billVatTreatment ?? inferred;
+  }, [purchase, bill?.status, bill?.billVatTreatment, vatMode]);
 
   const mergeWhtCertDisplaySettings = (c: CompanyProfileWhtInput | null | undefined) => {
     const d = c?.whtCertificateDisplay;
@@ -308,20 +484,30 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     }
   };
 
-  const printWhtCertificate = async (variant: WithholdingCertificateCopyVariant, official: boolean) => {
-    if (!currentUser || !whtCertificate) return;
+  const isPersistedWhtCertDoc = (doc: WithholdingCertificateDocument | null) =>
+    !!doc?.id &&
+    !doc.id.startsWith('_') &&
+    !!bill?.whtCertificateDocumentId &&
+    doc.id === bill.whtCertificateDocumentId;
+
+  const runWhtCertificatePrint = async (
+    doc: WithholdingCertificateDocument,
+    variant: WithholdingCertificateCopyVariant,
+    official: boolean,
+  ) => {
+    if (!currentUser) return;
     setWhtPrintBusy(true);
     try {
       const actor =
         currentUser.displayName?.trim() || currentUser.email || currentUser.id;
       const errs = official
-        ? validateWhtCertificateForOfficialPrint(whtCertificate, variant)
-        : validateWhtCertificateForPreviewPrint(whtCertificate, variant);
+        ? validateWhtCertificateForOfficialPrint(doc, variant)
+        : validateWhtCertificateForPreviewPrint(doc, variant);
       if (errs.length) {
         toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
         return;
       }
-      const html = buildWithholdingCertificateDocumentHtml(whtCertificate, {
+      const html = buildWithholdingCertificateDocumentHtml(doc, {
         copyVariant: variant,
         official,
         printedByName: actor,
@@ -329,7 +515,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         ...mergeWhtCertDisplaySettings(companyProfile),
       });
       openWithholdingCertificatePrintWindow(html);
-      if (official && firestore && whtCertRef && whtCertificate.id) {
+      if (official && isPersistedWhtCertDoc(doc) && firestore && whtCertRef) {
         try {
           await updateDocumentNonBlocking(whtCertRef, {
             lastPrintedCopyVariant: variant,
@@ -338,12 +524,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             updatedByName: actor,
           });
           const logRef = doc(
-            collection(firestore, 'withholding_certificate_documents', whtCertificate.id, 'audit_logs'),
+            collection(firestore, 'withholding_certificate_documents', doc.id, 'audit_logs'),
           );
           await setDoc(logRef, {
             id: logRef.id,
             ...buildWhtAuditLogEntry({
-              documentId: whtCertificate.id,
+              documentId: doc.id,
               action: 'PRINT_WHT',
               actorId: currentUser.id,
               actorName: actor,
@@ -360,24 +546,27 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   };
 
   /** ฉบับที่ 1 + 2 ในไฟล์เดียว (ให้ลูกค้า / PDF) */
-  const printWhtCertificatePayeeCopies12 = async (official: boolean) => {
-    if (!currentUser || !whtCertificate) return;
+  const runWhtCertificatePayeeCopies12Print = async (
+    doc: WithholdingCertificateDocument,
+    official: boolean,
+  ) => {
+    if (!currentUser) return;
     setWhtPrintBusy(true);
     try {
       const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
-      const errs = validateWhtCertificateForPayeeCopies12Print(whtCertificate, official);
+      const errs = validateWhtCertificateForPayeeCopies12Print(doc, official);
       if (errs.length) {
         toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
         return;
       }
-      const html = buildWithholdingCertificatePayeeCopies12Html(whtCertificate, {
+      const html = buildWithholdingCertificatePayeeCopies12Html(doc, {
         official,
         printedByName: actor,
         printedAtMs: Date.now(),
         ...mergeWhtCertDisplaySettings(companyProfile),
       });
       openWithholdingCertificatePrintWindow(html);
-      if (official && firestore && whtCertRef && whtCertificate.id) {
+      if (official && isPersistedWhtCertDoc(doc) && firestore && whtCertRef) {
         try {
           await updateDocumentNonBlocking(whtCertRef, {
             lastPrintedCopyVariant: 'COPY_PAYEE_TAX_RETURN',
@@ -386,12 +575,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             updatedByName: actor,
           });
           const logRef = doc(
-            collection(firestore, 'withholding_certificate_documents', whtCertificate.id, 'audit_logs'),
+            collection(firestore, 'withholding_certificate_documents', doc.id, 'audit_logs'),
           );
           await setDoc(logRef, {
             id: logRef.id,
             ...buildWhtAuditLogEntry({
-              documentId: whtCertificate.id,
+              documentId: doc.id,
               action: 'PRINT_WHT',
               actorId: currentUser.id,
               actorName: actor,
@@ -405,6 +594,45 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     } finally {
       setWhtPrintBusy(false);
     }
+  };
+
+  const whtHubPreviewHtml = useMemo(() => {
+    if (!whtHubOpen || !effectiveWhtPrintDoc || !currentUser) return '';
+    const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+    const errs = validateWhtCertificateForPreviewPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN');
+    if (errs.length) return '';
+    return buildWithholdingCertificateDocumentHtml(effectiveWhtPrintDoc, {
+      copyVariant: 'COPY_PAYEE_TAX_RETURN',
+      official: false,
+      printedByName: actor,
+      printedAtMs: Date.now(),
+      ...mergeWhtCertDisplaySettings(companyProfile),
+    });
+  }, [whtHubOpen, effectiveWhtPrintDoc, currentUser, companyProfile]);
+
+  const openWhtPreviewHub = () => {
+    if (!effectiveWhtPrintDoc) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีข้อมูลหัก ณ ที่จ่าย',
+        description: 'ใบนี้ไม่เข้าเงื่อนไขพิมพ์หนังสือรับรอง',
+      });
+      return;
+    }
+    const errs = validateWhtCertificateForPreviewPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN');
+    if (errs.length) {
+      toast({ variant: 'destructive', title: 'เปิดพรีวิวไม่ได้', description: errs.join(' ') });
+      return;
+    }
+    setWhtHubOpen(true);
+  };
+
+  const openWhtPreviewInNewTab = () => {
+    if (!whtHubPreviewHtml.trim()) {
+      toast({ variant: 'destructive', title: 'ยังไม่มีตัวอย่างให้เปิด' });
+      return;
+    }
+    openWithholdingCertificatePreviewTab(whtHubPreviewHtml);
   };
 
   const handleCreateWhtCertificate = async () => {
@@ -485,14 +713,27 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     }
   };
 
-  const saveDraft = async () => {
-    if (!billRef || !bill || bill.status !== 'DRAFT') return;
-    await updateDocumentNonBlocking(billRef, {
+  const buildVendorBillDetailPayload = (): Record<string, unknown> => {
+    if (!bill) return {};
+    const prNo = bill.purchaseRequestNo?.trim() || purchaseRequest?.requestNo?.trim();
+    return {
       billingReceivedDate: billingDate,
       plannedPaymentDate: payDate,
       notes,
+      ...(prNo ? { purchaseRequestNo: prNo } : {}),
+      ...(vatMode === 'AUTO'
+        ? { billVatTreatment: deleteField() }
+        : { billVatTreatment: vatMode }),
+      supportingDeliveryNote: supportingToFirestore(supportingDelivery),
+      supportingTaxInvoice: supportingToFirestore(supportingTaxInv),
+      supportingMoneyReceipt: supportingToFirestore(supportingReceipt),
       updatedAt: Date.now(),
-    });
+    };
+  };
+
+  const saveDraft = async () => {
+    if (!billRef || !bill || bill.status !== 'DRAFT') return;
+    await updateDocumentNonBlocking(billRef, buildVendorBillDetailPayload());
     toast({ title: 'บันทึกฉบับร่างแล้ว' });
   };
 
@@ -509,15 +750,26 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       });
       return;
     }
+    const rowErrs = [
+      validateSupportingRow('ใบส่งของ', supportingDelivery),
+      validateSupportingRow('ใบกำกับภาษี', supportingTaxInv),
+      validateSupportingRow('ใบเสร็จรับเงิน (คู่ค้า)', supportingReceipt),
+    ].filter(Boolean) as string[];
+    if (rowErrs.length) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลเอกสารประกอบไม่ครบ',
+        description: rowErrs.join(' '),
+      });
+      setSubmitConfirmOpen(false);
+      return;
+    }
     const now = Date.now();
     await updateDocumentNonBlocking(billRef, {
-      billingReceivedDate: billingDate,
-      plannedPaymentDate: payDate,
-      notes,
+      ...buildVendorBillDetailPayload(),
       purchaseType: purchase.purchaseType,
       status: 'SUBMITTED' as PurchaseVendorBillStatus,
       submittedToAccountingAt: now,
-      updatedAt: now,
     });
     const apAmount = bill.billAmount ?? purchase.totalAmount;
     await setDoc(
@@ -687,42 +939,57 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         {bill.status === 'PAID' && bill.cashbookEntryNo && (
           <Card className="border-green-200 bg-green-50/40">
             <CardHeader className="pb-2">
-              <CardTitle className="text-base text-green-900">ลงสมุด cashbook แล้ว</CardTitle>
-              <CardDescription className="space-y-1 text-green-800">
-                <p>
-                  เลขที่รายการ: <span className="font-mono font-bold">{bill.cashbookEntryNo}</span>
-                </p>
-                {(bill.paymentProofUrl || bill.whtPaymentProofUrl) && (
-                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-                    {bill.paymentProofUrl ? (
-                      <p className="m-0">
-                        หลักฐานการจ่าย:{' '}
-                        <a
-                          href={bill.paymentProofUrl}
-                          className="font-semibold text-primary underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {bill.paymentProofFileName || 'เปิด PDF'}
-                        </a>
-                      </p>
-                    ) : null}
-                    {bill.whtPaymentProofUrl ? (
-                      <p className="m-0">
-                        หลักฐานหัก ณ ที่จ่าย:{' '}
-                        <a
-                          href={bill.whtPaymentProofUrl}
-                          className="font-semibold text-primary underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {bill.whtPaymentProofFileName || 'เปิด PDF'}
-                        </a>
-                      </p>
-                    ) : null}
-                  </div>
-                )}
-              </CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <CardTitle className="text-base text-green-900">ลงสมุด cashbook แล้ว</CardTitle>
+                  <CardDescription className="space-y-1 text-green-800">
+                    <p>
+                      เลขที่รายการ: <span className="font-mono font-bold">{bill.cashbookEntryNo}</span>
+                    </p>
+                    {(bill.paymentProofUrl || bill.whtPaymentProofUrl) && (
+                      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                        {bill.paymentProofUrl ? (
+                          <p className="m-0">
+                            หลักฐานการจ่าย:{' '}
+                            <a
+                              href={bill.paymentProofUrl}
+                              className="font-semibold text-primary underline"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {bill.paymentProofFileName || 'เปิด PDF'}
+                            </a>
+                          </p>
+                        ) : null}
+                        {bill.whtPaymentProofUrl ? (
+                          <p className="m-0">
+                            หลักฐานหัก ณ ที่จ่าย:{' '}
+                            <a
+                              href={bill.whtPaymentProofUrl}
+                              className="font-semibold text-primary underline"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {bill.whtPaymentProofFileName || 'เปิด PDF'}
+                            </a>
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
+                  </CardDescription>
+                </div>
+                {canPrintWithholdingSummary && canWhtAccounting && effectiveWhtPrintDoc ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="shrink-0 gap-2 border-green-700/30 bg-white hover:bg-green-100/80 text-green-950 font-semibold"
+                    onClick={() => openWhtPreviewHub()}
+                  >
+                    <Eye className="h-4 w-4" />
+                    พรีวิวเอกสารหัก ณ ที่จ่าย
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
           </Card>
         )}
@@ -735,8 +1002,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   หนังสือรับรองการหักภาษี ณ ที่จ่าย (มาตรา 50 ทวิ)
                 </CardTitle>
                 <CardDescription className="text-violet-950/85">
-                  สร้างจากข้อมูลจ่ายเงินและใบวางบิลนี้เท่านั้น — ออกเลขที่และพิมพ์สำเนาทางการได้หลังบันทึก ISSUED
-                  ในหน้ารายละเอียด
+                  สร้างจากข้อมูลจ่ายเงินและใบวางบิลนี้เท่านั้น — ออกเลขที่ (ISSUED) ในหน้าบัญชี · พิมพ์และพรีวิวชุดสำเนาใช้ปุ่มในแถบเขียว
+                  «พรีวิวเอกสารหัก ณ ที่จ่าย» ด้านบน
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -775,90 +1042,13 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         {whtCertificate?.documentStatus ?? '—'}
                       </Badge>
                     </div>
-                    {whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' && (
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificate('COPY_PAYEE_TAX_RETURN', false)}
-                        >
-                          Preview ฉบับที่ 1
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificate('COPY_PAYEE_RECORD', false)}
-                        >
-                          Preview ฉบับที่ 2
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificatePayeeCopies12(false)}
-                        >
-                          Preview ฉบับที่ 1+2 (ไฟล์เดียว)
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificate('COPY_PAYER_RECORD', false)}
-                        >
-                          Preview ผู้หัก
-                        </Button>
-                      </div>
-                    )}
-                    {whtCertificate?.documentStatus === 'ISSUED' && (
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-2"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificate('COPY_PAYEE_TAX_RETURN', true)}
-                        >
-                          <Printer className="h-4 w-4" />
-                          พิมพ์ฉบับที่ 1
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-2"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificate('COPY_PAYEE_RECORD', true)}
-                        >
-                          <Printer className="h-4 w-4" />
-                          พิมพ์ฉบับที่ 2
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-2 font-semibold"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificatePayeeCopies12(true)}
-                        >
-                          <Printer className="h-4 w-4" />
-                          พิมพ์ฉบับที่ 1+2 (ไฟล์เดียว / PDF)
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-2"
-                          disabled={whtPrintBusy}
-                          onClick={() => void printWhtCertificate('COPY_PAYER_RECORD', true)}
-                        >
-                          <Printer className="h-4 w-4" />
-                          พิมพ์สำเนาผู้หัก
-                        </Button>
-                      </div>
-                    )}
+                    {effectiveWhtPrintDoc && whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' ? (
+                      <p className="text-sm text-violet-950/90 leading-relaxed">
+                        <strong>พิมพ์ / พรีวิว:</strong> ใช้ปุ่ม{' '}
+                        <strong>พรีวิวเอกสารหัก ณ ที่จ่าย</strong> ในการ์ดสีเขียว «ลงสมุด cashbook แล้ว» ด้านบน
+                        เพื่อดูตัวอย่างและเลือกชุดสำเนาตามรายการ (ผู้ถูกหัก · ผู้หัก · ตัวอย่างหรือทางการหลัง ISSUED)
+                      </p>
+                    ) : null}
                     {whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' && (
                       <p className="text-[11px] text-muted-foreground">
                         ยกเลิกเอกสารหรือเตรียม XML — ใช้ปุ่มในหน้ารายละเอียด (สิทธิ์ผู้จัดการบัญชี)
@@ -1063,25 +1253,246 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         {purchase && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">อ้างอิงใบสั่งซื้อ</CardTitle>
-              <CardDescription className="space-y-1">
-                <p>
-                  ยอดสุทธิใบสั่งซื้อ ฿{' '}
-                  {purchase.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </p>
-                {bill.billAmount != null && bill.billAmount > 0 && (
-                  <p className="font-semibold text-foreground">
-                    ยอดในใบรับวางบิลนี้ ฿{' '}
-                    {bill.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </p>
-                )}
-                {linkedMilestone && (
-                  <p>
-                    งวดชำระ #{linkedMilestone.sequence}: {linkedMilestone.label}
-                  </p>
-                )}
+              <CardTitle className="text-base">อ้างอิง PR / PO และยอดในใบวางบิล</CardTitle>
+              <CardDescription className="text-xs text-muted-foreground leading-relaxed">
+                การจ่ายเงินยังทำทีละใบรับวางบิลตาม PO/งวดเหมือนเดิม — ส่วนนี้เป็นเสมือนใบปะหน้าและเก็บเลขที่เอกสารคู่ค้า (ถ้ามี)
+                · ถ้าคู่ค้าเดียวกันหลาย PO ให้สร้างหลายใบ แล้วใช้ตัวกรองคู่ค้า + เดือนในรายการใบวางบิลเพื่อดูยอดรวม
               </CardDescription>
             </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-md border bg-muted/20 px-3 py-2">
+                  <p className="text-muted-foreground text-xs font-medium mb-1">ใบขอซื้อ (PR)</p>
+                  <p className="font-mono font-semibold text-base">
+                    {bill.purchaseRequestNo || purchaseRequest?.requestNo || '—'}
+                  </p>
+                  {purchase.purchaseRequestId ? (
+                    <Button variant="link" className="h-auto p-0 text-xs" asChild>
+                      <Link href={`/store/purchase-requests/${purchase.purchaseRequestId}`}>
+                        เปิด PR <ExternalLink className="h-3 w-3 ml-0.5 inline" />
+                      </Link>
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="rounded-md border bg-muted/20 px-3 py-2">
+                  <p className="text-muted-foreground text-xs font-medium mb-1">ใบสั่งซื้อ (PO)</p>
+                  <p className="font-mono font-semibold text-base">{bill.purchaseNo || purchase.purchaseNo}</p>
+                  <Button variant="link" className="h-auto p-0 text-xs" asChild>
+                    <Link href={`/purchases/${purchase.id}`}>
+                      เปิด PO <ExternalLink className="h-3 w-3 ml-0.5 inline" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-1">
+                <p className="text-xs font-semibold text-muted-foreground">การแสดงภาษีมูลค่าเพิ่มในใบวางบิล</p>
+                <p className="font-medium">
+                  {displayedVatTreatment === 'VAT_7'
+                    ? 'มีภาษีมูลค่าเพิ่ม (อัตรา 7%) ในยอดอ้างอิงนี้'
+                    : 'ไม่มีภาษีมูลค่าเพิ่มในยอดอ้างอิงนี้ / ยอดก่อนภาษี'}
+                </p>
+                {billFinancialSlice && displayedVatTreatment === 'NONE' && billFinancialSlice.vat > 0.005 ? (
+                  <p className="text-xs text-amber-900 dark:text-amber-200 mt-1 leading-snug">
+                    หมายเหตุ: เลือกว่าไม่มีภาษี แต่ส่วนที่จัดสรรจาก PO ยังมียอดภาษี — ควรตรวจให้ตรงกับเอกสารคู่ค้า
+                  </p>
+                ) : null}
+                {billFinancialSlice && displayedVatTreatment === 'VAT_7' && billFinancialSlice.vat < 0.005 ? (
+                  <p className="text-xs text-amber-900 dark:text-amber-200 mt-1 leading-snug">
+                    หมายเหตุ: เลือกว่ามี VAT แต่ส่วนที่จัดสรรจาก PO ไม่มียอดภาษี — ควรตรวจให้ตรงกับเอกสารคู่ค้า
+                  </p>
+                ) : null}
+              </div>
+
+              {billFinancialSlice ? (
+                <div className="rounded-md border px-3 py-2 space-y-1.5 font-mono text-sm">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground font-sans text-xs sm:text-sm">
+                      ยอดก่อนภาษี (ส่วนที่ใช้ในใบนี้)
+                    </span>
+                    <span>
+                      ฿
+                      {billFinancialSlice.beforeTax.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground font-sans text-xs sm:text-sm">
+                      ภาษีมูลค่าเพิ่ม (ส่วนที่ใช้ในใบนี้)
+                    </span>
+                    <span>
+                      ฿
+                      {billFinancialSlice.vat.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 font-bold border-t pt-1.5 font-sans">
+                    <span>รวมในใบวางบิล (ก่อนหัก ณ ที่จ่าย)</span>
+                    <span className="font-mono">
+                      ฿
+                      {billFinancialSlice.gross.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              {withholdingPreview && withholdingPreview.wht > 0.005 ? (
+                <div className="rounded-md border border-violet-200/80 bg-violet-50/30 px-3 py-2 space-y-1">
+                  <p className="text-xs font-semibold text-violet-950">หัก ณ ที่จ่าย (ผู้รับเงิน)</p>
+                  <p className="text-sm">
+                    อัตรา {purchase.supplierWithholdingRatePercent}% · ฐานก่อนภาษี (ประมาณการ) ฿
+                    {withholdingPreview.baseBeforeVat.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}{' '}
+                    · หัก ณ ที่จ่าย ฿
+                    {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="font-bold text-base">
+                    สุทธิที่โอนให้คู่ค้า (หลังหัก ณ ที่จ่าย) ฿
+                    {withholdingPreview.netPaid.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  ไม่มีหัก ณ ที่จ่ายตามการตั้งค่า PO/คู่ค้า — ยอดที่ต้องจ่ายให้คู่ค้าเท่ากับยอดรวมในใบวางบิลด้านบน
+                </p>
+              )}
+
+              <p className="text-xs text-muted-foreground border-t pt-2">
+                ยอดสุทธิทั้งใบสั่งซื้อ PO ฿
+                {purchase.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {linkedMilestone
+                  ? ` · งวดชำระ #${linkedMilestone.sequence}: ${linkedMilestone.label}`
+                  : ''}
+                {bill.billAmount != null && bill.billAmount > 0 ? (
+                  <> · บันทึกยอดในใบนี้ ฿{bill.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</>
+                ) : null}
+              </p>
+
+              {bill.status !== 'DRAFT' && (
+                <div className="border-t pt-3 space-y-2">
+                  <p className="text-xs font-semibold">เอกสารประกอบที่บันทึกไว้</p>
+                  <SupportingDocReadOnly title="1. ใบส่งของ" link={bill.supportingDeliveryNote} />
+                  <SupportingDocReadOnly title="2. ใบกำกับภาษี" link={bill.supportingTaxInvoice} />
+                  <SupportingDocReadOnly title="3. ใบเสร็จรับเงิน (คู่ค้า)" link={bill.supportingMoneyReceipt} />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {bill.status === 'DRAFT' && okStore && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">ภาษีและเอกสารประกอบจากคู่ค้า</CardTitle>
+              <CardDescription className="text-xs leading-relaxed">
+                เลือกว่ามองยอดในใบวางบิลว่ามี VAT 7% หรือไม่ (ค่าเริ่มต้นตาม PO) · ติ๊กเฉพาะเอกสารที่ได้รับจากคู่ค้า
+                แล้วกรอกเลขที่และวันที่ — ถ้าไม่มีให้ปล่อยไม่ติ๊ก (อ้างอิงเฉพาะ PO ภายใน)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold">ภาษีมูลค่าเพิ่มในใบวางบิลนี้</Label>
+                <RadioGroup
+                  value={vatMode}
+                  onValueChange={(v) => setVatMode(v as VatModeUi)}
+                  className="gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="AUTO" id="vat-auto" />
+                    <Label htmlFor="vat-auto" className="font-normal cursor-pointer">
+                      ตามใบสั่งซื้อ (แนะนำ)
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="VAT_7" id="vat-7" />
+                    <Label htmlFor="vat-7" className="font-normal cursor-pointer">
+                      ระบุว่ามีภาษีมูลค่าเพิ่ม 7%
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="NONE" id="vat-none" />
+                    <Label htmlFor="vat-none" className="font-normal cursor-pointer">
+                      ระบุว่าไม่มีภาษีมูลค่าเพิ่ม
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+
+              <div className="space-y-4">
+                <Label className="text-sm font-semibold">เอกสารประกอบ (ถ้ามี)</Label>
+                {(
+                  [
+                    {
+                      key: 'dn',
+                      title: '1. ใบส่งของ',
+                      row: supportingDelivery,
+                      setRow: setSupportingDelivery,
+                    },
+                    {
+                      key: 'ti',
+                      title: '2. ใบกำกับภาษี',
+                      row: supportingTaxInv,
+                      setRow: setSupportingTaxInv,
+                    },
+                    {
+                      key: 'rc',
+                      title: '3. ใบเสร็จรับเงิน (จากคู่ค้า)',
+                      row: supportingReceipt,
+                      setRow: setSupportingReceipt,
+                    },
+                  ] as const
+                ).map(({ key, title, row, setRow }) => (
+                  <div key={key} className="rounded-md border p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id={`sup-${key}`}
+                        checked={row.attached}
+                        onCheckedChange={(c) =>
+                          setRow({
+                            attached: c === true,
+                            documentNo: c === true ? row.documentNo : '',
+                            documentDate: c === true ? row.documentDate : '',
+                          })
+                        }
+                      />
+                      <Label htmlFor={`sup-${key}`} className="font-medium cursor-pointer">
+                        {title}
+                      </Label>
+                    </div>
+                    {row.attached ? (
+                      <div className="grid gap-3 sm:grid-cols-2 pl-6">
+                        <div className="space-y-1">
+                          <Label className="text-xs">เลขที่เอกสาร</Label>
+                          <Input
+                            className="h-10 font-mono"
+                            value={row.documentNo}
+                            onChange={(e) => setRow({ ...row, documentNo: e.target.value })}
+                            placeholder="เลขที่..."
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">วันที่เอกสาร</Label>
+                          <DatePickerThaiBE
+                            className="h-10 w-full"
+                            value={htmlDateValueToTimestampMs(row.documentDate)}
+                            onChange={(ms) =>
+                              setRow({ ...row, documentDate: timestampToHtmlDateValue(ms) })
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
           </Card>
         )}
 
@@ -1159,6 +1570,220 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
           </CardContent>
         </Card>
+
+        <Dialog open={whtHubOpen} onOpenChange={setWhtHubOpen}>
+          <DialogContent className="max-h-[90vh] w-[min(96vw,72rem)] max-w-[min(96vw,72rem)] translate-y-[-48%] gap-0 overflow-hidden p-0 flex flex-col sm:max-w-[min(96vw,72rem)]">
+            <DialogHeader className="shrink-0 space-y-1 px-6 pt-6 pb-3">
+              <DialogTitle>พรีวิวและพิมพ์ — หนังสือรับรองหัก ณ ที่จ่าย</DialogTitle>
+              <DialogDescription className="text-xs sm:text-sm leading-relaxed">
+                ด้านซ้ายแสดงตัวอย่างฉบับที่ 1 (ผู้ถูกหัก — ยื่นภาษี) · ด้านขวาเลือกชุดสำเนาแล้วกดพิมพ์ ระบบจะเปิดหน้าต่างและเรียกกล่องพิมพ์ของเบราว์เซอร์
+                {effectiveWhtPrintDoc?.documentStatus !== 'ISSUED'
+                  ? ' · พิมพ์ทางการ (ต้นฉบับ/สำเนาพร้อมเลขที่) ใช้ได้เมื่อออก ISSUED ในหน้าบัญชีแล้ว'
+                  : null}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t lg:flex-row">
+              <div className="flex min-h-[220px] flex-1 flex-col border-b bg-muted/30 lg:min-h-[min(480px,58vh)] lg:w-[58%] lg:max-w-[58%] lg:border-b-0 lg:border-r">
+                {whtHubPreviewHtml ? (
+                  <iframe
+                    title="พรีวิวหนังสือรับรองหัก ณ ที่จ่าย"
+                    className="min-h-[220px] w-full flex-1 border-0 bg-white lg:min-h-0"
+                    srcDoc={whtHubPreviewHtml}
+                  />
+                ) : (
+                  <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+                    ไม่สามารถสร้างตัวอย่าง
+                  </div>
+                )}
+              </div>
+              <ScrollArea className="h-[min(42vh,360px)] shrink-0 lg:h-auto lg:max-h-[min(72vh,620px)] lg:min-h-[min(480px,58vh)] lg:flex-1">
+                <div className="space-y-5 p-4 text-sm">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={!whtHubPreviewHtml.trim() || whtPrintBusy}
+                    onClick={() => openWhtPreviewInNewTab()}
+                  >
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    เปิดพรีวิวในแท็บใหม่ (พิมพ์จากเมนูเบราว์เซอร์)
+                  </Button>
+                  <Separator />
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      พิมพ์ตัวอย่าง (ฉบับร่าง)
+                    </p>
+                    <ul className="space-y-2">
+                      <li>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                          onClick={() =>
+                            effectiveWhtPrintDoc &&
+                            void runWhtCertificatePrint(
+                              effectiveWhtPrintDoc,
+                              'COPY_PAYEE_TAX_RETURN',
+                              false,
+                            )
+                          }
+                        >
+                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                          <span>
+                            <span className="block font-semibold">ฉบับที่ 1 — ผู้ถูกหัก (ยื่นภาษี)</span>
+                            <span className="text-xs text-muted-foreground">สำเนาสำหรับยื่นแบบภาษี</span>
+                          </span>
+                        </Button>
+                      </li>
+                      <li>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                          onClick={() =>
+                            effectiveWhtPrintDoc &&
+                            void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYEE_RECORD', false)
+                          }
+                        >
+                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                          <span>
+                            <span className="block font-semibold">ฉบับที่ 2 — ผู้ถูกหัก (เก็บเป็นหลักฐาน)</span>
+                            <span className="text-xs text-muted-foreground">สำเนาเก็บรักษา</span>
+                          </span>
+                        </Button>
+                      </li>
+                      <li>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                          onClick={() =>
+                            effectiveWhtPrintDoc &&
+                            void runWhtCertificatePayeeCopies12Print(effectiveWhtPrintDoc, false)
+                          }
+                        >
+                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                          <span>
+                            <span className="block font-semibold">ชุดฉบับที่ 1 + 2 — ผู้ถูกหัก (ไฟล์เดียว)</span>
+                            <span className="text-xs text-muted-foreground">สองหน้าในหน้าต่างเดียว</span>
+                          </span>
+                        </Button>
+                      </li>
+                      <li>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                          onClick={() =>
+                            effectiveWhtPrintDoc &&
+                            void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYER_RECORD', false)
+                          }
+                        >
+                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                          <span>
+                            <span className="block font-semibold">สำเนาผู้หัก</span>
+                            <span className="text-xs text-muted-foreground">เก็บเป็นหลักฐานฝั่งผู้จ่าย</span>
+                          </span>
+                        </Button>
+                      </li>
+                    </ul>
+                  </div>
+                  {effectiveWhtPrintDoc?.documentStatus === 'ISSUED' ? (
+                    <>
+                      <Separator />
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          พิมพ์ทางการ (ต้นฉบับ / สำเนา — มีเลขที่)
+                        </p>
+                        <ul className="space-y-2">
+                          <li>
+                            <Button
+                              type="button"
+                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                              onClick={() =>
+                                effectiveWhtPrintDoc &&
+                                void runWhtCertificatePrint(
+                                  effectiveWhtPrintDoc,
+                                  'COPY_PAYEE_TAX_RETURN',
+                                  true,
+                                )
+                              }
+                            >
+                              <Printer className="mr-2 h-4 w-4 shrink-0" />
+                              <span>
+                                <span className="block font-semibold">ฉบับที่ 1 — ผู้ถูกหัก (ทางการ)</span>
+                                <span className="text-xs opacity-90">ยื่นภาษี</span>
+                              </span>
+                            </Button>
+                          </li>
+                          <li>
+                            <Button
+                              type="button"
+                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                              onClick={() =>
+                                effectiveWhtPrintDoc &&
+                                void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYEE_RECORD', true)
+                              }
+                            >
+                              <Printer className="mr-2 h-4 w-4 shrink-0" />
+                              <span>
+                                <span className="block font-semibold">ฉบับที่ 2 — ผู้ถูกหัก (ทางการ)</span>
+                                <span className="text-xs opacity-90">เก็บหลักฐาน</span>
+                              </span>
+                            </Button>
+                          </li>
+                          <li>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-semibold"
+                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                              onClick={() =>
+                                effectiveWhtPrintDoc &&
+                                void runWhtCertificatePayeeCopies12Print(effectiveWhtPrintDoc, true)
+                              }
+                            >
+                              <Printer className="mr-2 h-4 w-4 shrink-0" />
+                              <span>
+                                <span className="block">ชุดฉบับที่ 1 + 2 — ทางการ (ไฟล์เดียว / PDF)</span>
+                                <span className="text-xs font-normal opacity-90">ผู้ถูกหัก</span>
+                              </span>
+                            </Button>
+                          </li>
+                          <li>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                              onClick={() =>
+                                effectiveWhtPrintDoc &&
+                                void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYER_RECORD', true)
+                              }
+                            >
+                              <Printer className="mr-2 h-4 w-4 shrink-0" />
+                              <span>
+                                <span className="block font-semibold">สำเนาผู้หัก (ทางการ)</span>
+                                <span className="text-xs text-muted-foreground">ผู้จ่ายเงิน</span>
+                              </span>
+                            </Button>
+                          </li>
+                        </ul>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </ScrollArea>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <AlertDialog open={submitConfirmOpen} onOpenChange={setSubmitConfirmOpen}>
           <AlertDialogContent>

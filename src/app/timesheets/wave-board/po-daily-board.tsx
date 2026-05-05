@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CalendarDays, Save, Loader2, Zap, Lock, UserMinus, Pencil, Undo2, Sparkles } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ArrowLeft } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -71,9 +71,16 @@ import {
   formatThaiYearMonthLabel,
 } from '@/lib/ops/timesheet-hub-po-month';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
-import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
-import { syncPoActiveAutoDailyForAssignment } from '@/lib/timesheet/po-active-auto-daily-sync';
-import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
+import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import {
+  applyPoActiveStandbyStopWindow,
+  syncPoActiveAutoDailyForAssignment,
+} from '@/lib/timesheet/po-active-auto-daily-sync';
+import {
+  isAssignmentEligibleForPoActiveAutoDaily,
+  PO_ACTIVE_STANDBY_STOP_AUTO_DAYS,
+  poActiveDailyTimesheetDocId,
+} from '@/lib/timesheet/po-active-auto-daily-build';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -188,11 +195,24 @@ export function PoDailyBoardCard({
   const [rosterData, setRosterData] = useState<Record<string, Partial<DailyTimesheet>>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [finishJobModal, setFinishJobModal] = useState<
-    null | { mode: 'finish' | 'revise'; assignment: Assignment }
+    null | {
+      mode: 'finish' | 'revise';
+      assignment: Assignment;
+      /** เฉพาะหยุดแบบจบงานจาก wizard — มีผลวันนี้ = เคลียร์วันนี้ไม่เป็น W */
+      finishTiming?: 'today' | 'tomorrow';
+    }
+  >(null);
+  const [stopFlow, setStopFlow] = useState<
+    null | {
+      assignment: Assignment;
+      step: 'mode' | 'timing';
+      stopMode?: 'finish_job' | 'standby_break';
+    }
   >(null);
   const [cancelFinishTarget, setCancelFinishTarget] = useState<Assignment | null>(null);
   const [finishJobDateYmd, setFinishJobDateYmd] = useState('');
   const [demobSubmitting, setDemobSubmitting] = useState(false);
+  const [standbySubmitting, setStandbySubmitting] = useState(false);
   const [autoGenBusy, setAutoGenBusy] = useState(false);
   const lastBangkokYmdRef = useRef(thailandTodayYmd());
   const autoTodaySyncLockRef = useRef(false);
@@ -215,8 +235,17 @@ export function PoDailyBoardCard({
       setFinishJobDateYmd(/^\d{4}-\d{2}-\d{2}$/.test(cur) ? cur : thailandTodayYmd());
       return;
     }
+    const bangkokToday = thailandTodayYmd();
+    if (finishJobModal.finishTiming === 'today') {
+      setFinishJobDateYmd(addDaysToYmd(bangkokToday, -1));
+      return;
+    }
+    if (finishJobModal.finishTiming === 'tomorrow') {
+      setFinishJobDateYmd(bangkokToday);
+      return;
+    }
     const base = (targetDate || '').slice(0, 10);
-    setFinishJobDateYmd(/^\d{4}-\d{2}-\d{2}$/.test(base) ? base : thailandTodayYmd());
+    setFinishJobDateYmd(/^\d{4}-\d{2}-\d{2}$/.test(base) ? base : bangkokToday);
   }, [finishJobModal, targetDate]);
 
   const poMonthHref = useMemo(() => {
@@ -662,6 +691,7 @@ export function PoDailyBoardCard({
         return;
       }
 
+      const tsService = new TimesheetService(firestore);
       const nextCycle = Math.max(1, (asgn.mobCycleNumber || 1) + 1);
       batch.update(mobRef, {
         deploymentStatus: 'DRAFT',
@@ -680,9 +710,36 @@ export function PoDailyBoardCard({
         mobWorkingStartedAt: deleteField(),
         mobWorkingStartedByUserId: deleteField(),
         mobLocationPhase: deleteField(),
+        poActiveAutoWorkSuspended: deleteField(),
+        poActiveStandbyAutoStartYmd: deleteField(),
+        poActiveStandbyAutoEndYmd: deleteField(),
         updatedAt: now,
         updatedBy: currentUser.id,
       });
+
+      if (finishJobModal.finishTiming === 'today') {
+        const ty = thailandTodayYmd();
+        const tid = poActiveDailyTimesheetDocId(asgn.workerId, asgn.id, ty);
+        const tsRef = doc(firestore, 'daily_timesheets', tid);
+        const tsSnap = await getDoc(tsRef);
+        if (tsSnap.exists()) {
+          const cur = tsSnap.data() as DailyTimesheet;
+          if (
+            !tsService.isFinalized(cur.status as DailyTimesheetStatus) &&
+            cur.poActiveAutoDaily === true &&
+            cur.eventType === 'work_day'
+          ) {
+            batch.update(tsRef, {
+              eventType: 'unpaid_leave',
+              normalHours: 0,
+              shiftType: 'DAY',
+              remark: '',
+              updatedAt: now,
+            });
+          }
+        }
+      }
+
       await batch.commit();
       setFinishJobModal(null);
       await loadRoster();
@@ -718,6 +775,9 @@ export function PoDailyBoardCard({
         mobLocationEndDate: deleteField(),
         mobLocationEndedAt: deleteField(),
         mobLocationEndedByUserId: deleteField(),
+        poActiveAutoWorkSuspended: deleteField(),
+        poActiveStandbyAutoStartYmd: deleteField(),
+        poActiveStandbyAutoEndYmd: deleteField(),
         updatedAt: now,
         updatedBy: currentUser.id,
       });
@@ -735,10 +795,49 @@ export function PoDailyBoardCard({
     }
   };
 
+  const runStandbyStopFlow = useCallback(
+    async (asgn: Assignment, timing: 'today' | 'tomorrow') => {
+      if (!firestore || !canEditTimesheets) {
+        toast({ variant: 'destructive', title: 'ไม่พร้อม', description: 'ไม่มีสิทธิ์หรือไม่ได้เชื่อมต่อ' });
+        return;
+      }
+      if (anyMonthLocked) {
+        toast({ variant: 'destructive', title: 'งวดล็อกแล้ว', description: 'ปลดล็อกงวดก่อนบันทึก' });
+        return;
+      }
+      setStandbySubmitting(true);
+      try {
+        const r = await applyPoActiveStandbyStopWindow(firestore, asgn.id, currentUser, timing);
+        setStopFlow(null);
+        toast({
+          title: 'หยุดแบบ standby แล้ว',
+          description: `SB อัตโนมัติ ${PO_ACTIVE_STANDBY_STOP_AUTO_DAYS} วัน (${formatYmdLocalThaiBE(r.startYmd)} – ${formatYmdLocalThaiBE(r.endYmd)}) · หลังช่วงนี้ไม่ซิงก์ W จนเริ่มงานใหม่ที่ Mobilization · แก้มือได้ทุกวัน`,
+        });
+        await loadRoster();
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setStandbySubmitting(false);
+      }
+    },
+    [firestore, canEditTimesheets, anyMonthLocked, currentUser, loadRoster, toast],
+  );
+
   const finishModalWorkerName = finishJobModal
     ? (() => {
         const w = workers?.find((x) => x.id === finishJobModal.assignment.workerId);
         return w ? `${w.firstName} ${w.lastName}`.trim() : finishJobModal.assignment.workerId;
+      })()
+    : '';
+
+  const stopFlowWorkerName = stopFlow
+    ? (() => {
+        const w = workers?.find((x) => x.id === stopFlow.assignment.workerId);
+        return w ? `${w.firstName} ${w.lastName}`.trim() : stopFlow.assignment.workerId;
       })()
     : '';
 
@@ -869,7 +968,7 @@ export function PoDailyBoardCard({
                       anyMonthLocked ||
                       activeEligibleAssignmentIds.length === 0
                     }
-                    title="เติมช่วงวันที่ว่างให้คนที่ ACTIVE (on-site) — รายเก่าที่ยังไม่ถูกซิงก์; หลังเที่ยงคืนไทยระบบจะลงวันนี้ให้อัตโนมัติเมื่อมีผู้ใช้เปิดกระดาน"
+                    title="เติมช่วงที่ขาดด้วยมือ — นอกจากนี้มี Cloud Function + Scheduler เติมวันนี้ (~00:10 ไทย) และซิงก์เมื่อมีผู้เปิดกระดาน"
                   >
                     {autoGenBusy ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
@@ -891,7 +990,7 @@ export function PoDailyBoardCard({
                 <span className="text-[10px] text-muted-foreground text-right max-w-[14rem] leading-snug">
                   บันทึกเฉพาะแถวที่วันที่เลือกอยู่ในช่วงมอบหมาย
                   {rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm) ? ' (รายชื่อตามเดือนนี้)' : ''}
-                  · ACTIVE = ลง W อัตโนมัติถึงวันนี้ (ไทย); กดจบงานแล้วจะหยุดตั้งแต่วันถัดไป
+                  · ACTIVE = ลง W / SB ตาม PO Active (ไทย); ปุ่มหยุด = จบงานหรือพัก SB · Cloud Scheduler เติมวันนี้ทุกเช้า (~00:10)
                 </span>
               </div>
             </div>
@@ -913,7 +1012,7 @@ export function PoDailyBoardCard({
                   <TableHead className="font-bold w-[148px] max-w-[160px] shrink-0">ประเภทวัน</TableHead>
                   <TableHead className="font-bold text-center w-[5.5rem] shrink-0">ชั่วโมงปกติ</TableHead>
                   <TableHead className="font-bold w-[6.5rem] shrink-0 whitespace-nowrap">สถานะปัจจุบัน</TableHead>
-                  <TableHead className="min-w-[6.5rem] text-center font-bold shrink-0">จบงาน</TableHead>
+                  <TableHead className="min-w-[6.5rem] text-center font-bold shrink-0">หยุด</TableHead>
                   <TableHead className="text-right pr-6 min-w-[6rem] w-[18%]">หมายเหตุ</TableHead>
                 </TableRow>
               </TableHeader>
@@ -982,8 +1081,13 @@ export function PoDailyBoardCard({
                             {worker?.workerCode || asgn.id.slice(0, 8)}
                           </span>
                           {!dateInAssignment ? (
-                            <span className="text-[9px] text-amber-800 dark:text-amber-200 mt-0.5">
-                              วันที่เลือกอยู่นอกช่วงมอบหมาย — เปลี่ยนวันที่หรือรอถึงช่วงที่ทับ
+                            <span className="text-[9px] text-amber-800 dark:text-amber-200 mt-0.5 leading-snug">
+                              วันที่เลือกอยู่นอกช่วงที่อนุญาตลงเวลา (ระบบเทียบวันมอบหมาย วันสแตนด์บาย/เริ่มงาน
+                              วันจบไซต์ และ endDate มอบหมาย)
+                              <span className="mt-0.5 block text-[8.5px] opacity-90">
+                                สาเหตุที่พบบ่อย: ช่องว่างระหว่าง &quot;จบรอบไซต์ก่อน&quot; กับวัน Standby/เริ่มงานของรอบใหม่
+                                ใน mobilization เดียวกัน (remob) · หรือเลือกวันหลังวันจบงาน/endDate ที่บันทึกแล้ว
+                              </span>
                             </span>
                           ) : afterMobEnd ? (
                             <span className="text-[9px] text-muted-foreground mt-0.5">
@@ -1097,11 +1201,16 @@ export function PoDailyBoardCard({
                               size="sm"
                               variant="outline"
                               className="h-8 text-[10px] gap-1 border-amber-600/40"
-                              disabled={!canEditTimesheets || demobSubmitting || anyMonthLocked}
-                              onClick={() => setFinishJobModal({ mode: 'finish', assignment: asgn })}
+                              disabled={
+                                !canEditTimesheets ||
+                                demobSubmitting ||
+                                standbySubmitting ||
+                                anyMonthLocked
+                              }
+                              onClick={() => setStopFlow({ assignment: asgn, step: 'mode' })}
                             >
-                              <UserMinus className="h-3.5 w-3.5 shrink-0" />
-                              จบงาน
+                              <Pause className="h-3.5 w-3.5 shrink-0" />
+                              หยุด
                             </Button>
                           ) : null}
                           {awaitingRemob ? (
@@ -1111,7 +1220,9 @@ export function PoDailyBoardCard({
                                 size="sm"
                                 variant="secondary"
                                 className="h-7 text-[9px] gap-0.5 px-1.5"
-                                disabled={!canEditTimesheets || demobSubmitting || anyMonthLocked}
+                                disabled={
+                                  !canEditTimesheets || demobSubmitting || standbySubmitting || anyMonthLocked
+                                }
                                 onClick={() => setFinishJobModal({ mode: 'revise', assignment: asgn })}
                               >
                                 <Pencil className="h-3 w-3 shrink-0" />
@@ -1122,7 +1233,12 @@ export function PoDailyBoardCard({
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 text-[9px] gap-0.5 px-1.5 text-destructive hover:text-destructive"
-                                disabled={!canEditTimesheets || demobSubmitting || anyMonthLocked}
+                                disabled={
+                                  !canEditTimesheets ||
+                                  demobSubmitting ||
+                                  standbySubmitting ||
+                                  anyMonthLocked
+                                }
                                 onClick={() => setCancelFinishTarget(asgn)}
                               >
                                 <Undo2 className="h-3 w-3 shrink-0" />
@@ -1174,6 +1290,131 @@ export function PoDailyBoardCard({
         </CardFooter>
       </Card>
       <AlertDialog
+        open={stopFlow !== null}
+        onOpenChange={(open) => {
+          if (!open && !standbySubmitting) setStopFlow(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {stopFlow?.step === 'mode' ? 'เลือกประเภทการหยุด' : 'เลือกวันที่เริ่มมีผล (Bangkok)'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-3">
+                <p>
+                  พนักงาน{' '}
+                  <span className="font-medium text-foreground">{stopFlowWorkerName}</span>
+                </p>
+                {stopFlow?.step === 'mode' ? (
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                      disabled={standbySubmitting}
+                      onClick={() =>
+                        stopFlow &&
+                        setStopFlow({ assignment: stopFlow.assignment, step: 'timing', stopMode: 'finish_job' })
+                      }
+                    >
+                      <span className="block font-semibold text-foreground">1. หยุดแบบจบงาน</span>
+                      <span className="mt-1 block text-xs leading-snug">
+                        เหมือนฟังก์ชันจบงานเดิม · ส่งกลับ Waiting MOB · แก้ไขวันสิ้นสุดได้ภายหลัง
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                      disabled={standbySubmitting}
+                      onClick={() =>
+                        stopFlow &&
+                        setStopFlow({ assignment: stopFlow.assignment, step: 'timing', stopMode: 'standby_break' })
+                      }
+                    >
+                      <span className="block font-semibold text-foreground">2. หยุดแบบ standby</span>
+                      <span className="mt-1 block text-xs leading-snug">
+                        ยัง ACTIVE — ระบบเติม SB อัตโนมัติ {PO_ACTIVE_STANDBY_STOP_AUTO_DAYS} วัน แล้วหยุดซิงก์ W จนเริ่มงานใหม่ที่
+                        Mobilization · ทุกวันแก้มือได้
+                      </span>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                      disabled={standbySubmitting || !stopFlow?.stopMode}
+                      onClick={() => {
+                        if (!stopFlow?.stopMode) return;
+                        if (stopFlow.stopMode === 'finish_job') {
+                          setFinishJobModal({
+                            mode: 'finish',
+                            assignment: stopFlow.assignment,
+                            finishTiming: 'today',
+                          });
+                          setStopFlow(null);
+                        } else {
+                          void runStandbyStopFlow(stopFlow.assignment, 'today');
+                        }
+                      }}
+                    >
+                      <span className="block font-semibold text-foreground">1. มีผลวันนี้</span>
+                      <span className="mt-1 block text-xs leading-snug">
+                        จบงาน: วันนี้ไม่เป็น W (เคลียร์แถว auto) · Standby: วันนี้เป็น SB ในช่วงอัตโนมัติ
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                      disabled={standbySubmitting || !stopFlow?.stopMode}
+                      onClick={() => {
+                        if (!stopFlow?.stopMode) return;
+                        if (stopFlow.stopMode === 'finish_job') {
+                          setFinishJobModal({
+                            mode: 'finish',
+                            assignment: stopFlow.assignment,
+                            finishTiming: 'tomorrow',
+                          });
+                          setStopFlow(null);
+                        } else {
+                          void runStandbyStopFlow(stopFlow.assignment, 'tomorrow');
+                        }
+                      }}
+                    >
+                      <span className="block font-semibold text-foreground">2. มีผลวันถัดไป</span>
+                      <span className="mt-1 block text-xs leading-snug">
+                        จบงาน: วันนี้ยังนับ W ได้ · Standby: เริ่ม SB พรุ่งนี้
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1 text-muted-foreground"
+                      disabled={standbySubmitting || !stopFlow}
+                      onClick={() =>
+                        stopFlow && setStopFlow({ assignment: stopFlow.assignment, step: 'mode' })
+                      }
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      กลับ
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={standbySubmitting}>ปิด</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
         open={finishJobModal !== null}
         onOpenChange={(open) => {
           if (!open) setFinishJobModal(null);
@@ -1184,7 +1425,7 @@ export function PoDailyBoardCard({
             <AlertDialogTitle>
               {finishJobModal?.mode === 'revise'
                 ? 'แก้ไขวันสิ้นสุดงาน'
-                : 'ยืนยันจบงาน — ส่งกลับคิว Mobilization'}
+                : 'หยุดแบบจบงาน — ส่งกลับคิว Mobilization'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="text-sm text-muted-foreground space-y-3">
@@ -1197,6 +1438,17 @@ export function PoDailyBoardCard({
                       {' '}
                       — หลังยืนยันจะเป็น <strong className="text-foreground">Waiting MOB</strong> และแสดงในเมนู Mobilization
                       (ยังผูก PO เดิม)
+                      {finishJobModal?.finishTiming === 'today' ? (
+                        <>
+                          {' '}
+                          · <strong className="text-foreground">มีผลวันนี้</strong> — วันนี้ (Bangkok) จะไม่เป็น W หากเป็นแถว auto
+                        </>
+                      ) : finishJobModal?.finishTiming === 'tomorrow' ? (
+                        <>
+                          {' '}
+                          · <strong className="text-foreground">มีผลพรุ่งนี้</strong> — วันสุดท้ายของ W auto ตามวันที่เลือกด้านล่าง
+                        </>
+                      ) : null}
                     </>
                   )}
                 </p>

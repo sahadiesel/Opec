@@ -34,6 +34,7 @@ import {
   Purchase,
   PurchaseRequest,
   PurchaseLine,
+  PurchasePaymentMilestone,
   PurchaseStatus,
   User,
   Vendor,
@@ -64,9 +65,9 @@ import {
 } from '@/components/ui/select';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, canApprovePurchaseAsManager } from '@/lib/permissions';
-import { PurchasePaymentPlanCard } from '@/components/purchases/purchase-payment-plan-card';
 import { Switch } from '@/components/ui/switch';
 import { formatDateThaiBE } from '@/lib/date-thai';
+import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 
 function escapeHtml(s: string): string {
   return s
@@ -146,6 +147,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   );
   const { data: lines } = useCollection<PurchaseLine>(linesQuery as any);
 
+  const milestonesQuery = useMemoFirebase(
+    () => (firestore && canViewPurchases ? collection(firestore, 'purchases', id, 'payment_milestones') : null),
+    [firestore, id, canViewPurchases]
+  );
+  const { data: paymentMilestones } = useCollection<PurchasePaymentMilestone>(milestonesQuery as any);
+
   type CompanyDocumentProfile = {
     companyNameTh?: string;
     companyNameEn?: string;
@@ -178,7 +185,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const vendor = vendors?.find((v) => v.id === purchase?.vendorId);
 
   const lineMode = purchase?.purchaseLineMode || 'SERVICE';
-  const linesEditable = purchase && canEditLinesStatus(purchase.status) && canEditPurchases;
+  /** PO ที่อ้าง PR — รายการถือเป็นผลจาก PR ที่อนุมัติแล้ว ไม่ให้แก้บรรทัดใน PO */
+  const linesEditable =
+    purchase &&
+    canEditLinesStatus(purchase.status) &&
+    canEditPurchases &&
+    !hasPurchaseRequisition;
   const fiscalTermsEditable =
     purchase &&
     (purchase.status === 'DRAFT' || purchase.status === 'RETURNED_FOR_REVISION') &&
@@ -203,10 +215,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   }, [purchase?.id, purchase?.supplierWithholdingEnabled, purchase?.supplierWithholdingRatePercent]);
 
   const recalculateTotals = (currentLines: PurchaseLine[]) => {
-    if (!purchaseRef) return;
-    const amountBeforeTax = currentLines.reduce((sum, l) => sum + Number(l.amount), 0);
-    const vatAmount = amountBeforeTax * 0.07;
-    const totalAmount = amountBeforeTax + vatAmount;
+    if (!purchaseRef || !purchase) return;
+    const lineSum = sumLineAmounts(currentLines.map((l) => ({ amount: Number(l.amount) || 0 })));
+    const { amountBeforeTax, vatAmount, totalAmount } = computePurchaseTotalsFromLines(
+      lineSum,
+      purchase.vatTreatment
+    );
 
     updateDoc(purchaseRef, {
       amountBeforeTax,
@@ -378,9 +392,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const canPrintPurchase =
     !!purchase &&
     ['APPROVED', 'ISSUED', 'COMPLETED'].includes(purchase.status) &&
-    (purchase.approvalDecidedAt != null || purchase.issuedAt != null);
+    (purchase.approvalDecidedAt != null ||
+      purchase.issuedAt != null ||
+      (hasPurchaseRequisition && purchase.status === 'APPROVED'));
 
   const handlePrint = () => {
+    if (!purchase) return;
     if (!canPrintPurchase) {
       toast({
         variant: 'destructive',
@@ -391,26 +408,35 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       });
       return;
     }
-    const body = buildPurchaseOrderPrintHtml({
-      company: companyProfile ?? undefined,
-      purchase,
-      vendor,
-      lines: lines ?? [],
-      milestones: paymentMilestones ?? [],
-      printedAtMs: Date.now(),
-      locale: printLocale,
-    });
-    if (
-      !openStandardPrintWindow({
-        windowTitle: purchase.purchaseNo,
-        bodyInnerHtml: body,
-        htmlLang: printLocale,
-      })
-    ) {
+    try {
+      const body = buildPurchaseOrderPrintHtml({
+        company: companyProfile ?? undefined,
+        purchase,
+        vendor,
+        lines: lines ?? [],
+        milestones: paymentMilestones ?? [],
+        printedAtMs: Date.now(),
+        locale: printLocale,
+      });
+      if (
+        !openStandardPrintWindow({
+          windowTitle: purchase.purchaseNo || 'PO',
+          bodyInnerHtml: body,
+          htmlLang: printLocale,
+        })
+      ) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } catch (e) {
+      console.error(e);
       toast({
         variant: 'destructive',
-        title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
-        description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        title: 'พิมพ์ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'เกิดข้อผิดพลาดขณะประกอบเอกสาร',
       });
     }
   };
@@ -585,9 +611,24 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 <div>
                   <CardTitle className="text-lg">รายการสินค้า / บริการ</CardTitle>
                   <CardDescription>
-                    {lineMode === 'INVENTORY'
-                      ? 'เลือกจากทะเบียนคลัง — ถ้ายังไม่มีรายการให้ไปเพิ่มที่คลังก่อน'
-                      : 'สั่งจ้างหรือระบุรายการด้วยตนเอง'}
+                    {hasPurchaseRequisition ? (
+                      <>
+                        รายการถูกล็อกจาก PR ที่อนุมัติแล้ว — แก้ไม่ได้ใน PO (หากต้องแก้ให้ทำ PR ใหม่)
+                        {linkedPr?.requestNo ? (
+                          <>
+                            {' '}
+                            ·{' '}
+                            <Link className="text-primary underline font-medium" href={`/store/purchase-requests/${purchase.purchaseRequestId}`}>
+                              {linkedPr.requestNo}
+                            </Link>
+                          </>
+                        ) : null}
+                      </>
+                    ) : lineMode === 'INVENTORY' ? (
+                      'เลือกจากทะเบียนคลัง — ถ้ายังไม่มีรายการให้ไปเพิ่มที่คลังก่อน'
+                    ) : (
+                      'สั่งจ้างหรือระบุรายการด้วยตนเอง'
+                    )}
                   </CardDescription>
                 </div>
                 {linesEditable && (

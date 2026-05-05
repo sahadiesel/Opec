@@ -1058,6 +1058,14 @@ export interface Assignment {
   mobLocationEndDate?: string;
   mobLocationEndedAt?: number;
   mobLocationEndedByUserId?: string;
+  /**
+   * หยุดแบบ standby จาก Wave Board — หลังช่วง SB อัตโนมัติแล้วไม่สร้าง work_day จนกว่าจะเริ่มงานใหม่ที่ Mobilization
+   */
+  poActiveAutoWorkSuspended?: boolean;
+  /** วันแรกของช่วง SB อัตโนมัติ (yyyy-mm-dd, Bangkok) */
+  poActiveStandbyAutoStartYmd?: string;
+  /** วันสุดท้ายของช่วง SB อัตโนมัติรวม 7 วัน (yyyy-mm-dd, Bangkok) */
+  poActiveStandbyAutoEndYmd?: string;
   /** Unassign — คืนคนให้ไป assign PO Active ชุดอื่นได้ */
   unassignedAt?: number;
   unassignedByUserId?: string;
@@ -1096,6 +1104,7 @@ export interface Assignment {
   notes?: string;
   createdAt: number;
   updatedAt: number;
+  updatedBy?: string;
 }
 
 export type ChecklistItemStatus = 'pass' | 'fail' | 'warning' | 'missing';
@@ -2267,6 +2276,18 @@ export interface Role {
 
 export type PurchaseLineEntryMode = 'INVENTORY' | 'SERVICE';
 
+/** การคิด VAT บน PR/PO — EXCLUSIVE=ยังไม่รวม VAT ต่อบรรทัด, INCLUSIVE=ยอดบรรทัดรวม VAT แล้ว */
+export type PurchaseRequestVatTreatment = 'NONE' | 'EXCLUSIVE' | 'INCLUSIVE';
+
+/** ร่างงวดชำระตอนทำ PR — คัดลอกเป็น payment_milestones เมื่อสร้าง PO */
+export interface PrPaymentMilestoneDraft {
+  sequence: number;
+  label: string;
+  amount: number;
+  /** ค่า input type="date" */
+  dueDate?: string;
+}
+
 export type PurchaseRequestStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
@@ -2283,7 +2304,21 @@ export interface PurchaseRequest {
   title: string;
   vendorId?: string;
   notes?: string;
+  /** วันที่ต้องการของ (HTML date) — อ้างอิงเท่านั้น */
+  needByDate?: string;
   estimatedAmount?: number;
+  /** สรุปจากบรรทัด PR — sync ตอนบันทึก */
+  amountBeforeTax?: number;
+  vatAmount?: number;
+  totalAmount?: number;
+  /** แบบที่ 1 คลัง / แบบที่ 2 คีย์มือ */
+  lineEntryMode?: PurchaseLineEntryMode;
+  vatTreatment?: PurchaseRequestVatTreatment;
+  /** เงื่อนไขจ่ายที่ขออนุมัติ — คัดลอกไป PO */
+  purchasePaymentType?: PurchaseType;
+  /** เครดิตแบ่งงวด — ถ้า false ใช้งวดเดียวตามเครดิตคู่ค้าเมื่อสร้าง PO */
+  paymentInstallmentsEnabled?: boolean;
+  paymentMilestoneDrafts?: PrPaymentMilestoneDraft[];
   status: PurchaseRequestStatus;
   requestedByUid?: string;
   requestedByName?: string;
@@ -2312,6 +2347,8 @@ export interface Purchase {
   status: PurchaseStatus;
   /** แบบที่ 1 เลือกจากคลัง / แบบที่ 2 สั่งจ้างคีย์มือ */
   purchaseLineMode?: PurchaseLineEntryMode;
+  /** คิด VAT ตามที่อนุมัติใน PR — ถ้าไม่มีถือเป็น EXCLUSIVE (พฤติกรรมเดิม) */
+  vatTreatment?: PurchaseRequestVatTreatment;
   /** งานจ้างเหมา — แสดง/คำนวณหัก ณ ที่จ่ายตามงวด (ฐาน = ส่วนก่อน VAT ของงวด ตามสัดส่วน amountBeforeTax/totalAmount) */
   supplierWithholdingEnabled?: boolean;
   /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
@@ -2388,6 +2425,17 @@ export interface PurchasePaymentMilestone {
   createdAt: number;
   updatedAt: number;
 }
+
+/** เอกสารประกอบใบวางบิล (ปะหน้า) — ถ้าไม่ติ๊ก = อ้างอิงเฉพาะ PO ภายในระบบ */
+export interface VendorBillSupportingDocumentLink {
+  attached?: boolean;
+  documentNo?: string;
+  /** ค่า input type="date" YYYY-MM-DD */
+  documentDate?: string;
+}
+
+/** ระบุว่ามองยอดในใบวางบิลว่ามี VAT 7% หรือไม่ — ถ้าไม่เก็บฟิลด์นี้ ให้อิงจากยอดภาษีใน PO */
+export type VendorBillVatTreatmentOverride = 'VAT_7' | 'NONE';
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
 export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PAID';
@@ -2618,12 +2666,22 @@ export interface PurchaseVendorBill {
   id: string;
   receiptNo: string;
   purchaseId: string;
+  /** snapshot เลขที่ PR — แสดงบนปะหน้าใบวางบิล */
+  purchaseRequestNo?: string;
   /** snapshot ณ สร้าง/ส่ง — ใช้แยกเวิร์กโฟลว์เงินสด vs เครดิต */
   purchaseType?: PurchaseType;
   /** ผูกกับงวดชำระ (ถ้ามี) */
   milestoneId?: string;
   /** ยอดในใบนี้ — ถ้าไม่ระบุให้ใช้ยอดสุทธิทั้งใบสั่งซื้อ (ของเก่า) */
   billAmount?: number;
+  /** ทับการตีความ VAT จาก PO (ถ้าไม่มี = ใช้ยอดภาษีใน PO) */
+  billVatTreatment?: VendorBillVatTreatmentOverride;
+  /** 1. ใบส่งของ — เลขที่/วันที่เมื่อมีติ๊ก */
+  supportingDeliveryNote?: VendorBillSupportingDocumentLink;
+  /** 2. ใบกำกับภาษี */
+  supportingTaxInvoice?: VendorBillSupportingDocumentLink;
+  /** 3. ใบเสร็จรับเงิน (จากคู่ค้า) */
+  supportingMoneyReceipt?: VendorBillSupportingDocumentLink;
   /** สำหรับแสดงผล */
   purchaseNo?: string;
   vendorId: string;
