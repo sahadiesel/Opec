@@ -36,7 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { useCollection, useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canCreate, canEdit, canView, isSystemAdmin } from '@/lib/permissions';
-import { isSimpleAccounting } from '@/lib/simple-tier-model';
+import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, doc, query, where } from 'firebase/firestore';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -146,6 +146,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const canAct = useMemo(
     () => !!currentUser && canEdit(currentUser, 'draft_invoices'),
     [currentUser]
+  );
+  const canAdminVoid = useMemo(
+    () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)),
+    [currentUser],
   );
   const canCreateTax = useMemo(
     () => !!currentUser && canCreate(currentUser, 'tax_invoices'),
@@ -374,7 +378,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   };
 
   const handleVoid = async () => {
-    if (!firestore || !currentUser || !canAct || !invoice) return;
+    if (!firestore || !currentUser || !canAdminVoid || !invoice) return;
     setVoidBusy(true);
     try {
       await voidCommercialInvoice(firestore, invoice.id, currentUser);
@@ -740,32 +744,33 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </CardContent>
         </Card>
 
-        {canAct && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER') && (
+        {canAct && invoice.status === 'DRAFT' && (
           <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-            {invoice.status === 'DRAFT' && (
-              <>
-                <Button className="gap-2 shrink-0" onClick={() => void handleSendToCustomer()} disabled={actionBusy}>
-                  {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  {invoice.customerRevisionRequestedAt
-                    ? 'ส่งกลับไปให้ลูกค้าตรวจสอบ (Portal)'
-                    : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="gap-2 shrink-0"
-                  onClick={() => void handleSaveDraftLines()}
-                  disabled={saveBusy}
-                >
-                  {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  บันทึกการแก้ไขรายการ
-                </Button>
-                <Button type="button" variant="outline" className="gap-2 shrink-0" onClick={addManualAdjustmentLine}>
-                  <Plus className="h-4 w-4" />
-                  เพิ่มส่วนลด / ค่าเพิ่ม
-                </Button>
-              </>
-            )}
+            <Button className="gap-2 shrink-0" onClick={() => void handleSendToCustomer()} disabled={actionBusy}>
+              {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {invoice.customerRevisionRequestedAt
+                ? 'ส่งกลับไปให้ลูกค้าตรวจสอบ (Portal)'
+                : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="gap-2 shrink-0"
+              onClick={() => void handleSaveDraftLines()}
+              disabled={saveBusy}
+            >
+              {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              บันทึกการแก้ไขรายการ
+            </Button>
+            <Button type="button" variant="outline" className="gap-2 shrink-0" onClick={addManualAdjustmentLine}>
+              <Plus className="h-4 w-4" />
+              เพิ่มส่วนลด / ค่าเพิ่ม
+            </Button>
+          </div>
+        )}
+
+        {canAdminVoid && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER') && (
+          <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
@@ -777,8 +782,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 <AlertDialogHeader>
                   <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง — สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                    ได้อีกครั้ง (ไม่ลบประวัติเอกสาร)
+                    เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
+                    ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ลูกค้า/ฝ่ายยืนยันแล้ว (ISSUED) ยกเลิกไม่ได้
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

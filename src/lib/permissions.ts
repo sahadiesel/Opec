@@ -421,9 +421,23 @@ export function getPermissions(
   /**
    * รายการใบแจ้งหนี้ (draft commercial / เรียกเก็บ) — เฉพาะ system admin (ด้านบน) + รายต่อนี้
    * ไม่รวม accounting officer / หัวหน้าสายอื่น
+   *
+   * รองรับผู้จัดการปฏิบัติการที่ accessGroup/level ชัด แต่ primary legacy role ยังไม่ sync เป็น operations_manager
+   * (สอดคล้องเงื่อนไขเดียวกับโมดูล operations_petty_cash — ไม่เปิดให้ sales_manager / store_officer)
    */
   if (moduleKey === 'draft_invoices') {
     if (isOperationManager(u) || isHrManager(u)) return clonePermission(FULL_ACCESS);
+    if (
+      isOperationsPillarExecutive(u) &&
+      isOperationGroupMember(u) &&
+      getEffectiveAccessLevel(u) === 'manager' &&
+      getEffectiveAccessGroup(u) === 'operations' &&
+      !isHrManager(u) &&
+      getPrimaryLegacyRole(u) !== 'sales_manager' &&
+      getPrimaryLegacyRole(u) !== 'store_officer'
+    ) {
+      return clonePermission(FULL_ACCESS);
+    }
     if (getEffectiveSimpleRole(u) === 'accounting_manager') return clonePermission(FULL_ACCESS);
     return clonePermission(NO_ACCESS);
   }

@@ -1,6 +1,11 @@
 import type { Firestore } from 'firebase/firestore';
 import { updateDoc, type DocumentReference } from 'firebase/firestore';
-import type { Purchase, PurchasePaymentMilestone, PurchasePaymentMilestoneStatus } from '@/lib/types';
+import type {
+  Purchase,
+  PurchasePaymentMilestone,
+  PurchasePaymentMilestoneStatus,
+  PurchaseVendorBill,
+} from '@/lib/types';
 
 export function roundMoney2(n: number): number {
   return Math.round(Number(n) * 100) / 100;
@@ -96,6 +101,18 @@ export function milestoneAmountBeforeVAT(
   /** ไม่มียอดแยกก่อนภาษีในเอกสาร — ถือว่าทั้งงวดเป็นฐานหัก (เช่น ไม่มี VAT) */
   if (before < 0.01) return m;
   return roundMoney2((m * before) / total);
+}
+
+/** อัตราหัก ณ ที่จ่ายที่ใช้กับใบวางบิลนี้ — override บนบิล (บัญชีแก้) หรือจาก PO */
+export function effectiveVendorBillWhtRatePercent(
+  bill: Pick<PurchaseVendorBill, 'supplierWithholdingRatePercentBill'>,
+  purchase: Pick<Purchase, 'supplierWithholdingRatePercent'>,
+): number {
+  const o = bill.supplierWithholdingRatePercentBill;
+  if (o !== undefined && o !== null && Number.isFinite(Number(o))) {
+    return Math.max(0, Number(o));
+  }
+  return Math.max(0, Number(purchase.supplierWithholdingRatePercent) || 0);
 }
 
 /** หัก ณ ที่จ่ายผู้รับเงิน: % จากฐานก่อน VAT ของงวด — สุทธิจ่าย = ยอดงวดรวม VAT − หัก ณ ที่จ่าย */

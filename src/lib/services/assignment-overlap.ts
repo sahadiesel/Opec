@@ -1,4 +1,5 @@
 import type { Assignment, DeploymentStatus, PurchaseOrder } from '@/lib/types';
+import { assignmentReleasedFromPoLineQuota } from '@/lib/ops/po-fulfillment-read-model';
 
 /**
  * Statuses where a worker is considered "occupied" and cannot be assigned elsewhere.
@@ -15,9 +16,9 @@ const BLOCKING_STATUSES: Set<DeploymentStatus> = new Set([
   'ACTIVE',
 ]);
 
-/** เฟส 2 PO workflow: Unassign แล้วว่างสล็อตแม้ deployment ยังไม่อัปเดต */
+/** เฟส 2 PO workflow: Unassign แล้วว่างสล็อต — สอดคล้องการปล่อยโควต้า (รองรับ Timestamp) */
 export function assignmentOccupiesWorkerSlot(a: Assignment): boolean {
-  if (a.unassignedAt != null && Number(a.unassignedAt) > 0) return false;
+  if (assignmentReleasedFromPoLineQuota(a)) return false;
   return BLOCKING_STATUSES.has(a.deploymentStatus);
 }
 

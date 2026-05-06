@@ -27,6 +27,39 @@ function deploymentStatusCountsTowardQuota(status: DeploymentStatus | string | u
   return !NORMALIZED_DEPLOYMENT_RELEASED_FROM_QUOTA.has(normalized);
 }
 
+/**
+ * `unassignedAt` บนบางเอกสารเป็น Firestore Timestamp — ต้องรองรับนอกจาก number เพื่อปล่อยโควต้า/Unassign
+ */
+export function assignmentHasUnassignedAtSet(a: Pick<Assignment, 'unassignedAt'> | undefined): boolean {
+  if (!a) return false;
+  const u = a.unassignedAt as unknown;
+  if (u == null) return false;
+  if (typeof u === 'number' && Number.isFinite(u) && u > 0) return true;
+  if (typeof u === 'object') {
+    const t = u as { toMillis?: () => number; seconds?: number; _seconds?: number };
+    if (typeof t.toMillis === 'function') {
+      try {
+        const ms = t.toMillis();
+        return Number.isFinite(ms) && ms > 0;
+      } catch {
+        return false;
+      }
+    }
+    const sec = typeof t.seconds === 'number' ? t.seconds : typeof t._seconds === 'number' ? t._seconds : null;
+    return sec != null && sec > 0;
+  }
+  return false;
+}
+
+/** ไม่จองโควต้าบรรทัด PO — Unassign / ปิดรายการ / จบภารกิจ (DEMOBILIZED) */
+export function assignmentReleasedFromPoLineQuota(
+  a: Pick<Assignment, 'deploymentStatus' | 'unassignedAt'>,
+): boolean {
+  if (assignmentHasUnassignedAtSet(a)) return true;
+  const normalized = normalizeDeploymentToken(a.deploymentStatus);
+  return Boolean(normalized && NORMALIZED_DEPLOYMENT_RELEASED_FROM_QUOTA.has(normalized));
+}
+
 /** ส่งทั้งเอกสาร mobilization เพื่อให้ถอนมอบหมาย (`unassignedAt`) ปล่อยโควต้าได้ถูกต้อง */
 export function assignmentCountsTowardQuota(
   assignmentOrStatus:
@@ -36,10 +69,46 @@ export function assignmentCountsTowardQuota(
 ): boolean {
   if (assignmentOrStatus !== null && typeof assignmentOrStatus === 'object') {
     const a = assignmentOrStatus as Pick<Assignment, 'deploymentStatus' | 'unassignedAt'>;
-    if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
-    return deploymentStatusCountsTowardQuota(a.deploymentStatus);
+    return !assignmentReleasedFromPoLineQuota(a);
   }
   return deploymentStatusCountsTowardQuota(assignmentOrStatus as DeploymentStatus | undefined);
+}
+
+/** คนเดียวกันที่มีหลาย mobilization ในชุด PO ที่ยังนับโควต้า — ใช้แจ้งซ้ำจากข้อมูลเก่า */
+export interface DuplicateQuotaMobilizationGroup {
+  /** `workerId` หรือ `_unknown:<mobId>` เมื่อไม่มี workerId */
+  workerKey: string;
+  assignments: Assignment[];
+}
+
+export function findDuplicateQuotaMobilizationGroups(
+  assignments: Assignment[] | undefined,
+  poIdSet: ReadonlySet<string>,
+): DuplicateQuotaMobilizationGroup[] {
+  const m = new Map<string, Assignment[]>();
+  for (const a of assignments ?? []) {
+    if (!poIdSet.has(a.poId)) continue;
+    if (!assignmentCountsTowardQuota(a)) continue;
+    const wid = (a.workerId || '').trim();
+    const wkey = wid || `_unknown:${a.id}`;
+    const arr = m.get(wkey) ?? [];
+    arr.push(a);
+    m.set(wkey, arr);
+  }
+  const out: DuplicateQuotaMobilizationGroup[] = [];
+  for (const [workerKey, rows] of m) {
+    if (rows.length <= 1) continue;
+    rows.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    out.push({ workerKey, assignments: rows });
+  }
+  out.sort((a, b) =>
+    (a.assignments[0]?.assignmentNo || a.workerKey).localeCompare(
+      b.assignments[0]?.assignmentNo || b.workerKey,
+      'th',
+      { numeric: true },
+    ),
+  );
+  return out;
 }
 
 export interface PoLineFulfillmentRow {
@@ -66,12 +135,17 @@ export function buildPoFulfillmentByLine(
   const wv = waves || [];
 
   return list.map((line) => {
-    const assignedCount = asg.filter(
-      (a) =>
-        a.poId === poId &&
-        a.poLineId === line.id &&
-        assignmentCountsTowardQuota(a),
-    ).length;
+    /**
+     * นับคนไม่ซ้ำต่อบรรทัด PO — สอดคล้องหน้า Assignments (ชุด PO Active) ที่ใช้ `pickRosterLinePerWorker`
+     * (หนึ่งแถวต่อคน) · ถ้ามี mobilization ซ้ำบนบรรทัดเดิม `.length` จะเกินจำนวนแถวที่ผู้ใช้เห็น
+     */
+    const assignedWorkerIds = new Set<string>();
+    for (const a of asg) {
+      if (a.poId !== poId || a.poLineId !== line.id || !assignmentCountsTowardQuota(a)) continue;
+      const wid = (a.workerId || '').trim();
+      assignedWorkerIds.add(wid || `mob:${a.id}`);
+    }
+    const assignedCount = assignedWorkerIds.size;
     const lineWaves = wv.filter(
       (w) =>
         w.poId === poId &&
@@ -91,7 +165,8 @@ export function buildPoFulfillmentByLine(
       positionId: line.positionId,
       workLocation: line.workLocation,
       lineStatus: line.status,
-      requiredQty: line.quantity,
+      /** นับเฉพาะบรรทัด active ต่อโควต้า — สอดคล้อง `remainingSlots` / หัวตารางรวม */
+      requiredQty,
       assignedCount,
       remainingSlots,
       waveCount: lineWaves.length,
@@ -106,17 +181,19 @@ export function aggregateActiveLineTotals(rows: PoLineFulfillmentRow[]): {
   openSlots: number;
   waveCount: number;
 } {
-  return rows
+  const { required, assigned, waveCount } = rows
     .filter((r) => r.lineStatus === 'active')
     .reduce(
       (acc, r) => ({
         required: acc.required + r.requiredQty,
         assigned: acc.assigned + r.assignedCount,
-        openSlots: acc.openSlots + r.remainingSlots,
         waveCount: acc.waveCount + r.waveCount,
       }),
-      { required: 0, assigned: 0, openSlots: 0, waveCount: 0 }
+      { required: 0, assigned: 0, waveCount: 0 },
     );
+  /** ระดับชุด/PO: ว่าง = โควต้ารวม − มอบหมายที่ยังจองสล็อต (ไม่ใช้แค่ผลรวม per-line เพื่อกันคลาดกับตัวเลขหัวแถว) */
+  const openSlots = Math.max(0, required - assigned);
+  return { required, assigned, openSlots, waveCount };
 }
 
 /** เฟส C: รวมโควต้าตาม position ข้าม PO สัญญาที่ active ทั้งหมด (นับ PO status=active + สัญญาหลัก active) */

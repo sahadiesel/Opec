@@ -1,9 +1,10 @@
 import type { Assignment, Worker, WorkerStatus } from '@/lib/types';
 import { TERMINAL_ASSIGNMENT_DEPLOYMENT_STATUSES } from '@/lib/worker-delete-eligibility';
+import { assignmentReleasedFromPoLineQuota } from '@/lib/ops/po-fulfillment-read-model';
 
 /** Mobilization ที่ยังถือว่าผูกคนอยู่ในงาน (ไม่รวมถอนตัว / ปิดรายการ) */
 export function isMobilizationOpenForJobStatus(a: Assignment): boolean {
-  if (a.unassignedAt != null && Number(a.unassignedAt) > 0) return false;
+  if (assignmentReleasedFromPoLineQuota(a)) return false;
   return !TERMINAL_ASSIGNMENT_DEPLOYMENT_STATUSES.includes(a.deploymentStatus);
 }
 

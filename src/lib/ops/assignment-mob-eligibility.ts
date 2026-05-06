@@ -11,12 +11,20 @@ export function countMobTimesheetSlotsForPoScope(
   assignments: readonly Assignment[] | undefined,
   poIdSet: ReadonlySet<string>,
 ): { mobPassed: number; mobWaiting: number } {
-  let mobPassed = 0;
-  let mobWaiting = 0;
+  /** คนละหนึ่งช่องต่อขอบเขต PO ในชุด — สอดคล้อง `pickRosterLinePerWorker` / โควต้าที่นับ unique worker ต่อบรรทัด */
+  const byWorker = new Map<string, Assignment[]>();
   for (const a of assignments ?? []) {
     if (!poIdSet.has(a.poId)) continue;
     if (!assignmentCountsTowardQuota(a)) continue;
-    if (assignmentReadyForWaveTimesheet(a)) mobPassed++;
+    const wkey = (a.workerId || '').trim() || a.id;
+    const arr = byWorker.get(wkey) ?? [];
+    arr.push(a);
+    byWorker.set(wkey, arr);
+  }
+  let mobPassed = 0;
+  let mobWaiting = 0;
+  for (const arr of byWorker.values()) {
+    if (arr.some((x) => assignmentReadyForWaveTimesheet(x))) mobPassed++;
     else mobWaiting++;
   }
   return { mobPassed, mobWaiting };

@@ -884,6 +884,16 @@ service cloud.firestore {
 
     // DRAFT: บัญชีสร้าง/ออกเอกสารจริง — พนักงานภายในดูได้และแนบรูปสลิปขณะยัง DRAFT เท่านั้น
     // Commercial invoices (draft → customer approval → issued) — not tax invoices; internal creates from timesheet/wave.
+    /** Transition to VOID — restricted to admin (internal ops managers must not void via client). */
+    function commercialInvoiceTransitionToVoid() {
+      return resource.data != null
+        && 'status' in resource.data
+        && resource.data.status != 'VOID'
+        && request.resource.data != null
+        && 'status' in request.resource.data
+        && request.resource.data.status == 'VOID';
+    }
+
     match /commercial_invoices/{id} {
       // Portal: same customer. DRAFT = readable so the app can show “not shared yet” instead of a rules error (e.g. from timesheet hub links).
       // isInternalStaffDoc: list ได้แม้ approval/activation ยังไม่สมบูรณ์ (เทียบ purchase_orders, worker_month_timesheets, …)
@@ -892,27 +902,34 @@ service cloud.firestore {
             && resource.data.customerId == userData().customerId
             && resource.data.status in ['DRAFT', 'PENDING_CUSTOMER', 'ISSUED', 'VOID']);
       allow create: if isInternalUser() || isInternalStaffDoc();
-      allow update: if isInternalUser() || isInternalStaffDoc()
+      allow update: if (commercialInvoiceTransitionToVoid() && isAdmin())
         || (
-          portalIsApprover()
-          && portalOwnsResourceCustomerId()
-          && resource.data.status == 'PENDING_CUSTOMER'
-          && request.resource.data.status == 'ISSUED'
-          && portalCommercialInvoiceConfirmKeysOnly()
-        )
-        || (
-          portalIsApprover()
-          && portalOwnsResourceCustomerId()
-          && resource.data.status == 'PENDING_CUSTOMER'
-          && request.resource.data.status == 'PENDING_CUSTOMER'
-          && portalCommercialInvoiceRevisionRequestKeysOnly()
-        )
-        || (
-          portalCommercialPaymentReportAllowed()
-          && request.resource.data.status == 'ISSUED'
-          && portalCommercialPaymentProofKeysOnly()
+          !commercialInvoiceTransitionToVoid()
+          && (
+            isInternalUser() || isInternalStaffDoc()
+            || (
+              portalIsApprover()
+              && portalOwnsResourceCustomerId()
+              && resource.data.status == 'PENDING_CUSTOMER'
+              && request.resource.data.status == 'ISSUED'
+              && portalCommercialInvoiceConfirmKeysOnly()
+            )
+            || (
+              portalIsApprover()
+              && portalOwnsResourceCustomerId()
+              && resource.data.status == 'PENDING_CUSTOMER'
+              && request.resource.data.status == 'PENDING_CUSTOMER'
+              && portalCommercialInvoiceRevisionRequestKeysOnly()
+            )
+            || (
+              portalCommercialPaymentReportAllowed()
+              && request.resource.data.status == 'ISSUED'
+              && portalCommercialPaymentProofKeysOnly()
+            )
+          )
         );
-      allow delete: if isAdmin()
+      /** Admin cannot hard-delete ISSUED (confirmed billing); internal non-admin still only DRAFT. */
+      allow delete: if (isAdmin() && resource.data.status != 'ISSUED')
         || ((isInternalUser() || isInternalStaffDoc()) && resource.data.status == 'DRAFT');
     }
 

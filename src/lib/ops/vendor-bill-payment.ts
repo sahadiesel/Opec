@@ -21,7 +21,11 @@ import type {
   Vendor,
 } from '@/lib/types';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
-import { syncPurchasePaymentClosure, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
+import {
+  syncPurchasePaymentClosure,
+  supplierWithholdingOnMilestone,
+  effectiveVendorBillWhtRatePercent,
+} from '@/lib/ops/purchase-payment-milestones';
 import {
   buildWithholdingCertificateDraft,
   stripUndefinedForFirestore,
@@ -59,6 +63,8 @@ export async function executeVendorBillPayment(params: {
     currentUser,
     paymentProofUrl,
     paymentProofFileName,
+    whtPaymentProofUrl,
+    whtPaymentProofFileName,
   } = params;
 
   if (bill.status !== 'SUBMITTED') {
@@ -84,12 +90,9 @@ export async function executeVendorBillPayment(params: {
   let amountFromBank = grossInclVat;
   let whtBreakdown: ReturnType<typeof supplierWithholdingOnMilestone> | null = null;
 
-  if (purchase.supplierWithholdingEnabled && (Number(purchase.supplierWithholdingRatePercent) || 0) > 0.005) {
-    whtBreakdown = supplierWithholdingOnMilestone(
-      grossInclVat,
-      Number(purchase.supplierWithholdingRatePercent) || 0,
-      purchase
-    );
+  const whtRateEffective = effectiveVendorBillWhtRatePercent(bill, purchase);
+  if (purchase.supplierWithholdingEnabled && whtRateEffective > 0.005) {
+    whtBreakdown = supplierWithholdingOnMilestone(grossInclVat, whtRateEffective, purchase);
     amountFromBank = whtBreakdown.netPaid;
   }
 
@@ -200,7 +203,7 @@ export async function executeVendorBillPayment(params: {
       grossPaymentAmount: grossInclVat,
       baseBeforeVat: whtBreakdown.baseBeforeVat,
       whtAmount: whtBreakdown.wht,
-      ratePercent: Number(purchase.supplierWithholdingRatePercent) || 0,
+      ratePercent: whtRateEffective,
       status: 'OUTSTANDING',
       cashbookEntryId: cbRef.id,
       cashbookEntryNo: entryNo,

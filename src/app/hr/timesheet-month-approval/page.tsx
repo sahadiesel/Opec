@@ -18,7 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, doc, limit, query, where, updateDoc } from 'firebase/firestore';
-import { isHrManager, isOperationManager, isSystemAdmin } from '@/lib/permission-core';
+import { canReviewMonthlyQueue, isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import type {
@@ -50,10 +50,10 @@ import { CheckCircle2, XCircle, ChevronLeft, ExternalLink, FileText, Images } fr
 import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
 
-function canReviewMonthlyQueue(user: User | null): boolean {
-  if (!user) return false;
-  if (isSystemAdmin(user)) return true;
-  return isOperationManager(user) || isHrManager(user);
+function formatThaiCalendarMonthYearFromYm(ym: string): string | null {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return null;
+  const d = new Date(`${ym}-01T12:00:00`);
+  return d.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
 }
 
 export default function TimesheetMonthApprovalQueuePage() {
@@ -147,6 +147,35 @@ export default function TimesheetMonthApprovalQueuePage() {
     [sorted, poById, customerLabel],
   );
 
+  const uniquePoQueueYearMonths = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of sortedPo) {
+      if (r.yearMonth && /^\d{4}-\d{2}$/.test(r.yearMonth)) s.add(r.yearMonth);
+    }
+    return [...s].sort();
+  }, [sortedPo]);
+
+  const poMonthQueueCardTitle = useMemo(() => {
+    const n = sortedPo.length;
+    if (n === 0) return 'ตรวจ Timesheet รอบเดือน (0)';
+    if (uniquePoQueueYearMonths.length === 1) {
+      const label = formatThaiCalendarMonthYearFromYm(uniquePoQueueYearMonths[0]);
+      if (label) return `ตรวจ Timesheet เดือน ${label} (${n})`;
+    }
+    return `ตรวจ Timesheet รอบเดือน (${n})`;
+  }, [sortedPo.length, uniquePoQueueYearMonths]);
+
+  const poMonthQueueCardDescription = useMemo(() => {
+    if (uniquePoQueueYearMonths.length === 0) {
+      return 'รายการที่ส่งอนุมัติจะแสดงตามชื่อเดือนปฏิทินของงวดที่ส่ง — จัดกลุ่มตามชุด PO Active';
+    }
+    if (uniquePoQueueYearMonths.length === 1) {
+      return 'ส่งจากหน้า Timesheet รายเดือน (รวมทุก wave) — ชื่อเดือนข้างบนสอดคล้องกับงวดที่ส่งอนุมัติ · แต่ละแถวคือหนึ่ง PO ต่อหนึ่งงวดปฏิทิน';
+    }
+    const labels = uniquePoQueueYearMonths.map((ym) => formatThaiCalendarMonthYearFromYm(ym) ?? ym).join(' · ');
+    return `งวดที่ส่งอนุมัติในรายการนี้: ${labels} (ตามชื่อเดือนที่ส่งอนุมัติ) — จัดกลุ่มตามชุด PO Active`;
+  }, [uniquePoQueueYearMonths]);
+
   const setStatus = async (row: WaveMonthTimesheetReview, next: 'approved' | 'rejected') => {
     if (!firestore || !currentUser || !canAct) return;
     setBusyId(row.id);
@@ -220,7 +249,7 @@ export default function TimesheetMonthApprovalQueuePage() {
         const billing = await ensureCommercialDraftInvoiceAfterPoMonthApproval(firestore, approvedRow, currentUser);
         const billingLine =
           billing.ok === true
-            ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} อัตโนมัติ (PO+งวด — ดูเมนูรายการใบแจ้งหนี้)`
+            ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} อัตโนมัติ (ดูเมนูรายการใบแจ้งหนี้)`
             : ` — ใบแจ้งหนี้: ${billing.reason}`;
         const zeroPayrollHint =
           updated === 0
@@ -231,7 +260,7 @@ export default function TimesheetMonthApprovalQueuePage() {
           : '';
         const po = poById.get(row.poId);
         toast({
-          title: 'อนุมัติแล้ว (PO+งวด)',
+          title: 'อนุมัติแล้ว',
           description: `${row.yearMonth} · ${po?.poCode ?? row.poId} — ตั้งพร้อมจ่าย payroll ${updated} รายการ timesheet ในช่วงงวด (รวมทุก wave)${billingLine}${periodHint}${zeroPayrollHint}`,
         });
       } else {
@@ -277,9 +306,9 @@ export default function TimesheetMonthApprovalQueuePage() {
                 กลับศูนย์อนุมัติ
               </Link>
             </Button>
-            <h1 className="text-2xl font-bold tracking-tight text-primary">คิวอนุมัติ Timesheet รอบเดือน (PO+งวด / Wave)</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-primary">คิวอนุมัติ Timesheet รอบเดือน</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              อนุมัติ <strong>งวด timesheet รวมราย PO+เดือน</strong> (รวมทุก wave) เป็นหลักสำหรับใบแจ้งหนี้/พร้อมจ่าย — คิวจัด{' '}
+              อนุมัติ <strong>Timesheet รายเดือน</strong> (รวมทุก wave ต่อ PO) เป็นหลักสำหรับใบแจ้งหนี้/พร้อมจ่าย — คิวจัด{' '}
               <strong>กลุ่มตามชุด PO Active</strong> (ลูกค้า + Onshore/Offshore) เพื่อไม่สลับหลาย PO ของลูกค้าเดียวกัน · ราย{' '}
               <strong>Wave</strong> ยังใช้สำหรับงวดที่อนุมัติราย wave ตามเดิม
             </p>
@@ -299,16 +328,14 @@ export default function TimesheetMonthApprovalQueuePage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">รอตรวจ — PO+เดือน ({sortedPo.length})</CardTitle>
-            <CardDescription>
-              ส่งจากหน้า Timesheet ราย PO+งวด — แสดงเป็นกลุ่มชุด PO Active · แต่ละแถวด้านล่างหัวกลุ่มคือหนึ่ง PO+เดือนที่ส่งตรวจ
-            </CardDescription>
+            <CardTitle className="text-base">{poMonthQueueCardTitle}</CardTitle>
+            <CardDescription>{poMonthQueueCardDescription}</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {loadingPo ? (
               <p className="p-6 text-center text-muted-foreground">กำลังโหลด…</p>
             ) : sortedPo.length === 0 ? (
-              <p className="p-8 text-center text-muted-foreground">ไม่มีรายการ PO+งวดรอตรวจ</p>
+              <p className="p-8 text-center text-muted-foreground">ไม่มีรายการ Timesheet รอบเดือนรอตรวจ</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -357,7 +384,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                             <TableCell className="text-sm">
                               <span className="font-medium">{po?.poCode ?? row.poId}</span>
                               <Badge variant="outline" className="ml-2 text-[10px] font-normal">
-                                PO+งวด
+                                Timesheet
                               </Badge>
                             </TableCell>
                             <TableCell className="text-sm">รวมทุก wave</TableCell>
@@ -373,7 +400,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                                     href={`/timesheets/wave-month?month=${encodeURIComponent(row.yearMonth)}&highlightPo=${encodeURIComponent(row.poId)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`}
                                   >
                                     <ExternalLink className="h-3.5 w-3.5" />
-                                    เอกสารรอบ PO
+                                    Timesheet
                                   </Link>
                                 </Button>
                                 <Button
@@ -613,7 +640,7 @@ export default function TimesheetMonthApprovalQueuePage() {
         <Dialog open={!!photoDialogPo} onOpenChange={(open) => !open && setPhotoDialogPo(null)}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>เอกสาร / รูป (งวด PO+เดือน)</DialogTitle>
+              <DialogTitle>เอกสาร / รูป Timesheet รายเดือน</DialogTitle>
               <DialogDescription>
                 {photoDialogPo
                   ? `${photoDialogPo.yearMonth} · ${poById.get(photoDialogPo.poId)?.poCode ?? photoDialogPo.poId}`
@@ -654,7 +681,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                 )}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">ไม่มีไฟล์แนบ — อัปโหลดที่หน้า PO+งวดเมื่อเปิดใช้งานเต็มรูป</p>
+              <p className="text-sm text-muted-foreground">ไม่มีไฟล์แนบ — อัปโหลดได้จากหน้า Timesheet รายเดือนเมื่อเปิดใช้งานเต็มรูป</p>
             )}
           </DialogContent>
         </Dialog>

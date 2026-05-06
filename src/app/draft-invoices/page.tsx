@@ -19,7 +19,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate, canEdit, isSystemAdmin } from '@/lib/permissions';
+import { canView, canCreate, isSystemAdmin } from '@/lib/permissions';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -99,9 +100,10 @@ export default function DraftInvoicesPage() {
     () => !!currentUser && canCreate(currentUser, 'draft_invoices'),
     [currentUser]
   );
-  const canVoidInvoice = useMemo(
-    () => !!currentUser && canEdit(currentUser, 'draft_invoices'),
-    [currentUser]
+  /** ยกเลิกเป็น VOID — เฉพาะผู้ดูแลระบบ (ไม่ให้ผู้จัดการปฏิบัติการยกเลิกแทน admin) */
+  const canAdminVoidInvoice = useMemo(
+    () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)),
+    [currentUser],
   );
   const canHardDeleteInvoice = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
 
@@ -370,7 +372,7 @@ export default function DraftInvoicesPage() {
   };
 
   const handleConfirmVoid = async () => {
-    if (!firestore || !currentUser || !voidTarget) return;
+    if (!firestore || !currentUser || !voidTarget || !canAdminVoidInvoice) return;
     setVoidBusy(true);
     try {
       await voidCommercialInvoice(firestore, voidTarget.id, currentUser);
@@ -392,6 +394,15 @@ export default function DraftInvoicesPage() {
 
   const handleConfirmDelete = async () => {
     if (!firestore || !currentUser || !deleteTarget || !canHardDeleteInvoice) return;
+    if (deleteTarget.status === 'ISSUED') {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่ได้',
+        description: 'ใบที่ยืนยันเรียกเก็บแล้ว (ยืนยันแล้ว) ห้ามลบ — ใช้ขั้นตอนทางบัญชี/ลูกหนี้แทน',
+      });
+      setDeleteTarget(null);
+      return;
+    }
     setDeleteBusy(true);
     try {
       await deleteCommercialInvoice(firestore, deleteTarget.id, currentUser);
@@ -772,8 +783,9 @@ export default function DraftInvoicesPage() {
           <CardHeader>
             <CardTitle>รายการใบแจ้งหนี้</CardTitle>
             <CardDescription>
-              เรียงตามวันที่เอกสาร — เปิดเพื่อตรวจยอด / พิมพ์ / ส่งลูกค้า — ยกเลิก (VOID) เมื่อต้องการหยุดใช้งานแต่ยังเก็บประวัติในระบบ —{' '}
-              <span className="text-foreground font-medium">ลบถาวร</span> เฉพาะผู้ดูแลระบบ (System Admin)
+              เรียงตามวันที่เอกสาร — เปิดเพื่อตรวจยอด / พิมพ์ / ส่งลูกค้า —{' '}
+              <span className="text-foreground font-medium">ยกเลิก (VOID)</span> เฉพาะผู้ดูแลระบบ สำหรับใบร่างหรือรอลูกค้า — ใบที่ยืนยันแล้วยกเลิกไม่ได้ —{' '}
+              <span className="text-foreground font-medium">ลบถาวร</span> เฉพาะผู้ดูแลระบบ และไม่รวมใบที่ยืนยันแล้ว
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -818,7 +830,7 @@ export default function DraftInvoicesPage() {
                               เปิด <ChevronRight className="h-4 w-4 ml-1" />
                             </Link>
                           </Button>
-                          {canVoidInvoice &&
+                          {canAdminVoidInvoice &&
                             (inv.status === 'DRAFT' || inv.status === 'PENDING_CUSTOMER') && (
                               <Button
                                 type="button"
@@ -826,19 +838,20 @@ export default function DraftInvoicesPage() {
                                 size="sm"
                                 className="text-destructive border-destructive/30 hover:bg-destructive/10"
                                 onClick={() => setVoidTarget(inv)}
+                                title="ยกเลิกเอกสาร (VOID) — เฉพาะผู้ดูแลระบบ"
                               >
                                 <Ban className="h-3.5 w-3.5 mr-1 shrink-0" />
                                 ยกเลิก
                               </Button>
                             )}
-                          {canHardDeleteInvoice && (
+                          {canHardDeleteInvoice && inv.status !== 'ISSUED' && (
                             <Button
                               type="button"
                               variant="outline"
                               size="sm"
                               className="text-destructive border-destructive/40 hover:bg-destructive/15"
                               onClick={() => setDeleteTarget(inv)}
-                              title="ลบถาวร — เฉพาะผู้ดูแลระบบ"
+                              title="ลบถาวร — เฉพาะผู้ดูแลระบบ (ห้ามลบใบที่ยืนยันแล้ว)"
                             >
                               <Trash2 className="h-3.5 w-3.5 mr-1 shrink-0" />
                               ลบ

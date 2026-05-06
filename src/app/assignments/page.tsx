@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef, Suspense } from 'react';
+import { useState, useMemo, useEffect, useRef, Suspense, Fragment } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
@@ -43,6 +43,7 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, canEdit, canDelete, isMatrixControlledRole } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 import {
   collection,
   doc,
@@ -86,13 +87,18 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import {
+  assignmentOccupiesWorkerSlot,
   checkWorkerAssignmentOverlap,
   mobilizationScheduleFromPo,
 } from '@/lib/services/assignment-overlap';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner';
 import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
-import { assignmentCountsTowardQuota, buildPoFulfillmentByLine } from '@/lib/ops/po-fulfillment-read-model';
+import {
+  assignmentCountsTowardQuota,
+  buildPoFulfillmentByLine,
+  findDuplicateQuotaMobilizationGroups,
+} from '@/lib/ops/po-fulfillment-read-model';
 import {
   normalizePoActiveBundleId,
   resolvePoActiveBundleKeyForPo,
@@ -167,8 +173,9 @@ function AssignmentsPageContent() {
   const canDeleteAssignments = useMemo(
     () =>
       !!currentUser &&
-      (useMatrixGuards ? canAccess(currentUser, 'assignments', 'delete') : canDelete(currentUser, 'assignments')),
-    [currentUser, useMatrixGuards]
+      (isSystemAdmin(currentUser) ||
+        (useMatrixGuards ? canAccess(currentUser, 'assignments', 'delete') : canDelete(currentUser, 'assignments'))),
+    [currentUser, useMatrixGuards],
   );
 
   const isAuthorized = useMemo(
@@ -399,6 +406,8 @@ function AssignmentsPageContent() {
     } else if (filterPoActiveBundleId) {
       const idSet = new Set(contractActivePOsForScope.map((p) => p.id));
       list = list.filter((a) => idSet.has(a.poId));
+      /** ไม่แสดงแถวที่ปล่อยโควต้าแล้ว (Unassign / CLOSED / DEMOBILIZED) — ให้สอดคล้องคอลัมน์มอบหมาย/ว่าง */
+      list = list.filter((a) => assignmentCountsTowardQuota(a));
       /** ชุด PO Active เดียวกัน: คนเดียวกันไม่ซ้อนหลายแถวจากหลาย wave */
       list = pickRosterLinePerWorker(list);
     }
@@ -434,6 +443,25 @@ function AssignmentsPageContent() {
     allWaves,
     allPOs,
   ]);
+
+  const quotaScopePoIdSet = useMemo(() => {
+    if (filterPoActiveBundleId) return new Set(contractActivePOsForScope.map((p) => p.id));
+    if (filterPoId) return new Set([filterPoId]);
+    return null;
+  }, [filterPoActiveBundleId, filterPoId, contractActivePOsForScope]);
+
+  const duplicateQuotaMobGroups = useMemo(() => {
+    if (!quotaScopePoIdSet?.size) return [];
+    return findDuplicateQuotaMobilizationGroups(assignments ?? undefined, quotaScopePoIdSet);
+  }, [assignments, quotaScopePoIdSet]);
+
+  const workerIdsWithQuotaDuplicates = useMemo(() => {
+    const s = new Set<string>();
+    for (const g of duplicateQuotaMobGroups) {
+      if (!g.workerKey.startsWith('_unknown:')) s.add(g.workerKey);
+    }
+    return s;
+  }, [duplicateQuotaMobGroups]);
 
   const targetPositionIdForDialogLine = useMemo(() => {
     if (!effectiveDialogPoId || !effectiveDialogLineId || !allPOLines?.length) return '';
@@ -791,10 +819,15 @@ function AssignmentsPageContent() {
       await batch.commit();
       const wid = assignmentPendingDelete.workerId;
       if (wid) {
-        await updateDoc(doc(firestore, 'workers', wid), {
-          workerStatus: 'AVAILABLE',
-          updatedAt: Date.now(),
-        });
+        const stillBlocking = (assignments ?? []).some(
+          (a) => a.id !== id && a.workerId === wid && assignmentOccupiesWorkerSlot(a),
+        );
+        if (!stillBlocking) {
+          await updateDoc(doc(firestore, 'workers', wid), {
+            workerStatus: 'AVAILABLE',
+            updatedAt: Date.now(),
+          });
+        }
       }
       toast({
         title: 'ลบการมอบหมายแล้ว',
@@ -915,6 +948,103 @@ function AssignmentsPageContent() {
               listBasePath="/assignments"
               moduleLabel="Assignments"
             />
+
+            {duplicateQuotaMobGroups.length > 0 && quotaScopePoIdSet ? (
+              <Card className="border-destructive/40 shadow-md overflow-hidden">
+                <CardHeader className="bg-destructive/5 border-b border-destructive/15 py-3">
+                  <CardTitle className="text-base flex flex-wrap items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden />
+                    พบ mobilization ซ้ำที่ยังนับโควต้า ({duplicateQuotaMobGroups.length} คน)
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-4xl">
+                    คนเดียวกันมีมากกว่า 1 เอกสาร <code className="font-mono text-[10px]">mobilizations</code> ในขอบเขต PO นี้ที่ยังจองสล็อต
+                    — ตารางหลักแสดงแค่หนึ่งแถวต่อคน แต่โควต้ายังถูกนับหลายครั้ง · ใช้ปุ่มลบเพื่อคืนโควต้า (เก็บรายการที่ถูกต้องไว้ 1 ฉบับ)
+                  </p>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader className="bg-muted/50">
+                      <TableRow>
+                        <TableHead className="pl-4 font-bold">เลขที่ / ชื่อ</TableHead>
+                        <TableHead className="font-bold">PO · บรรทัด</TableHead>
+                        <TableHead className="font-bold">Wave</TableHead>
+                        <TableHead className="font-bold">Deployment</TableHead>
+                        <TableHead className="font-bold text-right pr-4">จัดการ</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {duplicateQuotaMobGroups.map((group) => {
+                        const headWorker =
+                          !group.workerKey.startsWith('_unknown:')
+                            ? allWorkers?.find((w) => w.id === group.workerKey)
+                            : undefined;
+                        const groupTitle =
+                          headWorker != null
+                            ? `${headWorker.firstName ?? ''} ${headWorker.lastName ?? ''}`.trim() || group.workerKey
+                            : `ไม่ระบุ workerId (${group.workerKey})`;
+                        return (
+                          <Fragment key={group.workerKey}>
+                            <TableRow className="bg-amber-50/90 hover:bg-amber-50">
+                              <TableCell colSpan={5} className="py-2 pl-4 text-sm font-semibold text-amber-950">
+                                {groupTitle}
+                                <Badge variant="outline" className="ml-2 border-amber-700 text-amber-900 text-[10px]">
+                                  {group.assignments.length} รายการซ้ำ
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                            {group.assignments.map((a) => {
+                              const poRow = allPOs?.find((p) => p.id === a.poId);
+                              const wave = allWaves?.find((w) => w.id === a.waveId);
+                              const lineRow = allPOLines?.find((l) => l.id === a.poLineId && l.poId === a.poId);
+                              const posRow = lineRow?.positionId
+                                ? allPositions?.find((p) => p.id === lineRow.positionId)
+                                : undefined;
+                              const posLabel = posRow
+                                ? positionListPrimaryName(posRow as PositionDoc)
+                                : lineRow?.positionId || '—';
+                              return (
+                                <TableRow key={a.id} className="text-sm">
+                                  <TableCell className="pl-4 align-top">
+                                    <span className="font-mono text-[11px] font-bold text-primary block">
+                                      {a.assignmentNo || a.id.slice(0, 10)}
+                                    </span>
+                                    <span className="text-muted-foreground text-[10px]">{a.id}</span>
+                                  </TableCell>
+                                  <TableCell className="align-top">
+                                    <span className="font-mono font-semibold">{poRow?.poCode ?? a.poId}</span>
+                                    <span className="block text-[11px] text-muted-foreground mt-0.5">{posLabel}</span>
+                                    <span className="font-mono text-[10px] text-muted-foreground">line · {a.poLineId}</span>
+                                  </TableCell>
+                                  <TableCell className="align-top text-xs">
+                                    {wave?.waveCode ?? (isPoTimesheetScopeId(a.waveId) ? 'PO scope' : a.waveId || '—')}
+                                  </TableCell>
+                                  <TableCell className="align-top">{getDeploymentStatusBadge(a.deploymentStatus)}</TableCell>
+                                  <TableCell className="text-right pr-4 align-top">
+                                    {canDeleteAssignments ? (
+                                      <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        className="h-8 gap-1"
+                                        onClick={() => setAssignmentPendingDelete(a)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        ลบรายการนี้
+                                      </Button>
+                                    ) : (
+                                      <span className="text-[11px] text-muted-foreground">ไม่มีสิทธิ์ลบ</span>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </Fragment>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            ) : null}
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
               <div className="flex items-center gap-3 flex-1">
@@ -1215,6 +1345,14 @@ function AssignmentsPageContent() {
                               <div className="flex flex-col">
                                 <span className="text-[10px] font-mono font-bold text-primary mb-1">{asgn.assignmentNo || asgn.id.substring(0,8)}</span>
                                 <span className="font-bold text-base text-primary">{worker?.firstName} {worker?.lastName}</span>
+                                {workerIdsWithQuotaDuplicates.has(asgn.workerId) ? (
+                                  <Badge
+                                    variant="destructive"
+                                    className="mt-1.5 w-fit text-[10px] font-bold leading-tight"
+                                  >
+                                    มี mobilization ซ้ำ (ดูตารางแดงด้านบน)
+                                  </Badge>
+                                ) : null}
                                 <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {asgn.positionId}</span>
                               </div>
                             </TableCell>

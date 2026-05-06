@@ -2,7 +2,11 @@
  * สร้าง snapshot เอกสารหนังสือรับรองหัก ณ ที่จ่ายจากใบวางบิล / PO / cashbook (source of truth)
  */
 
-import { roundMoney2, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
+import {
+  roundMoney2,
+  supplierWithholdingOnMilestone,
+  effectiveVendorBillWhtRatePercent,
+} from '@/lib/ops/purchase-payment-milestones';
 import type {
   BankAccount,
   CashbookEntry,
@@ -171,7 +175,7 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
       ? roundMoney2(Number(milestone.amount) || 0)
       : roundMoney2(Number(bill.billAmount ?? purchase.totalAmount) || 0);
 
-  const rate = Number(purchase.supplierWithholdingRatePercent) || 0;
+  const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
   const wh = supplierWithholdingOnMilestone(grossInclVat, rate, purchase);
   const baseBeforeVat = wh.baseBeforeVat;
   const vatAmount = roundMoney2(grossInclVat - baseBeforeVat);

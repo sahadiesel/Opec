@@ -33,6 +33,7 @@ import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import { isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
+import { assignmentHasUnassignedAtSet } from '@/lib/ops/po-fulfillment-read-model';
 
 function MobilizationPageContent() {
   const router = useRouter();
@@ -83,7 +84,7 @@ function MobilizationPageContent() {
     if (!assignments) return [];
     return assignments.filter((a) => {
       if (!MOBILIZATION_QUEUE_DEPLOYMENT_STATUSES.includes(a.deploymentStatus as DeploymentStatus)) return false;
-      if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
+      if (assignmentHasUnassignedAtSet(a)) return false;
       return true;
     });
   }, [assignments]);

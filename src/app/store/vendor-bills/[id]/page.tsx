@@ -18,6 +18,7 @@ import {
   FileText,
   Printer,
   Eye,
+  Pencil,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection, useFirebaseApp } from '@/firebase';
 import {
@@ -55,7 +56,11 @@ import {
   WithholdingCertificateDocument,
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
-import { roundMoney2, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
+import {
+  effectiveVendorBillWhtRatePercent,
+  roundMoney2,
+  supplierWithholdingOnMilestone,
+} from '@/lib/ops/purchase-payment-milestones';
 import {
   buildWithholdingCertificateDocumentHtml,
   buildWithholdingCertificatePayeeCopies12Html,
@@ -97,6 +102,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -289,6 +295,10 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [submittedWhtBusy, setSubmittedWhtBusy] = useState(false);
   const [whtPrintBusy, setWhtPrintBusy] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
+  /** บัญชีแก้ % หัก ณ ที่จ่ายเฉพาะใบนี้ (ก่อนจ่าย) */
+  const [whtRateEditOpen, setWhtRateEditOpen] = useState(false);
+  const [whtRateInput, setWhtRateInput] = useState('');
+  const [whtRateSaving, setWhtRateSaving] = useState(false);
   /** พรีวิว + เลือกชุดพิมพ์หัก ณ ที่จ่าย (หลังจ่ายแล้ว) */
   const [whtHubOpen, setWhtHubOpen] = useState(false);
   const [vatMode, setVatMode] = useState<VatModeUi>('AUTO');
@@ -328,12 +338,21 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     return Number(bill.billAmount ?? purchase.totalAmount) || 0;
   }, [purchase, bill, linkedMilestone]);
 
-  /** ฐานหัก ณ ที่จ่ายตาม PO — ใช้ยอดงวดถ้ามี milestone */
+  const effectiveWhtRatePercent = useMemo(
+    () => (bill && purchase ? effectiveVendorBillWhtRatePercent(bill, purchase) : 0),
+    [bill, purchase],
+  );
+  const poWhtRatePercent = useMemo(() => Number(purchase?.supplierWithholdingRatePercent) || 0, [purchase]);
+  const hasBillWhtRateOverride =
+    bill?.supplierWithholdingRatePercentBill != null &&
+    Number.isFinite(Number(bill.supplierWithholdingRatePercentBill));
+
+  /** ฐานหัก ณ ที่จ่าย — อัตราใช้ override บนใบวางบิล (บัญชีแก้) ถ้ามี ไม่เช่นนั้นใช้จาก PO */
   const withholdingPreview = useMemo(() => {
     if (!purchase?.supplierWithholdingEnabled) return null;
-    const rate = Number(purchase.supplierWithholdingRatePercent) || 0;
-    if (rate < 0.005) return null;
     if (!bill) return null;
+    const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
+    if (rate < 0.005) return null;
     const grossInclVat =
       linkedMilestone != null
         ? Number(linkedMilestone.amount) || 0
@@ -496,7 +515,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     doc.id === bill.whtCertificateDocumentId;
 
   const runWhtCertificatePrint = async (
-    doc: WithholdingCertificateDocument,
+    whtDoc: WithholdingCertificateDocument,
     variant: WithholdingCertificateCopyVariant,
     official: boolean,
   ) => {
@@ -514,13 +533,13 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       const actor =
         currentUser.displayName?.trim() || currentUser.email || currentUser.id;
       const errs = official
-        ? validateWhtCertificateForOfficialPrint(doc, variant)
-        : validateWhtCertificateForPreviewPrint(doc, variant);
+        ? validateWhtCertificateForOfficialPrint(whtDoc, variant)
+        : validateWhtCertificateForPreviewPrint(whtDoc, variant);
       if (errs.length) {
         toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
         return;
       }
-      const html = buildWithholdingCertificateDocumentHtml(doc, {
+      const html = buildWithholdingCertificateDocumentHtml(whtDoc, {
         copyVariant: variant,
         official,
         printedByName: actor,
@@ -528,7 +547,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         ...mergeWhtCertDisplaySettings(companyProfile),
       });
       openWithholdingCertificatePrintWindow(html);
-      if (official && isPersistedWhtCertDoc(doc) && firestore && whtCertRef) {
+      if (official && isPersistedWhtCertDoc(whtDoc) && firestore && whtCertRef) {
         try {
           await updateDocumentNonBlocking(whtCertRef, {
             lastPrintedCopyVariant: variant,
@@ -537,12 +556,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             updatedByName: actor,
           });
           const logRef = doc(
-            collection(firestore, 'withholding_certificate_documents', doc.id, 'audit_logs'),
+            collection(firestore, 'withholding_certificate_documents', whtDoc.id, 'audit_logs'),
           );
           await setDoc(logRef, {
             id: logRef.id,
             ...buildWhtAuditLogEntry({
-              documentId: doc.id,
+              documentId: whtDoc.id,
               action: 'PRINT_WHT',
               actorId: currentUser.id,
               actorName: actor,
@@ -560,7 +579,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   /** ฉบับที่ 1 + 2 ในไฟล์เดียว (ให้ลูกค้า / PDF) */
   const runWhtCertificatePayeeCopies12Print = async (
-    doc: WithholdingCertificateDocument,
+    whtDoc: WithholdingCertificateDocument,
     official: boolean,
   ) => {
     if (!currentUser) return;
@@ -575,19 +594,19 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     setWhtPrintBusy(true);
     try {
       const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
-      const errs = validateWhtCertificateForPayeeCopies12Print(doc, official);
+      const errs = validateWhtCertificateForPayeeCopies12Print(whtDoc, official);
       if (errs.length) {
         toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
         return;
       }
-      const html = buildWithholdingCertificatePayeeCopies12Html(doc, {
+      const html = buildWithholdingCertificatePayeeCopies12Html(whtDoc, {
         official,
         printedByName: actor,
         printedAtMs: Date.now(),
         ...mergeWhtCertDisplaySettings(companyProfile),
       });
       openWithholdingCertificatePrintWindow(html);
-      if (official && isPersistedWhtCertDoc(doc) && firestore && whtCertRef) {
+      if (official && isPersistedWhtCertDoc(whtDoc) && firestore && whtCertRef) {
         try {
           await updateDocumentNonBlocking(whtCertRef, {
             lastPrintedCopyVariant: 'COPY_PAYEE_TAX_RETURN',
@@ -596,12 +615,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             updatedByName: actor,
           });
           const logRef = doc(
-            collection(firestore, 'withholding_certificate_documents', doc.id, 'audit_logs'),
+            collection(firestore, 'withholding_certificate_documents', whtDoc.id, 'audit_logs'),
           );
           await setDoc(logRef, {
             id: logRef.id,
             ...buildWhtAuditLogEntry({
-              documentId: doc.id,
+              documentId: whtDoc.id,
               action: 'PRINT_WHT',
               actorId: currentUser.id,
               actorName: actor,
@@ -817,6 +836,51 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       title: 'ส่งแผนกบัญชีแล้ว',
       description: 'อยู่ในคิว «ตรวจสอบรายจ่าย» และเจ้าหนี้การค้า (เครดิต)',
     });
+  };
+
+  const saveBillWhtRateOverride = async () => {
+    if (!billRef || !bill || bill.status !== 'SUBMITTED' || !canPay) return;
+    const n = parseFloat(String(whtRateInput).trim().replace(',', '.'));
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      toast({
+        variant: 'destructive',
+        title: 'อัตราไม่ถูกต้อง',
+        description: 'ระบุตัวเลข 0–100 (เช่น 3 สำหรับ 3%)',
+      });
+      return;
+    }
+    setWhtRateSaving(true);
+    try {
+      await updateDocumentNonBlocking(billRef, {
+        supplierWithholdingRatePercentBill: n,
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'บันทึกอัตราหัก ณ ที่จ่ายแล้ว',
+        description: `ใช้ ${n}% สำหรับใบ ${bill.receiptNo} เมื่อบันทึกจ่ายและหลักฐานหัก`,
+      });
+      setWhtRateEditOpen(false);
+    } finally {
+      setWhtRateSaving(false);
+    }
+  };
+
+  const clearBillWhtRateOverride = async () => {
+    if (!billRef || !bill || bill.status !== 'SUBMITTED' || !canPay) return;
+    setWhtRateSaving(true);
+    try {
+      await updateDocumentNonBlocking(billRef, {
+        supplierWithholdingRatePercentBill: deleteField(),
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'คืนค่าตาม PO',
+        description: `ใช้อัตรา ${poWhtRatePercent}% จากใบสั่งซื้อ`,
+      });
+      setWhtRateEditOpen(false);
+    } finally {
+      setWhtRateSaving(false);
+    }
   };
 
   const markPaid = async () => {
@@ -1219,7 +1283,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                             ยอดงวด (รวม VAT) ฿
                             {grossInclVatForBill.toLocaleString(undefined, { minimumFractionDigits: 2 })} — หัก ณ ที่จ่าย ฿
                             {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })} (
-                            {purchase?.supplierWithholdingRatePercent}%) ไม่ตัดจากบัญชีตอนโอน — สะสมที่{' '}
+                            {effectiveWhtRatePercent}%) ไม่ตัดจากบัญชีตอนโอน — สะสมที่{' '}
                             <Link href="/accounting/withholding-tax" className="font-semibold text-primary underline">
                               รายการหัก ณ ที่จ่าย
                             </Link>{' '}
@@ -1362,22 +1426,48 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               ) : null}
 
               {withholdingPreview && withholdingPreview.wht > 0.005 ? (
-                <div className="rounded-md border border-violet-200/80 bg-violet-50/30 px-3 py-2 space-y-1">
-                  <p className="text-xs font-semibold text-violet-950">หัก ณ ที่จ่าย (ผู้รับเงิน)</p>
-                  <p className="text-sm">
-                    อัตรา {purchase.supplierWithholdingRatePercent}% · ฐานก่อนภาษี (ประมาณการ) ฿
-                    {withholdingPreview.baseBeforeVat.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                    })}{' '}
-                    · หัก ณ ที่จ่าย ฿
-                    {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </p>
-                  <p className="font-bold text-base">
-                    สุทธิที่โอนให้คู่ค้า (หลังหัก ณ ที่จ่าย) ฿
-                    {withholdingPreview.netPaid.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                    })}
-                  </p>
+                <div className="rounded-md border border-violet-200/80 bg-violet-50/30 px-3 py-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-xs font-semibold text-violet-950">หัก ณ ที่จ่าย (ผู้รับเงิน)</p>
+                      <p className="text-sm">
+                        อัตรา {effectiveWhtRatePercent}%
+                        {hasBillWhtRateOverride ? (
+                          <span className="text-muted-foreground">
+                            {' '}
+                            (PO ลง {poWhtRatePercent}% — แก้เฉพาะใบนี้)
+                          </span>
+                        ) : null}{' '}
+                        · ฐานก่อนภาษี (ประมาณการ) ฿
+                        {withholdingPreview.baseBeforeVat.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                        })}{' '}
+                        · หัก ณ ที่จ่าย ฿
+                        {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                      <p className="font-bold text-base">
+                        สุทธิที่โอนให้คู่ค้า (หลังหัก ณ ที่จ่าย) ฿
+                        {withholdingPreview.netPaid.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                        })}
+                      </p>
+                    </div>
+                    {canPay && bill.status === 'SUBMITTED' && purchase?.supplierWithholdingEnabled ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 gap-1.5 border-violet-300 bg-white/90 font-semibold text-violet-950 hover:bg-violet-100/80"
+                        onClick={() => {
+                          setWhtRateInput(String(effectiveWhtRatePercent));
+                          setWhtRateEditOpen(true);
+                        }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        แก้ไข %
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               ) : (
                 <p className="text-muted-foreground text-xs leading-relaxed">
@@ -1803,6 +1893,62 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                 </div>
               </ScrollArea>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={whtRateEditOpen} onOpenChange={setWhtRateEditOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>แก้ไขอัตราหัก ณ ที่จ่าย (เฉพาะใบนี้)</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed">
+                ใช้เมื่อฝ่ายคลังลง % จาก PO ไม่ตรงกับเอกสารจริง — ยอดจ่าย ยอดหัก และหลักฐานหักจะคำนวณตามค่าที่บันทึกที่นี่ก่อนยืนยันจ่าย
+                {poWhtRatePercent > 0.005 ? (
+                  <span className="mt-2 block text-foreground">
+                    อัตราบน PO ปัจจุบัน: <span className="font-mono font-semibold">{poWhtRatePercent}%</span>
+                  </span>
+                ) : null}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="wht-rate-bill-override">อัตราหัก ณ ที่จ่าย (%)</Label>
+              <Input
+                id="wht-rate-bill-override"
+                type="text"
+                inputMode="decimal"
+                className="font-mono h-11"
+                value={whtRateInput}
+                onChange={(e) => setWhtRateInput(e.target.value)}
+                placeholder="เช่น 3"
+              />
+            </div>
+            <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                {hasBillWhtRateOverride ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={whtRateSaving}
+                    onClick={() => void clearBillWhtRateOverride()}
+                  >
+                    คืนค่าตาม PO
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" disabled={whtRateSaving} onClick={() => setWhtRateEditOpen(false)}>
+                  ยกเลิก
+                </Button>
+                <Button
+                  type="button"
+                  className="font-semibold"
+                  disabled={whtRateSaving}
+                  onClick={() => void saveBillWhtRateOverride()}
+                >
+                  {whtRateSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึก
+                </Button>
+              </div>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 

@@ -523,6 +523,18 @@ export function canApproveWorkerPayrollBatchAsManager(user: User | null): boolea
 }
 
 /**
+ * อนุมัติ/ปฏิเสธคิว timesheet รอบเดือน (`po_month_timesheet_reviews`, `wave_month_timesheet_reviews`) —
+ * `operations_manager`, `hr_manager`, System Admin · รองรับผู้ที่ matrix เป็น manager ฝั่ง operations แต่ user doc ยังไม่ sync `assignedRoleKey`
+ * (ไม่รวม payroll_officer / sales — สอดคล้อง {@link canApproveWorkerPayrollBatchAsManager})
+ */
+export function canApproveMonthlyTimesheetReviewQueue(user: User | null): boolean {
+  return canApproveWorkerPayrollBatchAsManager(user);
+}
+
+/** ชื่อเดิมในหน้า HR — ชี้ไปที่ {@link canApproveMonthlyTimesheetReviewQueue} */
+export const canReviewMonthlyQueue = canApproveMonthlyTimesheetReviewQueue;
+
+/**
  * บันทึก "ลูกค้าอนุมัติ billing" บน draft tax invoice (แยกจาก payroll) —
  * ผู้จัดการปฏิบัติการ/HR/ขาย, บัญชี, แอดมิน; ไม่รวม payroll_officer เป็นค่าเริ่มต้น
  */

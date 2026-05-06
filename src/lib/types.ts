@@ -2712,6 +2712,10 @@ export interface PurchaseVendorBill {
   notes?: string;
   /** ลิงก์หนังสือรับรองหัก ณ ที่จ่าย (withholding_certificate_documents) */
   whtCertificateDocumentId?: string;
+  /**
+   * บัญชีแก้อัตราหัก ณ ที่จ่ายเฉพาะใบนี้ (ก่อนจ่าย) เมื่อสโตร์ลง % จาก PO ผิด — ถ้าไม่มีใช้ purchase.supplierWithholdingRatePercent
+   */
+  supplierWithholdingRatePercentBill?: number;
   createdAt: number;
   updatedAt: number;
 }

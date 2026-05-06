@@ -273,9 +273,10 @@ export function PoQuotaQueueTable({
           const activeLines = lineRows.filter((r) => r.lineStatus === 'active');
           const isOrphan = bundleKey.startsWith('orphan:');
           const orphanPoId = isOrphan ? bundleKey.slice('orphan:'.length) : '';
+          /** เปิดหน้ารายการมอบหมายในชุดเท่านั้น — ผู้ใช้กด «สร้างการมอบหมายใหม่» เมื่อต้องการฟอร์ม (ไม่เปิด dialog ทันที) */
           const assignHref = isOrphan
-            ? `/assignments?poId=${encodeURIComponent(orphanPoId)}&openDialog=1`
-            : `/assignments?poActiveBundleId=${encodeURIComponent(bundleKey)}&openDialog=1`;
+            ? `/assignments?poId=${encodeURIComponent(orphanPoId)}`
+            : `/assignments?poActiveBundleId=${encodeURIComponent(bundleKey)}`;
           const secondaryHref = isOrphan
             ? `/purchase-orders/${encodeURIComponent(orphanPoId)}`
             : `/po-active/${encodeURIComponent(bundleKey)}`;
