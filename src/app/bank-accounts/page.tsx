@@ -87,6 +87,21 @@ export default function BankAccountsPage() {
     [currentUser],
   );
 
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+  const [fromId, setFromId] = useState('');
+  const [toId, setToId] = useState('');
+  const [transferAmount, setTransferAmount] = useState(0);
+  const [transferDate, setTransferDate] = useState(timestampToHtmlDateValue(Date.now()));
+  const [transferMemo, setTransferMemo] = useState('โอนระหว่างบัญชี');
+
+  const accountsQuery = useMemoFirebase(() => {
+    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
+    return collection(firestore, 'bank_accounts');
+  }, [firestore, isUserLoading, firebaseUser, isAuthorized]);
+
+  const { data: accounts, isLoading } = useCollection<BankAccount>(accountsQuery as any);
+
   const accountIdsKey = useMemo(() => (accounts ?? []).map((a) => a.id).sort().join(','), [accounts]);
 
   useEffect(() => {
@@ -116,21 +131,6 @@ export default function BankAccountsPage() {
       cancelled = true;
     };
   }, [firestore, accountIdsKey, canReconcileBalances, toast]);
-
-  const [transferOpen, setTransferOpen] = useState(false);
-  const [transferSubmitting, setTransferSubmitting] = useState(false);
-  const [fromId, setFromId] = useState('');
-  const [toId, setToId] = useState('');
-  const [transferAmount, setTransferAmount] = useState(0);
-  const [transferDate, setTransferDate] = useState(timestampToHtmlDateValue(Date.now()));
-  const [transferMemo, setTransferMemo] = useState('โอนระหว่างบัญชี');
-
-  const accountsQuery = useMemoFirebase(() => {
-    if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
-    return collection(firestore, 'bank_accounts');
-  }, [firestore, isUserLoading, firebaseUser, isAuthorized]);
-
-  const { data: accounts, isLoading } = useCollection<BankAccount>(accountsQuery as any);
 
   const handleTransfer = async () => {
     if (!firestore || !currentUser) return;

@@ -13,6 +13,8 @@ import {
   isAssignmentEligibleForPoActiveAutoDaily,
   poActiveDailyTimesheetDocId,
   resolvePoActiveAutoDailySyncKind,
+  normalizePoActiveBundleId,
+  poTimesheetScopeId,
   resolvePoActiveBundleKeyForPo,
   thailandTodayYmd,
   type AssignmentLike,
@@ -72,6 +74,14 @@ function ymdInRangeInclusive(date: string, start: string, end: string): boolean 
   return date >= start && date <= end;
 }
 
+async function isPoActiveBundleAutoDailyDisabled(db: Firestore, bundleId: string): Promise<boolean> {
+  const id = normalizePoActiveBundleId(bundleId);
+  if (!id || id.startsWith('orphan:')) return false;
+  const snap = await db.collection('po_active_bundles').doc(id).get();
+  if (!snap.exists) return false;
+  return snap.data()?.poActiveAutoDailyDisabled === true;
+}
+
 /**
  * เติม daily_timesheets ของวันนี้ (Bangkok) เท่านั้น — ประหยัดอ่าน/เขียนเมื่อรันจาก Scheduler
  */
@@ -80,21 +90,41 @@ export async function syncTodayOnlyForMobilization(
   assignment: AssignmentLike,
   totals: SyncTotals,
 ): Promise<void> {
-  if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
+  let a = assignment;
+  const mobRef = db.collection('mobilizations').doc(assignment.id);
+  if (
+    a.deploymentStatus === 'ACTIVE' &&
+    !(typeof a.unassignedAt === 'number' && a.unassignedAt > 0) &&
+    !(a.waveId || '').trim() &&
+    (a.poId || '').trim()
+  ) {
+    const wid = poTimesheetScopeId(a.poId!.trim());
+    await mobRef.update({ waveId: wid, updatedAt: Date.now() });
+    a = { ...a, waveId: wid };
+  }
+
+  if (!isAssignmentEligibleForPoActiveAutoDaily(a)) {
     return;
   }
-  totals.eligible++;
 
-  const poRef = db.collection('purchase_orders').doc(assignment.poId!);
+  const poRef = db.collection('purchase_orders').doc(a.poId!);
   const poSnap = await poRef.get();
   if (!poSnap.exists) return;
   const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrderLike;
 
-  const lineSnap = await poRef.collection('po_lines').doc(assignment.poLineId!).get();
+  const bundleIdForSwitch = resolvePoActiveBundleKeyForPo(po);
+  if (await isPoActiveBundleAutoDailyDisabled(db, bundleIdForSwitch)) {
+    totals.skipped++;
+    return;
+  }
+
+  totals.eligible++;
+
+  const lineSnap = await poRef.collection('po_lines').doc(a.poLineId!).get();
   if (!lineSnap.exists) return;
   const line = { id: lineSnap.id, ...(lineSnap.data() as object) } as POLineLike;
 
-  const range = computePoActiveAutoDailyRange(assignment, po);
+  const range = computePoActiveAutoDailyRange(a, po);
   if (!range) return;
 
   const today = thailandTodayYmd();
@@ -103,33 +133,33 @@ export async function syncTodayOnlyForMobilization(
     return;
   }
 
-  const syncKind = resolvePoActiveAutoDailySyncKind(assignment, today);
+  const syncKind = resolvePoActiveAutoDailySyncKind(a, today);
   if (!syncKind) {
     totals.skipped++;
     return;
   }
 
-  let workerName = (assignment.workerName || '').trim();
+  let workerName = (a.workerName || '').trim();
   if (!workerName) {
-    const wSnap = await db.collection('workers').doc(assignment.workerId!).get();
+    const wSnap = await db.collection('workers').doc(a.workerId!).get();
     if (wSnap.exists) {
       const w = wSnap.data() as WorkerLike;
       workerName = `${w.firstName || ''} ${w.lastName || ''}`.trim();
     }
   }
-  if (!workerName) workerName = assignment.workerId!;
+  if (!workerName) workerName = a.workerId!;
 
   const bundleId = resolvePoActiveBundleKeyForPo(po);
   const laborTerms = await loadLaborCostTermsForPo(db, po.id);
   const laborCostContractTermId = pickLaborCostTermIdForDate(laborTerms, today);
 
-  const id = poActiveDailyTimesheetDocId(assignment.workerId!, assignment.id, today);
+  const id = poActiveDailyTimesheetDocId(a.workerId!, a.id, today);
   const dRef = db.collection('daily_timesheets').doc(id);
   const existing = await dRef.get();
 
   const now = Date.now();
   const rowParams = {
-    assignment,
+    assignment: a,
     po,
     line,
     date: today,

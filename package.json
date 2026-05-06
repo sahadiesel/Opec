@@ -29,7 +29,7 @@
     "deploy:indexes": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore:indexes",
     "deploy:firestore": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore",
     "deploy:storage": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only storage",
-    "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore,storage,apphosting:opecbackend --force",
+    "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --force",
     "deploy:functions": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only functions",
     "deploy:functions:indexes": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore:indexes,functions",
     "deploy:rules-and-app": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore:rules && cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only apphosting:opecbackend --force"

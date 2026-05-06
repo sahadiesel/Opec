@@ -1,4 +1,5 @@
 import type { Assignment, DailyTimesheet, POLine, PurchaseOrder } from '@/lib/types';
+import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 
 export function minYmd(a: string, b: string): string {
@@ -15,11 +16,21 @@ function msToYmdUtc(ms: unknown): string {
   return new Date(n).toISOString().slice(0, 10);
 }
 
-/** ACTIVE + ยังไม่ Unassign + มีข้อมูลผูก PO */
+/** ถ้าไม่มี waveId (ข้อมูลเก่า) ใช้คีย์ scope PO เดียวกับตอน assign ใหม่ */
+export function effectiveWaveIdForPoActiveAuto(a: Pick<Assignment, 'waveId' | 'poId'>): string | null {
+  const w = (a.waveId || '').trim();
+  if (w) return w;
+  const pid = (a.poId || '').trim();
+  if (!pid) return null;
+  return poTimesheetScopeId(pid);
+}
+
+/** ACTIVE + ยังไม่ Unassign + มีข้อมูลผูก PO (+ waveId จริงหรือ fallback PO scope) */
 export function isAssignmentEligibleForPoActiveAutoDaily(a: Assignment): boolean {
   if (a.deploymentStatus !== 'ACTIVE') return false;
   if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
-  return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && a.waveId?.trim());
+  const siteId = effectiveWaveIdForPoActiveAuto(a);
+  return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && siteId);
 }
 
 /** จำนวนวันที่ระบบเติม SB อัตโนมัติเมื่อหยุดแบบ standby (รวมวันเริ่ม) */
@@ -96,7 +107,7 @@ export type PoActiveAutoDailyRowParams = {
 export function buildPoActiveAutoDailyRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
   const { assignment: a, po, line, date, workerNameSnapshot, poActiveBundleId, laborCostContractTermId } = p;
   const contractId = (a.contractId || po.contractId || '').trim();
-  const siteId = (a.waveId || '').trim();
+  const siteId = effectiveWaveIdForPoActiveAuto(a) || '';
   const nh = normalHoursFromPoLine(line);
 
   return {

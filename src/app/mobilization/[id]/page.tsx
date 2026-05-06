@@ -515,7 +515,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       });
       void (async () => {
         try {
-          const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser);
+          const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+            ignoreBundleAutoDisabled: true,
+          });
           if (r.created + r.updated > 0) {
             toast({
               title: 'เติมรายวันอัตโนมัติแล้ว',
@@ -621,7 +623,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
     setAutoDailySyncing(true);
     try {
-      const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser);
+      const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+        ignoreBundleAutoDisabled: true,
+      });
       toast({
         title: 'ซิงค์รายวัน PO Active แล้ว',
         description: `สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped} (แถวที่ปิดบัญชีแล้วหรือแก้มือ)`,

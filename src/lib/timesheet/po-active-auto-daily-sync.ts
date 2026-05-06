@@ -9,6 +9,7 @@ import {
   getDoc,
   getDocs,
   query,
+  updateDoc,
   where,
   writeBatch,
   type DocumentData,
@@ -17,7 +18,7 @@ import {
 import type { Assignment, DailyTimesheet, LaborCostContractTerm, POLine, PurchaseOrder, User, Worker } from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
-import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { isPoActiveBundleAutoDailyDisabled, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
   buildPoActiveAutoDailyRowPayload,
   buildPoActiveAutoStandbyRowPayload,
@@ -29,10 +30,13 @@ import {
   resolvePoActiveAutoDailySyncKind,
 } from '@/lib/timesheet/po-active-auto-daily-build';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 
 export type PoActiveAutoDailySyncOptions = {
   /** เติมเฉพาะ yyyy-mm-dd ปัจจุบันในเขตไทย — ใช้หลังเที่ยงคืนหรือเปิดกระดาน */
   todayOnly?: boolean;
+  /** ปุ่ม Auto gen / ซิงก์ที่ Mobilization — ข้ามการเช็คปิด master ของ bundle */
+  ignoreBundleAutoDisabled?: boolean;
 };
 
 function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
@@ -81,7 +85,19 @@ export async function syncPoActiveAutoDailyForAssignment(
   if (!mobSnap.exists()) {
     throw new Error('ไม่พบ mobilization');
   }
-  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  let assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+
+  if (
+    assignment.deploymentStatus === 'ACTIVE' &&
+    !(typeof assignment.unassignedAt === 'number' && assignment.unassignedAt > 0) &&
+    !(assignment.waveId || '').trim() &&
+    (assignment.poId || '').trim()
+  ) {
+    const wid = poTimesheetScopeId(assignment.poId.trim());
+    const nowRepair = Date.now();
+    await updateDoc(mobRef, { waveId: wid, updatedAt: nowRepair });
+    assignment = { ...assignment, waveId: wid };
+  }
 
   if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
     return { created: 0, updated: 0, skipped: 0 };
@@ -90,6 +106,13 @@ export async function syncPoActiveAutoDailyForAssignment(
   const poSnap = await getDoc(doc(db, 'purchase_orders', assignment.poId));
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+
+  if (!options?.ignoreBundleAutoDisabled) {
+    const bundleIdCheck = resolvePoActiveBundleKeyForPo(po);
+    if (await isPoActiveBundleAutoDailyDisabled(db, bundleIdCheck)) {
+      return { created: 0, updated: 0, skipped: 0 };
+    }
+  }
 
   const lineSnap = await getDoc(doc(db, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId));
   if (!lineSnap.exists()) throw new Error('ไม่พบ PO line');

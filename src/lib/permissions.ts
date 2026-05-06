@@ -670,6 +670,16 @@ export function canCreateVerifyPrintWhtCertificate(user: User | null): boolean {
   return canMarkPurchaseVendorBillPaid(user);
 }
 
+/**
+ * พรีวิว / พิมพ์ตัวอย่างหัก ณ ที่จ่ายจากหน้าใบวางบิลคลัง — บัญชีหรือเจ้าหน้าที่คลัง (ส่งเอกสารให้คู่ค้า)
+ * การพิมพ์ทางการหลัง ISSUED และการสร้างหนังสือในระบบยังใช้ canCreateVerifyPrintWhtCertificate
+ */
+export function canPreviewVendorBillWhtCertificate(user: User | null): boolean {
+  if (!user) return false;
+  if (canCreateVerifyPrintWhtCertificate(user)) return true;
+  return isStoreOfficer(user) && canView(user, 'store_inventory');
+}
+
 /** ตรวจสอบความถูกต้อง (DRAFT → VERIFIED) — เจ้าหน้าที่/ผู้จัดการบัญชี */
 export function canVerifyWhtCertificate(user: User | null): boolean {
   return canCreateVerifyPrintWhtCertificate(user);

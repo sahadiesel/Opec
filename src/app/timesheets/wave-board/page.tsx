@@ -6,10 +6,10 @@ import { Button } from '@/components/ui/button';
 import { CalendarDays } from 'lucide-react';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { useSearchParams } from 'next/navigation';
-import { collection, query, where, getDocs, type Firestore } from 'firebase/firestore';
-import { PurchaseOrder, Wave, Worker, User, Position, WaveMonthTimesheetReview } from '@/lib/types';
+import { collection, query, where, getDocs, doc, type Firestore } from 'firebase/firestore';
+import { PurchaseOrder, PoActiveBundle, Wave, Worker, User, Position, WaveMonthTimesheetReview } from '@/lib/types';
 import { PoDailyBoardCard } from '@/app/timesheets/wave-board/po-daily-board';
 import { useToast } from '@/hooks/use-toast';
 import { PageGuidance } from '@/components/layout/page-guidance';
@@ -31,6 +31,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+function isContractBasedPurchaseOrder(p: PurchaseOrder): boolean {
+  return (p.poType || 'contract') === 'contract' && !!(p.contractId || '').trim();
+}
 
 async function hasDailyTimesheetsForPoDate(db: Firestore, date: string, poIds: string[]): Promise<boolean> {
   for (const poId of poIds) {
@@ -100,13 +104,53 @@ function WaveTimesheetBoardContent() {
   }, [firestore, canViewTimesheets]);
   const { data: allOpenWaves, isLoading: wavesLoading } = useCollection<Wave>(waveQuery as any);
 
+  const poActiveBundleDocRef = useMemoFirebase(
+    () =>
+      firestore && canViewTimesheets && filterPoActiveBundleId
+        ? doc(firestore, 'po_active_bundles', filterPoActiveBundleId)
+        : null,
+    [firestore, canViewTimesheets, filterPoActiveBundleId],
+  );
+  const { data: poActiveBundleDoc, isLoading: poActiveBundleDocLoading } = useDoc<PoActiveBundle>(
+    poActiveBundleDocRef as any,
+  );
+
   const openPoIdSet = useMemo(() => new Set((pos ?? []).map((p) => p.id)), [pos]);
 
+  /**
+   * PO ในชุด PO Active — สอดคล้องหน้า `/po-active/[bundleId]` และคิวโควต้า:
+   * ถ้า `po_active_bundles.poIds` มีข้อมูล ใช้รายการนั้น (เฉพาะ PO จากสัญญา)
+   * ถ้าไม่มี (เอกสารไม่มี / ยังไม่ sync) fallback เป็น PO ที่ `resolvePoActiveBundleKeyForPo` ตรงกับ bundle
+   */
+  const bundlePosList = useMemo(() => {
+    if (!filterPoActiveBundleId || !(pos ?? []).length) return [];
+    const rawIds = poActiveBundleDoc?.poIds;
+    if (rawIds?.length) {
+      const posById = new Map((pos ?? []).map((p) => [p.id, p]));
+      const seen = new Set<string>();
+      const out: PurchaseOrder[] = [];
+      for (const id of rawIds) {
+        if (!id || seen.has(id)) continue;
+        const p = posById.get(id);
+        if (!p || !isContractBasedPurchaseOrder(p)) continue;
+        seen.add(id);
+        out.push(p);
+      }
+      return out;
+    }
+    return (pos ?? [])
+      .filter(
+        (p) =>
+          resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId && isContractBasedPurchaseOrder(p),
+      )
+      .sort((a, b) => a.poCode.localeCompare(b.poCode, 'th'));
+  }, [filterPoActiveBundleId, pos, poActiveBundleDoc?.poIds]);
+
   const poIdsInBundleFilter = useMemo(() => {
-    if (!filterPoActiveBundleId || !(pos ?? []).length) return null;
-    const ids = (pos ?? []).filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId).map((p) => p.id);
-    return ids.length ? new Set(ids) : null;
-  }, [filterPoActiveBundleId, pos]);
+    if (!filterPoActiveBundleId) return null;
+    if (!bundlePosList.length) return new Set<string>();
+    return new Set(bundlePosList.map((p) => p.id));
+  }, [filterPoActiveBundleId, bundlePosList]);
 
   const sortedWaves = useMemo(() => {
     const list = (allOpenWaves ?? []).filter((w) => openPoIdSet.has(w.poId));
@@ -156,14 +200,6 @@ function WaveTimesheetBoardContent() {
     }
     return [...m.values()].sort((a, b) => a.po.poCode.localeCompare(b.po.poCode, 'th'));
   }, [sortedWavesForBoard, pos, filterPoId, poIdsInBundleFilter]);
-
-  /** PO ทั้งหมดในชุดเดียวกัน — ใช้โหมดตารางเดียวบน Wave Board */
-  const bundlePosList = useMemo(() => {
-    if (!filterPoActiveBundleId || !(pos ?? []).length) return [];
-    return (pos ?? [])
-      .filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId)
-      .sort((a, b) => a.poCode.localeCompare(b.poCode, 'th'));
-  }, [filterPoActiveBundleId, pos]);
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewTimesheets ? collection(firestore, 'workers') : null),
@@ -240,7 +276,7 @@ function WaveTimesheetBoardContent() {
     [applyBoardDate, firestore, boardPoIds, targetDate],
   );
 
-  const loading = posLoading || wavesLoading;
+  const loading = posLoading || wavesLoading || (!!filterPoActiveBundleId && poActiveBundleDocLoading);
 
   if (userLoading || !currentUser) return null;
   if (!canViewTimesheets) {
@@ -261,7 +297,7 @@ function WaveTimesheetBoardContent() {
           </Button>
           <h1 className="text-3xl font-bold tracking-tight text-primary">
             <CalendarDays className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
-            คีย์ลงเวลาแบบกลุ่ม (PO + assignment)
+            คีย์ลงเวลาแบบกลุ่ม (Bulk Check-in)
           </h1>
           <p className="text-muted-foreground text-lg max-w-4xl">
             {filterPoActiveBundleId ? (
@@ -292,7 +328,7 @@ function WaveTimesheetBoardContent() {
             )}{' '}
             บันทึกร่าง DRAFT ที่นี่ ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
             <Link href="/timesheets/wave-month" className="text-primary font-semibold underline">
-              เอกสาร timesheet ราย PO+เดือน
+              Monthly Timesheet
             </Link>
             .
           </p>
@@ -302,11 +338,12 @@ function WaveTimesheetBoardContent() {
           title="วิธีใช้"
           tips={[
             'ชุด PO Active = ตารางเดียวรายชื่อรวม; คนที่ยังอยู่แค่ assign / ยังไม่ mob จะไม่ขึ้นในกระดานจนกว่าจะผ่าน Mobilization ตามเกณฑ์ readiness + deployment',
-            'วางบิล / payroll รอบเดือนให้ยึดเอกสาร PO+เดือนหลังอนุมัติ',
+            'วางบิล / payroll รอบเดือนให้ยึดเอกสาร Monthly Timesheet หลังอนุมัติ',
             'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
             'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
             'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
-            'คนที่สถานะ ACTIVE (on-site): Cloud Function + Scheduler เติม/รักษาวันนี้ (~00:10 Asia/Bangkok) และ UI ซิงก์เมื่อมีผู้เปิดกระดาน (~45 วินาที); ช่วงหยุดแบบ standby จะเป็น SB อัตโนมัติตามช่วงที่ตั้งไว้ · ปุ่ม Auto gen เติมช่วงที่ขาดด้วยมือ · ปุ่มหยุด = จบงานหรือพัก SB',
+            'คนที่สถานะ ACTIVE (on-site): Cloud Function + Scheduler เติม/รักษาวันนี้ (~00:10 Asia/Bangkok) และ UI ซิงก์เมื่อมีผู้เปิดกระดาน (~45 วินาที) — ยกเว้นเมื่อปิดสวิตช์ «ลงเวลาอัตโนมัติ» บนกระดาน; ช่วงหยุดแบบ standby จะเป็น SB อัตโนมัติตามช่วงที่ตั้งไว้ · ปุ่ม Auto gen เติมช่วงที่ขาด (รวมตอนปิดสวิตช์) · ปุ่มหยุด = จบงานหรือพัก SB',
+            'อัปเดตหน้าจอ (สวิตช์ Auto / ข้อความใต้ชื่อ): ต้อง deploy แอป — เช่น npm run deploy:app (Firebase App Hosting; opecbackend) — deploy เฉพาะ functions ไม่เปลี่ยน UI',
           ]}
         />
 
@@ -322,7 +359,7 @@ function WaveTimesheetBoardContent() {
         ) : filterPoActiveBundleId ? (
           bundlePosList.length === 0 ? (
             <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
-              ไม่พบ PO ในชุด PO Active นี้ — ตรวจสถานะ PO หรือการจัดชุด PO Active
+              ไม่พบ PO ในชุด PO Active นี้ — ตรวจว่า PO มีสถานะ active/pending, ผูกสัญญา (contract) และ `poActiveBundleId` ตรงกับชุดนี้
             </p>
           ) : (
             <div className="space-y-8">

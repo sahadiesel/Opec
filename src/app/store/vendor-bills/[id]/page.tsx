@@ -35,6 +35,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import {
   canCreateVerifyPrintWhtCertificate,
   canMarkPurchaseVendorBillPaid,
+  canPreviewVendorBillWhtCertificate,
   canView,
 } from '@/lib/permissions';
 import {
@@ -270,6 +271,10 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const whtAtSourceItem = whtAtSourceRows?.[0] as { id?: string } | undefined;
 
   const canWhtAccounting = useMemo(() => canCreateVerifyPrintWhtCertificate(currentUser), [currentUser]);
+  const canPreviewVendorBillWht = useMemo(
+    () => canPreviewVendorBillWhtCertificate(currentUser),
+    [currentUser],
+  );
 
   const [billingDate, setBillingDate] = useState('');
   const [payDate, setPayDate] = useState('');
@@ -424,7 +429,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     if (!currentUser || !purchase || !bill || !vendor || !withholdingPreview || !canPrintWithholdingSummary) {
       return;
     }
-    if (!canWhtAccounting) return;
+    if (!canPreviewVendorBillWht) return;
     const entryYmd = payoutEntryDate.trim();
     if (!entryYmd) {
       toast({ variant: 'destructive', title: 'ระบุวันที่ทำรายการ', description: 'ต้องมีวันที่จ่าย (cashbook) เพื่อแสดงบนหนังสือรับรอง' });
@@ -496,6 +501,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     official: boolean,
   ) => {
     if (!currentUser) return;
+    if (official && !canWhtAccounting) {
+      toast({
+        variant: 'destructive',
+        title: 'พิมพ์ทางการไม่ได้',
+        description: 'ใช้สิทธิ์เจ้าหน้าที่บัญชีเพื่อพิมพ์สำเนาทางการหลังออกเลขที่แล้ว',
+      });
+      return;
+    }
     setWhtPrintBusy(true);
     try {
       const actor =
@@ -551,6 +564,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     official: boolean,
   ) => {
     if (!currentUser) return;
+    if (official && !canWhtAccounting) {
+      toast({
+        variant: 'destructive',
+        title: 'พิมพ์ทางการไม่ได้',
+        description: 'ใช้สิทธิ์เจ้าหน้าที่บัญชีเพื่อพิมพ์ชุดทางการหลังออกเลขที่แล้ว',
+      });
+      return;
+    }
     setWhtPrintBusy(true);
     try {
       const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
@@ -978,7 +999,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                     )}
                   </CardDescription>
                 </div>
-                {canPrintWithholdingSummary && canWhtAccounting && effectiveWhtPrintDoc ? (
+                {canPrintWithholdingSummary && canPreviewVendorBillWht && effectiveWhtPrintDoc ? (
                   <Button
                     type="button"
                     variant="secondary"
@@ -1221,7 +1242,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
                       ยืนยันจ่ายเงิน + ลง cashbook
                     </Button>
-                    {canPrintWithholdingSummary && canWhtAccounting ? (
+                    {canPrintWithholdingSummary && canPreviewVendorBillWht ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -1239,7 +1260,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       </Button>
                     ) : null}
                   </div>
-                  {canPrintWithholdingSummary && canWhtAccounting ? (
+                  {canPrintWithholdingSummary && canPreviewVendorBillWht ? (
                     <p className="text-[11px] text-muted-foreground leading-snug">
                       ปุ่มขวาพิมพ์ตัวอย่างก่อนจ่าย (มีข้อความฉบับร่าง) • เลขที่และสำเนาทางการหลังบันทึกจ่ายจากการ์ด «หนังสือรับรองหัก ณ ที่จ่าย»
                     </p>
@@ -1693,7 +1714,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       </li>
                     </ul>
                   </div>
-                  {effectiveWhtPrintDoc?.documentStatus === 'ISSUED' ? (
+                  {effectiveWhtPrintDoc?.documentStatus === 'ISSUED' && canWhtAccounting ? (
                     <>
                       <Separator />
                       <div className="space-y-2">

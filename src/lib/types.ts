@@ -856,6 +856,8 @@ export interface PoActiveBundle {
   workMode: JobMode;
   poIds: string[];
   updatedAt: number;
+  /** true = ปิด Scheduler/UI silent sync — ไม่ลบแถวเก่า; ใช้ลงมือหรือปุ่ม Auto gen */
+  poActiveAutoDailyDisabled?: boolean;
 }
 
 export interface OtRulesSnapshot {

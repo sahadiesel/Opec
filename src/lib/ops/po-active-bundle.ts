@@ -2,6 +2,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   getDocs,
   query,
   setDoc,
@@ -120,4 +121,13 @@ export async function rebuildAllPoActiveBundlesForCustomer(
     const bid = poActiveBundleDocId(cid, mode);
     await updateDoc(pref, { poActiveBundleId: bid, updatedAt: now });
   }
+}
+
+/** Master switch: ปิดการลงรายวันอัตโนมัติของ bundle (Scheduler + silent sync บนกระดาน) */
+export async function isPoActiveBundleAutoDailyDisabled(db: Firestore, bundleId: string): Promise<boolean> {
+  const id = normalizePoActiveBundleId(bundleId);
+  if (!id || id.startsWith('orphan:')) return false;
+  const snap = await getDoc(doc(db, 'po_active_bundles', id));
+  if (!snap.exists()) return false;
+  return (snap.data() as PoActiveBundle).poActiveAutoDailyDisabled === true;
 }

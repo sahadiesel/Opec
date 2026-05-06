@@ -94,10 +94,26 @@ export function resolvePoActiveBundleKeyForPo(po: PurchaseOrderLike): string {
   return poActiveBundleDocId(cid, mode);
 }
 
+const PO_TIMESHEET_SCOPE_PREFIX = 'po_ts_scope_';
+
+export function poTimesheetScopeId(poId: string): string {
+  return `${PO_TIMESHEET_SCOPE_PREFIX}${poId}`;
+}
+
+/** sync กับ src/lib/timesheet/po-active-auto-daily-build.ts — effectiveWaveIdForPoActiveAuto */
+export function effectiveWaveIdForPoActiveAuto(a: AssignmentLike): string | null {
+  const w = (a.waveId || '').trim();
+  if (w) return w;
+  const pid = (a.poId || '').trim();
+  if (!pid) return null;
+  return poTimesheetScopeId(pid);
+}
+
 export function isAssignmentEligibleForPoActiveAutoDaily(a: AssignmentLike): boolean {
   if (a.deploymentStatus !== 'ACTIVE') return false;
   if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
-  return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && a.waveId?.trim());
+  const siteId = effectiveWaveIdForPoActiveAuto(a);
+  return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && siteId);
 }
 
 /** sync กับ src/lib/timesheet/po-active-auto-daily-build.ts — resolvePoActiveAutoDailySyncKind */
@@ -156,7 +172,7 @@ export function buildPoActiveAutoDailyRowPayload(p: {
 }): Record<string, unknown> {
   const { assignment: a, po, line, date, workerNameSnapshot, poActiveBundleId, laborCostContractTermId } = p;
   const contractId = (a.contractId || po.contractId || '').trim();
-  const siteId = (a.waveId || '').trim();
+  const siteId = effectiveWaveIdForPoActiveAuto(a) || '';
   const nh = normalHoursFromPoLine(line);
   const workMode: JobMode = a.workMode === 'ONSHORE' || a.workMode === 'OFFSHORE' ? a.workMode : 'OFFSHORE';
 

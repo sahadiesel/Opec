@@ -15,7 +15,7 @@ import {
 } from '@/lib/date-thai';
 import { parseISO } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import {
   collection,
   collectionGroup,
@@ -23,6 +23,8 @@ import {
   getDoc,
   getDocs,
   query,
+  setDoc,
+  updateDoc,
   where,
   writeBatch,
   deleteField,
@@ -30,6 +32,7 @@ import {
 } from 'firebase/firestore';
 import {
   PurchaseOrder,
+  PoActiveBundle,
   Wave,
   Assignment,
   Worker,
@@ -55,6 +58,7 @@ import {
   isYmdWithinAssignmentMobTimesheetWindow,
 } from '@/lib/constants/timesheet-ui';
 import { poTimesheetScopeId, isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -64,6 +68,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Switch } from '@/components/ui/switch';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import {
@@ -77,6 +82,7 @@ import {
   syncPoActiveAutoDailyForAssignment,
 } from '@/lib/timesheet/po-active-auto-daily-sync';
 import {
+  computePoActiveAutoDailyRange,
   isAssignmentEligibleForPoActiveAutoDaily,
   PO_ACTIVE_STANDBY_STOP_AUTO_DAYS,
   poActiveDailyTimesheetDocId,
@@ -224,6 +230,60 @@ export function PoDailyBoardCard({
 
   const monthYm = targetDate.slice(0, 7);
   const waveById = useMemo(() => new Map(waves.map((w) => [w.id, w])), [waves]);
+
+  const resolvedBundleIdForAuto = useMemo(() => {
+    if (scope.mode === 'bundle') return normalizePoActiveBundleId(scope.bundleKey);
+    return normalizePoActiveBundleId(resolvePoActiveBundleKeyForPo(scope.po));
+  }, [scope]);
+
+  const bundleRefForAutoSwitch = useMemoFirebase(
+    () =>
+      firestore && resolvedBundleIdForAuto
+        ? doc(firestore, 'po_active_bundles', resolvedBundleIdForAuto)
+        : null,
+    [firestore, resolvedBundleIdForAuto],
+  );
+  const { data: bundleForAutoSwitch } = useDoc<PoActiveBundle>(bundleRefForAutoSwitch as any);
+  const bundleAutoDailyDisabled = bundleForAutoSwitch?.poActiveAutoDailyDisabled === true;
+
+  const showAutoMasterSwitch = useMemo(
+    () => !!resolvedBundleIdForAuto && !resolvedBundleIdForAuto.startsWith('orphan:'),
+    [resolvedBundleIdForAuto],
+  );
+
+  const [autoMasterSaving, setAutoMasterSaving] = useState(false);
+
+  const handleBundleAutoDailyToggle = useCallback(
+    async (autoOn: boolean) => {
+      if (!firestore || !resolvedBundleIdForAuto || resolvedBundleIdForAuto.startsWith('orphan:')) return;
+      setAutoMasterSaving(true);
+      try {
+        await setDoc(
+          doc(firestore, 'po_active_bundles', resolvedBundleIdForAuto),
+          {
+            poActiveAutoDailyDisabled: !autoOn,
+            updatedAt: Date.now(),
+          },
+          { merge: true },
+        );
+        toast({
+          title: autoOn ? 'เปิดลงเวลาอัตโนมัติแล้ว' : 'ปิดลงเวลาอัตโนมัติแล้ว',
+          description: autoOn
+            ? 'Scheduler และซิงก์เมื่อเปิดกระดานจะลงวันถัดไปเป็นต้นไป — ไม่ย้อนเติมวันว่างเก่าโดยอัตโนมัติ'
+            : 'ต้องลงมือหรือกด Auto gen เพื่อเติมช่วงที่ขาด · ข้อมูลแถวเดิมในระบบไม่ถูกลบ',
+        });
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setAutoMasterSaving(false);
+      }
+    },
+    [firestore, resolvedBundleIdForAuto, toast],
+  );
 
   useEffect(() => {
     if (!finishJobModal) {
@@ -438,6 +498,7 @@ export function PoDailyBoardCard({
 
   const runSilentTodayAutoSync = useCallback(async () => {
     if (!firestore || !canEditTimesheets || anyMonthLocked || activeEligibleAssignmentIds.length === 0) return;
+    if (bundleAutoDailyDisabled) return;
     if (autoTodaySyncLockRef.current) return;
     autoTodaySyncLockRef.current = true;
     try {
@@ -459,6 +520,7 @@ export function PoDailyBoardCard({
     firestore,
     canEditTimesheets,
     anyMonthLocked,
+    bundleAutoDailyDisabled,
     activeEligibleAssignmentIds,
     currentUser,
     targetDate,
@@ -487,14 +549,23 @@ export function PoDailyBoardCard({
     let s = 0;
     try {
       for (const aid of activeEligibleAssignmentIds) {
-        const r = await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser);
+        const r = await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, {
+          ignoreBundleAutoDisabled: true,
+        });
         c += r.created;
         u += r.updated;
         s += r.skipped;
       }
       toast({
         title: 'Auto gen เสร็จแล้ว',
-        description: `สร้าง ${c} · อัปเดต ${u} · ข้าม ${s} (แถวแก้มือหรือล็อกการเงินจะไม่ถูกทับ)`,
+        description: [
+          `สร้าง ${c} · อัปเดต ${u} · ข้าม ${s} (แถวแก้มือหรือล็อกการเงินจะไม่ถูกทับ)`,
+          s > 40
+            ? 'ข้ามจำนวนมาก: มักเป็นแถวที่ลงมือแล้ว (ไม่มี poActiveAutoDaily) หรือบางวันอยู่นอกช่วงออโต้ · แถวเป็น "-" ใต้ชื่อมีข้อความแดง = ตรวจ Mobilization'
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
       });
       await loadRoster();
     } catch (e: unknown) {
@@ -890,7 +961,7 @@ export function PoDailyBoardCard({
             </div>
             <div className="flex flex-col gap-1.5 sm:items-end shrink-0">
               <Button variant="secondary" size="sm" asChild>
-                <Link href={poMonthHref}>เอกสาร PO+เดือน (วางบิล / payroll) →</Link>
+                <Link href={poMonthHref}>Monthly Timesheet (วางบิล / payroll) →</Link>
               </Button>
             </div>
           </div>
@@ -956,7 +1027,27 @@ export function PoDailyBoardCard({
                 />
               </div>
               <div className="flex flex-col items-stretch gap-1 sm:items-end sm:min-w-[10rem]">
-                <div className="flex flex-wrap gap-1.5 justify-end">
+                <div className="flex flex-wrap gap-1.5 justify-end items-center">
+                  {showAutoMasterSwitch ? (
+                    <div className="flex items-center gap-2 rounded-md border border-muted bg-background/90 px-2.5 py-1.5 mr-1">
+                      <Switch
+                        id="po-active-auto-daily-master"
+                        checked={!bundleAutoDailyDisabled}
+                        disabled={autoMasterSaving || !canEditTimesheets || anyMonthLocked}
+                        onCheckedChange={(on) => void handleBundleAutoDailyToggle(on)}
+                        aria-label="เปิดหรือปิดการลงเวลารายวันอัตโนมัติ PO Active"
+                      />
+                      <Label
+                        htmlFor="po-active-auto-daily-master"
+                        className="text-[10px] font-bold leading-tight cursor-pointer select-none max-w-[9.5rem]"
+                      >
+                        ลงเวลาอัตโนมัติ
+                        <span className="block font-normal text-muted-foreground font-mono text-[9px]">
+                          PO Active · Scheduler
+                        </span>
+                      </Label>
+                    </div>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"
@@ -1092,6 +1183,14 @@ export function PoDailyBoardCard({
                           ) : afterMobEnd ? (
                             <span className="text-[9px] text-muted-foreground mt-0.5">
                               หลังวันจบงาน — ไม่สร้างลงเวลาอัตโนมัติ (ดูประวัติวันก่อนหน้าในตารางเดือน)
+                            </span>
+                          ) : asgn.deploymentStatus === 'ACTIVE' &&
+                            isAssignmentEligibleForPoActiveAutoDaily(asgn) &&
+                            poForRow &&
+                            !computePoActiveAutoDailyRange(asgn, poForRow) ? (
+                            <span className="text-[9px] text-rose-700 dark:text-rose-300 mt-0.5 leading-snug">
+                              ลงเวลาอัตโนมัติยังไม่รัน: ตรวจวันเริ่มงาน / วันมอบหมาย และเพดาน PO ใน Mobilization — หรือกด Auto gen
+                              หลังแก้ข้อมูล
                             </span>
                           ) : finishDateHintForRow ? (
                             <span className="text-[9px] text-destructive mt-0.5">{finishDateHintForRow}</span>
@@ -1248,15 +1347,22 @@ export function PoDailyBoardCard({
                           ) : null}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right pr-6">
-                        <Input
-                          disabled={rowEditLocked}
-                          className="h-8 text-[10px] text-right"
-                          value={row.remark}
-                          onChange={(e) =>
-                            setRosterData((p) => ({ ...p, [asgn.id]: { ...p[asgn.id], remark: e.target.value } }))
-                          }
-                        />
+                      <TableCell className="text-right pr-6 align-top">
+                        <div className="flex flex-col items-end gap-1">
+                          {bundleAutoDailyDisabled ? (
+                            <span className="text-[9px] font-semibold text-amber-900 dark:text-amber-100 whitespace-nowrap">
+                              Manual Mode
+                            </span>
+                          ) : null}
+                          <Input
+                            disabled={rowEditLocked}
+                            className="h-8 text-[10px] text-right w-full min-w-0"
+                            value={row.remark}
+                            onChange={(e) =>
+                              setRosterData((p) => ({ ...p, [asgn.id]: { ...p[asgn.id], remark: e.target.value } }))
+                            }
+                          />
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -1281,7 +1387,7 @@ export function PoDailyBoardCard({
           </p>
           <div className="flex flex-wrap gap-2">
             <Button variant="link" className="text-xs h-auto p-0" asChild>
-              <Link href={poMonthHref}>เอกสาร PO+เดือน (ปิดงวด / วางบิล)</Link>
+              <Link href={poMonthHref}>Monthly Timesheet (ปิดงวด / วางบิล)</Link>
             </Button>
             <Button variant="link" className="text-xs h-auto p-0" asChild>
               <Link href="/timesheets/wave-month">สรุปรอบเดือนราย wave</Link>
