@@ -6,6 +6,7 @@
  */
 
 import type { WithholdingCertificateDocument, WhtElectronicData } from '@/lib/types';
+import { effectiveWhtCertificateDocumentNo } from '@/lib/wht/wht-certificate-validation';
 
 function escapeXml(s: string): string {
   return s
@@ -77,7 +78,7 @@ export function generateWhtXmlPayload(_documentId: string, doc: WithholdingCerti
 export function validateWhtBeforeExport(doc: WithholdingCertificateDocument): string[] {
   const errs: string[] = [];
   if (doc.documentStatus !== 'ISSUED') errs.push('ต้องออกเอกสาร (ISSUED) ก่อนเตรียม XML');
-  if (!(doc.certificateNo || '').trim()) errs.push('ต้องมีเลขที่หนังสือรับรอง');
+  if (!effectiveWhtCertificateDocumentNo(doc)) errs.push('ต้องมีเลขที่หนังสือรับรอง');
   return errs;
 }
 

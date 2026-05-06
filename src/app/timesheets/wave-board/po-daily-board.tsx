@@ -882,7 +882,7 @@ export function PoDailyBoardCard({
         setStopFlow(null);
         toast({
           title: 'หยุดแบบ standby แล้ว',
-          description: `SB อัตโนมัติ ${PO_ACTIVE_STANDBY_STOP_AUTO_DAYS} วัน (${formatYmdLocalThaiBE(r.startYmd)} – ${formatYmdLocalThaiBE(r.endYmd)}) · หลังช่วงนี้ไม่ซิงก์ W จนเริ่มงานใหม่ที่ Mobilization · แก้มือได้ทุกวัน`,
+          description: `SB อัตโนมัติ ${PO_ACTIVE_STANDBY_STOP_AUTO_DAYS} วัน (${formatYmdLocalThaiBE(r.startYmd)} – ${formatYmdLocalThaiBE(r.endYmd)}) · หลังช่วงนี้ระบบกลับลง W อัตโนมัติตามปกติ · แก้มือได้ทุกวัน`,
         });
         await loadRoster();
       } catch (e: unknown) {

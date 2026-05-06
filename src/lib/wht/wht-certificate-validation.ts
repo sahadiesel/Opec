@@ -5,6 +5,15 @@
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import type { WithholdingCertificateCopyVariant, WithholdingCertificateDocument } from '@/lib/types';
 
+/** เลขที่หนังสือรับรองที่ใช้แสดงและตรวจสอบ — รองรับทั้งฟิลด์หลักและ whtElectronicData.documentNo */
+export function effectiveWhtCertificateDocumentNo(
+  doc: Pick<WithholdingCertificateDocument, 'certificateNo' | 'whtElectronicData'>,
+): string {
+  const top = String(doc.certificateNo ?? '').trim();
+  if (top) return top;
+  return String(doc.whtElectronicData?.documentNo ?? '').trim();
+}
+
 const THAI_TAX_ID = /^\d{13}$/;
 
 export function isValidThaiTaxId(id: string | null | undefined): boolean {
@@ -155,7 +164,7 @@ export function validateWhtCertificateForOfficialPrint(
   if (doc.documentStatus !== 'ISSUED') {
     errors.push('ไม่สามารถพิมพ์เป็นทางการได้: ต้องออกเอกสาร (ISSUED) ก่อน');
   }
-  if (!(doc.certificateNo || '').trim()) {
+  if (!effectiveWhtCertificateDocumentNo(doc)) {
     errors.push('ไม่สามารถพิมพ์เป็นทางการได้: ยังไม่มีเลขที่เอกสาร');
   }
   errors.push(...validateWhtCertificateForOfficialIssue(doc, options));

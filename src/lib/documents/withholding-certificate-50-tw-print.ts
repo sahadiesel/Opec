@@ -11,6 +11,8 @@ import type {
   WithholdingCertificateDocument,
   WhtTaxCondition,
 } from '@/lib/types';
+import { whtCertificateThaiAddressDisplay } from '@/lib/wht/wht-address-display';
+import { effectiveWhtCertificateDocumentNo } from '@/lib/wht/wht-certificate-validation';
 
 /** @deprecated ใช้ snapshot จาก {@link WithholdingCertificateDocument} แทน — เก็บไว้ให้โค้ดเก่าอ้างอิงชื่อฟิลด์ */
 export type CompanyProfileForWhtCert = {
@@ -26,6 +28,11 @@ export interface WithholdingCertificateDocumentPrintOptions {
   copyVariant: WithholdingCertificateCopyVariant;
   /** true = เลขที่จริง (หลัง ISSUED); false = ร่าง/preview */
   official: boolean;
+  /**
+   * true = ไม่แสดงแถบตัวอย่างและไม่ใส่ข้อความ «ฉบับร่าง» ที่ช่องเลขที่ (ใช้ «—» ถ้ายังไม่มีเลขที่)
+   * — สำหรับพิมพ์ส่งลูกค้าจากหน้าร้านโดยไม่ต้องโชว์โหมดร่าง
+   */
+  hideDraftChrome?: boolean;
   printedByName: string;
   printedAtMs: number;
   showSignatureImage: boolean;
@@ -389,10 +396,11 @@ function buildWithholdingCertificateBodyHtml(
   doc: WithholdingCertificateDocument,
   opts: WithholdingCertificateDocumentPrintOptions,
 ): string {
-  const cnRaw = (doc.certificateNo || '').trim();
-  const cn = escapeHtml(
-    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
-  );
+  const cnRaw = effectiveWhtCertificateDocumentNo(doc);
+  const cnPlaceholderDraft = '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)';
+  const cnResolved =
+    opts.official && cnRaw ? cnRaw : opts.hideDraftChrome ? cnRaw || '—' : cnRaw || cnPlaceholderDraft;
+  const cn = escapeHtml(cnResolved);
 
   const issueDateDisp = formatYmdLocalThaiBE(doc.paymentIssueDate, '____/____/________');
   const payDateDisp = formatYmdLocalThaiBE(doc.paymentDate, '____/____/________');
@@ -402,6 +410,9 @@ function buildWithholdingCertificateBodyHtml(
   const payerIsHead = payer.branchType === 'HEAD_OFFICE';
   const payeeIsHead = payee.branchType === 'HEAD_OFFICE';
 
+  const payerAddrTh = whtCertificateThaiAddressDisplay(payer.addressTh);
+  const payeeAddrTh = whtCertificateThaiAddressDisplay(payee.addressTh);
+
   const whtWords = amountToThaiBahtText(doc.withholdingTaxAmount);
 
   const sigUrl = opts.showSignatureImage ? (doc.signatureImageUrl || '').trim() : '';
@@ -409,8 +420,10 @@ function buildWithholdingCertificateBodyHtml(
 
   const banner = escapeHtml(copyVariantBannerTh(opts.copyVariant));
 
+  const showDraftWatermark = !opts.official && !opts.hideDraftChrome;
+
   return `
-${!opts.official ? '<div class="draft-watermark">[ ตัวอย่างก่อนออกเอกสาร — ไม่ใช่หลักฐานทางการ ]</div>' : ''}
+${showDraftWatermark ? '<div class="draft-watermark">[ ตัวอย่างก่อนออกเอกสาร — ไม่ใช่หลักฐานทางการ ]</div>' : ''}
 <div class="copy-banner">${banner}</div>
 <div class="doc-top">
   <div class="doc-title-wrap">
@@ -426,11 +439,9 @@ ${!opts.official ? '<div class="draft-watermark">[ ตัวอย่างก�
 
 <div class="sec">1. ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>
 <div class="field">ชื่อบริษัท/ห้าง: ${escapeHtml(payer.legalNameTh || '—')}</div>
-${payer.legalNameEn ? `<div class="field muted">Name (EN): ${escapeHtml(payer.legalNameEn)}</div>` : ''}
 <div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payer.taxId || '—')}</div>
 <div class="field">ประเภทผู้เสียภาษี: ${escapeHtml(payerTaxpayerTypeTh(payer.taxpayerType))}</div>
-<div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payer.addressTh || '—')}</div>
-${payer.addressEn ? `<div class="field">ที่อยู่ (English): ${escapeHtml(payer.addressEn)}</div>` : ''}
+<div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payerAddrTh)}</div>
 ${payer.phone || payer.email ? `<div class="field">โทรศัพท์ / อีเมล: ${escapeHtml([payer.phone, payer.email].filter(Boolean).join(' · ') || '—')}</div>` : ''}
 <div class="field">สาขา: ${payerIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payerIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payerIsHead && payer.branchNo ? payer.branchNo : '__________')}</div>
 
@@ -438,8 +449,7 @@ ${payer.phone || payer.email ? `<div class="field">โทรศัพท์ / �
 <div class="field">ชื่อบุคคล/บริษัท/ห้าง: ${escapeHtml(payee.displayName || '—')}</div>
 <div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payee.taxId || '—')}</div>
 <div class="field">ประเภทคู่ค้า: ${escapeHtml(payeeCategoryTh(payee.vendorCategory))}${payee.countryCode ? ` · รหัสประเทศ ${escapeHtml(payee.countryCode)}` : ''}</div>
-<div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payee.addressTh || '—')}</div>
-${payee.addressEn ? `<div class="field">ที่อยู่ (English): ${escapeHtml(payee.addressEn)}</div>` : ''}
+<div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payeeAddrTh)}</div>
 <div class="field">สาขา: ${payeeIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payeeIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payeeIsHead && payee.branchNo ? payee.branchNo : '__________')}</div>
 
 <div class="sec">3. รายละเอียดการจ่ายเงิน</div>
@@ -502,10 +512,11 @@ export function buildWithholdingCertificateDocumentHtml(
   doc: WithholdingCertificateDocument,
   opts: WithholdingCertificateDocumentPrintOptions,
 ): string {
-  const cnRaw = (doc.certificateNo || '').trim();
-  const cn = escapeHtml(
-    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
-  );
+  const cnRaw = effectiveWhtCertificateDocumentNo(doc);
+  const cnPlaceholderDraft = '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)';
+  const cnResolved =
+    opts.official && cnRaw ? cnRaw : opts.hideDraftChrome ? cnRaw || '—' : cnRaw || cnPlaceholderDraft;
+  const cn = escapeHtml(cnResolved);
   const css = withholdingCertificatePrintCss();
   const inner = buildWithholdingCertificateBodyHtml(doc, opts);
 
@@ -521,10 +532,11 @@ export function buildWithholdingCertificatePayeeCopies12Html(
   doc: WithholdingCertificateDocument,
   opts: WithholdingCertificateDocumentPrintBaseOptions,
 ): string {
-  const cnRaw = (doc.certificateNo || '').trim();
-  const cn = escapeHtml(
-    opts.official && cnRaw ? cnRaw : cnRaw || '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)',
-  );
+  const cnRaw = effectiveWhtCertificateDocumentNo(doc);
+  const cnPlaceholderDraft = '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)';
+  const cnResolved =
+    opts.official && cnRaw ? cnRaw : opts.hideDraftChrome ? cnRaw || '—' : cnRaw || cnPlaceholderDraft;
+  const cn = escapeHtml(cnResolved);
   const css = withholdingCertificatePrintCss();
   const inner1 = buildWithholdingCertificateBodyHtml(doc, { ...opts, copyVariant: 'COPY_PAYEE_TAX_RETURN' });
   const inner2 = buildWithholdingCertificateBodyHtml(doc, { ...opts, copyVariant: 'COPY_PAYEE_RECORD' });

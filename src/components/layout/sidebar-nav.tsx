@@ -38,7 +38,6 @@ import {
   Building2,
   FlaskConical,
   ChevronRight,
-  Percent,
   Receipt,
   FileQuestion,
   Calculator,
@@ -126,14 +125,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     icon: Inbox,
     items: [
       { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
-      { key: 'accounts_payable', title: 'ตรวจสอบรายจ่าย (ใบรับวางบิล)', href: '/accounting/outgoing-review', icon: Banknote },
       { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
-      {
-        key: 'withholding_tax_items',
-        title: 'รายการหัก ณ ที่จ่าย',
-        href: '/accounting/withholding-tax',
-        icon: Percent,
-      },
     ],
   },
   {

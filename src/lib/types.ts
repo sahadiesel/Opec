@@ -2444,7 +2444,31 @@ export interface VendorBillSupportingDocumentLink {
 export type VendorBillVatTreatmentOverride = 'VAT_7' | 'NONE';
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
-export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PAID';
+export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID';
+
+/** บัญชีเลือกประเภทหัก ณ ที่จ่ายบนใบวางบิลก่อนจ่าย — อัตราและข้อความบนใบหัก ม.50 ทวิ */
+export type VendorBillWhtPresetCategory = 'TRANSPORT_FREIGHT' | 'SERVICE' | 'RENT';
+
+/** งวดจ่ายภายในใบรับวางบิลเดียว (แผนที่คลังกำหนด — ไม่ใช่แค่หมายเหตุ) */
+export type VendorBillInstallmentPayStatus = 'PENDING' | 'PAID';
+
+export interface VendorBillPaymentInstallment {
+  id: string;
+  sequence: number;
+  label: string;
+  /** ยอดรวม VAT ของงวดนี้ */
+  amountInclVat: number;
+  /** ค่า input type="date" */
+  dueDate?: string;
+  payStatus: VendorBillInstallmentPayStatus;
+  paidAt?: number;
+  paidByUid?: string;
+  paidByName?: string;
+  cashbookEntryId?: string;
+  cashbookEntryNo?: string;
+  paymentProofUrl?: string;
+  paymentProofFileName?: string;
+}
 
 /** รายการหัก ณ ที่จ่าย (ผู้รับเงิน) — สะสมเพื่อสรุปนำส่งสรรพากร ไม่ตัดบัญชีธนาคารตอนจ่ายคู่ค้า */
 export type WithholdingAtSourceStatus = 'OUTSTANDING' | 'REMITTED' | 'VOID';
@@ -2458,6 +2482,8 @@ export interface WithholdingAtSourceItem {
   vendorBillId: string;
   receiptNo?: string;
   milestoneId?: string;
+  /** แบ่งจ่ายหลายงวดในใบเดียว — อ้าง installment ที่จ่ายครั้งนี้ */
+  installmentId?: string;
   /** ยอดงวดรวม VAT (ก่อนหัก) */
   grossPaymentAmount: number;
   baseBeforeVat: number;
@@ -2678,6 +2704,19 @@ export interface PurchaseVendorBill {
   purchaseType?: PurchaseType;
   /** ผูกกับงวดชำระ (ถ้ามี) */
   milestoneId?: string;
+  /**
+   * แผนแบ่งจ่ายภายในใบเดียว (คลังกำหนด 1–N งวด) — ว่าง = จ่ายครั้งเดียวเต็มยอด (พฤติกรรมเดิม)
+   * เมื่อมีรายการนี้ ระบบจะติดตามยอดค้างในเจ้าหนี้ตามงวดที่จ่ายแล้ว / ยังไม่จ่าย
+   */
+  paymentInstallments?: VendorBillPaymentInstallment[];
+  /**
+   * ปิดเรื่องเอกสารตามเช็คลิส (ใบกำกับภาษี + ใบเสร็จรับเงินครบ) — สถานะปิดสมบูรณ์ทางเอกสาร
+   * แยกจากการจ่ายเงินครบทุกงวด
+   */
+  vendorBillDocumentationClosed?: boolean;
+  vendorBillDocumentationClosedAt?: number;
+  vendorBillDocumentationClosedByUid?: string;
+  vendorBillDocumentationClosedByName?: string;
   /** ยอดในใบนี้ — ถ้าไม่ระบุให้ใช้ยอดสุทธิทั้งใบสั่งซื้อ (ของเก่า) */
   billAmount?: number;
   /** ทับการตีความ VAT จาก PO (ถ้าไม่มี = ใช้ยอดภาษีใน PO) */
@@ -2712,8 +2751,11 @@ export interface PurchaseVendorBill {
   notes?: string;
   /** ลิงก์หนังสือรับรองหัก ณ ที่จ่าย (withholding_certificate_documents) */
   whtCertificateDocumentId?: string;
+  /** เลือกจากเมนูบัญชี (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) — ใช้แทนอัตราจาก PO เมื่อมีค่า */
+  vendorBillWhtPresetCategory?: VendorBillWhtPresetCategory;
   /**
    * บัญชีแก้อัตราหัก ณ ที่จ่ายเฉพาะใบนี้ (ก่อนจ่าย) เมื่อสโตร์ลง % จาก PO ผิด — ถ้าไม่มีใช้ purchase.supplierWithholdingRatePercent
+   * เมื่อเลือก preset ระบบจะซิงค์ค่านี้ให้ตรงกับอัตรา preset
    */
   supplierWithholdingRatePercentBill?: number;
   createdAt: number;

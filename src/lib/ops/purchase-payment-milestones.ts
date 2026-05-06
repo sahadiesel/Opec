@@ -5,6 +5,7 @@ import type {
   PurchasePaymentMilestone,
   PurchasePaymentMilestoneStatus,
   PurchaseVendorBill,
+  VendorBillWhtPresetCategory,
 } from '@/lib/types';
 
 export function roundMoney2(n: number): number {
@@ -103,11 +104,32 @@ export function milestoneAmountBeforeVAT(
   return roundMoney2((m * before) / total);
 }
 
-/** อัตราหัก ณ ที่จ่ายที่ใช้กับใบวางบิลนี้ — override บนบิล (บัญชีแก้) หรือจาก PO */
+/** อัตราตามเมนูบัญชี (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) */
+export function vendorBillWhtPresetRatePercent(category: VendorBillWhtPresetCategory): number {
+  switch (category) {
+    case 'TRANSPORT_FREIGHT':
+      return 1;
+    case 'SERVICE':
+      return 3;
+    case 'RENT':
+      return 5;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * อัตราหัก ณ ที่จ่ายที่ใช้กับใบวางบิลนี้
+ * ลำดับ: เลือกประเภทจากเมนูบัญชี → % แก้มือบนบิล → จาก PO
+ */
 export function effectiveVendorBillWhtRatePercent(
-  bill: Pick<PurchaseVendorBill, 'supplierWithholdingRatePercentBill'>,
+  bill: Pick<PurchaseVendorBill, 'supplierWithholdingRatePercentBill' | 'vendorBillWhtPresetCategory'>,
   purchase: Pick<Purchase, 'supplierWithholdingRatePercent'>,
 ): number {
+  const cat = bill.vendorBillWhtPresetCategory;
+  if (cat === 'TRANSPORT_FREIGHT' || cat === 'SERVICE' || cat === 'RENT') {
+    return vendorBillWhtPresetRatePercent(cat);
+  }
   const o = bill.supplierWithholdingRatePercentBill;
   if (o !== undefined && o !== null && Number.isFinite(Number(o))) {
     return Math.max(0, Number(o));

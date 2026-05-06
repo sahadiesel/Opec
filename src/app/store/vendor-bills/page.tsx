@@ -96,6 +96,8 @@ function statusBadge(status: PurchaseVendorBillStatus) {
       return <Badge variant="outline">ฉบับร่าง</Badge>;
     case 'SUBMITTED':
       return <Badge className="bg-amber-600">รอจ่ายเงิน</Badge>;
+    case 'PARTIALLY_PAID':
+      return <Badge className="bg-orange-600">จ่ายบางส่วน</Badge>;
     case 'PAID':
       return <Badge className="bg-green-600">จ่ายแล้ว</Badge>;
     default:
@@ -167,7 +169,12 @@ export default function StoreVendorBillsPage() {
   const billsFiltered = useMemo(() => {
     if (!bills) return [];
     const qq = billSearch.trim().toLowerCase();
-    let list = tab === 'all' ? bills : bills.filter((b) => b.status === tab);
+    let list =
+      tab === 'all'
+        ? bills
+        : tab === 'SUBMITTED'
+          ? bills.filter((b) => b.status === 'SUBMITTED' || b.status === 'PARTIALLY_PAID')
+          : bills.filter((b) => b.status === tab);
     list = list.filter((b) => {
       if (billVendorId !== 'all' && b.vendorId !== billVendorId) return false;
       if (billMonth !== 'all') {

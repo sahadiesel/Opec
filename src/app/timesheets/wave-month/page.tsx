@@ -356,51 +356,55 @@ export default function WaveMonthTimesheetSummaryPage() {
   }, [mobAssignments, monthYm, reviewByWaveId, poMonthByPoId]);
 
   const poActiveAutoDailySyncLockRef = useRef(false);
-  const lastBangkokYmdWaveMonthRef = useRef(thailandTodayYmd());
+  /** กันยิงซ้ำทั้งเดือน — คีย์ต่อเดือนปฏิทิน + วันนี้เขตไทย (วันใหม่จะรันเติมย้อนหลังในเดือนอีกครั้ง) */
+  const waveMonthPoAutoHealSucceededKeyRef = useRef<string>('');
 
-  const runSilentTodayPoActiveAutoDaily = useCallback(async () => {
+  useEffect(() => {
+    waveMonthPoAutoHealSucceededKeyRef.current = '';
+  }, [monthYm]);
+
+  const runWaveMonthPoActiveAutoHeal = useCallback(async () => {
     if (!firestore || !currentUser || !canEditTs || silentPoActiveAutoDailyIds.length === 0) return;
+    const todayYmd = thailandTodayYmd();
+    if (!todayYmd.startsWith(monthYm)) return;
+    const idsFingerprint = [...silentPoActiveAutoDailyIds].sort().join(',');
+    const runKey = `${monthYm}|${todayYmd}|${idsFingerprint}`;
+    if (waveMonthPoAutoHealSucceededKeyRef.current === runKey) return;
     if (poActiveAutoDailySyncLockRef.current) return;
     poActiveAutoDailySyncLockRef.current = true;
     try {
       for (const aid of silentPoActiveAutoDailyIds) {
         try {
-          await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, { todayOnly: true });
+          await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, {
+            backfillCalendarMonthYm: monthYm,
+          });
         } catch {
           /* สิทธิ์/เครือข่ายรายแถว — ไม่รบกวนผู้ใช้ */
         }
       }
+      waveMonthPoAutoHealSucceededKeyRef.current = runKey;
     } finally {
       poActiveAutoDailySyncLockRef.current = false;
     }
-  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds]);
+  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds, monthYm]);
 
   useEffect(() => {
-    lastBangkokYmdWaveMonthRef.current = thailandTodayYmd();
-    void runSilentTodayPoActiveAutoDaily();
-  }, [runSilentTodayPoActiveAutoDaily]);
+    void runWaveMonthPoActiveAutoHeal();
+  }, [runWaveMonthPoActiveAutoHeal]);
 
   useEffect(() => {
     if (!canEditTs || !firestore) return;
     const iv = window.setInterval(() => {
-      const y = thailandTodayYmd();
-      if (y !== lastBangkokYmdWaveMonthRef.current) {
-        lastBangkokYmdWaveMonthRef.current = y;
-        void runSilentTodayPoActiveAutoDaily();
-      }
+      void runWaveMonthPoActiveAutoHeal();
     }, 45_000);
     return () => window.clearInterval(iv);
-  }, [canEditTs, firestore, runSilentTodayPoActiveAutoDaily]);
+  }, [canEditTs, firestore, runWaveMonthPoActiveAutoHeal]);
 
   useEffect(() => {
     if (!canEditTs || !firestore) return;
     const onVis = () => {
       if (document.visibilityState !== 'visible') return;
-      const y = thailandTodayYmd();
-      if (y !== lastBangkokYmdWaveMonthRef.current) {
-        lastBangkokYmdWaveMonthRef.current = y;
-        void runSilentTodayPoActiveAutoDaily();
-      }
+      void runWaveMonthPoActiveAutoHeal();
     };
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('focus', onVis);
@@ -408,7 +412,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', onVis);
     };
-  }, [canEditTs, firestore, runSilentTodayPoActiveAutoDaily]);
+  }, [canEditTs, firestore, runWaveMonthPoActiveAutoHeal]);
 
   useEffect(() => {
     if (!firestore || !currentUser || !monthYm || !canViewTs) return;

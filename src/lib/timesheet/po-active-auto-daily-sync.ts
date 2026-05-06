@@ -29,12 +29,18 @@ import {
   poActiveDailyTimesheetDocId,
   resolvePoActiveAutoDailySyncKind,
 } from '@/lib/timesheet/po-active-auto-daily-build';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 
 export type PoActiveAutoDailySyncOptions = {
   /** เติมเฉพาะ yyyy-mm-dd ปัจจุบันในเขตไทย — ใช้หลังเที่ยงคืนหรือเปิดกระดาน */
   todayOnly?: boolean;
+  /**
+   * เติมทุกวันในเดือนปฏิทิน yyyy-mm ที่อยู่ในช่วง mobilization และไม่เกินวันนี้ (เขตไทย)
+   * — ใช้หน้า wave-month เพื่อเติมช่องว่าง "-" ย้อนหลังในเดือนปัจจุบัน (todayOnly มีลำดับก่อนถ้าเปิดพร้อมกัน)
+   */
+  backfillCalendarMonthYm?: string;
   /** ปุ่ม Auto gen / ซิงก์ที่ Mobilization — ข้ามการเช็คปิด master ของ bundle */
   ignoreBundleAutoDisabled?: boolean;
 };
@@ -125,7 +131,17 @@ export async function syncPoActiveAutoDailyForAssignment(
 
   const rangeDates = [...eachYmdInRange(range.start, range.end)];
   const todayYmd = thailandTodayYmd();
-  const datesToSync = options?.todayOnly ? rangeDates.filter((d) => d === todayYmd) : rangeDates;
+  const ymBf = (options?.backfillCalendarMonthYm || '').trim();
+  let datesToSync: string[];
+  if (options?.todayOnly) {
+    datesToSync = rangeDates.filter((d) => d === todayYmd);
+  } else if (/^\d{4}-\d{2}$/.test(ymBf)) {
+    const ms = `${ymBf}-01`;
+    const me = lastDayOfCalendarMonth(ymBf);
+    datesToSync = rangeDates.filter((d) => d >= ms && d <= me && d <= todayYmd);
+  } else {
+    datesToSync = rangeDates;
+  }
 
   const eligibleDates = datesToSync.filter((d) => resolvePoActiveAutoDailySyncKind(assignment, d) !== null);
   if (eligibleDates.length === 0) {

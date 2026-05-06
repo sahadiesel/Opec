@@ -38,7 +38,8 @@ export const PO_ACTIVE_STANDBY_STOP_AUTO_DAYS = 7;
 
 /**
  * ว่าจะซิงก์ PO Active auto สำหรับวันนี้เป็น work / standby / ไม่ซิงก์
- * — null = ไม่สร้างหรือไม่อัปเดตแถวอัตโนมัติสำหรับวันนั้น (ช่วงหลังจบ SB หรือข้อมูลระงับไม่ครบ)
+ * — null = ไม่สร้างหรือไม่อัปเดตแถวอัตโนมัติสำหรับวันนั้น (เช่น flag ระงับแต่ไม่มีช่วง SB ครบ)
+ * — หลังจบช่วง SB ให้กลับลง work_day อัตโนมัติ (ไม่ปิดการซิงก์ถาวรจนกว่าจะไปแก้ Mobilization)
  */
 export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string): 'work_day' | 'standby_day' | null {
   if (!isAssignmentEligibleForPoActiveAutoDaily(a)) return null;
@@ -49,7 +50,6 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
   if (suspended) {
     if (!hasSeg) return null;
     if (dateYmd >= sbStart && dateYmd <= sbEnd) return 'standby_day';
-    if (dateYmd > sbEnd) return null;
   }
   return 'work_day';
 }

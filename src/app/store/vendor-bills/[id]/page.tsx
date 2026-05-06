@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,7 @@ import {
   Loader2,
   Send,
   Banknote,
+  Building2,
   ClipboardCheck,
   FileText,
   Printer,
@@ -48,18 +49,30 @@ import {
   PurchaseRequest,
   PurchaseVendorBill,
   PurchaseVendorBillStatus,
+  VendorBillPaymentInstallment,
   User,
   Vendor,
   VendorBillSupportingDocumentLink,
   VendorBillVatTreatmentOverride,
+  VendorBillWhtPresetCategory,
   WithholdingCertificateCopyVariant,
   WithholdingCertificateDocument,
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
 import {
+  billUsesPaymentInstallmentPlan,
+  buildEqualInstallmentDrafts,
+  mergePaidInstallmentsWithPendingDraft,
+  singleFullInstallment,
+  validateInstallmentsAgainstTotal,
+  vendorBillRemainingForPendingInstallments,
+  vendorBillTotalInclVat,
+} from '@/lib/ops/vendor-bill-installment-plan';
+import {
   effectiveVendorBillWhtRatePercent,
   roundMoney2,
   supplierWithholdingOnMilestone,
+  vendorBillWhtPresetRatePercent,
 } from '@/lib/ops/purchase-payment-milestones';
 import {
   buildWithholdingCertificateDocumentHtml,
@@ -73,7 +86,9 @@ import {
   type CompanyProfileWhtInput,
 } from '@/lib/wht/wht-certificate-build';
 import { buildWhtAuditLogEntry } from '@/lib/wht/wht-certificate-audit';
+import { assignWhtCertificateNumberIfMissing } from '@/lib/wht/wht-certificate-assign-number';
 import {
+  effectiveWhtCertificateDocumentNo,
   validateWhtCertificateForOfficialPrint,
   validateWhtCertificateForPayeeCopies12Print,
   validateWhtCertificateForPreviewPrint,
@@ -113,14 +128,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   uploadVendorBillPaymentProofPdf,
-  uploadVendorBillWhtProofPdf,
-  validateVendorBillPaymentProofPdf,
+  validateVendorBillPaymentProof,
 } from '@/lib/storage/vendor-bill-payment-proofs';
 
 function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
   if (s === 'SUBMITTED') return 'รอจ่ายเงิน';
-  return 'จ่ายแล้ว';
+  if (s === 'PARTIALLY_PAID') return 'จ่ายบางส่วน';
+  return 'จ่ายครบแล้ว';
 }
 
 type SupportingFormRow = { attached: boolean; documentNo: string; documentDate: string };
@@ -148,6 +163,18 @@ function validateSupportingRow(label: string, row: SupportingFormRow): string | 
     return `${label}: ต้องระบุเลขที่และวันที่เมื่อติ๊กแนบเอกสาร`;
   }
   return null;
+}
+
+const WHT_PRESET_OPTIONS: { id: VendorBillWhtPresetCategory; title: string; detail: string }[] = [
+  { id: 'TRANSPORT_FREIGHT', title: 'ค่าขนส่ง', detail: 'หัก ณ ที่จ่าย 1%' },
+  { id: 'SERVICE', title: 'ค่าบริการ', detail: 'หัก ณ ที่จ่าย 3%' },
+  { id: 'RENT', title: 'ค่าเช่า', detail: 'หัก ณ ที่จ่าย 5%' },
+];
+
+function inferWhtPresetFromEffectiveRate(rate: number): VendorBillWhtPresetCategory {
+  if (Math.abs(rate - 1) < 0.02) return 'TRANSPORT_FREIGHT';
+  if (Math.abs(rate - 5) < 0.02) return 'RENT';
+  return 'SERVICE';
 }
 
 type VatModeUi = 'AUTO' | VendorBillVatTreatmentOverride;
@@ -276,9 +303,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const { data: whtAtSourceRows } = useCollection(whtAtSourceQuery as any);
   const whtAtSourceItem = whtAtSourceRows?.[0] as { id?: string } | undefined;
 
-  const canWhtAccounting = useMemo(() => canCreateVerifyPrintWhtCertificate(currentUser), [currentUser]);
   const canPreviewVendorBillWht = useMemo(
     () => canPreviewVendorBillWhtCertificate(currentUser),
+    [currentUser],
+  );
+  const canAssignWhtCertificateNo = useMemo(
+    () => canCreateVerifyPrintWhtCertificate(currentUser),
     [currentUser],
   );
 
@@ -290,15 +320,18 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [payoutEntryDate, setPayoutEntryDate] = useState('');
   const [paying, setPaying] = useState(false);
   const [paymentProofFile, setPaymentProofFile] = useState<File | null>(null);
-  const [whtPaymentProofFile, setWhtPaymentProofFile] = useState<File | null>(null);
-  const [createWhtBusy, setCreateWhtBusy] = useState(false);
+  const paymentProofInputRef = useRef<HTMLInputElement>(null);
   const [submittedWhtBusy, setSubmittedWhtBusy] = useState(false);
   const [whtPrintBusy, setWhtPrintBusy] = useState(false);
+  const [whtAssignNoBusy, setWhtAssignNoBusy] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   /** บัญชีแก้ % หัก ณ ที่จ่ายเฉพาะใบนี้ (ก่อนจ่าย) */
   const [whtRateEditOpen, setWhtRateEditOpen] = useState(false);
   const [whtRateInput, setWhtRateInput] = useState('');
   const [whtRateSaving, setWhtRateSaving] = useState(false);
+  const [whtPresetDialogOpen, setWhtPresetDialogOpen] = useState(false);
+  const [whtPresetChoice, setWhtPresetChoice] = useState<VendorBillWhtPresetCategory>('SERVICE');
+  const [whtPresetSaving, setWhtPresetSaving] = useState(false);
   /** พรีวิว + เลือกชุดพิมพ์หัก ณ ที่จ่าย (หลังจ่ายแล้ว) */
   const [whtHubOpen, setWhtHubOpen] = useState(false);
   const [vatMode, setVatMode] = useState<VatModeUi>('AUTO');
@@ -311,6 +344,17 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [supportingReceipt, setSupportingReceipt] = useState<SupportingFormRow>(() =>
     supportingFromBill(undefined),
   );
+  const [installmentsDraft, setInstallmentsDraft] = useState<VendorBillPaymentInstallment[]>([]);
+  const [installmentPayTargetId, setInstallmentPayTargetId] = useState('');
+  const [docCloseBusy, setDocCloseBusy] = useState(false);
+  /** ปิดเรื่องเอกสาร: ติ๊ก + เลขที่ใบกำกับ / ใบเสร็จ */
+  const [docCloseTiChecked, setDocCloseTiChecked] = useState(false);
+  const [docCloseRcChecked, setDocCloseRcChecked] = useState(false);
+  const [docCloseTiNo, setDocCloseTiNo] = useState('');
+  const [docCloseRcNo, setDocCloseRcNo] = useState('');
+  /** แบ่งงวดเฉพาะส่วนที่ยัง PENDING — แผนกบัญชีแก้ได้แม้สโตร์ส่งมาเป็นงวดเดียว */
+  const [accountingInstallmentDraft, setAccountingInstallmentDraft] = useState<VendorBillPaymentInstallment[]>([]);
+  const [accountingPlanSaving, setAccountingPlanSaving] = useState(false);
 
   useEffect(() => {
     if (!bill) return;
@@ -321,10 +365,47 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     setSupportingDelivery(supportingFromBill(bill.supportingDeliveryNote));
     setSupportingTaxInv(supportingFromBill(bill.supportingTaxInvoice));
     setSupportingReceipt(supportingFromBill(bill.supportingMoneyReceipt));
-    if (bill.status === 'SUBMITTED') {
-      setPayoutEntryDate((d) => d || timestampToHtmlDateValue(Date.now()));
+    if (bill.status === 'DRAFT' && purchase) {
+      if (bill.paymentInstallments?.length) {
+        setInstallmentsDraft(bill.paymentInstallments);
+      } else {
+        setInstallmentsDraft(singleFullInstallment(vendorBillTotalInclVat(bill, purchase)));
+      }
     }
-  }, [bill?.id, bill?.status]);
+    if (bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID') {
+      setPayoutEntryDate((d) => d || timestampToHtmlDateValue(Date.now()));
+      const pending = (bill.paymentInstallments ?? []).filter((i) => i.payStatus === 'PENDING');
+      setInstallmentPayTargetId((prev) =>
+        prev && pending.some((p) => p.id === prev) ? prev : pending[0]?.id ?? '',
+      );
+      if (purchase) {
+        const pendingRows = (bill.paymentInstallments ?? []).filter((i) => i.payStatus === 'PENDING');
+        const remaining = vendorBillRemainingForPendingInstallments(bill, purchase);
+        if (pendingRows.length > 0) {
+          setAccountingInstallmentDraft(pendingRows);
+        } else if (remaining > 0.005) {
+          setAccountingInstallmentDraft(singleFullInstallment(remaining));
+        } else {
+          setAccountingInstallmentDraft([]);
+        }
+      }
+    }
+  }, [bill?.id, bill?.status, bill?.updatedAt, purchase?.id]);
+
+  useEffect(() => {
+    if (!bill || bill.status === 'DRAFT') return;
+    setDocCloseTiChecked(!!bill.supportingTaxInvoice?.attached);
+    setDocCloseRcChecked(!!bill.supportingMoneyReceipt?.attached);
+    setDocCloseTiNo((bill.supportingTaxInvoice?.documentNo || '').trim());
+    setDocCloseRcNo((bill.supportingMoneyReceipt?.documentNo || '').trim());
+  }, [
+    bill?.id,
+    bill?.status,
+    bill?.supportingTaxInvoice?.attached,
+    bill?.supportingMoneyReceipt?.attached,
+    bill?.supportingTaxInvoice?.documentNo,
+    bill?.supportingMoneyReceipt?.documentNo,
+  ]);
 
   const grossForPayment = useMemo(() => {
     if (!purchase || !bill) return 0;
@@ -343,9 +424,21 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     [bill, purchase],
   );
   const poWhtRatePercent = useMemo(() => Number(purchase?.supplierWithholdingRatePercent) || 0, [purchase]);
-  const hasBillWhtRateOverride =
+  const hasVendorBillWhtPreset = !!bill?.vendorBillWhtPresetCategory;
+  const hasManualBillWhtRate =
     bill?.supplierWithholdingRatePercentBill != null &&
     Number.isFinite(Number(bill.supplierWithholdingRatePercentBill));
+  /** แก้ % มือบนบิล โดยไม่ได้เลือกเมนูประเภท (preset จะซิงค์ % ลงบิลด้วย — แยกด้วยฟิลด์ preset) */
+  const hasManualWhtOnly = hasManualBillWhtRate && !hasVendorBillWhtPreset;
+
+  const vendorPayeeBankDisplay = useMemo(() => {
+    if (!vendor) return null;
+    const bankName = vendor.bankName?.trim();
+    const acctName = vendor.bankAccountName?.trim();
+    const acctNo = vendor.bankAccountNumber?.trim();
+    if (!bankName && !acctName && !acctNo) return null;
+    return { bankName, acctName, acctNo };
+  }, [vendor]);
 
   /** ฐานหัก ณ ที่จ่าย — อัตราใช้ override บนใบวางบิล (บัญชีแก้) ถ้ามี ไม่เช่นนั้นใช้จาก PO */
   const withholdingPreview = useMemo(() => {
@@ -362,6 +455,29 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   }, [purchase, linkedMilestone, bill]);
 
   const canPrintWithholdingSummary = !!withholdingPreview && withholdingPreview.wht > 0.005;
+
+  const billHasInstallmentPlan = useMemo(
+    () => !!(bill && billUsesPaymentInstallmentPlan(bill)),
+    [bill],
+  );
+
+  const payoutGrossInclVat = useMemo(() => {
+    if (!bill || !purchase) return grossInclVatForBill;
+    if (!billHasInstallmentPlan || !installmentPayTargetId) return grossInclVatForBill;
+    const row = bill.paymentInstallments!.find((i) => i.id === installmentPayTargetId);
+    if (!row || row.payStatus !== 'PENDING') return grossInclVatForBill;
+    return roundMoney2(Number(row.amountInclVat) || 0);
+  }, [bill, purchase, billHasInstallmentPlan, installmentPayTargetId, grossInclVatForBill]);
+
+  const withholdingAtPayout = useMemo(() => {
+    if (!purchase?.supplierWithholdingEnabled || !bill) return null;
+    const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
+    if (rate < 0.005) return null;
+    if (payoutGrossInclVat < 0.01) return null;
+    return supplierWithholdingOnMilestone(payoutGrossInclVat, rate, purchase);
+  }, [purchase, bill, payoutGrossInclVat]);
+
+  const canPrintWithholdingAtPayout = !!withholdingAtPayout && withholdingAtPayout.wht > 0.005;
 
   /** เอกสารหัก ฯ สำหรับพิมพ์/พรีวิว — ใช้ของจริงจาก Firestore หรือประกอบจาก cashbook ถ้ายังไม่มีเลขเอกสาร */
   const effectiveWhtPrintDoc = useMemo((): WithholdingCertificateDocument | null => {
@@ -412,9 +528,19 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   /** ตรงกับ executeVendorBillPayment: ตัดธนาคารเฉพาะสุทธิจ่ายคู่ค้า — หัก ณ ที่จ่ายไม่ผ่านบัญชี */
   const bankDebitAmount = useMemo(() => {
-    if (withholdingPreview && withholdingPreview.wht > 0.005) return withholdingPreview.netPaid;
-    return grossInclVatForBill || grossForPayment;
-  }, [withholdingPreview, grossForPayment, grossInclVatForBill]);
+    const awaiting = bill?.status === 'SUBMITTED' || bill?.status === 'PARTIALLY_PAID';
+    const wht = awaiting ? withholdingAtPayout : withholdingPreview;
+    const gross = awaiting ? payoutGrossInclVat : grossInclVatForBill;
+    if (wht && wht.wht > 0.005) return wht.netPaid;
+    return gross || grossForPayment;
+  }, [
+    bill?.status,
+    withholdingPreview,
+    withholdingAtPayout,
+    payoutGrossInclVat,
+    grossInclVatForBill,
+    grossForPayment,
+  ]);
 
   const billFinancialSlice = useMemo(() => {
     if (!purchase || !bill) return null;
@@ -445,7 +571,11 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   /** พิมพ์ตัวอย่างหนังสือรับรองก่อนบันทึกจ่าย — ใช้วันที่/ธนาคารจากฟอร์มด้านบน (ไม่เผาเลขที่จริง) */
   const handleSubmittedPreviewWhtCertificate = async () => {
-    if (!currentUser || !purchase || !bill || !vendor || !withholdingPreview || !canPrintWithholdingSummary) {
+    const whtPrev =
+      bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID' ? withholdingAtPayout : withholdingPreview;
+    const grossPrev =
+      bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID' ? payoutGrossInclVat : grossInclVatForBill;
+    if (!currentUser || !purchase || !bill || !vendor || !whtPrev || !(whtPrev.wht > 0.005)) {
       return;
     }
     if (!canPreviewVendorBillWht) return;
@@ -467,8 +597,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       paymentMethod: payoutMethod,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      grossPaymentAmount: grossInclVatForBill,
-      ...(withholdingPreview.wht > 0.005 ? { supplierWithholdingAmount: withholdingPreview.wht } : {}),
+      grossPaymentAmount: grossPrev,
+      ...(whtPrev.wht > 0.005 ? { supplierWithholdingAmount: whtPrev.wht } : {}),
     };
     setSubmittedWhtBusy(true);
     try {
@@ -498,6 +628,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       const html = buildWithholdingCertificateDocumentHtml(previewDoc, {
         copyVariant: 'COPY_PAYEE_TAX_RETURN',
         official: false,
+        hideDraftChrome: true,
         printedByName: actor,
         printedAtMs: Date.now(),
         ...mergeWhtCertDisplaySettings(companyProfile),
@@ -518,16 +649,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     whtDoc: WithholdingCertificateDocument,
     variant: WithholdingCertificateCopyVariant,
     official: boolean,
+    hideDraftChrome = false,
   ) => {
     if (!currentUser) return;
-    if (official && !canWhtAccounting) {
-      toast({
-        variant: 'destructive',
-        title: 'พิมพ์ทางการไม่ได้',
-        description: 'ใช้สิทธิ์เจ้าหน้าที่บัญชีเพื่อพิมพ์สำเนาทางการหลังออกเลขที่แล้ว',
-      });
-      return;
-    }
     setWhtPrintBusy(true);
     try {
       const actor =
@@ -542,6 +666,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       const html = buildWithholdingCertificateDocumentHtml(whtDoc, {
         copyVariant: variant,
         official,
+        hideDraftChrome,
         printedByName: actor,
         printedAtMs: Date.now(),
         ...mergeWhtCertDisplaySettings(companyProfile),
@@ -581,16 +706,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const runWhtCertificatePayeeCopies12Print = async (
     whtDoc: WithholdingCertificateDocument,
     official: boolean,
+    hideDraftChrome = false,
   ) => {
     if (!currentUser) return;
-    if (official && !canWhtAccounting) {
-      toast({
-        variant: 'destructive',
-        title: 'พิมพ์ทางการไม่ได้',
-        description: 'ใช้สิทธิ์เจ้าหน้าที่บัญชีเพื่อพิมพ์ชุดทางการหลังออกเลขที่แล้ว',
-      });
-      return;
-    }
     setWhtPrintBusy(true);
     try {
       const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
@@ -601,6 +719,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       }
       const html = buildWithholdingCertificatePayeeCopies12Html(whtDoc, {
         official,
+        hideDraftChrome,
         printedByName: actor,
         printedAtMs: Date.now(),
         ...mergeWhtCertDisplaySettings(companyProfile),
@@ -636,19 +755,43 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     }
   };
 
+  const whtHubOfficialPrint = useMemo(() => {
+    if (!effectiveWhtPrintDoc) return false;
+    return (
+      effectiveWhtPrintDoc.documentStatus === 'ISSUED' &&
+      !!effectiveWhtCertificateDocumentNo(effectiveWhtPrintDoc)
+    );
+  }, [effectiveWhtPrintDoc]);
+
   const whtHubPreviewHtml = useMemo(() => {
     if (!whtHubOpen || !effectiveWhtPrintDoc || !currentUser) return '';
     const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
-    const errs = validateWhtCertificateForPreviewPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN');
+    const errs = whtHubOfficialPrint
+      ? validateWhtCertificateForOfficialPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN')
+      : validateWhtCertificateForPreviewPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN');
     if (errs.length) return '';
     return buildWithholdingCertificateDocumentHtml(effectiveWhtPrintDoc, {
       copyVariant: 'COPY_PAYEE_TAX_RETURN',
-      official: false,
+      official: whtHubOfficialPrint,
+      hideDraftChrome: true,
       printedByName: actor,
       printedAtMs: Date.now(),
       ...mergeWhtCertDisplaySettings(companyProfile),
     });
-  }, [whtHubOpen, effectiveWhtPrintDoc, currentUser, companyProfile]);
+  }, [whtHubOpen, effectiveWhtPrintDoc, currentUser, companyProfile, whtHubOfficialPrint]);
+
+  const whtHubIframeKey = useMemo(() => {
+    const d = whtCertificate ?? effectiveWhtPrintDoc;
+    if (!d?.id) return 'wht-preview';
+    return `${d.id}-${effectiveWhtCertificateDocumentNo(d)}-${d.updatedAt ?? 0}`;
+  }, [whtCertificate, effectiveWhtPrintDoc]);
+
+  const showWhtAssignNumberPanel =
+    !!bill?.whtCertificateDocumentId &&
+    !!whtCertificate &&
+    !effectiveWhtCertificateDocumentNo(whtCertificate) &&
+    whtCertificate.documentStatus !== 'CANCELLED' &&
+    canAssignWhtCertificateNo;
 
   const openWhtPreviewHub = () => {
     if (!effectiveWhtPrintDoc) {
@@ -659,7 +802,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       });
       return;
     }
-    const errs = validateWhtCertificateForPreviewPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN');
+    const officialReady =
+      effectiveWhtPrintDoc.documentStatus === 'ISSUED' &&
+      !!effectiveWhtCertificateDocumentNo(effectiveWhtPrintDoc);
+    const errs = officialReady
+      ? validateWhtCertificateForOfficialPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN')
+      : validateWhtCertificateForPreviewPrint(effectiveWhtPrintDoc, 'COPY_PAYEE_TAX_RETURN');
     if (errs.length) {
       toast({ variant: 'destructive', title: 'เปิดพรีวิวไม่ได้', description: errs.join(' ') });
       return;
@@ -675,88 +823,39 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     openWithholdingCertificatePreviewTab(whtHubPreviewHtml);
   };
 
-  const handleCreateWhtCertificate = async () => {
-    if (
-      !firestore ||
-      !billRef ||
-      !currentUser ||
-      !purchase ||
-      !bill ||
-      !vendor ||
-      !withholdingPreview ||
-      !canPrintWithholdingSummary ||
-      !payoutCashbook
-    ) {
+  const handleAssignWhtCertificateNumber = async () => {
+    if (!firestore || !whtCertRef || !currentUser || !whtCertificate || !bill?.whtCertificateDocumentId) {
       toast({
         variant: 'destructive',
-        title: 'สร้างไม่ได้',
-        description: 'ต้องมีรายการจ่าย (cashbook) และข้อมูลครบหลังบันทึกจ่ายแล้ว',
+        title: 'ดำเนินการไม่ได้',
+        description: 'ไม่พบเอกสารหัก ณ ที่จ่ายที่บันทึกไว้ในระบบ — ถ้ายังไม่จ่ายหรือจ่ายไม่สำเร็จให้บันทึกจ่ายใหม่',
       });
       return;
     }
-    setCreateWhtBusy(true);
+    setWhtAssignNoBusy(true);
     try {
-      const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
-      const draft = buildWithholdingCertificateDraft({
-        bill,
-        purchase,
-        vendor,
-        company: companyProfile ?? undefined,
-        milestone: linkedMilestone ?? undefined,
-        cashbook: payoutCashbook,
-        bank: payoutBankAccount ?? undefined,
-        paymentDateYmd: payoutCashbook.entryDate,
-        paymentIssueDateYmd: payoutCashbook.entryDate,
-        paymentMethod: payoutCashbook.paymentMethod,
-        sourceWithholdingAtSourceItemId: whtAtSourceItem?.id,
+      const { certificateNo } = await assignWhtCertificateNumberIfMissing({
+        firestore,
+        certRef: whtCertRef,
+        wht: whtCertificate,
+        currentUser,
       });
-      draft.createdByUid = currentUser.id;
-      draft.createdByName = actor;
-
-      const certRef = doc(collection(firestore, 'withholding_certificate_documents'));
-      const batch = writeBatch(firestore);
-      batch.set(certRef, stripUndefinedForFirestore({ id: certRef.id, ...draft }));
-      batch.update(billRef, {
-        whtCertificateDocumentId: certRef.id,
-        updatedAt: Date.now(),
-      });
-      const logRef = doc(
-        collection(firestore, 'withholding_certificate_documents', certRef.id, 'audit_logs'),
-      );
-      batch.set(
-        logRef,
-        stripUndefinedForFirestore({
-          id: logRef.id,
-          ...buildWhtAuditLogEntry({
-            documentId: certRef.id,
-            action: 'CREATE_WHT',
-            actorId: currentUser.id,
-            actorName: actor,
-            payloadSummary: { sourceVendorBillId: bill.id },
-          }),
-        }),
-      );
-      await batch.commit();
-      toast({
-        title: 'สร้างหนังสือรับรองแล้ว',
-        description: 'เปิดหน้ารายละเอียดเพื่อตรวจสอบและออกเลขที่',
-      });
+      toast({ title: 'ออกเลขที่แล้ว', description: `เลขที่ ${certificateNo} — พรีวิวจะอัปเดตอัตโนมัติ` });
     } catch (e) {
-      console.error(e);
       toast({
         variant: 'destructive',
-        title: 'สร้างไม่สำเร็จ',
+        title: 'ออกเลขที่ไม่ได้',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      setCreateWhtBusy(false);
+      setWhtAssignNoBusy(false);
     }
   };
 
   const buildVendorBillDetailPayload = (): Record<string, unknown> => {
     if (!bill) return {};
     const prNo = bill.purchaseRequestNo?.trim() || purchaseRequest?.requestNo?.trim();
-    return {
+    const base: Record<string, unknown> = {
       billingReceivedDate: billingDate,
       plannedPaymentDate: payDate,
       notes,
@@ -769,12 +868,54 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       supportingMoneyReceipt: supportingToFirestore(supportingReceipt),
       updatedAt: Date.now(),
     };
+    if (bill.status === 'DRAFT' && purchase) {
+      base.paymentInstallments = stripUndefinedForFirestore(installmentsDraft);
+    }
+    return base;
   };
 
   const saveDraft = async () => {
     if (!billRef || !bill || bill.status !== 'DRAFT') return;
     await updateDocumentNonBlocking(billRef, buildVendorBillDetailPayload());
     toast({ title: 'บันทึกฉบับร่างแล้ว' });
+  };
+
+  const saveAccountingInstallmentPlan = async () => {
+    if (!billRef || !bill || !purchase || !canPay) return;
+    if (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') return;
+    const remaining = vendorBillRemainingForPendingInstallments(bill, purchase);
+    const pendingErr = validateInstallmentsAgainstTotal(accountingInstallmentDraft, remaining);
+    if (pendingErr) {
+      toast({
+        variant: 'destructive',
+        title: 'แผนงวดไม่ตรงยอดคงค้าง',
+        description: pendingErr,
+      });
+      return;
+    }
+    const merged = mergePaidInstallmentsWithPendingDraft(bill, accountingInstallmentDraft);
+    const fullErr = validateInstallmentsAgainstTotal(merged, vendorBillTotalInclVat(bill, purchase));
+    if (fullErr) {
+      toast({ variant: 'destructive', title: 'ผลรวมทั้งใบไม่ตรง', description: fullErr });
+      return;
+    }
+    setAccountingPlanSaving(true);
+    try {
+      await updateDocumentNonBlocking(
+        billRef,
+        stripUndefinedForFirestore({
+          paymentInstallments: merged,
+          updatedAt: Date.now(),
+        }),
+      );
+      toast({
+        title: 'บันทึกแผนงวดแล้ว',
+        description:
+          'จ่ายและหัก ณ ที่จ่าย (ถ้ามี) จะคำนวณทีละงวด — แต่ละครั้งที่บันทึกจ่ายจะสร้างเอกสารหักฯ แยกตามยอดงวดนั้น',
+      });
+    } finally {
+      setAccountingPlanSaving(false);
+    }
   };
 
   const submitToAccounting = async () => {
@@ -804,9 +945,21 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       setSubmitConfirmOpen(false);
       return;
     }
+    const totalIncl = vendorBillTotalInclVat(bill, purchase);
+    const plan =
+      installmentsDraft.length > 0 ? installmentsDraft : singleFullInstallment(totalIncl);
+    const planErr = validateInstallmentsAgainstTotal(plan, totalIncl);
+    if (planErr) {
+      toast({ variant: 'destructive', title: 'แผนงวดจ่ายไม่ตรงยอด', description: planErr });
+      setSubmitConfirmOpen(false);
+      return;
+    }
     const now = Date.now();
     await updateDocumentNonBlocking(billRef, {
       ...buildVendorBillDetailPayload(),
+      paymentInstallments: stripUndefinedForFirestore(
+        plan.map((row) => ({ ...row, payStatus: 'PENDING' as const })),
+      ),
       purchaseType: purchase.purchaseType,
       status: 'SUBMITTED' as PurchaseVendorBillStatus,
       submittedToAccountingAt: now,
@@ -832,14 +985,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       { merge: true }
     );
     setSubmitConfirmOpen(false);
-    toast({
-      title: 'ส่งแผนกบัญชีแล้ว',
-      description: 'อยู่ในคิว «ตรวจสอบรายจ่าย» และเจ้าหนี้การค้า (เครดิต)',
-    });
+      toast({
+        title: 'ส่งแผนกบัญชีแล้ว',
+        description: 'รายการอยู่ในเจ้าหนี้การค้า (เครดิต) — บัญชีตรวจและบันทึกจ่ายได้จากใบรับวางบิลนี้',
+      });
   };
 
   const saveBillWhtRateOverride = async () => {
-    if (!billRef || !bill || bill.status !== 'SUBMITTED' || !canPay) return;
+    if (!billRef || !bill || (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') || !canPay) return;
     const n = parseFloat(String(whtRateInput).trim().replace(',', '.'));
     if (!Number.isFinite(n) || n < 0 || n > 100) {
       toast({
@@ -853,6 +1006,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     try {
       await updateDocumentNonBlocking(billRef, {
         supplierWithholdingRatePercentBill: n,
+        vendorBillWhtPresetCategory: deleteField(),
         updatedAt: Date.now(),
       });
       toast({
@@ -866,11 +1020,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   };
 
   const clearBillWhtRateOverride = async () => {
-    if (!billRef || !bill || bill.status !== 'SUBMITTED' || !canPay) return;
+    if (!billRef || !bill || (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') || !canPay) return;
     setWhtRateSaving(true);
     try {
       await updateDocumentNonBlocking(billRef, {
         supplierWithholdingRatePercentBill: deleteField(),
+        vendorBillWhtPresetCategory: deleteField(),
         updatedAt: Date.now(),
       });
       toast({
@@ -883,8 +1038,113 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     }
   };
 
+  const saveWhtPresetChoice = async () => {
+    if (!billRef || !bill || (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') || !canPay) return;
+    const rate = vendorBillWhtPresetRatePercent(whtPresetChoice);
+    const label = WHT_PRESET_OPTIONS.find((o) => o.id === whtPresetChoice)?.title ?? '';
+    setWhtPresetSaving(true);
+    try {
+      await updateDocumentNonBlocking(
+        billRef,
+        stripUndefinedForFirestore({
+          vendorBillWhtPresetCategory: whtPresetChoice,
+          supplierWithholdingRatePercentBill: rate,
+          updatedAt: Date.now(),
+        }),
+      );
+      toast({
+        title: 'บันทึกประเภทหัก ณ ที่จ่ายแล้ว',
+        description: `${label} ${rate}% — ยอดตัดธนาคาร (โอนสุทธิ) คำนวณใหม่ก่อนยืนยันจ่าย`,
+      });
+      setWhtPresetDialogOpen(false);
+    } finally {
+      setWhtPresetSaving(false);
+    }
+  };
+
+  const clearWhtPresetDialogToPo = async () => {
+    if (!billRef || !bill || (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') || !canPay) return;
+    setWhtPresetSaving(true);
+    try {
+      await updateDocumentNonBlocking(billRef, {
+        supplierWithholdingRatePercentBill: deleteField(),
+        vendorBillWhtPresetCategory: deleteField(),
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'คืนค่าตาม PO',
+        description: `ใช้อัตรา ${poWhtRatePercent}% จากใบสั่งซื้อ`,
+      });
+      setWhtPresetDialogOpen(false);
+    } finally {
+      setWhtPresetSaving(false);
+    }
+  };
+
+  const closeVendorBillDocumentation = async () => {
+    if (!billRef || !bill || !currentUser || (!okStore && !okAccounting)) return;
+    if (bill.vendorBillDocumentationClosed) return;
+    if (!docCloseTiChecked || !docCloseRcChecked) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ครบ',
+        description: 'ต้องติ๊กยืนยันการได้รับทั้งใบกำกับภาษีและใบเสร็จรับเงิน',
+      });
+      return;
+    }
+    const tiNo = docCloseTiNo.trim();
+    const rcNo = docCloseRcNo.trim();
+    if (!tiNo || !rcNo) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ครบ',
+        description: 'กรอกเลขที่ใบกำกับภาษีและเลขที่ใบเสร็จรับเงินให้ครบ',
+      });
+      return;
+    }
+    const fallbackDocDate =
+      billingDate.trim() ||
+      (bill.billingReceivedDate || '').trim() ||
+      timestampToHtmlDateValue(Date.now());
+
+    setDocCloseBusy(true);
+    try {
+      const actor = currentUser.displayName?.trim() || currentUser.email || currentUser.id;
+      await updateDocumentNonBlocking(billRef, stripUndefinedForFirestore({
+        supportingTaxInvoice: {
+          attached: true,
+          documentNo: tiNo,
+          documentDate: (bill.supportingTaxInvoice?.documentDate || '').trim() || fallbackDocDate,
+        },
+        supportingMoneyReceipt: {
+          attached: true,
+          documentNo: rcNo,
+          documentDate: (bill.supportingMoneyReceipt?.documentDate || '').trim() || fallbackDocDate,
+        },
+        vendorBillDocumentationClosed: true,
+        vendorBillDocumentationClosedAt: Date.now(),
+        vendorBillDocumentationClosedByUid: currentUser.id,
+        vendorBillDocumentationClosedByName: actor,
+        updatedAt: Date.now(),
+      }));
+      toast({
+        title: 'ปิดเรื่องเอกสารสมบูรณ์แล้ว',
+        description: 'บันทึกเลขที่ใบกำกับภาษีและใบเสร็จแล้ว — แยกจากสถานะการจ่ายเงิน',
+      });
+    } finally {
+      setDocCloseBusy(false);
+    }
+  };
+
   const markPaid = async () => {
-    if (!firestore || !billRef || !bill || !purchase || !purchaseRef || bill.status !== 'SUBMITTED') {
+    if (
+      !firestore ||
+      !billRef ||
+      !bill ||
+      !purchase ||
+      !purchaseRef ||
+      (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID')
+    ) {
       toast({ variant: 'destructive', title: 'บันทึกไม่ได้' });
       return;
     }
@@ -898,24 +1158,21 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       return;
     }
     if (!paymentProofFile) {
-      toast({ variant: 'destructive', title: 'แนบหลักฐานการจ่าย (PDF)', description: 'จำเป็นตอนยืนยันจ่าย' });
+      toast({
+        variant: 'destructive',
+        title: 'แนบหลักฐานโอนเงิน',
+        description: 'จำเป็นเมื่อยืนยันจ่าย — รองรับ PDF หรือรูปภาพ (JPG, PNG, WEBP, GIF)',
+      });
       return;
     }
-    const proofErr = validateVendorBillPaymentProofPdf(paymentProofFile);
+    const proofErr = validateVendorBillPaymentProof(paymentProofFile);
     if (proofErr) {
       toast({ variant: 'destructive', title: 'ไฟล์ไม่ถูกต้อง', description: proofErr });
       return;
     }
-    if (
-      withholdingPreview &&
-      withholdingPreview.wht > 0.005 &&
-      whtPaymentProofFile
-    ) {
-      const whtErr = validateVendorBillPaymentProofPdf(whtPaymentProofFile);
-      if (whtErr) {
-        toast({ variant: 'destructive', title: 'ไฟล์หัก ณ ที่จ่ายไม่ถูกต้อง', description: whtErr });
-        return;
-      }
+    if (billHasInstallmentPlan && !installmentPayTargetId.trim()) {
+      toast({ variant: 'destructive', title: 'เลือกงวดที่จ่าย', description: 'ไม่พบงวดที่รอชำระ' });
+      return;
     }
     setPaying(true);
     try {
@@ -923,21 +1180,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         firebaseApp,
         bill.id,
         currentUser.id,
-        paymentProofFile
+        paymentProofFile,
       );
-      let whtProof: { downloadUrl: string; fileName: string } | undefined;
-      if (
-        withholdingPreview &&
-        withholdingPreview.wht > 0.005 &&
-        whtPaymentProofFile
-      ) {
-        whtProof = await uploadVendorBillWhtProofPdf(
-          firebaseApp,
-          bill.id,
-          currentUser.id,
-          whtPaymentProofFile,
-        );
-      }
       const { cashbookEntryNo, createdWhtCertificateId } = await executeVendorBillPayment({
         firestore,
         billRef,
@@ -951,15 +1195,15 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         currentUser,
         paymentProofUrl: proof.downloadUrl,
         paymentProofFileName: proof.fileName,
-        ...(whtProof
-          ? { whtPaymentProofUrl: whtProof.downloadUrl, whtPaymentProofFileName: whtProof.fileName }
+        ...(billHasInstallmentPlan && installmentPayTargetId.trim()
+          ? { installmentId: installmentPayTargetId.trim() }
           : {}),
       });
       toast({
         title: 'บันทึกจ่ายแล้ว',
         description:
           createdWhtCertificateId != null
-            ? `Cashbook ${cashbookEntryNo} · หักยอดบัญชีธนาคารแล้ว · สร้างหนังสือรับรองหัก ณ ที่จ่าย (ร่าง) อัตโนมัติแล้ว`
+            ? `Cashbook ${cashbookEntryNo} · หักยอดบัญชีธนาคารแล้ว · ออกหนังสือรับรองหัก ณ ที่จ่ายพร้อมเลขที่แล้ว`
             : `Cashbook ${cashbookEntryNo} · หักยอดบัญชีธนาคารแล้ว`,
       });
     } catch (e: unknown) {
@@ -1000,8 +1244,51 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   const readOnly = bill.status !== 'DRAFT' || !okStore;
 
+  /** งวดที่ตรงกับ cashbook หลักของใบ (หลังจ่ายครบ — ใช้สำหรับหนังสือรับรองหัก ณ ที่จ่าย) */
+  const isPrimaryPaidCashbookRow = (row: VendorBillPaymentInstallment) =>
+    bill.status === 'PAID' &&
+    !!bill.cashbookEntryId &&
+    row.payStatus === 'PAID' &&
+    row.cashbookEntryId === bill.cashbookEntryId;
+
   const effectivePurchaseType = bill.purchaseType ?? purchase?.purchaseType;
   const isCashPo = effectivePurchaseType === 'CASH';
+  const awaitingVendorPayment = bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID';
+  const docsChecklistOk =
+    !!bill.supportingTaxInvoice?.attached &&
+    !!bill.supportingMoneyReceipt?.attached &&
+    !!(bill.supportingTaxInvoice?.documentNo || '').trim() &&
+    !!(bill.supportingMoneyReceipt?.documentNo || '').trim();
+
+  const docCloseFormReady =
+    docCloseTiChecked &&
+    docCloseRcChecked &&
+    !!docCloseTiNo.trim() &&
+    !!docCloseRcNo.trim();
+
+  /** คอลัมน์หัก ณ ที่จ่ายร่วมกับงวดจ่าย — เฉพาะพรีวิวและพิมพ์จากใบจ่าย */
+  const renderVendorBillWhtLedgerCell = () => (
+    <div className="flex flex-col gap-1.5 items-start max-w-[14rem]">
+      {payoutCashbookLoading ? (
+        <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+          <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+          โหลดข้อมูลจ่าย…
+        </span>
+      ) : null}
+      {canPrintWithholdingSummary && canPreviewVendorBillWht && effectiveWhtPrintDoc ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="h-8 gap-1.5 px-2.5 font-semibold"
+          onClick={() => openWhtPreviewHub()}
+        >
+          <Eye className="h-3.5 w-3.5" />
+          พรีวิว / พิมพ์
+        </Button>
+      ) : null}
+    </div>
+  );
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -1018,135 +1305,300 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               ใบสั่งซื้อ {bill.purchaseNo || bill.purchaseId} · {vendor?.vendorName || '—'}
             </p>
           </div>
-          <Badge className="ml-auto">{statusLabel(bill.status)}</Badge>
+          <div className="ml-auto flex flex-col items-end gap-1">
+            <Badge>{statusLabel(bill.status)}</Badge>
+            {bill.vendorBillDocumentationClosed ? (
+              <Badge variant="outline" className="border-emerald-600 text-emerald-900">
+                เอกสารครบ — ปิดเรื่องแล้ว
+              </Badge>
+            ) : null}
+          </div>
         </div>
 
-        {bill.status === 'PAID' && bill.cashbookEntryNo && (
-          <Card className="border-green-200 bg-green-50/40">
+        {bill.status === 'PAID' && !bill.vendorBillDocumentationClosed && (
+          <Card className="border-amber-200 bg-amber-50/50">
             <CardHeader className="pb-2">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <CardTitle className="text-base text-green-900">ลงสมุด cashbook แล้ว</CardTitle>
-                  <CardDescription className="space-y-1 text-green-800">
-                    <p>
-                      เลขที่รายการ: <span className="font-mono font-bold">{bill.cashbookEntryNo}</span>
-                    </p>
-                    {(bill.paymentProofUrl || bill.whtPaymentProofUrl) && (
-                      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
-                        {bill.paymentProofUrl ? (
-                          <p className="m-0">
-                            หลักฐานการจ่าย:{' '}
-                            <a
-                              href={bill.paymentProofUrl}
-                              className="font-semibold text-primary underline"
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {bill.paymentProofFileName || 'เปิด PDF'}
-                            </a>
-                          </p>
-                        ) : null}
-                        {bill.whtPaymentProofUrl ? (
-                          <p className="m-0">
-                            หลักฐานหัก ณ ที่จ่าย:{' '}
-                            <a
-                              href={bill.whtPaymentProofUrl}
-                              className="font-semibold text-primary underline"
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {bill.whtPaymentProofFileName || 'เปิด PDF'}
-                            </a>
-                          </p>
-                        ) : null}
-                      </div>
-                    )}
-                  </CardDescription>
-                </div>
-                {canPrintWithholdingSummary && canPreviewVendorBillWht && effectiveWhtPrintDoc ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="shrink-0 gap-2 border-green-700/30 bg-white hover:bg-green-100/80 text-green-950 font-semibold"
-                    onClick={() => openWhtPreviewHub()}
-                  >
-                    <Eye className="h-4 w-4" />
-                    พรีวิวเอกสารหัก ณ ที่จ่าย
-                  </Button>
-                ) : null}
-              </div>
+              <CardTitle className="text-base text-amber-950">ยังไม่ปิดเรื่องเอกสาร</CardTitle>
+              <CardDescription className="text-amber-950/90">
+                จ่ายเงินครบแล้ว แต่สถานะสมบูรณ์ทางธุรการตามนโยบายคือได้รับ{' '}
+                <strong>ใบกำกับภาษี</strong> และ <strong>ใบเสร็จรับเงิน</strong> ครบและปิดเช็คลิสด้านล่าง
+              </CardDescription>
             </CardHeader>
           </Card>
         )}
 
-        {bill.status === 'PAID' && canPrintWithholdingSummary && purchase && vendor && canWhtAccounting && (
-            <Card className="border-violet-200 bg-violet-50/40">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-violet-800" />
-                  หนังสือรับรองการหักภาษี ณ ที่จ่าย (มาตรา 50 ทวิ)
-                </CardTitle>
-                <CardDescription className="text-violet-950/85">
-                  สร้างจากข้อมูลจ่ายเงินและใบวางบิลนี้เท่านั้น — ออกเลขที่ (ISSUED) ในหน้าบัญชี · พิมพ์และพรีวิวชุดสำเนาใช้ปุ่มในแถบเขียว
-                  «พรีวิวเอกสารหัก ณ ที่จ่าย» ด้านบน
+        {bill.status === 'PARTIALLY_PAID' && (
+          <Card className="border-orange-200 bg-orange-50/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-orange-950">จ่ายบางส่วนแล้ว</CardTitle>
+              <CardDescription className="text-orange-950/90">
+                ยังมีงวดที่รอชำระ — ดูรายละเอียดงวดในแผนด้านล่าง เจ้าหนี้คงยอดค้างจนกว่าจะจ่ายครบทุกงวด
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+
+        {purchase &&
+          bill.status !== 'DRAFT' &&
+          (((bill.paymentInstallments?.length ?? 0) > 0 ||
+            (bill.status === 'PAID' && !!bill.cashbookEntryId))) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">แผนงวดชำระในใบนี้</CardTitle>
+                <CardDescription>
+                  แต่ละงวดมีหลักฐานการจ่ายแยก — ยอดค้างในเจ้าหนี้ลดทีละงวดเมื่อบันทึกจ่าย · หลังจ่ายครบ ใช้คอลัมน์ขวาสำหรับพรีวิว/พิมพ์หนังสือรับรองหัก ณ ที่จ่าย และจัดการเอกสารในระบบบัญชี (ถ้ามี)
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {!bill.cashbookEntryId ? (
-                  <p className="text-sm text-amber-800">
-                    ใบวางบิลนี้ยังไม่มี <code className="text-xs bg-muted px-1 rounded">cashbookEntryId</code> — ติดต่อผู้ดูแลระบบ
-                  </p>
-                ) : payoutCashbookLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    กำลังโหลดรายการ cashbook…
-                  </div>
-                ) : !payoutCashbook ? (
-                  <p className="text-sm text-destructive">
-                    โหลดรายการ cashbook ไม่สำเร็จ (เลขที่ {bill.cashbookEntryNo || bill.cashbookEntryId})
-                  </p>
-                ) : !bill.whtCertificateDocumentId ? (
-                  <Button
-                    className="font-bold gap-2"
-                    disabled={createWhtBusy}
-                    onClick={() => void handleCreateWhtCertificate()}
-                  >
-                    {createWhtBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                    สร้างหนังสือรับรองหัก ณ ที่จ่าย
-                  </Button>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap gap-2 items-center">
-                      <Button variant="outline" asChild className="gap-2">
-                        <Link href={`/accounting/wht-certificates/${bill.whtCertificateDocumentId}`}>
-                          <ExternalLink className="h-4 w-4" />
-                          ดูเอกสาร / ตรวจสอบ / ออกเลขที่
-                        </Link>
-                      </Button>
-                      <Badge variant={whtCertificate?.documentStatus === 'ISSUED' ? 'default' : 'secondary'}>
-                        {whtCertificate?.documentStatus ?? '—'}
-                      </Badge>
-                    </div>
-                    {effectiveWhtPrintDoc && whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' ? (
-                      <p className="text-sm text-violet-950/90 leading-relaxed">
-                        <strong>พิมพ์ / พรีวิว:</strong> ใช้ปุ่ม{' '}
-                        <strong>พรีวิวเอกสารหัก ณ ที่จ่าย</strong> ในการ์ดสีเขียว «ลงสมุด cashbook แล้ว» ด้านบน
-                        เพื่อดูตัวอย่างและเลือกชุดสำเนาตามรายการ (ผู้ถูกหัก · ผู้หัก · ตัวอย่างหรือทางการหลัง ISSUED)
-                      </p>
-                    ) : null}
-                    {whtCertificate && whtCertificate.documentStatus !== 'CANCELLED' && (
-                      <p className="text-[11px] text-muted-foreground">
-                        ยกเลิกเอกสารหรือเตรียม XML — ใช้ปุ่มในหน้ารายละเอียด (สิทธิ์ผู้จัดการบัญชี)
-                      </p>
-                    )}
-                  </>
-                )}
+              <CardContent className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 pr-3 font-medium">งวด</th>
+                      <th className="py-2 pr-3 font-medium">ชื่อ</th>
+                      <th className="py-2 pr-3 font-medium text-right">ยอด (รวม VAT)</th>
+                      <th className="py-2 pr-3 font-medium">สถานะ</th>
+                      <th className="py-2 pr-3 font-medium">Cashbook</th>
+                      <th className="py-2 pr-3 font-medium">หลักฐานจ่าย</th>
+                      <th className="py-2 font-medium min-w-[10rem]">หัก ณ ที่จ่าย</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(bill.paymentInstallments?.length ?? 0) > 0
+                      ? (bill.paymentInstallments ?? []).map((row) => {
+                          const primary = isPrimaryPaidCashbookRow(row);
+                          return (
+                            <tr key={row.id} className="border-b border-muted/60">
+                              <td className="py-2 pr-3 font-mono">{row.sequence}</td>
+                              <td className="py-2 pr-3">{row.label}</td>
+                              <td className="py-2 pr-3 text-right font-mono font-semibold">
+                                ฿
+                                {Number(row.amountInclVat || 0).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                })}
+                              </td>
+                              <td className="py-2 pr-3">
+                                {row.payStatus === 'PAID' ? (
+                                  <Badge className="bg-green-600">จ่ายแล้ว</Badge>
+                                ) : (
+                                  <Badge variant="outline">รอจ่าย</Badge>
+                                )}
+                              </td>
+                              <td className="py-2 pr-3 font-mono text-xs">
+                                {row.cashbookEntryNo || row.cashbookEntryId || '—'}
+                              </td>
+                              <td className="py-2 pr-3">
+                                {row.paymentProofUrl ? (
+                                  <a
+                                    href={row.paymentProofUrl}
+                                    className="text-primary font-semibold underline text-xs"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {row.paymentProofFileName || 'เปิดไฟล์'}
+                                  </a>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+                              <td className="py-2 align-top">
+                                {primary ? (
+                                  renderVendorBillWhtLedgerCell()
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      : bill.status === 'PAID' && bill.cashbookEntryId ? (
+                          <tr className="border-b border-muted/60">
+                            <td className="py-2 pr-3 font-mono">1</td>
+                            <td className="py-2 pr-3 text-muted-foreground">ชำระเต็มจำนวน (ไม่แบ่งงวดในใบนี้)</td>
+                            <td className="py-2 pr-3 text-right font-mono font-semibold">
+                              ฿
+                              {vendorBillTotalInclVat(bill, purchase).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-2 pr-3">
+                              <Badge className="bg-green-600">จ่ายแล้ว</Badge>
+                            </td>
+                            <td className="py-2 pr-3 font-mono text-xs">
+                              {bill.cashbookEntryNo || bill.cashbookEntryId || '—'}
+                            </td>
+                            <td className="py-2 pr-3">
+                              {bill.paymentProofUrl ? (
+                                <a
+                                  href={bill.paymentProofUrl}
+                                  className="text-primary font-semibold underline text-xs"
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {bill.paymentProofFileName || 'เปิดไฟล์'}
+                                </a>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                            <td className="py-2 align-top">{renderVendorBillWhtLedgerCell()}</td>
+                          </tr>
+                        ) : null}
+                  </tbody>
+                </table>
               </CardContent>
             </Card>
           )}
 
-        {bill.status === 'SUBMITTED' && purchase && purchaseRef && (
+        {awaitingVendorPayment && purchase && purchaseRef && (
           <>
+            {canPay ? (
+              <Card className="border-indigo-200/90 bg-indigo-50/40">
+                <CardHeader>
+                  <CardTitle className="text-base">แบ่งงวดชำระ (แผนกบัญชี)</CardTitle>
+                  <CardDescription className="text-xs leading-relaxed">
+                    แม้สโตร์ส่งมาเป็นงวดเดียว บัญชีสามารถแยกเป็นได้ถึง 5 งวดได้ที่นี่ — ผลรวมงวดที่ยังไม่จ่ายต้องเท่ายอดคงค้าง{' '}
+                    <span className="font-mono font-semibold">
+                      ฿
+                      {vendorBillRemainingForPendingInstallments(bill, purchase).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                    {bill.paymentInstallments?.some((i) => i.payStatus === 'PAID') ? (
+                      <span>
+                        {' '}
+                        (มีงวดที่จ่ายแล้วถูกล็อก — แก้ได้เฉพาะงวดที่เหลือ)
+                      </span>
+                    ) : null}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {(bill.paymentInstallments ?? []).some((i) => i.payStatus === 'PAID') ? (
+                    <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs space-y-1">
+                      <p className="font-semibold text-muted-foreground">งวดที่จ่ายแล้ว (ไม่แก้ผ่านฟอร์มนี้)</p>
+                      <ul className="list-disc pl-4 space-y-0.5">
+                        {(bill.paymentInstallments ?? [])
+                          .filter((i) => i.payStatus === 'PAID')
+                          .sort((a, b) => a.sequence - b.sequence)
+                          .map((i) => (
+                            <li key={i.id}>
+                              {i.label} · ฿
+                              {Number(i.amountInclVat || 0).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                              })}{' '}
+                              · {i.cashbookEntryNo || i.cashbookEntryId || '—'}
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div className="space-y-2 min-w-[10rem]">
+                      <Label>จำนวนงวด (ส่วนที่ยังไม่จ่าย)</Label>
+                      <Select
+                        value={String(Math.max(1, accountingInstallmentDraft.length))}
+                        onValueChange={(v) => {
+                          const n = parseInt(v, 10);
+                          const rem = vendorBillRemainingForPendingInstallments(bill, purchase);
+                          setAccountingInstallmentDraft(buildEqualInstallmentDrafts(n, rem));
+                        }}
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <SelectItem key={n} value={String(n)}>
+                              {n} งวด
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  {validateInstallmentsAgainstTotal(
+                    accountingInstallmentDraft,
+                    vendorBillRemainingForPendingInstallments(bill, purchase),
+                  ) ? (
+                    <p className="text-sm text-destructive">
+                      {validateInstallmentsAgainstTotal(
+                        accountingInstallmentDraft,
+                        vendorBillRemainingForPendingInstallments(bill, purchase),
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-emerald-800">ผลรวมงวดที่แก้ตรงกับยอดคงค้าง</p>
+                  )}
+                  <div className="rounded-md border overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                          <th className="p-2 font-medium">#</th>
+                          <th className="p-2 font-medium">ชื่องวด</th>
+                          <th className="p-2 font-medium text-right">ยอด (รวม VAT)</th>
+                          <th className="p-2 font-medium">กำหนดชำระ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {accountingInstallmentDraft.map((row, idx) => (
+                          <tr key={row.id} className="border-b border-muted/50">
+                            <td className="p-2 font-mono">{row.sequence ?? idx + 1}</td>
+                            <td className="p-2 min-w-[8rem]">
+                              <Input
+                                className="h-9"
+                                value={row.label}
+                                onChange={(e) => {
+                                  const next = [...accountingInstallmentDraft];
+                                  next[idx] = { ...row, label: e.target.value };
+                                  setAccountingInstallmentDraft(next);
+                                }}
+                              />
+                            </td>
+                            <td className="p-2 text-right">
+                              <Input
+                                className="h-9 font-mono text-right"
+                                type="number"
+                                step="0.01"
+                                value={row.amountInclVat}
+                                onChange={(e) => {
+                                  const next = [...accountingInstallmentDraft];
+                                  next[idx] = {
+                                    ...row,
+                                    amountInclVat: roundMoney2(parseFloat(e.target.value) || 0),
+                                  };
+                                  setAccountingInstallmentDraft(next);
+                                }}
+                              />
+                            </td>
+                            <td className="p-2 min-w-[11rem]">
+                              <DatePickerThaiBE
+                                className="h-9 w-full"
+                                value={htmlDateValueToTimestampMs(row.dueDate || '')}
+                                onChange={(ms) => {
+                                  const next = [...accountingInstallmentDraft];
+                                  next[idx] = { ...row, dueDate: timestampToHtmlDateValue(ms) };
+                                  setAccountingInstallmentDraft(next);
+                                }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Button
+                    type="button"
+                    className="font-semibold"
+                    disabled={accountingPlanSaving}
+                    onClick={() => void saveAccountingInstallmentPlan()}
+                  >
+                    {accountingPlanSaving ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    บันทึกแผนงวด (ใช้ก่อนจ่ายงวดถัดไป)
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
             {!isCashPo && (
               <Card className="border-blue-200 bg-blue-50/40">
                 <CardHeader>
@@ -1156,20 +1608,16 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   <CardDescription className="text-blue-950/90 space-y-2">
                     <p>
                       รายการนี้อยู่ใน{' '}
-                      <Link href="/accounting/outgoing-review" className="font-semibold underline">
-                        ตรวจสอบรายจ่าย
-                      </Link>{' '}
-                      และ{' '}
                       <Link href="/accounts-payable" className="font-semibold underline">
-                        เจ้าหนี้การค้า
+                        เจ้าหนี้การค้า (AP)
                       </Link>{' '}
-                      แล้ว — เมื่อถึงกำหนดชำระให้บันทึกจ่ายด้านล่าง (ลง cashbook และปิดเจ้าหนี้)
+                      แล้ว — เมื่อถึงกำหนดชำระให้บันทึกจ่ายด้านล่าง (ลง cashbook · ออกหนังสือรับรองหัก ณ ที่จ่ายเมื่อมีการหัก)
                     </p>
                   </CardDescription>
                 </CardHeader>
               </Card>
             )}
-            {bill.status === 'SUBMITTED' && canPay && (
+            {canPay && (
               <Card className={isCashPo ? 'border-emerald-200' : 'border-slate-200'}>
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
@@ -1183,22 +1631,46 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       <>
                         ลง cashbook เป็นจ่ายออก — <strong>ตัดบัญชีธนาคารเฉพาะสุทธิโอนให้คู่ค้า</strong>
                         {purchase?.supplierWithholdingEnabled
-                          ? ' (ส่วนหัก ณ ที่จ่ายสะสมที่เมนูรายการหัก ณ ที่จ่าย ไม่ตัดบัญชีตอนโอน)'
+                          ? ' (ส่วนหัก ณ ที่จ่ายไม่ตัดบัญชีตอนโอน — ออกหนังสือรับรองเมื่อบันทึกจ่าย)'
                           : ''}
-                        {' — แนะนำทำจากเมนู '}
-                        <Link href="/accounting/outgoing-review" className="font-semibold underline">
-                          ตรวจสอบรายจ่าย
-                        </Link>{' '}
-                        หรือดำเนินการที่นี่
                       </>
                     ) : (
                       <>
-                        เมื่อถึงวันจ่ายจริง ให้กดจ่ายที่นี่ — ระบบจะลง cashbook ปิดเจ้าหนี้ และอัปเดตงวด PO
+                        เมื่อถึงวันจ่ายจริง ให้กดจ่ายที่นี่ — ระบบจะลง cashbook ปิดเจ้าหนี้ตามงวด
+                        {billHasInstallmentPlan ? ' (หลายงวดในใบเดียวจะคงยอดค้างจนกว่าจะครบทุกงวด)' : ' และอัปเดตงวด PO'}
                       </>
                     )}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {billHasInstallmentPlan ? (
+                    <div className="space-y-2 min-w-0 rounded-md border bg-muted/20 px-3 py-3">
+                      <Label>งวดที่บันทึกจ่ายครั้งนี้</Label>
+                      <Select
+                        value={installmentPayTargetId || undefined}
+                        onValueChange={setInstallmentPayTargetId}
+                      >
+                        <SelectTrigger className="h-11 w-full">
+                          <SelectValue placeholder="เลือกงวด..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(bill.paymentInstallments ?? [])
+                            .filter((i) => i.payStatus === 'PENDING')
+                            .map((i) => (
+                              <SelectItem key={i.id} value={i.id}>
+                                {i.label} · ฿
+                                {Number(i.amountInclVat || 0).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                })}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground leading-snug">
+                        เลือกงวดที่ตรงกับสลิปโอน — หลักฐานจะผูกกับงวดนี้เพื่อส่งให้คู่ค้า
+                      </p>
+                    </div>
+                  ) : null}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2 min-w-0">
                       <Label>บัญชีธนาคารที่ตัดจ่าย</Label>
@@ -1232,35 +1704,84 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       </Select>
                     </div>
                   </div>
+                  {vendorPayeeBankDisplay ? (
+                    <div className="rounded-md border border-sky-200/90 bg-sky-50/45 px-3 py-3 space-y-2 dark:bg-sky-950/25 dark:border-sky-900/45">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-sky-950 dark:text-sky-100">
+                        <Building2 className="h-4 w-4 shrink-0 opacity-80" />
+                        บัญชีรับเงินของคู่ค้า (โอนเข้า — จากทะเบียนคู่ค้า)
+                      </div>
+                      <dl className="grid gap-1.5 text-sm">
+                        {vendorPayeeBankDisplay.bankName ? (
+                          <div className="flex flex-wrap gap-x-2">
+                            <dt className="text-muted-foreground shrink-0">ธนาคาร</dt>
+                            <dd className="font-mono font-medium">{vendorPayeeBankDisplay.bankName}</dd>
+                          </div>
+                        ) : null}
+                        {vendorPayeeBankDisplay.acctName ? (
+                          <div className="flex flex-wrap gap-x-2">
+                            <dt className="text-muted-foreground shrink-0">ชื่อบัญชี</dt>
+                            <dd className="font-medium">{vendorPayeeBankDisplay.acctName}</dd>
+                          </div>
+                        ) : null}
+                        {vendorPayeeBankDisplay.acctNo ? (
+                          <div className="flex flex-wrap gap-x-2">
+                            <dt className="text-muted-foreground shrink-0">เลขที่บัญชี</dt>
+                            <dd className="font-mono font-semibold tracking-wide">{vendorPayeeBankDisplay.acctNo}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                      <p className="text-[11px] text-muted-foreground leading-snug">
+                        ใช้อ้างอิงตอนโอนและแนบสลิป — ถ้าไม่ตรงกับของจริงให้แก้ที่เมนูทะเบียนคู่ค้า (ข้อมูลการเงิน)
+                      </p>
+                      {vendor?.id ? (
+                        <Button variant="link" className="h-auto p-0 text-xs font-semibold" asChild>
+                          <Link href={`/vendors/${vendor.id}`}>
+                            เปิดแก้ไขคู่ค้า <ExternalLink className="h-3 w-3 ml-0.5 inline" />
+                          </Link>
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : vendor ? (
+                    <div className="rounded-md border border-dashed border-muted-foreground/30 bg-muted/15 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+                      ยังไม่มีเลขบัญชีรับเงินของคู่ค้าในระบบ — แนะนำกรอกที่{' '}
+                      <Link href={`/vendors/${vendor.id}`} className="font-semibold text-primary underline">
+                        คู่ค้านี้ → ข้อมูลการเงิน
+                      </Link>{' '}
+                      เพื่อแสดงที่นี่ตอนโอน
+                    </div>
+                  ) : null}
                   <div className="space-y-2 min-w-0">
-                    <Label>แนบหลักฐานการจ่าย (PDF)</Label>
+                    <Label>แนบหลักฐานโอนเงิน (PDF หรือรูปภาพ)</Label>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      แนบเฉพาะสลิปหรือหลักฐานการโอน — ใบหัก ณ ที่จ่ายพิมพ์จากระบบได้ (ปุ่มด้านล่าง) ไม่ต้องแนบที่นี่
+                    </p>
                     <Input
+                      ref={paymentProofInputRef}
                       type="file"
-                      accept="application/pdf"
+                      accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,.pdf,.jpg,.jpeg,.png,.webp,.gif"
                       className="h-11 cursor-pointer"
                       onChange={(e) => setPaymentProofFile(e.target.files?.[0] ?? null)}
                     />
-                    {paymentProofFile && (
-                      <p className="text-xs text-muted-foreground">เลือก: {paymentProofFile.name}</p>
-                    )}
+                    {paymentProofFile ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-xs text-muted-foreground min-w-0 flex-1 truncate">
+                          เลือกแล้ว: {paymentProofFile.name}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => {
+                            setPaymentProofFile(null);
+                            if (paymentProofInputRef.current) paymentProofInputRef.current.value = '';
+                          }}
+                        >
+                          ลบไฟล์
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
-                  {withholdingPreview && withholdingPreview.wht > 0.005 ? (
-                    <div className="space-y-2 min-w-0 rounded-md border border-violet-200/80 bg-violet-50/40 px-3 py-3 dark:bg-violet-950/20 dark:border-violet-900/50">
-                      <Label>แนบหลักฐานหัก ณ ที่จ่าย (PDF) — ถ้ามี</Label>
-                      <p className="text-[11px] text-muted-foreground leading-snug">
-                        แยกจากสลิปโอน — เก็บคู่เลขที่รายการ cashbook เพื่อตรวจสอบภาษี
-                      </p>
-                      <Input
-                        type="file"
-                        accept="application/pdf"
-                        className="h-11 cursor-pointer bg-background"
-                        onChange={(e) => setWhtPaymentProofFile(e.target.files?.[0] ?? null)}
-                      />
-                      {whtPaymentProofFile && (
-                        <p className="text-xs text-muted-foreground">เลือก: {whtPaymentProofFile.name}</p>
-                      )}
-                    </div>
-                  ) : null}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2 min-w-0">
                       <Label>วันที่ทำรายการ (cashbook)</Label>
@@ -1277,17 +1798,13 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         className="h-11 font-mono font-bold text-right bg-muted/50"
                         value={`฿ ${bankDebitAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
                       />
-                      {withholdingPreview && withholdingPreview.wht > 0.005 ? (
+                      {withholdingAtPayout && withholdingAtPayout.wht > 0.005 ? (
                         <div className="text-[11px] text-muted-foreground leading-snug space-y-1">
                           <p>
                             ยอดงวด (รวม VAT) ฿
-                            {grossInclVatForBill.toLocaleString(undefined, { minimumFractionDigits: 2 })} — หัก ณ ที่จ่าย ฿
-                            {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })} (
-                            {effectiveWhtRatePercent}%) ไม่ตัดจากบัญชีตอนโอน — สะสมที่{' '}
-                            <Link href="/accounting/withholding-tax" className="font-semibold text-primary underline">
-                              รายการหัก ณ ที่จ่าย
-                            </Link>{' '}
-                            เพื่อสรุปนำส่งสรรพากร
+                            {payoutGrossInclVat.toLocaleString(undefined, { minimumFractionDigits: 2 })} — หัก ณ ที่จ่าย ฿
+                            {withholdingAtPayout.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })} (
+                            {effectiveWhtRatePercent}%) ไม่ตัดจากบัญชีตอนโอน — ระบบสร้างหนังสือรับรองและเลขที่เมื่อยืนยันจ่าย
                           </p>
                         </div>
                       ) : (
@@ -1306,7 +1823,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Banknote className="h-4 w-4" />}
                       ยืนยันจ่ายเงิน + ลง cashbook
                     </Button>
-                    {canPrintWithholdingSummary && canPreviewVendorBillWht ? (
+                    {canPrintWithholdingAtPayout && canPreviewVendorBillWht ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -1324,9 +1841,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       </Button>
                     ) : null}
                   </div>
-                  {canPrintWithholdingSummary && canPreviewVendorBillWht ? (
+                  {canPrintWithholdingAtPayout && canPreviewVendorBillWht ? (
                     <p className="text-[11px] text-muted-foreground leading-snug">
-                      ปุ่มขวาพิมพ์ตัวอย่างก่อนจ่าย (มีข้อความฉบับร่าง) • เลขที่และสำเนาทางการหลังบันทึกจ่ายจากการ์ด «หนังสือรับรองหัก ณ ที่จ่าย»
+                      ปุ่มขวาพิมพ์ตัวอย่างก่อนจ่ายจากข้อมูลในฟอร์ม · หลังบันทึกจ่ายครบ — พรีวิวและพิมพ์ชุดสำเนาได้จากตาราง «แผนงวดชำระในใบนี้» (คอลัมน์หัก ณ ที่จ่าย)
                     </p>
                   ) : null}
                 </CardContent>
@@ -1426,48 +1943,68 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               ) : null}
 
               {withholdingPreview && withholdingPreview.wht > 0.005 ? (
-                <div className="rounded-md border border-violet-200/80 bg-violet-50/30 px-3 py-2">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 space-y-1">
-                      <p className="text-xs font-semibold text-violet-950">หัก ณ ที่จ่าย (ผู้รับเงิน)</p>
-                      <p className="text-sm">
-                        อัตรา {effectiveWhtRatePercent}%
-                        {hasBillWhtRateOverride ? (
-                          <span className="text-muted-foreground">
-                            {' '}
-                            (PO ลง {poWhtRatePercent}% — แก้เฉพาะใบนี้)
-                          </span>
-                        ) : null}{' '}
-                        · ฐานก่อนภาษี (ประมาณการ) ฿
-                        {withholdingPreview.baseBeforeVat.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                        })}{' '}
-                        · หัก ณ ที่จ่าย ฿
-                        {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </p>
-                      <p className="font-bold text-base">
-                        สุทธิที่โอนให้คู่ค้า (หลังหัก ณ ที่จ่าย) ฿
-                        {withholdingPreview.netPaid.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                        })}
-                      </p>
-                    </div>
-                    {canPay && bill.status === 'SUBMITTED' && purchase?.supplierWithholdingEnabled ? (
+                <div className="rounded-md border border-violet-200/80 bg-violet-50/30 px-3 py-2 space-y-3">
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-xs font-semibold text-violet-950">หัก ณ ที่จ่าย (ผู้รับเงิน)</p>
+                    <p className="text-sm">
+                      อัตรา {effectiveWhtRatePercent}%
+                      {hasVendorBillWhtPreset ? (
+                        <span className="text-muted-foreground">
+                          {' '}
+                          (
+                          {WHT_PRESET_OPTIONS.find((o) => o.id === bill.vendorBillWhtPresetCategory)?.title ?? 'เมนูบัญชี'}{' '}
+                          — เลือกก่อนจ่าย)
+                        </span>
+                      ) : hasManualWhtOnly ? (
+                        <span className="text-muted-foreground">
+                          {' '}
+                          (PO ลง {poWhtRatePercent}% — แก้ % มือเฉพาะใบนี้)
+                        </span>
+                      ) : null}{' '}
+                      · ฐานก่อนภาษี (ประมาณการ) ฿
+                      {withholdingPreview.baseBeforeVat.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}{' '}
+                      · หัก ณ ที่จ่าย ฿
+                      {withholdingPreview.wht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+                    <p className="font-bold text-base">
+                      สุทธิที่โอนให้คู่ค้า (หลังหัก ณ ที่จ่าย) ฿
+                      {withholdingPreview.netPaid.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </p>
+                  </div>
+                  {canPay && awaitingVendorPayment && purchase?.supplierWithholdingEnabled ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-violet-300/80 bg-background/80 px-3 py-2.5 dark:bg-background/40">
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="shrink-0 gap-1.5 border-violet-300 bg-white/90 font-semibold text-violet-950 hover:bg-violet-100/80"
+                        className="gap-1.5 font-semibold border-violet-400/80 bg-background"
                         onClick={() => {
-                          setWhtRateInput(String(effectiveWhtRatePercent));
-                          setWhtRateEditOpen(true);
+                          const next =
+                            bill.vendorBillWhtPresetCategory ??
+                            inferWhtPresetFromEffectiveRate(effectiveWhtRatePercent);
+                          setWhtPresetChoice(next);
+                          setWhtPresetDialogOpen(true);
                         }}
                       >
                         <Pencil className="h-3.5 w-3.5" />
-                        แก้ไข %
+                        แก้ไขรายการหัก ณ ที่จ่าย
                       </Button>
-                    ) : null}
-                  </div>
+                      <p className="text-[11px] text-muted-foreground leading-snug min-w-0 flex-1">
+                        เลือกประเภทเงินได้ (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) — ระบบจะคำนวณยอดหักและยอดโอนสุทธิใหม่
+                        {hasVendorBillWhtPreset ? (
+                          <span className="block mt-1 text-foreground font-medium">
+                            ปัจจุบัน:{' '}
+                            {WHT_PRESET_OPTIONS.find((o) => o.id === bill.vendorBillWhtPresetCategory)?.title ?? '—'} ·{' '}
+                            {effectiveWhtRatePercent}%
+                          </span>
+                        ) : null}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <p className="text-muted-foreground text-xs leading-relaxed">
@@ -1493,6 +2030,116 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   <SupportingDocReadOnly title="2. ใบกำกับภาษี" link={bill.supportingTaxInvoice} />
                   <SupportingDocReadOnly title="3. ใบเสร็จรับเงิน (คู่ค้า)" link={bill.supportingMoneyReceipt} />
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {bill.status !== 'DRAFT' && (okStore || okAccounting) && (
+          <Card className={docsChecklistOk ? 'border-emerald-200/90 bg-emerald-50/25' : ''}>
+            <CardHeader>
+              <CardTitle className="text-base">เช็คลิสต์ปิดเรื่องเอกสาร</CardTitle>
+              <CardDescription>
+                สถานะสมบูรณ์ทางธุรการคือได้รับ <strong>ใบกำกับภาษี</strong> และ{' '}
+                <strong>ใบเสร็จรับเงิน</strong> ครบ — แยกจากการจ่ายเงินครบทุกงวด · ติ๊กเมื่อได้รับเอกสารแล้วกรอกเลขที่
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              {bill.vendorBillDocumentationClosed ? (
+                <div className="space-y-3">
+                  <p className="text-emerald-900 leading-relaxed">
+                    ปิดเรื่องเอกสารสมบูรณ์แล้ว
+                    {bill.vendorBillDocumentationClosedAt
+                      ? ` · ${new Date(bill.vendorBillDocumentationClosedAt).toLocaleString('th-TH')}`
+                      : ''}
+                    {bill.vendorBillDocumentationClosedByName
+                      ? ` · โดย ${bill.vendorBillDocumentationClosedByName}`
+                      : ''}
+                  </p>
+                  <dl className="grid gap-2 text-muted-foreground">
+                    <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                      <dt className="font-medium text-foreground">ใบกำกับภาษี</dt>
+                      <dd className="font-mono">
+                        {(bill.supportingTaxInvoice?.documentNo || '').trim() || '—'}
+                      </dd>
+                    </div>
+                    <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                      <dt className="font-medium text-foreground">ใบเสร็จรับเงิน (คู่ค้า)</dt>
+                      <dd className="font-mono">
+                        {(bill.supportingMoneyReceipt?.documentNo || '').trim() || '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="pt-0.5">
+                      <Checkbox
+                        id="doc-close-tax-inv"
+                        checked={docCloseTiChecked}
+                        onCheckedChange={(c) => {
+                          const on = c === true;
+                          setDocCloseTiChecked(on);
+                          if (!on) setDocCloseTiNo('');
+                        }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[min(100%,14rem)] space-y-1.5">
+                      <Label htmlFor="doc-close-tax-inv" className="font-semibold cursor-pointer">
+                        ใบกำกับภาษี
+                      </Label>
+                      <Input
+                        id="doc-close-tax-inv-no"
+                        className="h-9 font-mono"
+                        placeholder="เลขที่ใบกำกับภาษี"
+                        value={docCloseTiNo}
+                        onChange={(e) => setDocCloseTiNo(e.target.value)}
+                        disabled={!docCloseTiChecked}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className="pt-0.5">
+                      <Checkbox
+                        id="doc-close-receipt"
+                        checked={docCloseRcChecked}
+                        onCheckedChange={(c) => {
+                          const on = c === true;
+                          setDocCloseRcChecked(on);
+                          if (!on) setDocCloseRcNo('');
+                        }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[min(100%,14rem)] space-y-1.5">
+                      <Label htmlFor="doc-close-receipt" className="font-semibold cursor-pointer">
+                        ใบเสร็จรับเงิน (คู่ค้า)
+                      </Label>
+                      <Input
+                        id="doc-close-receipt-no"
+                        className="h-9 font-mono"
+                        placeholder="เลขที่ใบเสร็จรับเงิน"
+                        value={docCloseRcNo}
+                        onChange={(e) => setDocCloseRcNo(e.target.value)}
+                        disabled={!docCloseRcChecked}
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    disabled={!docCloseFormReady || docCloseBusy}
+                    className="font-semibold"
+                    onClick={() => void closeVendorBillDocumentation()}
+                  >
+                    {docCloseBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    ยืนยันปิดเรื่องเอกสารสมบูรณ์
+                  </Button>
+                  {!docCloseFormReady ? (
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      ติ๊กครบสองรายการและกรอกเลขที่ทั้งคู่ — ระบบจะบันทึกลงใบวางบิลและปิดเรื่องเอกสาร (วันที่อ้างอิงใช้จากวันรับวางบิลหรือวันนี้ถ้ายังไม่มี)
+                    </p>
+                  ) : null}
+                </>
               )}
             </CardContent>
           </Card>
@@ -1607,6 +2254,115 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
           </Card>
         )}
 
+        {bill.status === 'DRAFT' && okStore && purchase && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">แผนงวดชำระในใบนี้</CardTitle>
+              <CardDescription className="text-xs leading-relaxed">
+                กำหนด 1–5 งวดที่ฝ่ายคลังตกลงกับคู่ค้า — ผลรวมต้องเท่ายอดในใบวางบิล (รวม VAT) บัญชีจะบันทึกจ่ายทีละงวด
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="space-y-2 min-w-[10rem]">
+                  <Label>จำนวนงวด</Label>
+                  <Select
+                    value={String(Math.max(1, installmentsDraft.length))}
+                    onValueChange={(v) => {
+                      const n = parseInt(v, 10);
+                      setInstallmentsDraft(buildEqualInstallmentDrafts(n, vendorBillTotalInclVat(bill, purchase)));
+                    }}
+                  >
+                    <SelectTrigger className="h-11">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n} งวด
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-sm pb-1">
+                  ยอดรวมในใบ (รวม VAT){' '}
+                  <span className="font-mono font-bold">
+                    ฿
+                    {vendorBillTotalInclVat(bill, purchase).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </span>
+                </p>
+              </div>
+              {validateInstallmentsAgainstTotal(installmentsDraft, vendorBillTotalInclVat(bill, purchase)) ? (
+                <p className="text-sm text-destructive">
+                  {validateInstallmentsAgainstTotal(installmentsDraft, vendorBillTotalInclVat(bill, purchase))}
+                </p>
+              ) : (
+                <p className="text-xs text-emerald-800">ผลรวมงวดตรงกับยอดใบวางบิล</p>
+              )}
+              <div className="rounded-md border overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-left text-muted-foreground">
+                      <th className="p-2 font-medium">#</th>
+                      <th className="p-2 font-medium">ชื่องวด</th>
+                      <th className="p-2 font-medium text-right">ยอด (รวม VAT)</th>
+                      <th className="p-2 font-medium">กำหนดชำระ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {installmentsDraft.map((row, idx) => (
+                      <tr key={row.id} className="border-b border-muted/50">
+                        <td className="p-2 font-mono">{row.sequence}</td>
+                        <td className="p-2 min-w-[8rem]">
+                          <Input
+                            className="h-9"
+                            value={row.label}
+                            onChange={(e) => {
+                              const next = [...installmentsDraft];
+                              next[idx] = { ...row, label: e.target.value };
+                              setInstallmentsDraft(next);
+                            }}
+                          />
+                        </td>
+                        <td className="p-2 text-right">
+                          <Input
+                            className="h-9 font-mono text-right"
+                            type="number"
+                            step="0.01"
+                            value={row.amountInclVat}
+                            onChange={(e) => {
+                              const next = [...installmentsDraft];
+                              next[idx] = {
+                                ...row,
+                                amountInclVat: roundMoney2(parseFloat(e.target.value) || 0),
+                              };
+                              setInstallmentsDraft(next);
+                            }}
+                          />
+                        </td>
+                        <td className="p-2 min-w-[11rem]">
+                          <DatePickerThaiBE
+                            className="h-9 w-full"
+                            value={htmlDateValueToTimestampMs(row.dueDate || '')}
+                            onChange={(ms) => {
+                              const next = [...installmentsDraft];
+                              next[idx] = { ...row, dueDate: timestampToHtmlDateValue(ms) };
+                              setInstallmentsDraft(next);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {bill.status === 'DRAFT' && okStore && (
           <Card className="border-amber-200/80 bg-amber-50/30 print:hidden">
             <CardHeader className="pb-2">
@@ -1653,7 +2409,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   />
                 ) : (
                   <div className="flex h-11 min-h-[2.75rem] items-center rounded-md border border-dashed border-muted-foreground/25 bg-muted/30 px-3 text-sm text-muted-foreground">
-                    {bill.status === 'SUBMITTED' ? 'ยังไม่จ่าย' : '—'}
+                    {awaitingVendorPayment ? 'ยังไม่จ่ายครบ' : '—'}
                   </div>
                 )}
               </div>
@@ -1687,16 +2443,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             <DialogHeader className="shrink-0 space-y-1 px-6 pt-6 pb-3">
               <DialogTitle>พรีวิวและพิมพ์ — หนังสือรับรองหัก ณ ที่จ่าย</DialogTitle>
               <DialogDescription className="text-xs sm:text-sm leading-relaxed">
-                ด้านซ้ายแสดงตัวอย่างฉบับที่ 1 (ผู้ถูกหัก — ยื่นภาษี) · ด้านขวาเลือกชุดสำเนาแล้วกดพิมพ์ ระบบจะเปิดหน้าต่างและเรียกกล่องพิมพ์ของเบราว์เซอร์
-                {effectiveWhtPrintDoc?.documentStatus !== 'ISSUED'
-                  ? ' · พิมพ์ทางการ (ต้นฉบับ/สำเนาพร้อมเลขที่) ใช้ได้เมื่อออก ISSUED ในหน้าบัญชีแล้ว'
-                  : null}
+                ด้านซ้ายเป็นพรีวิวตามข้อมูลจ่ายจริง · ด้านขวาเลือกพิมพ์ · ถ้ายังไม่มีเลขที่ (เอกสารเก่าหรือข้อมูลไม่ครบ) ช่องเลขที่จะเป็น «—» — ผู้มีสิทธิ์บัญชีใช้ปุ่ม «ออกเลขที่» ด้านขวาเพื่อรันเลขถัดไปจากระบบ (ไม่สร้างเอกสารซ้ำ)
               </DialogDescription>
             </DialogHeader>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t lg:flex-row">
               <div className="flex min-h-[220px] flex-1 flex-col border-b bg-muted/30 lg:min-h-[min(480px,58vh)] lg:w-[58%] lg:max-w-[58%] lg:border-b-0 lg:border-r">
                 {whtHubPreviewHtml ? (
                   <iframe
+                    key={whtHubIframeKey}
                     title="พรีวิวหนังสือรับรองหัก ณ ที่จ่าย"
                     className="min-h-[220px] w-full flex-1 border-0 bg-white lg:min-h-0"
                     srcDoc={whtHubPreviewHtml}
@@ -1720,176 +2474,74 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                     <ExternalLink className="mr-2 h-4 w-4" />
                     เปิดพรีวิวในแท็บใหม่ (พิมพ์จากเมนูเบราว์เซอร์)
                   </Button>
+                  {showWhtAssignNumberPanel ? (
+                    <div className="rounded-md border border-amber-200 bg-amber-50/70 p-3 space-y-2">
+                      <p className="text-xs text-amber-950 leading-snug">
+                        เอกสารนี้ยังไม่มีเลขที่ในระบบ — กดด้านล่างเพื่อรันเลขถัดไป (ชุด WHT50-) แล้วใช้พิมพ์แบบมีเลขที่จริง
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full font-semibold"
+                        disabled={whtAssignNoBusy || whtPrintBusy}
+                        onClick={() => void handleAssignWhtCertificateNumber()}
+                      >
+                        {whtAssignNoBusy ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <FileText className="mr-2 h-4 w-4" />
+                        )}
+                        ออกเลขที่หนังสือรับรอง
+                      </Button>
+                    </div>
+                  ) : null}
                   <Separator />
                   <div className="space-y-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      พิมพ์ตัวอย่าง (ฉบับร่าง)
+                      พิมพ์
                     </p>
-                    <ul className="space-y-2">
-                      <li>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                          onClick={() =>
-                            effectiveWhtPrintDoc &&
-                            void runWhtCertificatePrint(
-                              effectiveWhtPrintDoc,
-                              'COPY_PAYEE_TAX_RETURN',
-                              false,
-                            )
-                          }
-                        >
-                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
-                          <span>
-                            <span className="block font-semibold">ฉบับที่ 1 — ผู้ถูกหัก (ยื่นภาษี)</span>
-                            <span className="text-xs text-muted-foreground">สำเนาสำหรับยื่นแบบภาษี</span>
-                          </span>
-                        </Button>
-                      </li>
-                      <li>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                          onClick={() =>
-                            effectiveWhtPrintDoc &&
-                            void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYEE_RECORD', false)
-                          }
-                        >
-                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
-                          <span>
-                            <span className="block font-semibold">ฉบับที่ 2 — ผู้ถูกหัก (เก็บเป็นหลักฐาน)</span>
-                            <span className="text-xs text-muted-foreground">สำเนาเก็บรักษา</span>
-                          </span>
-                        </Button>
-                      </li>
-                      <li>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                          onClick={() =>
-                            effectiveWhtPrintDoc &&
-                            void runWhtCertificatePayeeCopies12Print(effectiveWhtPrintDoc, false)
-                          }
-                        >
-                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
-                          <span>
-                            <span className="block font-semibold">ชุดฉบับที่ 1 + 2 — ผู้ถูกหัก (ไฟล์เดียว)</span>
-                            <span className="text-xs text-muted-foreground">สองหน้าในหน้าต่างเดียว</span>
-                          </span>
-                        </Button>
-                      </li>
-                      <li>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                          disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                          onClick={() =>
-                            effectiveWhtPrintDoc &&
-                            void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYER_RECORD', false)
-                          }
-                        >
-                          <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
-                          <span>
-                            <span className="block font-semibold">สำเนาผู้หัก</span>
-                            <span className="text-xs text-muted-foreground">เก็บเป็นหลักฐานฝั่งผู้จ่าย</span>
-                          </span>
-                        </Button>
-                      </li>
-                    </ul>
+                    <Button
+                      type="button"
+                      variant="default"
+                      className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                      disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                      onClick={() =>
+                        effectiveWhtPrintDoc &&
+                        void runWhtCertificatePayeeCopies12Print(
+                          effectiveWhtPrintDoc,
+                          whtHubOfficialPrint,
+                          true,
+                        )
+                      }
+                    >
+                      <Printer className="mr-2 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-semibold">ส่วนผู้ถูกหัก — 2 ฉบับ (ไฟล์เดียว)</span>
+                        <span className="text-xs opacity-90">ฉบับที่ 1 และ 2 ในหน้าต่างพิมพ์เดียว</span>
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
+                      disabled={whtPrintBusy || !effectiveWhtPrintDoc}
+                      onClick={() =>
+                        effectiveWhtPrintDoc &&
+                        void runWhtCertificatePrint(
+                          effectiveWhtPrintDoc,
+                          'COPY_PAYER_RECORD',
+                          whtHubOfficialPrint,
+                          true,
+                        )
+                      }
+                    >
+                      <Printer className="mr-2 h-4 w-4 shrink-0 opacity-70" />
+                      <span>
+                        <span className="block font-semibold">ส่วนผู้หัก</span>
+                        <span className="text-xs text-muted-foreground">สำเนาสำหรับผู้จ่ายเงิน</span>
+                      </span>
+                    </Button>
                   </div>
-                  {effectiveWhtPrintDoc?.documentStatus === 'ISSUED' && canWhtAccounting ? (
-                    <>
-                      <Separator />
-                      <div className="space-y-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          พิมพ์ทางการ (ต้นฉบับ / สำเนา — มีเลขที่)
-                        </p>
-                        <ul className="space-y-2">
-                          <li>
-                            <Button
-                              type="button"
-                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                              onClick={() =>
-                                effectiveWhtPrintDoc &&
-                                void runWhtCertificatePrint(
-                                  effectiveWhtPrintDoc,
-                                  'COPY_PAYEE_TAX_RETURN',
-                                  true,
-                                )
-                              }
-                            >
-                              <Printer className="mr-2 h-4 w-4 shrink-0" />
-                              <span>
-                                <span className="block font-semibold">ฉบับที่ 1 — ผู้ถูกหัก (ทางการ)</span>
-                                <span className="text-xs opacity-90">ยื่นภาษี</span>
-                              </span>
-                            </Button>
-                          </li>
-                          <li>
-                            <Button
-                              type="button"
-                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                              onClick={() =>
-                                effectiveWhtPrintDoc &&
-                                void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYEE_RECORD', true)
-                              }
-                            >
-                              <Printer className="mr-2 h-4 w-4 shrink-0" />
-                              <span>
-                                <span className="block font-semibold">ฉบับที่ 2 — ผู้ถูกหัก (ทางการ)</span>
-                                <span className="text-xs opacity-90">เก็บหลักฐาน</span>
-                              </span>
-                            </Button>
-                          </li>
-                          <li>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-semibold"
-                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                              onClick={() =>
-                                effectiveWhtPrintDoc &&
-                                void runWhtCertificatePayeeCopies12Print(effectiveWhtPrintDoc, true)
-                              }
-                            >
-                              <Printer className="mr-2 h-4 w-4 shrink-0" />
-                              <span>
-                                <span className="block">ชุดฉบับที่ 1 + 2 — ทางการ (ไฟล์เดียว / PDF)</span>
-                                <span className="text-xs font-normal opacity-90">ผู้ถูกหัก</span>
-                              </span>
-                            </Button>
-                          </li>
-                          <li>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="h-auto w-full justify-start whitespace-normal py-2.5 text-left font-normal"
-                              disabled={whtPrintBusy || !effectiveWhtPrintDoc}
-                              onClick={() =>
-                                effectiveWhtPrintDoc &&
-                                void runWhtCertificatePrint(effectiveWhtPrintDoc, 'COPY_PAYER_RECORD', true)
-                              }
-                            >
-                              <Printer className="mr-2 h-4 w-4 shrink-0" />
-                              <span>
-                                <span className="block font-semibold">สำเนาผู้หัก (ทางการ)</span>
-                                <span className="text-xs text-muted-foreground">ผู้จ่ายเงิน</span>
-                              </span>
-                            </Button>
-                          </li>
-                        </ul>
-                      </div>
-                    </>
-                  ) : null}
                 </div>
               </ScrollArea>
             </div>
@@ -1923,7 +2575,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             </div>
             <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                {hasBillWhtRateOverride ? (
+                {hasManualWhtOnly || hasVendorBillWhtPreset ? (
                   <Button
                     type="button"
                     variant="ghost"
@@ -1952,13 +2604,81 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
           </DialogContent>
         </Dialog>
 
+        <Dialog open={whtPresetDialogOpen} onOpenChange={setWhtPresetDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>แก้ไขรายการหัก ณ ที่จ่าย (เฉพาะใบนี้)</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed">
+                เลือกประเภทให้ตรงกับเอกสารจริงก่อนยืนยันจ่าย — อัตรา ยอดหัก และยอดโอนสุทธิจะคำนวณใหม่ และข้อความบนใบหัก ม.50 จะใช้ตามรายการที่เลือก
+                {poWhtRatePercent > 0.005 ? (
+                  <span className="mt-2 block text-foreground">
+                    อัตราบน PO ปัจจุบัน:{' '}
+                    <span className="font-mono font-semibold">{poWhtRatePercent}%</span>
+                  </span>
+                ) : null}
+              </DialogDescription>
+            </DialogHeader>
+            <RadioGroup
+              value={whtPresetChoice}
+              onValueChange={(v) => setWhtPresetChoice(v as VendorBillWhtPresetCategory)}
+              className="gap-3 py-2"
+            >
+              {WHT_PRESET_OPTIONS.map((opt) => (
+                <label
+                  key={opt.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                >
+                  <RadioGroupItem value={opt.id} id={`wht-preset-${opt.id}`} className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold leading-tight">{opt.title}</span>
+                    <span className="text-xs text-muted-foreground">{opt.detail}</span>
+                  </span>
+                </label>
+              ))}
+            </RadioGroup>
+            <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                {hasVendorBillWhtPreset || hasManualWhtOnly ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={whtPresetSaving}
+                    onClick={() => void clearWhtPresetDialogToPo()}
+                  >
+                    ใช้ตาม PO
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={whtPresetSaving}
+                  onClick={() => setWhtPresetDialogOpen(false)}
+                >
+                  ยกเลิก
+                </Button>
+                <Button
+                  type="button"
+                  className="font-semibold"
+                  disabled={whtPresetSaving}
+                  onClick={() => void saveWhtPresetChoice()}
+                >
+                  {whtPresetSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึก
+                </Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <AlertDialog open={submitConfirmOpen} onOpenChange={setSubmitConfirmOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>ส่งใบรับวางบิลให้ฝ่ายบัญชี?</AlertDialogTitle>
               <AlertDialogDescription className="space-y-2">
                 <span className="block">
-                  ยืนยันว่าตรวจรับสินค้า/งานตามงวดนี้ถูกต้องแล้ว — หลังส่ง รายการจะไปอยู่ที่ «ตรวจสอบรายจ่าย» และเจ้าหนี้การค้า
+                  ยืนยันว่าตรวจรับสินค้า/งานตามงวดนี้ถูกต้องแล้ว — หลังส่ง แผนกบัญชีจะเห็นรายการในเจ้าหนี้การค้าและบันทึกจ่ายจากใบนี้
                   (เครดิต)
                 </span>
               </AlertDialogDescription>

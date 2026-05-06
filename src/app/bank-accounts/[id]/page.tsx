@@ -30,6 +30,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { canCreate } from '@/lib/permissions';
 import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
@@ -204,18 +205,23 @@ function BankAccountDetailContent({ id }: { id: string }) {
   const preMonthNet = useMemo(() => {
     let n = 0;
     for (const e of preCbRows ?? []) {
-      n += (e.direction === 'IN' ? 1 : -1) * e.amount;
+      const amt = roundMoney2(Number(e.amount ?? 0));
+      n += (e.direction === 'IN' ? 1 : -1) * amt;
     }
     if (isPettyAccount) {
       for (const e of prePtRows ?? []) {
-        n += (e.direction === 'IN' ? 1 : -1) * e.amount;
+        const amt = roundMoney2(Number(e.amount ?? 0));
+        n += (e.direction === 'IN' ? 1 : -1) * amt;
       }
     }
-    return n;
+    return roundMoney2(n);
   }, [preCbRows, prePtRows, isPettyAccount]);
 
   const balanceAtStartOfSelectedMonth = useMemo(
-    () => Number(accData?.openingBalance ?? formData.openingBalance ?? 0) + preMonthNet,
+    () =>
+      roundMoney2(
+        roundMoney2(Number(accData?.openingBalance ?? formData.openingBalance ?? 0)) + preMonthNet,
+      ),
     [accData?.openingBalance, formData.openingBalance, preMonthNet],
   );
 
@@ -245,7 +251,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
         entryNo: e.entryNo,
         description: `${e.description ?? ''}${payrollHint}`,
         direction: e.direction,
-        amount: e.amount,
+        amount: roundMoney2(Number(e.amount ?? 0)),
         source: 'cashbook',
         entryType: cashbookEntryTypeLabel(e.entryType),
         paymentMethod: e.paymentMethod,
@@ -259,7 +265,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
           entryNo: e.entryNo,
           description: e.description,
           direction: e.direction,
-          amount: e.amount,
+          amount: roundMoney2(Number(e.amount ?? 0)),
           source: 'petty',
           entryType: 'รายการ Petty หน้างาน',
           paymentMethod: e.paymentMethod,
@@ -278,7 +284,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
     let bal = balanceAtStartOfSelectedMonth;
     return movementRowsChronological.map((row) => {
       const effect = row.direction === 'IN' ? row.amount : -row.amount;
-      bal += effect;
+      bal = roundMoney2(bal + effect);
       return { ...row, balanceAfter: bal };
     });
   }, [movementRowsChronological, balanceAtStartOfSelectedMonth]);
@@ -290,7 +296,11 @@ function BankAccountDetailContent({ id }: { id: string }) {
       if (r.direction === 'IN') totalIn += r.amount;
       else totalOut += r.amount;
     }
-    return { totalIn, totalOut, net: totalIn - totalOut };
+    return {
+      totalIn: roundMoney2(totalIn),
+      totalOut: roundMoney2(totalOut),
+      net: roundMoney2(totalIn - totalOut),
+    };
   }, [movementRows]);
 
   const movementBlockLoading =
@@ -321,6 +331,8 @@ function BankAccountDetailContent({ id }: { id: string }) {
           ...formData,
           accountCode: finalCode,
           id: newRef.id,
+          openingBalance: roundMoney2(Number(formData.openingBalance ?? 0)),
+          currentBalance: roundMoney2(Number(formData.currentBalance ?? 0)),
           createdAt: now,
           updatedAt: now
         });
@@ -332,6 +344,8 @@ function BankAccountDetailContent({ id }: { id: string }) {
       } else {
         await updateDoc(accRef!, {
           ...formData,
+          openingBalance: roundMoney2(Number(formData.openingBalance ?? 0)),
+          currentBalance: roundMoney2(Number(formData.currentBalance ?? 0)),
           updatedAt: now
         });
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });

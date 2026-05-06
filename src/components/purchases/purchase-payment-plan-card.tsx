@@ -85,6 +85,7 @@ function dueDisplay(ymd: string | undefined): string {
 function vendorBillStatusTh(s: PurchaseVendorBillStatus): string {
   if (s === 'DRAFT') return 'ร่าง';
   if (s === 'SUBMITTED') return 'แจ้งบัญชีแล้ว';
+  if (s === 'PARTIALLY_PAID') return 'จ่ายบางส่วน';
   return 'จ่ายแล้ว';
 }
 

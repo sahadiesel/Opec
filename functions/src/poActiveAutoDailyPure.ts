@@ -129,7 +129,6 @@ export function resolvePoActiveAutoDailySyncKind(
   if (suspended) {
     if (!hasSeg) return null;
     if (dateYmd >= sbStart && dateYmd <= sbEnd) return 'standby_day';
-    if (dateYmd > sbEnd) return null;
   }
   return 'work_day';
 }

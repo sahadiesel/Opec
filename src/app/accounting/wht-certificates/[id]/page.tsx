@@ -263,8 +263,16 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
 
   const issue = async () => {
     if (!firestore || !currentUser || !wht || !certRef) return;
-    if (wht.documentStatus !== 'VERIFIED') {
-      toast({ variant: 'destructive', title: 'ออกไม่ได้', description: 'ต้องอยู่ในสถานะ VERIFIED ก่อน' });
+    if (wht.documentStatus === 'ISSUED') {
+      toast({ variant: 'destructive', title: 'ออกแล้ว', description: 'เอกสารนี้มีเลขที่แล้ว' });
+      return;
+    }
+    if (wht.documentStatus !== 'VERIFIED' && wht.documentStatus !== 'DRAFT') {
+      toast({
+        variant: 'destructive',
+        title: 'ออกไม่ได้',
+        description: 'สถานะเอกสารไม่พร้อมออกเลขที่ — ใช้ได้เฉพาะร่าง (DRAFT) หรือตรวจแล้ว (VERIFIED)',
+      });
       return;
     }
     const errs = validateWhtCertificateForOfficialIssue(wht);

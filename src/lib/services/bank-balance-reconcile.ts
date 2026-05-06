@@ -54,14 +54,20 @@ export async function syncBankCurrentBalanceIfDrift(
   const bankRef = doc(db, 'bank_accounts', bankAccountId);
   const bankSnap = await getDoc(bankRef);
   if (!bankSnap.exists()) throw new Error('ไม่พบบัญชี');
-  const stored = roundMoney2(Number(bankSnap.data()?.currentBalance ?? 0));
+  const rawStored = Number(bankSnap.data()?.currentBalance ?? 0);
+  const stored = roundMoney2(rawStored);
   const { computed } = await computeBankBalanceFromMovements(db, bankAccountId);
-  if (Math.abs(computed - stored) >= 0.01) {
+  /** ยอด drift จริง หรือแค่เศษ IEEE ในฐานข้อมูล (เช่น 192276.04999999993 แทน 192276.05) */
+  const needsSemanticFix = Math.abs(computed - stored) >= 0.01;
+  const needsFloatNormalize =
+    !needsSemanticFix &&
+    (Math.abs(rawStored - computed) > 1e-6 || Math.abs(rawStored - stored) > 1e-6);
+  if (needsSemanticFix || needsFloatNormalize) {
     await updateDoc(bankRef, {
       currentBalance: computed,
       updatedAt: Date.now(),
     });
-    return { computed, stored, corrected: true };
+    return { computed, stored: rawStored, corrected: true };
   }
-  return { computed, stored, corrected: false };
+  return { computed, stored: rawStored, corrected: false };
 }

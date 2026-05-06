@@ -123,23 +123,23 @@ function TimesheetHubContent() {
   );
 
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !canViewTimesheets || showAllLegacy) return null;
+    if (!firestore || !canViewTimesheets) return null;
     return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
-  }, [firestore, canViewTimesheets, showAllLegacy]);
+  }, [firestore, canViewTimesheets]);
 
   const { data: activeContracts, isLoading: contractsLoading } = useCollection<MainContract>(contractsQuery as any);
 
   const customersQuery = useMemoFirebase(() => {
-    if (!firestore || !canViewTimesheets || showAllLegacy) return null;
+    if (!firestore || !canViewTimesheets) return null;
     return collection(firestore, 'customers');
-  }, [firestore, canViewTimesheets, showAllLegacy]);
+  }, [firestore, canViewTimesheets]);
 
   const { data: customers, isLoading: customersLoading } = useCollection<Customer>(customersQuery as any);
 
   const wavesQuery = useMemoFirebase(() => {
-    if (!firestore || !canViewTimesheets || showAllLegacy) return null;
+    if (!firestore || !canViewTimesheets) return null;
     return collection(firestore, 'waves');
-  }, [firestore, canViewTimesheets, showAllLegacy]);
+  }, [firestore, canViewTimesheets]);
 
   const { data: allWaves, isLoading: wavesLoading } = useCollection<Wave>(wavesQuery as any);
 
@@ -205,8 +205,10 @@ function TimesheetHubContent() {
     const cur = currentYearMonth();
     u.add(cur);
     if (showAllLegacy) {
-      for (const po of pos ?? []) {
-        for (const ym of yearMonthsForPoAssignments(allMobs ?? [], po.id)) u.add(ym);
+      for (const row of bundleRows) {
+        for (const po of row.pos) {
+          for (const ym of yearMonthsForPoAssignments(allMobs ?? [], po.id)) u.add(ym);
+        }
       }
     } else {
       for (const row of bundleRows) {
@@ -228,14 +230,21 @@ function TimesheetHubContent() {
     [bundleRows, allMobs, hubMonthFilter],
   );
 
-  const legacyPosVisibleForMonth = useMemo(
-    () =>
-      (pos ?? []).filter((po) => {
+  /** โหมดราย PO — เฉพาะใบที่อยู่ในชุด PO Active (สายสัญญา + สัญญาหลัก active + มีบรรทัดโควต้า) เหมือนเกณฑ์คิวโควต้า */
+  const legacyPosVisibleForMonth = useMemo(() => {
+    const byId = new Map<string, PurchaseOrder>();
+    for (const row of bundleRows) {
+      for (const p of row.pos) {
+        byId.set(p.id, p);
+      }
+    }
+    return [...byId.values()]
+      .filter((po) => {
         const yms = yearMonthsForPoHub(allMobs ?? [], po.id);
         return yms.some((ym) => ym === hubMonthFilter);
-      }),
-    [pos, allMobs, hubMonthFilter],
-  );
+      })
+      .sort((a, b) => (a.poCode || a.id).localeCompare(b.poCode || b.id, 'th'));
+  }, [bundleRows, allMobs, hubMonthFilter]);
 
   const applyHubMonthFilter = (ym: string) => {
     setHubMonthFilter(ym);
@@ -256,7 +265,7 @@ function TimesheetHubContent() {
     );
   }
 
-  const loading = showAllLegacy ? loadingLegacy : loadingBundle;
+  const loading = loadingBundle;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -266,12 +275,12 @@ function TimesheetHubContent() {
             <PayrollScopeTag scope="worker" showHint={false} />
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-primary flex items-center gap-2">
               <CalendarDays className="h-8 w-8 shrink-0" aria-hidden />
-              ศูนย์ลงเวลา (Timesheet รายเดือน)
+              ศูนย์ลงเวลา (Timesheet รายวัน)
             </h1>
             <p className="text-muted-foreground mt-1 max-w-3xl">
               {showAllLegacy ? (
                 <>
-                  โหมด <strong>ราย PO</strong> — แต่ละการ์ดคือใบคำสั่งจ้าง active · ใช้เมื่อต้องการดูแยกทีละใบ
+                  โหมด <strong>ราย PO</strong> — แสดงเฉพาะใบคำสั่งจ้างที่อยู่ในชุด <strong>PO Active</strong> (แยกการ์ดทีละใบ)
                 </>
               ) : (
                 <>
@@ -303,10 +312,8 @@ function TimesheetHubContent() {
                 <Link href={`/timesheets?month=${encodeURIComponent(hubMonthFilter)}`}>กลับโหมดชุด PO Active</Link>
               </Button>
             )}
-            <Button variant="outline" asChild>
-            </Button>
             <Button asChild>
-              <Link href="/timesheets/wave-month">สรุปรายเดือน + เอกสาร PO+เดือน</Link>
+              <Link href="/timesheets/wave-month">สรุปรายเดือน (Monthly Timesheet)</Link>
             </Button>
           </div>
         </div>
@@ -370,8 +377,13 @@ function TimesheetHubContent() {
           <p className="text-sm text-muted-foreground py-12 text-center">กำลังโหลดการมอบหมายและบรรทัดคำสั่งจ้าง…</p>
         ) : showAllLegacy ? (
           <div className="space-y-8">
-            {(pos ?? []).length === 0 ? (
-              <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">ไม่มีคำสั่งจ้างที่ Active</p>
+            {bundleRows.length === 0 ? (
+              <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
+                ไม่พบชุด PO Active ที่มีบรรทัดโควต้าใต้สัญญาหลัก active — ตรวจ Customer PO /{' '}
+                <Link href="/po-active-quota-queue" className="text-primary underline font-medium">
+                  คิวเติมโควต้า
+                </Link>
+              </p>
             ) : legacyPosVisibleForMonth.length === 0 ? (
               <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
                 ไม่มีคำสั่งจ้างที่มีงวดในเดือนที่เลือก ({formatThaiYearMonthLabel(hubMonthFilter, 'th-TH')}) — ลองเปลี่ยนเดือนในกรองด้านบน

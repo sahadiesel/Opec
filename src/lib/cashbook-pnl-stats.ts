@@ -1,4 +1,5 @@
 import type { BankAccount, BankAccountType, CashbookEntry } from '@/lib/types';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 const DEPOSIT_TYPES: ReadonlySet<BankAccountType> = new Set(['SAVINGS', 'CURRENT', 'CASH']);
 
@@ -50,13 +51,13 @@ export function cashbookPnlFromEntries(
     const toT = getType(inE.bankAccountId);
 
     if (isDeposit(fromT) && isPetty(toT)) {
-      pnlOut += Number(outE.amount) || 0;
+      pnlOut += roundMoney2(Number(outE.amount) || 0);
       used.add(a.id);
       used.add(b.id);
       continue;
     }
     if (isPetty(fromT) && isDeposit(toT)) {
-      pnlIn += Number(inE.amount) || 0;
+      pnlIn += roundMoney2(Number(inE.amount) || 0);
       used.add(a.id);
       used.add(b.id);
     }
@@ -79,5 +80,9 @@ export function cashbookPnlFromEntries(
     }
   }
 
-  return { pnlIn, pnlOut, net: pnlIn - pnlOut };
+  return {
+    pnlIn: roundMoney2(pnlIn),
+    pnlOut: roundMoney2(pnlOut),
+    net: roundMoney2(pnlIn - pnlOut),
+  };
 }

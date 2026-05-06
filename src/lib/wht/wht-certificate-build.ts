@@ -15,6 +15,7 @@ import type {
   PurchasePaymentMilestone,
   PurchaseVendorBill,
   Vendor,
+  VendorBillWhtPresetCategory,
   VendorType,
   WithholdingCertificateDocument,
   WhtElectronicData,
@@ -23,6 +24,10 @@ import type {
   WhtWithholdingFormType,
 } from '@/lib/types';
 import { stripUndefinedForFirestore as stripFirestoreUndefined } from '@/lib/firestore/strip-undefined-for-firestore';
+import {
+  whtCertificateEnglishLeadFromMixed,
+  whtCertificateThaiAddressDisplay,
+} from '@/lib/wht/wht-address-display';
 
 /** Re-export ให้ import เดิมจากโมดูลนี้ยังใช้ได้ */
 export { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
@@ -56,6 +61,31 @@ function joinAddr(...parts: (string | undefined)[]): string {
   return parts.filter(Boolean).join(' ').trim();
 }
 
+function payerAddressesForWhtCertificate(
+  company: CompanyProfileWhtInput | null | undefined,
+): { addressTh: string; addressEn?: string } {
+  const rawBlock = joinAddr(company?.addressLine1, company?.addressLine2);
+  const explicitEn = joinAddr(company?.addressEnLine1, company?.addressEnLine2);
+  const addressTh = whtCertificateThaiAddressDisplay(rawBlock);
+  const enFromMixed = whtCertificateEnglishLeadFromMixed(rawBlock);
+  const mergedEn = explicitEn.trim() || enFromMixed;
+  return { addressTh, addressEn: mergedEn.trim() || undefined };
+}
+
+function vendorAddressForWhtCertificate(address: string | undefined): {
+  addressTh: string;
+  addressEn?: string;
+} {
+  const raw = (address || '').trim();
+  if (!raw) return { addressTh: '—' };
+  const addressTh = whtCertificateThaiAddressDisplay(raw);
+  const enMix = whtCertificateEnglishLeadFromMixed(raw);
+  return {
+    addressTh,
+    ...(enMix ? { addressEn: enMix } : {}),
+  };
+}
+
 function vendorPayeeCategory(v: Vendor): WithholdingCertificateDocument['payee']['vendorCategory'] {
   const t = (v.taxId || '').replace(/\s/g, '');
   if (!t) return 'OTHER';
@@ -72,6 +102,24 @@ function incomeFromPurchase(purchase: Purchase): {
     return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าจ้างเหมา / ค่าบริการ' };
   }
   return { code: 'GOODS_MANUFACTURING', displayTh: 'ค่าจ้างทำของ' };
+}
+
+/** ข้อความและรหัสประเภทเงินได้บนใบหัก ม.50 — เลือกจากใบวางบิลหรือสันนิษฐานจาก PO */
+export function incomeTypeForVendorBillWht(
+  bill: Pick<PurchaseVendorBill, 'vendorBillWhtPresetCategory'>,
+  purchase: Purchase,
+): { code: WhtIncomeTypeCode; displayTh: string } {
+  const cat = bill.vendorBillWhtPresetCategory;
+  if (cat === 'TRANSPORT_FREIGHT') {
+    return { code: 'OTHER', displayTh: 'ค่าขนส่ง' };
+  }
+  if (cat === 'SERVICE') {
+    return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าบริการ' };
+  }
+  if (cat === 'RENT') {
+    return { code: 'OTHER', displayTh: 'ค่าเช่า' };
+  }
+  return incomeFromPurchase(purchase);
 }
 
 function mapVendorTypeToPayee(vt: VendorType | undefined): WithholdingCertificateDocument['payee']['vendorCategory'] {
@@ -113,11 +161,11 @@ export function buildWhtElectronicDataFromDocument(
     payerTaxId: d.payer.taxId,
     payerBranchNo: d.payer.branchType === 'BRANCH' ? d.payer.branchNo : undefined,
     payerName: d.payer.legalNameTh,
-    payerAddress: d.payer.addressTh,
+    payerAddress: whtCertificateThaiAddressDisplay(d.payer.addressTh),
     payeeTaxId: d.payee.taxId,
     payeeBranchNo: d.payee.branchType === 'BRANCH' ? d.payee.branchNo : undefined,
     payeeName: d.payee.displayName,
-    payeeAddress: d.payee.addressTh,
+    payeeAddress: whtCertificateThaiAddressDisplay(d.payee.addressTh),
     incomeTypeCode: d.incomeTypeCode,
     incomeTypeName: d.incomeTypeDisplayTh,
     formTypeCode: d.withholdingFormType,
@@ -180,34 +228,36 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
   const baseBeforeVat = wh.baseBeforeVat;
   const vatAmount = roundMoney2(grossInclVat - baseBeforeVat);
 
-  const income = incomeFromPurchase(purchase);
+  const income = incomeTypeForVendorBillWht(bill, purchase);
 
   const payerBranchIsHead = company?.branchType !== 'branch';
   const payeeBranchIsHead = vendor.branchType !== 'branch';
 
   const disp = company?.whtCertificateDisplay;
 
+  const payerAddr = payerAddressesForWhtCertificate(company ?? undefined);
   const payer = {
     legalNameTh: (company?.companyNameTh || '').trim() || '—',
     legalNameEn: (company?.companyNameEn || '').trim() || undefined,
     taxId: (company?.taxId || '').trim(),
     branchType: payerBranchIsHead ? ('HEAD_OFFICE' as const) : ('BRANCH' as const),
     branchNo: payerBranchIsHead ? undefined : (company?.branchNo || '').trim() || undefined,
-    addressTh: joinAddr(company?.addressLine1, company?.addressLine2) || '—',
-    addressEn: joinAddr(company?.addressEnLine1, company?.addressEnLine2) || undefined,
+    addressTh: payerAddr.addressTh,
+    addressEn: payerAddr.addressEn,
     phone: (company?.phone || '').trim() || undefined,
     email: (company?.email || '').trim() || undefined,
     taxpayerType: company?.taxpayerType ?? 'COMPANY',
   };
 
   const payeeCat = vendorPayeeCategory(vendor);
+  const payeeAddr = vendorAddressForWhtCertificate(vendor.address);
   const payee = {
     displayName: (vendor.vendorName || '').trim() || '—',
     taxId: (vendor.taxId || '').trim() || undefined,
     branchType: payeeBranchIsHead ? ('HEAD_OFFICE' as const) : ('BRANCH' as const),
     branchNo: payeeBranchIsHead ? undefined : (vendor.branchNo || '').trim() || undefined,
-    addressTh: (vendor.address || '').trim() || '—',
-    addressEn: undefined,
+    addressTh: payeeAddr.addressTh,
+    addressEn: payeeAddr.addressEn,
     vendorCategory: payeeCat === 'OTHER' ? mapVendorTypeToPayee(vendor.vendorType) : payeeCat,
     countryCode: 'TH',
   };
@@ -215,13 +265,28 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
   const bankLast4 = bank?.accountNumber ? String(bank.accountNumber).replace(/\s/g, '').slice(-4) : undefined;
   const bankName = bank?.bankName?.trim();
 
-  const jobDescription = [
+  /** ช่อง «รายละเอียดงาน / บริการ» — ถ้ามี preset ค่าขนส่ง/บริการ/เช่า ให้แสดงชัดในเอกสาร */
+  const jobDetailTail = [
     milestone?.label ? `งวดชำระ: ${milestone.label}` : '',
     purchase.notes ? `หมายเหตุ PO: ${purchase.notes}` : '',
     bill.notes ? `ใบวางบิล: ${bill.notes}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ') || '—';
+  ].filter(Boolean);
+
+  const presetCat = bill.vendorBillWhtPresetCategory;
+  const hasWhtIncomePreset =
+    presetCat === 'TRANSPORT_FREIGHT' || presetCat === 'SERVICE' || presetCat === 'RENT';
+
+  const jobDescriptionParts: string[] = [];
+  if (hasWhtIncomePreset) {
+    jobDescriptionParts.push(income.displayTh);
+  }
+  jobDescriptionParts.push(...jobDetailTail);
+
+  const jobDescription =
+    jobDescriptionParts.filter(Boolean).join(' · ') ||
+    jobDetailTail.join(' · ') ||
+    income.displayTh.trim() ||
+    '—';
 
   const now = Date.now();
 

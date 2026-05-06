@@ -85,7 +85,7 @@ export default function AccountingWithholdingPayrollHubPage() {
           </CardHeader>
           <CardContent>
             <Button asChild variant="outline">
-              <Link href="/accounting/withholding-tax">ไปรายการหัก ณ ที่จ่าย (คู่ค้า)</Link>
+              <Link href="/ap-bills">ไปรับวางบิลเจ้าหนี้ (หัก ณ ที่จ่ายคู่ค้า)</Link>
             </Button>
           </CardContent>
         </Card>
