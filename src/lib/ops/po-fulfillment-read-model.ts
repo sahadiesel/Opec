@@ -1,6 +1,7 @@
 import type { Assignment, DeploymentStatus, POLine, Position, PurchaseOrder, Wave } from '@/lib/types';
 import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
+import { assignmentHasMobWorkStartedForQuotaDisplay } from '@/lib/ops/mobilization-final-clearance';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
 /**
@@ -118,6 +119,10 @@ export interface PoLineFulfillmentRow {
   lineStatus: POLine['status'];
   requiredQty: number;
   assignedCount: number;
+  /** จองโควต้าแล้วและถือว่าขึ้นไซต์/เริ่มงานแล้ว */
+  onSiteCount: number;
+  /** จองโควต้าแล้วแต่ยังรอ mobilization / ยังไม่เริ่มงานบนไซต์ */
+  standbyCount: number;
   remainingSlots: number;
   waveCount: number;
   plannedWorkersInWaves: number;
@@ -139,13 +144,22 @@ export function buildPoFulfillmentByLine(
      * นับคนไม่ซ้ำต่อบรรทัด PO — สอดคล้องหน้า Assignments (ชุด PO Active) ที่ใช้ `pickRosterLinePerWorker`
      * (หนึ่งแถวต่อคน) · ถ้ามี mobilization ซ้ำบนบรรทัดเดิม `.length` จะเกินจำนวนแถวที่ผู้ใช้เห็น
      */
-    const assignedWorkerIds = new Set<string>();
+    const byWorker = new Map<string, Assignment[]>();
     for (const a of asg) {
       if (a.poId !== poId || a.poLineId !== line.id || !assignmentCountsTowardQuota(a)) continue;
       const wid = (a.workerId || '').trim();
-      assignedWorkerIds.add(wid || `mob:${a.id}`);
+      const key = wid || `mob:${a.id}`;
+      const arr = byWorker.get(key) ?? [];
+      arr.push(a);
+      byWorker.set(key, arr);
     }
-    const assignedCount = assignedWorkerIds.size;
+    const assignedCount = byWorker.size;
+    let onSiteCount = 0;
+    let standbyCount = 0;
+    for (const arr of byWorker.values()) {
+      if (arr.some((x) => assignmentHasMobWorkStartedForQuotaDisplay(x))) onSiteCount++;
+      else standbyCount++;
+    }
     const lineWaves = wv.filter(
       (w) =>
         w.poId === poId &&
@@ -168,6 +182,8 @@ export function buildPoFulfillmentByLine(
       /** นับเฉพาะบรรทัด active ต่อโควต้า — สอดคล้อง `remainingSlots` / หัวตารางรวม */
       requiredQty,
       assignedCount,
+      onSiteCount,
+      standbyCount,
       remainingSlots,
       waveCount: lineWaves.length,
       plannedWorkersInWaves,
@@ -178,22 +194,26 @@ export function buildPoFulfillmentByLine(
 export function aggregateActiveLineTotals(rows: PoLineFulfillmentRow[]): {
   required: number;
   assigned: number;
+  onSite: number;
+  onStandby: number;
   openSlots: number;
   waveCount: number;
 } {
-  const { required, assigned, waveCount } = rows
+  const { required, assigned, onSite, onStandby, waveCount } = rows
     .filter((r) => r.lineStatus === 'active')
     .reduce(
       (acc, r) => ({
         required: acc.required + r.requiredQty,
         assigned: acc.assigned + r.assignedCount,
+        onSite: acc.onSite + r.onSiteCount,
+        onStandby: acc.onStandby + r.standbyCount,
         waveCount: acc.waveCount + r.waveCount,
       }),
-      { required: 0, assigned: 0, waveCount: 0 },
+      { required: 0, assigned: 0, onSite: 0, onStandby: 0, waveCount: 0 },
     );
   /** ระดับชุด/PO: ว่าง = โควต้ารวม − มอบหมายที่ยังจองสล็อต (ไม่ใช้แค่ผลรวม per-line เพื่อกันคลาดกับตัวเลขหัวแถว) */
   const openSlots = Math.max(0, required - assigned);
-  return { required, assigned, openSlots, waveCount };
+  return { required, assigned, onSite, onStandby, openSlots, waveCount };
 }
 
 /** เฟส C: รวมโควต้าตาม position ข้าม PO สัญญาที่ active ทั้งหมด (นับ PO status=active + สัญญาหลัก active) */

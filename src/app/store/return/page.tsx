@@ -4,27 +4,24 @@ import { useState, useEffect, useMemo } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-import { 
-  ArrowLeft, 
-  PackagePlus, 
-  Users, 
-  Briefcase, 
-  Waves, 
-  History, 
-  CheckCircle2, 
-  Trash2, 
-  Info, 
+import {
+  ArrowLeft,
+  PackagePlus,
+  Users,
+  History,
+  CheckCircle2,
+  Trash2,
+  Info,
   AlertTriangle,
   Loader2,
   PackageCheck,
-  Search,
-  CheckCircle
+  CheckCircle,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, query, where, writeBatch, increment } from 'firebase/firestore';
-import { StoreItem, Worker, Assignment, Wave, StoreTransaction, User as AppUser, Position } from '@/lib/types';
+import { StoreItem, Worker, Assignment, StoreTransaction, OfficeStaff } from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -36,7 +33,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { netCustodyQuantityDelta } from '@/lib/store/store-custody-net';
 
 export default function StoreReturnPage() {
   const router = useRouter();
@@ -47,12 +46,29 @@ export default function StoreReturnPage() {
 
   const canAccess = canAccessDomain(currentUser, 'store');
 
+  const [returnMode, setReturnMode] = useState<'field' | 'office'>('field');
   const [selectedWorkerId, setSelectedWorkerId] = useState('');
   const [selectedAsgnId, setSelectedAsgnId] = useState('');
+  const [selectedOfficeStaffId, setSelectedOfficeStaffId] = useState('');
   const [returnDate, setReturnDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [notes, setNotes] = useState('');
   const [returnList, setReturnList] = useState<any[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const m = new URLSearchParams(window.location.search).get('mode');
+    if (m === 'office') setReturnMode('office');
+  }, []);
+
+  const onReturnModeChange = (v: string) => {
+    const next = v as 'field' | 'office';
+    setReturnMode(next);
+    setSelectedWorkerId('');
+    setSelectedAsgnId('');
+    setSelectedOfficeStaffId('');
+    setReturnList([]);
+  };
 
   // Data Queries — gate by store access
   const workersQuery = useMemoFirebase(() => {
@@ -67,14 +83,28 @@ export default function StoreReturnPage() {
   }, [firestore, canAccess, selectedWorkerId]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
-  const activeAsgn = assignments?.find(a => a.id === selectedAsgnId);
+  const activeAsgn = assignments?.find((a) => a.id === selectedAsgnId);
 
-  // Fetch all transactions for this assignment to calculate net outstanding
-  const txQuery = useMemoFirebase(() => {
-    if (!firestore || !canAccess || !selectedAsgnId) return null;
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
+    return collection(firestore, 'office_staff');
+  }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
+  const { data: officeStaffList } = useCollection<OfficeStaff>(officeStaffQuery as any);
+
+  const fieldTxQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess || returnMode !== 'field' || !selectedAsgnId) return null;
     return query(collection(firestore, 'store_transactions'), where('assignmentId', '==', selectedAsgnId));
-  }, [firestore, canAccess, selectedAsgnId]);
-  const { data: transactions } = useCollection<StoreTransaction>(txQuery as any);
+  }, [firestore, canAccess, returnMode, selectedAsgnId]);
+
+  const officeTxQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess || returnMode !== 'office' || !selectedOfficeStaffId) return null;
+    return query(collection(firestore, 'store_transactions'), where('officeStaffId', '==', selectedOfficeStaffId));
+  }, [firestore, canAccess, returnMode, selectedOfficeStaffId]);
+
+  const { data: fieldTransactions } = useCollection<StoreTransaction>(fieldTxQuery as any);
+  const { data: officeTransactions } = useCollection<StoreTransaction>(officeTxQuery as any);
+
+  const transactions = returnMode === 'field' ? fieldTransactions : officeTransactions;
 
   const itemsQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'store_items') : null), [firestore, canAccess]);
   const { data: allStoreItems } = useCollection<StoreItem>(itemsQuery as any);
@@ -82,13 +112,12 @@ export default function StoreReturnPage() {
   // Calculate Net Outstanding per Item
   const outstandingItems = useMemo(() => {
     if (!transactions || !allStoreItems) return [];
-    
+
     const balance: Record<string, number> = {};
-    transactions.forEach(tx => {
-      if (tx.transactionType === 'ISSUE') balance[tx.itemId] = (balance[tx.itemId] || 0) + tx.quantity;
-      if (['RETURN', 'DAMAGED', 'LOST'].includes(tx.transactionType)) {
-        balance[tx.itemId] = (balance[tx.itemId] || 0) - tx.quantity;
-      }
+    transactions.forEach((tx) => {
+      const d = netCustodyQuantityDelta(tx);
+      if (!d) return;
+      balance[tx.itemId] = (balance[tx.itemId] || 0) + d;
     });
 
     return Object.entries(balance)
@@ -116,8 +145,24 @@ export default function StoreReturnPage() {
   };
 
   const handleConfirmReturn = async () => {
-    if (!firestore || !activeAsgn || !currentUser || returnList.length === 0) {
-      toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรายการที่ต้องการคืน" });
+    if (!firestore || !currentUser || returnList.length === 0) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุรายการที่ต้องการคืน' });
+      return;
+    }
+    if (returnMode === 'field' && !activeAsgn) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาเลือกคนงานและงาน (mobilization) สำหรับรับคืน',
+      });
+      return;
+    }
+    if (returnMode === 'office' && !selectedOfficeStaffId) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาเลือกพนักงานออฟฟิศผู้คืนของ',
+      });
       return;
     }
 
@@ -139,17 +184,35 @@ export default function StoreReturnPage() {
       const returnSlipsRef = collection(firestore, 'store_return_slips');
       const newReturnRef = doc(returnSlipsRef);
 
+      const officeStaff =
+        returnMode === 'office'
+          ? officeStaffList?.find((s) => s.id === selectedOfficeStaffId)
+          : undefined;
+
       // 1. Create Return Slip Header
       batch.set(newReturnRef, {
         id: newReturnRef.id,
         returnNo: finalNo,
-        workerId: selectedWorkerId,
-        assignmentId: activeAsgn.id,
-        waveId: activeAsgn.waveId,
+        returnType: returnMode,
         returnDate,
         notes,
         createdAt: Date.now(),
-        createdBy: currentUser.displayName
+        createdBy: currentUser.displayName,
+        ...(returnMode === 'field' && activeAsgn
+          ? {
+              workerId: selectedWorkerId,
+              assignmentId: activeAsgn.id,
+              waveId: activeAsgn.waveId ?? '',
+              officeStaffId: '',
+              officeStaffName: '',
+            }
+          : {
+              workerId: '',
+              assignmentId: '',
+              waveId: '',
+              officeStaffId: selectedOfficeStaffId,
+              officeStaffName: officeStaff?.fullName || '',
+            }),
       });
 
       // 2. Process Items
@@ -176,13 +239,24 @@ export default function StoreReturnPage() {
           itemId: item.itemId,
           transactionType: item.condition === 'GOOD' ? 'RETURN' : item.condition,
           quantity: item.quantity,
-          workerId: selectedWorkerId,
-          assignmentId: activeAsgn.id,
-          waveId: activeAsgn.waveId,
           transactionDate: returnDate,
           notes: `Ref Return: ${finalNo}. Condition: ${item.condition}. ${item.remarks}`,
           createdAt: Date.now(),
-          createdBy: currentUser.displayName
+          createdBy: currentUser.displayName,
+          issueType: returnMode,
+          ...(returnMode === 'field' && activeAsgn
+            ? {
+                workerId: selectedWorkerId,
+                assignmentId: activeAsgn.id,
+                waveId: activeAsgn.waveId ?? '',
+                officeStaffId: '',
+              }
+            : {
+                workerId: '',
+                assignmentId: '',
+                waveId: '',
+                officeStaffId: selectedOfficeStaffId,
+              }),
         });
       }
 
@@ -214,11 +288,24 @@ export default function StoreReturnPage() {
           <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
           <div className="flex-1">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <PackageCheck className="h-8 w-8 text-green-600" /> คืนของจากลูกจ้าง (Return from Worker)
+              <PackageCheck className="h-8 w-8 text-green-600" /> รับคืนอุปกรณ์ / เครื่องมือ (Return to Store)
             </h1>
-            <p className="text-muted-foreground text-lg">ใช้สำหรับคืน PPE หรือเครื่องมือจากลูกจ้างกลับเข้าคลัง โดยอ้างอิงจากประวัติการเบิก</p>
+            <p className="text-muted-foreground text-lg">
+              โหมดลูกจ้างหน้างาน: คืนตาม mobilization และประวัติเบิกของงานนั้น — โหมดพนักงานออฟฟิศ: คืนตามประวัติเบิกของผู้รับออฟฟิศ (ไม่ผูกงาน)
+            </p>
           </div>
         </div>
+
+        <Tabs value={returnMode} onValueChange={onReturnModeChange} className="w-full">
+          <TabsList className="grid w-full max-w-lg grid-cols-2 h-auto p-1">
+            <TabsTrigger value="field" className="py-3">
+              ลูกจ้างหน้างาน (Field)
+            </TabsTrigger>
+            <TabsTrigger value="office" className="py-3">
+              พนักงานออฟฟิศ (Office)
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         <Alert className="bg-primary/5 border-primary/20 shadow-sm">
           <Info className="h-5 w-5 text-primary" />
@@ -234,45 +321,102 @@ export default function StoreReturnPage() {
             <Card className="shadow-md">
               <CardHeader className="border-b bg-muted/20">
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Users className="h-5 w-5 text-primary" /> เลือกพนักงานและงาน (Recipient & Job)
+                  <Users className="h-5 w-5 text-primary" />{' '}
+                  {returnMode === 'field' ? 'เลือกพนักงานและงาน (Recipient & Job)' : 'เลือกพนักงานออฟฟิศ (Office Staff)'}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="font-bold">เลือกคนงาน (Select Worker)</Label>
-                    <Select onValueChange={setSelectedWorkerId} value={selectedWorkerId}>
-                      <SelectTrigger className="h-11"><SelectValue placeholder="ค้นหาคนงาน..." /></SelectTrigger>
-                      <SelectContent>
-                        {allWorkers?.map(w => (
-                          <SelectItem key={w.id} value={w.id}>{w.firstName} {w.lastName}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                {returnMode === 'field' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="font-bold">เลือกคนงาน (Select Worker)</Label>
+                      <Select
+                        onValueChange={(v) => {
+                          setSelectedWorkerId(v);
+                          setSelectedAsgnId('');
+                          setReturnList([]);
+                        }}
+                        value={selectedWorkerId}
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue placeholder="ค้นหาคนงาน..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allWorkers?.map((w) => (
+                            <SelectItem key={w.id} value={w.id}>
+                              {w.firstName} {w.lastName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                  <div className="space-y-2">
-                    <Label className="font-bold">เลือกงาน (Select Assignment)</Label>
-                    <Select onValueChange={setSelectedAsgnId} value={selectedAsgnId} disabled={!selectedWorkerId}>
-                      <SelectTrigger className="h-11"><SelectValue placeholder="เลือกงานเพื่อดูอุปกรณ์ค้างคืน..." /></SelectTrigger>
+                    <div className="space-y-2">
+                      <Label className="font-bold">เลือกงาน (Select Assignment)</Label>
+                      <Select
+                        onValueChange={(v) => {
+                          setSelectedAsgnId(v);
+                          setReturnList([]);
+                        }}
+                        value={selectedAsgnId}
+                        disabled={!selectedWorkerId}
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue placeholder="เลือกงานเพื่อดูอุปกรณ์ค้างคืน..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {assignments?.map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.projectName} ({a.deploymentStatus})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-w-md">
+                    <Label className="font-bold">เลือกพนักงานออฟฟิศ (Office Staff)</Label>
+                    <Select
+                      onValueChange={(v) => {
+                        setSelectedOfficeStaffId(v);
+                        setReturnList([]);
+                      }}
+                      value={selectedOfficeStaffId}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="เลือกพนักงานออฟฟิศ..." />
+                      </SelectTrigger>
                       <SelectContent>
-                        {assignments?.map(a => (
-                          <SelectItem key={a.id} value={a.id}>{a.projectName} ({a.deploymentStatus})</SelectItem>
-                        ))}
+                        {(officeStaffList ?? [])
+                          .slice()
+                          .sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'th'))
+                          .map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.fullName || s.id}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      แสดงยอดค้างคืนจากประวัติ ISSUE ของพนักงานออฟฟิศเทียบ RETURN / DAMAGED / LOST — สอดคล้องการเบิกโหมด Office
+                    </p>
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
 
-            {selectedAsgnId && (
+            {((returnMode === 'field' && selectedAsgnId) || (returnMode === 'office' && selectedOfficeStaffId)) && (
               <Card className="shadow-md overflow-hidden">
                 <CardHeader className="border-b bg-muted/20">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <History className="h-5 w-5 text-primary" /> รายการอุปกรณ์ที่ยังไม่คืน (Outstanding Items)
                   </CardTitle>
-                  <CardDescription>แสดงเฉพาะอุปกรณ์ที่พนักงานรายนี้ยังถือครองอยู่ภายใต้งานที่เลือก</CardDescription>
+                  <CardDescription>
+                    {returnMode === 'field'
+                      ? 'แสดงเฉพาะอุปกรณ์ที่พนักงานรายนี้ยังถือครองอยู่ภายใต้งานที่เลือก'
+                      : 'แสดงอุปกรณ์ที่พนักงานออฟฟิศรายนี้ยังถือครองจากการเบิกยืม (โหมด Office)'}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   {outstandingItems.length === 0 ? (

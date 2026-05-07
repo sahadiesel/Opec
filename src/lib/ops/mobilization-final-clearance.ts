@@ -48,6 +48,17 @@ export function isFinalClearanceStep3Done(
   return a.deploymentStatus === 'ACTIVE';
 }
 
+/**
+ * คิวโควต้า PO Active — นับเป็น «กำลังทำงานบนไซต์» เมื่อมีวันเริ่มงานบันทึกแล้ว หรือผ่านขั้นเริ่มงาน (timestamp / ACTIVE)
+ */
+export function assignmentHasMobWorkStartedForQuotaDisplay(
+  a: Pick<Assignment, 'mobWorkingStartedAt' | 'mobWorkingStartDate' | 'deploymentStatus'>,
+): boolean {
+  const ws = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ws)) return true;
+  return isFinalClearanceStep3Done(a);
+}
+
 export function isMobUnassigned(a: Pick<Assignment, 'unassignedAt'>): boolean {
   return typeof a.unassignedAt === 'number' && a.unassignedAt > 0;
 }

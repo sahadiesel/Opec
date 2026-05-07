@@ -33,6 +33,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff } from '@/lib/types';
+import { netCustodyQuantityDelta } from '@/lib/store/store-custody-net';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
@@ -114,14 +115,12 @@ export default function StoreDashboardPage() {
     const map = new Map<string, Acc>();
 
     for (const tx of transactions) {
-      const isOffice = Boolean(tx.officeStaffId);
-      const holderId = tx.officeStaffId || tx.workerId || '';
+      const delta = netCustodyQuantityDelta(tx);
+      if (!delta) continue;
+      const isOffice = Boolean((tx.officeStaffId || '').trim());
+      const holderId = ((tx.officeStaffId || tx.workerId || '') as string).trim();
       if (!holderId) continue;
       const key = `${tx.itemId}|${holderId}`;
-      let delta = 0;
-      if (tx.transactionType === 'ISSUE') delta = tx.quantity;
-      else if (tx.transactionType === 'RETURN') delta = -tx.quantity;
-      else continue;
 
       const prevQty = map.get(key)?.qty ?? 0;
       const nextQty = prevQty + delta;
@@ -150,37 +149,80 @@ export default function StoreDashboardPage() {
       });
   }, [transactions, items, workers, officeStaff]);
 
-  const pendingReturns = useMemo(() => {
-    // If user cannot read workers or mobilizations, we cannot resolve the names
-    // But we can still see raw transaction counts if we have access to transactions
-    if (!transactions) return [];
-    
-    // Group all transactions by assignment
-    const balanceMap: Record<string, { assignmentId: string; itemCount: number; totalQty: number }> = {};
-    
-    transactions.forEach(tx => {
-      if (!tx.assignmentId) return;
-      if (!balanceMap[tx.assignmentId]) {
-        balanceMap[tx.assignmentId] = { assignmentId: tx.assignmentId, itemCount: 0, totalQty: 0 };
+  type PendingReturnRow =
+    | {
+        kind: 'field';
+        key: string;
+        assignmentId: string;
+        workerName: string;
+        projectName: string;
+        waveCode: string;
+        totalQty: number;
       }
-      
-      const change = tx.transactionType === 'ISSUE' ? tx.quantity : (tx.transactionType === 'RETURN' ? -tx.quantity : 0);
-      balanceMap[tx.assignmentId].totalQty += change;
-    });
+    | {
+        kind: 'office';
+        key: string;
+        officeStaffId: string;
+        staffName: string;
+        totalQty: number;
+      };
 
-    return Object.values(balanceMap)
-      .filter(b => b.totalQty > 0)
-      .map(b => {
-        const asgn = mobilizations?.find(m => m.id === b.assignmentId);
-        const worker = workers?.find(w => w.id === asgn?.workerId);
+  const pendingReturns = useMemo((): PendingReturnRow[] => {
+    if (!transactions) return [];
+    const assignmentBalances: Record<string, number> = {};
+    const officeBalances: Record<string, number> = {};
+
+    for (const tx of transactions) {
+      const d = netCustodyQuantityDelta(tx);
+      if (!d) continue;
+      const aid = (tx.assignmentId || '').trim();
+      const oid = (tx.officeStaffId || '').trim();
+      if (aid) {
+        assignmentBalances[aid] = (assignmentBalances[aid] || 0) + d;
+      } else if (oid) {
+        officeBalances[oid] = (officeBalances[oid] || 0) + d;
+      }
+    }
+
+    const fieldRows: PendingReturnRow[] = Object.entries(assignmentBalances)
+      .filter(([, q]) => q > 0)
+      .map(([assignmentId, totalQty]) => {
+        const asgn = mobilizations?.find((m) => m.id === assignmentId);
+        const worker = workers?.find((w) => w.id === asgn?.workerId);
         return {
-          ...b,
-          workerName: worker ? `${worker.firstName} ${worker.lastName}` : (isOpsOrHR ? 'Unknown' : 'Restricted Access'),
+          kind: 'field' as const,
+          key: `field:${assignmentId}`,
+          assignmentId,
+          totalQty,
+          workerName: worker
+            ? `${worker.firstName} ${worker.lastName}`
+            : isOpsOrHR
+              ? 'Unknown'
+              : 'Restricted Access',
           projectName: asgn?.projectName || (isOpsOrHR ? 'Unknown Project' : 'Restricted Access'),
-          waveCode: asgn?.waveId || 'N/A'
+          waveCode: asgn?.waveId || 'N/A',
         };
       });
-  }, [transactions, mobilizations, workers, isOpsOrHR]);
+
+    const officeRows: PendingReturnRow[] = Object.entries(officeBalances)
+      .filter(([, q]) => q > 0)
+      .map(([officeStaffId, totalQty]) => {
+        const st = officeStaff?.find((o) => o.id === officeStaffId);
+        return {
+          kind: 'office' as const,
+          key: `office:${officeStaffId}`,
+          officeStaffId,
+          staffName: st?.fullName || (isOpsOrHR ? officeStaffId : 'Restricted Access'),
+          totalQty,
+        };
+      });
+
+    return [...fieldRows, ...officeRows].sort((a, b) => {
+      const la = a.kind === 'field' ? a.workerName : a.staffName;
+      const lb = b.kind === 'field' ? b.workerName : b.staffName;
+      return la.localeCompare(lb, 'th');
+    });
+  }, [transactions, mobilizations, workers, officeStaff, isOpsOrHR]);
 
   if (userLoading || isUserLoading) {
     return (
@@ -437,35 +479,57 @@ export default function StoreDashboardPage() {
             <Card className="shadow-lg overflow-hidden border-none">
               <CardHeader className="bg-amber-50/50 border-b">
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Users className="h-5 w-5 text-amber-600" /> รายการค้างคืนจากคนงาน (Pending Returns)
+                  <Users className="h-5 w-5 text-amber-600" /> รายการค้างคืน (Pending Returns)
                 </CardTitle>
-                <CardDescription>รายการ PPE และเครื่องมือที่พนักงานยังไม่ได้ส่งคืนหลังจบงานหรือ Demob</CardDescription>
+                <CardDescription>
+                  ลูกจ้างหน้างานตาม mobilization และพนักงานออฟฟิศตามประวัติเบิกยืม — ยอดคำนวณจาก ISSUE หัก RETURN / DAMAGED / LOST
+                </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="font-bold pl-6">พนักงาน (Worker)</TableHead>
-                      <TableHead className="font-bold">โครงการ / โฟลว์</TableHead>
-                      <TableHead className="font-bold">รอบงาน (Wave)</TableHead>
-                      <TableHead className="text-center font-bold">จำนวนชิ้นที่ถือครอง</TableHead>
+                      <TableHead className="font-bold pl-6">ผู้ถือครอง</TableHead>
+                      <TableHead className="font-bold">บริบท</TableHead>
+                      <TableHead className="font-bold">รอบ / ประเภท</TableHead>
+                      <TableHead className="text-center font-bold">จำนวนค้าง (หน่วยรวม)</TableHead>
                       <TableHead className="text-right pr-6">ดำเนินการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {pendingReturns.map((ret) => (
-                      <TableRow key={ret.assignmentId} className="hover:bg-muted/30 transition-colors">
-                        <TableCell className="pl-6 font-bold text-primary">{ret.workerName}</TableCell>
-                        <TableCell className="text-sm">{ret.projectName}</TableCell>
-                        <TableCell><Badge variant="outline" className="font-mono bg-white">{ret.waveCode}</Badge></TableCell>
+                      <TableRow key={ret.key} className="hover:bg-muted/30 transition-colors">
+                        <TableCell className="pl-6 font-bold text-primary">
+                          {ret.kind === 'field' ? ret.workerName : ret.staffName}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {ret.kind === 'field' ? ret.projectName : 'พนักงานออฟฟิศ (ไม่ผูก mobilization)'}
+                        </TableCell>
+                        <TableCell>
+                          {ret.kind === 'field' ? (
+                            <Badge variant="outline" className="font-mono bg-white">
+                              {ret.waveCode}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="font-semibold">
+                              Office
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="text-center">
-                          <Badge className="bg-amber-600 hover:bg-amber-700 font-bold px-3">
-                            {ret.totalQty} รายการ
-                          </Badge>
+                          <Badge className="bg-amber-600 hover:bg-amber-700 font-bold px-3">{ret.totalQty}</Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <Button size="sm" variant="outline" className="border-amber-600 text-amber-700 hover:bg-amber-50 font-bold" asChild>
-                            <Link href="/store/return">บันทึกรับคืน <ChevronRight className="h-4 w-4 ml-1" /></Link>
+                            <Link
+                              href={
+                                ret.kind === 'office'
+                                  ? '/store/return?mode=office'
+                                  : '/store/return'
+                              }
+                            >
+                              บันทึกรับคืน <ChevronRight className="h-4 w-4 ml-1" />
+                            </Link>
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -504,6 +568,11 @@ export default function StoreDashboardPage() {
                     {transactions?.map((tx) => {
                       const item = items?.find(i => i.id === tx.itemId);
                       const worker = workers?.find(w => w.id === tx.workerId);
+                      const ost = officeStaff?.find((o) => o.id === tx.officeStaffId);
+                      const holderLabel =
+                        ost?.fullName ||
+                        (worker ? `${worker.firstName} ${worker.lastName}` : '') ||
+                        (tx.referenceId ? `Ref: ${tx.referenceId.substring(0, 8)}` : '');
                       return (
                         <TableRow key={tx.id} className="hover:bg-muted/20">
                           <TableCell className="pl-6 text-xs text-muted-foreground">{tx.transactionDate}</TableCell>
@@ -518,7 +587,11 @@ export default function StoreDashboardPage() {
                           <TableCell className="font-medium text-sm">{item?.itemName || 'N/A'}</TableCell>
                           <TableCell className="text-center font-bold">{tx.quantity}</TableCell>
                           <TableCell className="text-[10px] text-muted-foreground">
-                            {worker ? `${worker.firstName} ${worker.lastName}` : (tx.referenceId ? `Ref: ${tx.referenceId.substring(0,8)}` : (isOpsOrHR ? '-' : 'Restricted'))}
+                            {holderLabel ||
+                              (isOpsOrHR ? '—' : 'Restricted')}
+                            {tx.officeStaffId ? (
+                              <span className="block text-[9px] text-primary/80">Office borrow</span>
+                            ) : null}
                           </TableCell>
                           <TableCell className="text-right pr-6 text-[10px] font-medium text-primary">{tx.createdBy}</TableCell>
                         </TableRow>

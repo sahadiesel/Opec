@@ -1,34 +1,33 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  ArrowLeft, 
-  Search, 
-  Filter, 
-  History, 
-  Download, 
-  Calendar, 
-  User, 
-  Briefcase, 
-  Waves, 
+import {
+  ArrowLeft,
+  Search,
+  Filter,
+  History,
+  Download,
+  Calendar,
+  User,
+  Waves,
   Package,
-  ArrowUpDown,
-  ChevronRight,
-  Info
+  Info,
+  Building2,
+  Briefcase,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { 
-  StoreItem, 
-  StoreTransaction, 
-  User as AppUser, 
-  Worker, 
-  Assignment, 
+import {
+  StoreItem,
+  StoreTransaction,
+  Worker,
+  Assignment,
   Wave,
-  TransactionType
+  TransactionType,
+  OfficeStaff,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -40,6 +39,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { formatYmdLocalThaiBE, formatTimeThaiBE } from '@/lib/date-thai';
 
+type LedgerHolderPick = { kind: 'worker' | 'office'; id: string; displayName: string };
+
+function normalizeLedgerSearch(s: string): string {
+  return s.trim().toLowerCase();
+}
+
 export default function InventoryLedgerPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
@@ -47,10 +52,22 @@ export default function InventoryLedgerPage() {
 
   const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
 
-  // Filter States
-  const [searchTerm, setSearchTerm] = useState('');
+  const [itemSearchTerm, setItemSearchTerm] = useState('');
+  const [holderSearchInput, setHolderSearchInput] = useState('');
+  const [selectedHolder, setSelectedHolder] = useState<LedgerHolderPick | null>(null);
+  const [holderSuggestOpen, setHolderSuggestOpen] = useState(false);
+  const holderWrapRef = useRef<HTMLDivElement>(null);
+
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (!holderWrapRef.current?.contains(e.target as Node)) setHolderSuggestOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, []);
 
   // 1. Data Fetching — gate by store access
   const txQuery = useMemoFirebase(() => {
@@ -71,20 +88,87 @@ export default function InventoryLedgerPage() {
   const wavesQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'waves') : null), [firestore, canAccess]);
   const { data: waves } = useCollection<Wave>(wavesQuery as any);
 
+  const officeStaffQuery = useMemoFirebase(() => (firestore && canAccess ? collection(firestore, 'office_staff') : null), [firestore, canAccess]);
+  const { data: officeStaffList } = useCollection<OfficeStaff>(officeStaffQuery as any);
+
+  const holderSuggestions = useMemo(() => {
+    const q = normalizeLedgerSearch(holderSearchInput);
+    if (q.length < 1) return [];
+    type Sug = LedgerHolderPick & { sortKey: string };
+    const out: Sug[] = [];
+    for (const w of workers ?? []) {
+      const displayName = `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.id;
+      const hay = normalizeLedgerSearch(displayName);
+      if (hay.includes(q) || normalizeLedgerSearch(w.id).includes(q)) {
+        out.push({ kind: 'worker', id: w.id, displayName, sortKey: displayName });
+      }
+    }
+    for (const s of officeStaffList ?? []) {
+      const displayName = (s.fullName || '').trim() || s.id;
+      const hay = normalizeLedgerSearch(displayName);
+      if (hay.includes(q) || normalizeLedgerSearch(s.id).includes(q)) {
+        out.push({ kind: 'office', id: s.id, displayName, sortKey: displayName });
+      }
+    }
+    out.sort((a, b) => a.sortKey.localeCompare(b.sortKey, 'th'));
+    return out.slice(0, 24);
+  }, [holderSearchInput, workers, officeStaffList]);
+
+  const requesterDisplayLabel = useCallback(
+    (tx: StoreTransaction): string => {
+      const oid = (tx.officeStaffId || '').trim();
+      if (oid) {
+        const st = officeStaffList?.find((o) => o.id === oid);
+        return (st?.fullName || '').trim() || oid;
+      }
+      const wid = (tx.workerId || '').trim();
+      if (wid) {
+        const w = workers?.find((x) => x.id === wid);
+        return `${w?.firstName || ''} ${w?.lastName || ''}`.trim() || wid;
+      }
+      return '';
+    },
+    [workers, officeStaffList],
+  );
+
   // 2. Logic: Filtering & Mapping
   const filteredLedger = useMemo(() => {
     if (!transactions) return [];
-    return transactions.filter(tx => {
-      const item = items?.find(i => i.id === tx.itemId);
-      const matchesSearch = item?.itemName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           item?.itemCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           tx.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+    const itemQ = normalizeLedgerSearch(itemSearchTerm);
+    const holderQ = normalizeLedgerSearch(holderSearchInput);
+
+    return transactions.filter((tx) => {
+      const item = items?.find((i) => i.id === tx.itemId);
+      const matchesItem =
+        !itemQ ||
+        (item?.itemName && normalizeLedgerSearch(item.itemName).includes(itemQ)) ||
+        (item?.itemCode && normalizeLedgerSearch(item.itemCode).includes(itemQ));
+
+      let matchesHolder = true;
+      if (selectedHolder) {
+        matchesHolder =
+          (selectedHolder.kind === 'worker' && tx.workerId === selectedHolder.id) ||
+          (selectedHolder.kind === 'office' && tx.officeStaffId === selectedHolder.id);
+      } else if (holderQ) {
+        const label = normalizeLedgerSearch(requesterDisplayLabel(tx));
+        matchesHolder = Boolean(label && label.includes(holderQ));
+      }
+
       const matchesType = typeFilter === 'ALL' || tx.transactionType === typeFilter;
       const matchesCategory = categoryFilter === 'ALL' || item?.category === categoryFilter;
-      
-      return matchesSearch && matchesType && matchesCategory;
+
+      return matchesItem && matchesHolder && matchesType && matchesCategory;
     });
-  }, [transactions, items, searchTerm, typeFilter, categoryFilter]);
+  }, [
+    transactions,
+    items,
+    itemSearchTerm,
+    holderSearchInput,
+    selectedHolder,
+    typeFilter,
+    categoryFilter,
+    requesterDisplayLabel,
+  ]);
 
   const categories = useMemo(() => {
     if (!items) return [];
@@ -136,21 +220,90 @@ export default function InventoryLedgerPage() {
         {/* Filters Card */}
         <Card className="shadow-sm border-none bg-card">
           <CardContent className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs font-bold uppercase text-muted-foreground">ค้นหา (Search)</Label>
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+              <div className="space-y-2 md:col-span-3">
+                <Label className="text-xs font-bold uppercase text-muted-foreground">
+                  ค้นหาอุปกรณ์ (Item)
+                </Label>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="รหัส, ชื่อสินค้า หรือบันทึก..." 
+                  <Package className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="รหัสหรือชื่อสินค้า..."
                     className="pl-9"
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
+                    value={itemSearchTerm}
+                    onChange={(e) => setItemSearchTerm(e.target.value)}
                   />
                 </div>
               </div>
-              
-              <div className="space-y-2">
+
+              <div className="space-y-2 md:col-span-3" ref={holderWrapRef}>
+                <Label className="text-xs font-bold uppercase text-muted-foreground">
+                  ผู้เบิก / ผู้ถือครอง (Requester)
+                </Label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none z-[1]" />
+                  <Input
+                    placeholder="พิมพ์ชื่อ — เลือกจากรายการที่โผล่..."
+                    className="pl-9"
+                    autoComplete="off"
+                    value={holderSearchInput}
+                    onChange={(e) => {
+                      setHolderSearchInput(e.target.value);
+                      setSelectedHolder(null);
+                      setHolderSuggestOpen(true);
+                    }}
+                    onFocus={() => setHolderSuggestOpen(true)}
+                  />
+                  {holderSuggestOpen && holderSuggestions.length > 0 ? (
+                    <ul
+                      className="absolute left-0 right-0 top-full mt-1 max-h-56 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md z-50 py-1 text-sm"
+                      role="listbox"
+                    >
+                      {holderSuggestions.map((s) => (
+                        <li key={`${s.kind}:${s.id}`}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-muted/80 flex items-center gap-2"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setSelectedHolder({ kind: s.kind, id: s.id, displayName: s.displayName });
+                              setHolderSearchInput(s.displayName);
+                              setHolderSuggestOpen(false);
+                            }}
+                          >
+                            {s.kind === 'office' ? (
+                              <Building2 className="h-3.5 w-3.5 shrink-0 text-sky-600" aria-hidden />
+                            ) : (
+                              <User className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                            )}
+                            <span className="truncate">{s.displayName}</span>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {s.kind === 'office' ? 'ออฟฟิศ' : 'ลูกจ้าง'}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                {selectedHolder ? (
+                  <p className="text-[10px] text-muted-foreground">
+                    กรองเฉพาะรายการของ <strong className="text-foreground">{selectedHolder.displayName}</strong>{' '}
+                    <button
+                      type="button"
+                      className="text-primary underline font-medium"
+                      onClick={() => {
+                        setSelectedHolder(null);
+                        setHolderSearchInput('');
+                      }}
+                    >
+                      ล้างการเลือก
+                    </button>
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
                 <Label className="text-xs font-bold uppercase text-muted-foreground">ประเภทรายการ (Type)</Label>
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
                   <SelectTrigger>
@@ -168,7 +321,7 @@ export default function InventoryLedgerPage() {
                 </Select>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 md:col-span-2">
                 <Label className="text-xs font-bold uppercase text-muted-foreground">หมวดหมู่ (Category)</Label>
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                   <SelectTrigger>
@@ -183,12 +336,19 @@ export default function InventoryLedgerPage() {
                 </Select>
               </div>
 
-              <div className="flex items-end">
-                <Button variant="ghost" className="w-full gap-2 text-muted-foreground" onClick={() => {
-                  setSearchTerm('');
-                  setTypeFilter('ALL');
-                  setCategoryFilter('ALL');
-                }}>
+              <div className="flex items-end md:col-span-2">
+                <Button
+                  variant="ghost"
+                  className="w-full gap-2 text-muted-foreground"
+                  onClick={() => {
+                    setItemSearchTerm('');
+                    setHolderSearchInput('');
+                    setSelectedHolder(null);
+                    setHolderSuggestOpen(false);
+                    setTypeFilter('ALL');
+                    setCategoryFilter('ALL');
+                  }}
+                >
                   <Filter className="h-4 w-4" /> ล้างตัวกรอง (Clear)
                 </Button>
               </div>
@@ -220,6 +380,11 @@ export default function InventoryLedgerPage() {
                     const worker = workers?.find(w => w.id === tx.workerId);
                     const asgn = assignments?.find(a => a.id === tx.assignmentId);
                     const wave = waves?.find(w => w.id === tx.waveId);
+                    const requesterName = requesterDisplayLabel(tx);
+                    const slipNote =
+                      tx.notes && /ref\s*(slip|return)/i.test(tx.notes)
+                        ? tx.notes.replace(/\s+/g, ' ').trim().slice(0, 120)
+                        : '';
 
                     return (
                       <TableRow key={tx.id} className="hover:bg-muted/20 transition-colors group">
@@ -256,19 +421,43 @@ export default function InventoryLedgerPage() {
                             <span className="font-mono text-primary font-bold">{tx.referenceId?.substring(0, 12) || '-'}</span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            {worker && (
-                              <span className="font-bold text-xs text-primary flex items-center gap-1">
-                                <User className="h-2.5 w-2.5" /> {worker.firstName} {worker.lastName}
+                        <TableCell className="max-w-[280px]">
+                          <div className="flex flex-col gap-0.5">
+                            {requesterName ? (
+                              <span className="font-bold text-sm text-primary flex items-center gap-1.5">
+                                {(tx.officeStaffId || '').trim() ? (
+                                  <Building2 className="h-3.5 w-3.5 shrink-0 text-sky-700" aria-hidden />
+                                ) : (
+                                  <User className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                )}
+                                <span className="leading-tight">{requesterName}</span>
                               </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground italic">— ไม่มีผู้เบิกในบรรทัด (เช่น รับเข้า/ตัดยอดคลัง)</span>
                             )}
-                            {wave && (
+                            {(tx.officeStaffId || '').trim() ? (
+                              <span className="text-[10px] text-sky-800/90">พนักงานออฟฟิศ</span>
+                            ) : worker && asgn ? (
                               <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                <Waves className="h-2.5 w-2.5" /> {wave.waveCode}
+                                <Briefcase className="h-2.5 w-2.5 shrink-0" aria-hidden />
+                                <span className="truncate">{asgn.projectName || 'งานมอบหมาย'}</span>
                               </span>
-                            )}
-                            <span className="text-[10px] italic text-muted-foreground truncate max-w-[200px]">{tx.notes || '-'}</span>
+                            ) : null}
+                            {wave && !(tx.officeStaffId || '').trim() ? (
+                              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                <Waves className="h-2.5 w-2.5 shrink-0" aria-hidden />
+                                {wave.waveCode}
+                              </span>
+                            ) : null}
+                            {slipNote ? (
+                              <span className="text-[10px] text-muted-foreground truncate" title={tx.notes}>
+                                {slipNote}
+                              </span>
+                            ) : tx.notes ? (
+                              <span className="text-[10px] text-muted-foreground truncate max-w-[260px]" title={tx.notes}>
+                                {tx.notes}
+                              </span>
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
