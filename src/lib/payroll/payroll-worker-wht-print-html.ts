@@ -160,8 +160,7 @@ ${payee.bankName || payee.bankAccountLast4 ? `<div class="field">ธนาคา
 <div class="sec">4. ภาษีหัก ณ ที่จ่าย</div>
 ${pitNote}
 <div class="field">ฐานภาษี (เงินได้ที่ใช้คำนวณใน Payroll): ${fmtBaht(vm.taxableIncomeAmount)} บาท</div>
-<div class="field">อัตราภาษีหัก ณ ที่จ่าย: ${escapeHtml(vm.withholdingTaxRateDisplayTh)}</div>
-<div class="field">จำนวนภาษีที่หักไว้: ${fmtBaht(vm.withholdingTaxAmount)} บาท</div>
+<div class="field">อัตราภาษีหัก ณ ที่จ่าย ${escapeHtml(vm.withholdingTaxRateDisplayTh)} เป็นเงินที่หักไว้ ${fmtBaht(vm.withholdingTaxAmount)} บาท</div>
 <div class="field">ตัวอักษรจำนวนภาษีที่หักไว้: ${escapeHtml(vm.withholdingTaxWordsTh)}</div>
 <div class="field"><strong>ยอดสุทธิที่จ่าย</strong>: ${fmtBaht(vm.netPaidAmount)} บาท</div>
 

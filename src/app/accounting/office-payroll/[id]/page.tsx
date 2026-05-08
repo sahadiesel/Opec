@@ -24,7 +24,11 @@ import {
   Users,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { OfficePayrollWhtSingleDialog } from '@/components/payroll/office-payroll-wht-single-dialog';
+import { OfficePayrollWhtBatchDialog } from '@/components/payroll/office-payroll-wht-batch-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
+import { canPreviewOfficePayrollWht } from '@/lib/payroll/payroll-office-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { collection, doc, query, updateDoc, where, type DocumentData } from 'firebase/firestore';
 import { OfficePayrollLine, OfficePayrollRun, BankAccount, PayrollRunStatus, User as AppUser } from '@/lib/types';
@@ -36,6 +40,7 @@ import { canView } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
+import { assertOfficePayrollLinesStaffIdentityComplete } from '@/lib/payroll/office-staff-payroll-identity';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { useAppUser } from '@/hooks/use-app-user';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
@@ -70,6 +75,39 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
     [firestore, id, isAuthorized],
   );
   const { data: lines, isLoading: isLinesLoading } = useCollection<OfficePayrollLine>(linesQuery as any);
+
+  const companyProfileWhtRef = useMemoFirebase(
+    () => (firestore && isAuthorized ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: companyProfileForWht } = useDoc<CompanyDocumentProfileForPayrollWht>(companyProfileWhtRef as any);
+
+  const linesSorted = useMemo(() => {
+    const list = [...(lines ?? [])];
+    list.sort((a, b) =>
+      (a.staffName || '').localeCompare(b.staffName || '', 'th', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+    return list;
+  }, [lines]);
+
+  const officeWhtPeriodLabel = useMemo(() => {
+    if (!run) return '';
+    return `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`;
+  }, [run]);
+
+  const canOfficeWhtPreview =
+    !!run &&
+    canPreviewOfficePayrollWht(currentUser as AppUser, run.status) &&
+    linesSorted.length > 0;
+  const officeWhtDisabledReason =
+    linesSorted.length === 0
+      ? 'ยังไม่มีรายการจ่ายในทะเบียนงวดนี้'
+      : !run || !canPreviewOfficePayrollWht(currentUser as AppUser, run.status)
+        ? 'งวดนี้ยังไม่พร้อมใบหัก ณ ที่จ่าย (ต้องคำนวณแล้ว)'
+        : undefined;
 
   const [payoutBankId, setPayoutBankId] = useState('');
   const [statusBusy, setStatusBusy] = useState(false);
@@ -125,6 +163,9 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
 
     try {
       if (newStatus === 'FINANCE_APPROVED') {
+        if (lines?.length) {
+          await assertOfficePayrollLinesStaffIdentityComplete(firestore, lines);
+        }
         updateData.financeApprovedBy = currentUser.displayName;
         const bankForPayout = (payoutBankId || run.payoutBankAccountId || '').trim();
         if (!run.financeCashbookEntryId) {
@@ -231,6 +272,18 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
             <Button variant="outline" size="sm" asChild>
               <Link href={`/office-payroll/${id}`}>มุมมอง HR (คำนวณ / อนุมัติ)</Link>
             </Button>
+            {firestore && run ? (
+              <OfficePayrollWhtBatchDialog
+                firestore={firestore}
+                run={run}
+                linesSorted={linesSorted}
+                periodLabel={officeWhtPeriodLabel}
+                companyProfile={companyProfileForWht ?? null}
+                currentUser={currentUser as AppUser}
+                disabled={!canOfficeWhtPreview}
+                disabledTitle={officeWhtDisabledReason}
+              />
+            ) : null}
             <Button variant="outline" size="sm" asChild className="gap-1">
               <Link href={`/office-payroll/${id}/print`}>
                 <Printer className="h-4 w-4" />
@@ -380,13 +433,14 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
                   <TableHead className="text-right">Gross</TableHead>
                   <TableHead className="text-right">หัก</TableHead>
                   <TableHead className="text-right font-bold">สุทธิ</TableHead>
+                  <TableHead className="text-center w-[88px] px-1">ใบหักฯ</TableHead>
                   <TableHead className="text-right w-[100px]">สลิป</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLinesLoading && (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-12 text-center">
+                    <TableCell colSpan={7} className="py-12 text-center">
                       <Loader2 className="h-6 w-6 animate-spin inline mr-2" />
                       กำลังโหลด…
                     </TableCell>
@@ -410,6 +464,22 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
                         <TableCell className="text-right">฿{line.grossPay.toLocaleString()}</TableCell>
                         <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-bold text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
+                        <TableCell className="text-center align-middle px-1">
+                          {firestore && run ? (
+                            <OfficePayrollWhtSingleDialog
+                              firestore={firestore}
+                              run={run}
+                              line={line}
+                              periodLabel={officeWhtPeriodLabel}
+                              companyProfile={companyProfileForWht ?? null}
+                              currentUser={currentUser as AppUser}
+                              disabled={!canOfficeWhtPreview}
+                              disabledTitle={officeWhtDisabledReason}
+                            />
+                          ) : (
+                            '—'
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">{slipModel ? <PayslipDialog model={slipModel} /> : '—'}</TableCell>
                       </TableRow>
                     );

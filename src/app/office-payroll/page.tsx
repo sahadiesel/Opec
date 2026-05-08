@@ -159,7 +159,8 @@ export default function OfficePayrollPage() {
   const [sendingReviewId, setSendingReviewId] = useState<string | null>(null);
   const [runSearch, setRunSearch] = useState('');
   const [monthFilterYm, setMonthFilterYm] = useState<string>(() => currentPayrollMonthYm());
-  const [monthFilterShowAll, setMonthFilterShowAll] = useState(false);
+  /** ค่าเริ่มต้นแสดงทุกเดือน — ให้ตรวจสอบงวดที่จ่ายแล้วย้อนหลังได้เหมือนรายการ Payroll Batches ลูกจ้าง */
+  const [monthFilterShowAll, setMonthFilterShowAll] = useState(true);
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -561,7 +562,8 @@ export default function OfficePayrollPage() {
                       }}
                     />
                     <p className="text-[11px] text-muted-foreground leading-snug">
-                      ค่าเริ่มต้นเมื่อเข้าหน้า: เดือนปัจจุบัน ({formatPayrollYearMonthEnAbbrev(currentPayrollMonthYm())})
+                      เปิดหน้ามาแสดง <strong>ทุกเดือน</strong> เพื่อเห็นงวดจ่ายแล้วย้อนหลัง — เลือกเดือนในปฏิทินด้านบนถ้าต้องการโฟกัสเดือนเดียว (
+                      เดือนปัจจุบัน {formatPayrollYearMonthEnAbbrev(currentPayrollMonthYm())})
                     </p>
                   </div>
                   <div className="flex flex-col gap-2">

@@ -7,7 +7,7 @@ import {
   isActiveForApp,
   isInternalTypeUser,
 } from '@/lib/simple-tier-model';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { getPrimaryLegacyRole, isSystemAdmin } from '@/lib/permission-core';
 import type {
   LaborCostResolutionSnapshot,
   LaborCostSourceKind,
@@ -24,7 +24,6 @@ export const LABOR_COST_STAFF_ROLES = new Set<string>([
   'hr_manager',
   'hr_officer',
   'payroll_officer',
-  'operations_officer',
 ]);
 
 function isLaborCostStaffByRole(role: string | null): boolean {
@@ -40,7 +39,17 @@ export function canViewWorkerLaborCostFromUser(
 ): boolean {
   if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
   if (isSystemAdmin(user as User)) return true;
+  if (getPrimaryLegacyRole(user as User) === 'operations_officer') return false;
   return isLaborCostStaffByRole(getEffectiveSimpleRole(user));
+}
+
+/** เลขบัญชี / ข้อมูลการเงินในทะเบียนลูกจ้าง — ไม่ให้ operations_officer (แยกจากแพทย์/ประกัน) */
+export function canViewWorkerBankPayrollFieldsFromUser(
+  user: Partial<User> | null | undefined,
+): boolean {
+  if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
+  if (isSystemAdmin(user as User)) return true;
+  return getPrimaryLegacyRole(user as User) !== 'operations_officer';
 }
 
 /** ระยะนี้แก้ได้กับ role เดียวกับ who can view — ต่อไปอาจแยก (เช่น ดูได้แต่ HR แก้) */

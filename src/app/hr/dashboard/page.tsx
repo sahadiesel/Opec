@@ -41,7 +41,7 @@ import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { canSeeHrPillarUi } from '@/lib/permissions';
-import { getEffectiveAccessLevel, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { getEffectiveAccessLevel, isOperationsOfficer, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
@@ -75,6 +75,12 @@ export default function HRDashboardPage() {
     return level === 'officer' || level === 'viewer';
   }, [currentUser]);
 
+  /** เจ้าหน้าที่ปฏิบัติการ: ใช้แดชบอร์ด HR แต่ไม่โหลด/ไม่แสดงคิว payroll และต้นทุนค่าแรง */
+  const hidePayrollAndLaborCostUi = useMemo(
+    () => !!currentUser && isOperationsOfficer(currentUser) && !isSystemAdmin(currentUser),
+    [currentUser],
+  );
+
   // --- HR Data Queries ---
   
   const workersQuery = useMemoFirebase(() => {
@@ -84,9 +90,9 @@ export default function HRDashboardPage() {
   const { data: workers, isLoading: isWorkersLoading } = useCollection<Worker>(workersQuery as any);
 
   const payrollQuery = useMemoFirebase(() => {
-    if (!firestore || !isHRAuthorized) return null;
+    if (!firestore || !isHRAuthorized || hidePayrollAndLaborCostUi) return null;
     return query(collection(firestore, 'payroll_runs'), where('status', 'in', ['DRAFT', 'HR_REVIEW', 'CALCULATED']), limit(10));
-  }, [firestore, isHRAuthorized]);
+  }, [firestore, isHRAuthorized, hidePayrollAndLaborCostUi]);
   const { data: payrollRuns } = useCollection<PayrollRun>(payrollQuery as any);
 
   const exceptionQuery = useMemoFirebase(() => {
@@ -110,7 +116,11 @@ export default function HRDashboardPage() {
   }, [firestore, isHRAuthorized]);
   const { data: correctionTs } = useCollection<DailyTimesheet>(correctionTsQuery as any);
 
-  const positionsQuery = useMemoFirebase(() => (firestore && isHRAuthorized ? collection(firestore, 'positions') : null), [firestore, isHRAuthorized]);
+  const positionsQuery = useMemoFirebase(
+    () =>
+      firestore && isHRAuthorized && !hidePayrollAndLaborCostUi ? collection(firestore, 'positions') : null,
+    [firestore, isHRAuthorized, hidePayrollAndLaborCostUi],
+  );
   const { data: positions } = useCollection<Position>(positionsQuery as any);
 
 
@@ -260,7 +270,9 @@ export default function HRDashboardPage() {
             )}
           </h1>
           <p className="text-muted-foreground text-lg italic">
-            ติดตามความพร้อมของลูกจ้าง งานรออนุมัติ และคำขอแก้ไขข้อมูลหลังปิดงวด (Worker compliance & HR action queues).
+            {hidePayrollAndLaborCostUi
+              ? 'ติดตามความพร้อมลูกจ้าง เอกสาร การลงเวลา และอุปกรณ์ความปลอดภัย — ไม่แสดงข้อมูลงวดจ่ายและต้นทุนค่าแรง'
+              : 'ติดตามความพร้อมของลูกจ้าง งานรออนุมัติ และคำขอแก้ไขข้อมูลหลังปิดงวด (Worker compliance & HR action queues).'}
           </p>
         </div>
 
@@ -274,7 +286,7 @@ export default function HRDashboardPage() {
           </Alert>
         )}
 
-        {!viewerOnly ? (
+        {!viewerOnly && !hidePayrollAndLaborCostUi ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card className="border-l-4 border-l-indigo-600 shadow-md">
               <CardHeader className="pb-2">
@@ -369,13 +381,15 @@ export default function HRDashboardPage() {
           <StatCard title="บล็อก Assign" value={stats.blocked} sub="Blocked By Policy" icon={ShieldAlert} colorClass="border-l-red-600" />
           <StatCard title="งานค้าง HR" value={pendingHRTasks.length} sub="Pending Tasks" icon={Clock} colorClass="border-l-purple-600" />
           <StatCard title="คำขอแก้ไข" value={(pendingExceptions?.length || 0) + (correctionTs?.length || 0)} sub="Correction Queue" icon={RotateCcw} colorClass="border-l-amber-500" />
-          <StatCard
-            title="ตำแหน่งยังไม่กำหนดฐาน"
-            value={positionsMissingDefaultLabor.length}
-            sub="OPEC ต้นทุน/วัน ที่ /positions"
-            icon={AlertTriangle}
-            colorClass="border-l-rose-600"
-          />
+          {!hidePayrollAndLaborCostUi ? (
+            <StatCard
+              title="ตำแหน่งยังไม่กำหนดฐาน"
+              value={positionsMissingDefaultLabor.length}
+              sub="OPEC ต้นทุน/วัน ที่ /positions"
+              icon={AlertTriangle}
+              colorClass="border-l-rose-600"
+            />
+          ) : null}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -454,53 +468,75 @@ export default function HRDashboardPage() {
             </Card>
           </div>
 
-          <div className="space-y-6">
-            <Card className="bg-amber-50 border-amber-100 shadow-none">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-bold uppercase text-amber-800 flex items-center gap-2">
-                  <AlertTriangle className="h-3 w-3" /> Payroll Lock Reminder
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-[10px] text-amber-700 leading-relaxed">
-                รายการที่สถานะเป็น 'CORRECTION_REQUIRED' จะไม่ถูกนำไปคำนวณในงวด Payroll กรุณาเร่งประสานงานแก้ไขและยืนยันยอดให้ทันรอบการจ่าย
-              </CardContent>
-            </Card>
+          {!hidePayrollAndLaborCostUi ? (
+            <div className="space-y-6">
+              <Card className="bg-amber-50 border-amber-100 shadow-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-bold uppercase text-amber-800 flex items-center gap-2">
+                    <AlertTriangle className="h-3 w-3" /> Payroll Lock Reminder
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="text-[10px] text-amber-700 leading-relaxed">
+                  รายการที่สถานะเป็น 'CORRECTION_REQUIRED' จะไม่ถูกนำไปคำนวณในงวด Payroll กรุณาเร่งประสานงานแก้ไขและยืนยันยอดให้ทันรอบการจ่าย
+                </CardContent>
+              </Card>
 
-            <Card className="bg-rose-50 border-rose-100 shadow-none">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-bold uppercase text-rose-800 flex items-center gap-2">
-                  <AlertTriangle className="h-3 w-3" /> ฐานต้นทุนแรง (Positions)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {positionsMissingDefaultLabor.length === 0 ? (
-                  <p className="text-[10px] text-rose-700">
-                    ทุกตำแหน่งหน้างาน active ระบุฐาน OPEC/วันครบแล้ว หรือยังไม่ต้องใช้ (ดูรายละเอียดที่{' '}
-                    <Link href="/positions" className="font-medium underline">
-                      ตำแหน่งงาน
-                    </Link>
-                    )
-                  </p>
-                ) : (
-                  positionsMissingDefaultLabor.slice(0, 6).map((p) =>
-                    viewerOnly ? (
-                      <p key={p.id} className="text-[10px] text-rose-700">
-                        {p.positionCode || p.id}: ยังไม่มีฐานต้นทุน OPEC (onshore/offshore) — กำหนดที่รายละเอียดตำแหน่ง
-                      </p>
-                    ) : (
-                      <Link
-                        key={p.id}
-                        href={`/positions/${p.id}`}
-                        className="block text-[10px] text-rose-700 hover:underline"
-                      >
-                        {p.positionCode || p.id}: ยังไม่มีฐานต้นทุน OPEC (onshore/offshore) — กำหนดที่รายละเอียดตำแหน่ง
+              <Card className="bg-rose-50 border-rose-100 shadow-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-bold uppercase text-rose-800 flex items-center gap-2">
+                    <AlertTriangle className="h-3 w-3" /> ฐานต้นทุนแรง (Positions)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {positionsMissingDefaultLabor.length === 0 ? (
+                    <p className="text-[10px] text-rose-700">
+                      ทุกตำแหน่งหน้างาน active ระบุฐาน OPEC/วันครบแล้ว หรือยังไม่ต้องใช้ (ดูรายละเอียดที่{' '}
+                      <Link href="/positions" className="font-medium underline">
+                        ตำแหน่งงาน
                       </Link>
-                    ),
-                  )
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                      )
+                    </p>
+                  ) : (
+                    positionsMissingDefaultLabor.slice(0, 6).map((p) =>
+                      viewerOnly ? (
+                        <p key={p.id} className="text-[10px] text-rose-700">
+                          {p.positionCode || p.id}: ยังไม่มีฐานต้นทุน OPEC (onshore/offshore) — กำหนดที่รายละเอียดตำแหน่ง
+                        </p>
+                      ) : (
+                        <Link
+                          key={p.id}
+                          href={`/positions/${p.id}`}
+                          className="block text-[10px] text-rose-700 hover:underline"
+                        >
+                          {p.positionCode || p.id}: ยังไม่มีฐานต้นทุน OPEC (onshore/offshore) — กำหนดที่รายละเอียดตำแหน่ง
+                        </Link>
+                      ),
+                    )
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <Card className="bg-slate-50 border-slate-100 shadow-none">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-bold uppercase text-slate-800 flex items-center gap-2">
+                    <HardHat className="h-3 w-3" /> ลงเวลา · PPE · สารเสพติด
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="text-[10px] text-slate-700 leading-relaxed space-y-2">
+                  <p>
+                    ลงเวลา: <Link href="/timesheets">รายวัน</Link> ·{' '}
+                    <Link href="/timesheets/wave-month">สรุปรายเดือน (Wave)</Link>
+                  </p>
+                  <p>
+                    ทะเบียนลูกจ้าง — แท็บ <strong>สารเสพติด</strong> / <strong>รายการ PPE</strong> / <strong>รายการอุปกรณ์</strong> และ{' '}
+                    <Link href="/store">คลังอุปกรณ์</Link> สำหรับเบิก-คืน
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       </div>
     </AppShell>

@@ -86,6 +86,16 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'User with primary operations_officer should retain workers + ops even if also tagged hr_officer'
   );
 
+  const opsOnly = createMockUser(['operations_officer'], 'operations', 'officer');
+  const opsPayroll = getPermissions(opsOnly, 'worker_payroll');
+  const opsDraftInv = getPermissions(opsOnly, 'draft_invoices');
+  const opsTimesheets = getPermissions(opsOnly, 'timesheets');
+  assert(
+    'Operations officer: no payroll / commercial invoice menu',
+    !opsPayroll.view && !opsDraftInv.view && opsTimesheets.view,
+    'operations_officer must not access payroll or draft invoices but can use timesheets'
+  );
+
   const client = createMockUser(['client_user'], 'client', 'viewer');
   client.userType = 'customer_portal';
   const clientAccessToPayroll = getPermissions(client, 'worker_payroll');

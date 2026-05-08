@@ -596,7 +596,13 @@ export interface OfficeStaff {
   status: 'ACTIVE' | 'INACTIVE' | 'RESIGNED';
   notes?: string;
   linkedUserId?: string;
+  /** @deprecated ไม่ใช้ใน UI — เก็บไว้เฉพาะข้อมูลเก่าใน Firestore */
   supervisorId?: string;
+  /** snapshot ตอนผู้ดูแลระบบผูกบัญชี — ให้ HR ดูชื่อ/อีเมลโดยไม่ต้องอ่าน users/{id} */
+  linkedUserDisplayName?: string;
+  linkedUserDisplayEmail?: string;
+  /** snapshot บรรทัดสรุปสิทธิ์ตอนบันทึกการผูกบัญชี */
+  linkedUserAccessSummary?: string[];
   createdAt: number;
   createdBy?: string;
   updatedAt: number;

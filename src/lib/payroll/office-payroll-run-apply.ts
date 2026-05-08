@@ -18,6 +18,7 @@ import {
   resolvePayrollPoliciesForDate,
   runStatusToD8Lifecycle,
 } from '@/lib/payroll/d8';
+import { assertOfficeStaffListPayrollIdentityComplete } from '@/lib/payroll/office-staff-payroll-identity';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -99,6 +100,8 @@ export async function applyStandardOfficeRunLines(
   staffList: OfficeStaff[],
   options: { newStatus?: PayrollRunStatus },
 ): Promise<ApplyOfficeRunLinesResult> {
+  assertOfficeStaffListPayrollIdentityComplete(staffList);
+
   await deleteAllLinesForOfficeRun(firestore, runId);
 
   const asOf = run.payrollPeriodEnd || `${run.payrollMonth}-28`;

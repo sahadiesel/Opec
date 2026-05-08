@@ -22,6 +22,9 @@ import { Loader2, UserCircle, KeyRound } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useAuth } from '@/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import { addDoc, collection, doc, getDoc, query, updateDoc, where } from 'firebase/firestore';
+import { getEffectiveSimpleRole } from '@/lib/simple-tier-model';
+import { sanitizeFirestorePayload } from '@/lib/utils';
+import type { OfficeStaff } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { fetchLinkedPersonnelForUser } from '@/lib/hr/linked-personnel';
@@ -76,6 +79,56 @@ export default function MyProfilePage() {
     void loadLinked();
   }, [loadLinked]);
 
+  useEffect(() => {
+    if (linked?.kind !== 'office_staff') return;
+    const r = linked.record;
+    setOfficeForm({
+      fullName: r.fullName ?? '',
+      nickname: r.nickname ?? '',
+      phone: r.phone ?? '',
+      nationalId: r.nationalId ?? '',
+      address: r.address ?? '',
+      emergencyContactName: r.emergencyContactName ?? '',
+      emergencyContactRelation: r.emergencyContactRelation ?? '',
+      emergencyContactPhone: r.emergencyContactPhone ?? '',
+    });
+  }, [linked]);
+
+  const canSelfEditOfficeStaffProfile = useMemo(
+    () => linked?.kind === 'office_staff' && getEffectiveSimpleRole(currentUser) === 'employee_self',
+    [linked, currentUser],
+  );
+
+  const saveOfficePersonal = async () => {
+    if (!firestore || !currentUser || linked?.kind !== 'office_staff') return;
+    if (!canSelfEditOfficeStaffProfile) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์แก้ไขทะเบียนนี้' });
+      return;
+    }
+    setOfficePersonalBusy(true);
+    try {
+      const now = Date.now();
+      await updateDoc(
+        doc(firestore, 'office_staff', linked.record.id),
+        sanitizeFirestorePayload({
+          ...officeForm,
+          updatedAt: now,
+          updatedBy: currentUser.displayName || currentUser.email || currentUser.id,
+        } as Partial<OfficeStaff>),
+      );
+      toast({ title: 'บันทึกข้อมูลส่วนตัวแล้ว' });
+      void loadLinked();
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setOfficePersonalBusy(false);
+    }
+  };
+
   const myAdvancesQ = useMemoFirebase(() => {
     if (!firestore || !currentUser?.id) return null;
     return query(collection(firestore, 'cash_advance_requests'), where('subjectLinkedUserId', '==', currentUser.id));
@@ -91,6 +144,18 @@ export default function MyProfilePage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordBusy, setPasswordBusy] = useState(false);
+
+  const [officePersonalBusy, setOfficePersonalBusy] = useState(false);
+  const [officeForm, setOfficeForm] = useState({
+    fullName: '',
+    nickname: '',
+    phone: '',
+    nationalId: '',
+    address: '',
+    emergencyContactName: '',
+    emergencyContactRelation: '',
+    emergencyContactPhone: '',
+  });
 
   const [workerLaborView, setWorkerLaborView] = useState<WorkerGlobalLaborContext | null>(null);
   const [workerLaborLoad, setWorkerLaborLoad] = useState(false);
@@ -376,53 +441,102 @@ export default function MyProfilePage() {
                       </p>
                     </>
                   ) : (
-                    <>
-                      <p>
-                        <span className="text-muted-foreground">ชื่อ</span>
-                        <br />
-                        {linked.record.fullName}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">รหัส</span>
-                        <br />
-                        {linked.record.staffCode}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">แผนก</span>
-                        <br />
-                        {linked.record.department}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">ตำแหน่ง</span>
-                        <br />
-                        {linked.record.positionTitle}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">โทรศัพท์</span>
-                        <br />
-                        {linked.record.phone || '—'}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">เลขบัตรประชาชน</span>
-                        <br />
-                        {linked.record.nationalId || '—'}
-                      </p>
-                      <p className="sm:col-span-2">
-                        <span className="text-muted-foreground">ที่อยู่</span>
-                        <br />
-                        {linked.record.address || '—'}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">โรงพยาบาล สปส.</span>
-                        <br />
-                        {linked.record.socialSecurityHospital || '—'}
-                      </p>
-                      <p>
-                        <span className="text-muted-foreground">เลข สปส.</span>
-                        <br />
-                        {linked.record.socialSecurityNo || '—'}
-                      </p>
-                    </>
+                    <div className="sm:col-span-2 space-y-4 w-full">
+                      {canSelfEditOfficeStaffProfile ? (
+                        <p className="text-xs text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
+                          แก้ไขข้อมูลส่วนตัวด้านล่างได้ — เงินเดือน บัญชีธนาคาร และข้อมูลภาษีให้ติดต่อ HR
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          ดูข้อมูลทะเบียนพนักงานออฟฟิศ — แก้ไขส่วนตัวได้เมื่อบัญชีของคุณเป็นประเภทพนักงาน (employee_self) และ HR ผูกบัญชีแล้ว
+                        </p>
+                      )}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label>ชื่อ-นามสกุล</Label>
+                          <Input
+                            value={officeForm.fullName}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, fullName: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ชื่อเล่น</Label>
+                          <Input
+                            value={officeForm.nickname}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, nickname: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>โทรศัพท์</Label>
+                          <Input
+                            value={officeForm.phone}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, phone: e.target.value }))}
+                            inputMode="tel"
+                          />
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label>เลขบัตรประชาชน</Label>
+                          <Input
+                            value={officeForm.nationalId}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, nationalId: e.target.value }))}
+                            className="font-mono"
+                          />
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label>ที่อยู่</Label>
+                          <Textarea
+                            value={officeForm.address}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, address: e.target.value }))}
+                            className="min-h-[88px]"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ผู้ติดต่อฉุกเฉิน — ชื่อ</Label>
+                          <Input
+                            value={officeForm.emergencyContactName}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, emergencyContactName: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ความสัมพันธ์</Label>
+                          <Input
+                            value={officeForm.emergencyContactRelation}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, emergencyContactRelation: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label>เบอร์ฉุกเฉิน</Label>
+                          <Input
+                            value={officeForm.emergencyContactPhone}
+                            disabled={!canSelfEditOfficeStaffProfile}
+                            onChange={(e) => setOfficeForm((f) => ({ ...f, emergencyContactPhone: e.target.value }))}
+                            inputMode="tel"
+                          />
+                        </div>
+                      </div>
+                      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                        <p>
+                          <span className="font-medium text-foreground">รหัส / แผนก / ตำแหน่ง</span> — ดูอย่างเดียว:{' '}
+                          {linked.record.staffCode} · {linked.record.department} · {linked.record.positionTitle}
+                        </p>
+                        <p>
+                          สปส.: {linked.record.socialSecurityHospital || '—'} · เลข {linked.record.socialSecurityNo || '—'}
+                        </p>
+                      </div>
+                      {canSelfEditOfficeStaffProfile ? (
+                        <Button type="button" onClick={() => void saveOfficePersonal()} disabled={officePersonalBusy}>
+                          {officePersonalBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                          บันทึกข้อมูลส่วนตัว
+                        </Button>
+                      ) : null}
+                    </div>
                   )}
                 </CardContent>
               </Card>

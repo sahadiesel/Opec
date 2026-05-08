@@ -39,6 +39,7 @@ import {
   FlaskConical,
   ChevronRight,
   Receipt,
+  Percent,
   FileQuestion,
   Calculator,
   Wallet,
@@ -70,6 +71,7 @@ import {
   sidebarMatrixVisibilityForPath,
   canViewHrHubItem,
   canViewHrPayrollFlowSubsection,
+  canViewHrFieldTimesheetSubsection,
   canViewHrApprovalSubsection,
 } from '@/lib/navigation/nav-access';
 import { cn } from '@/lib/utils';
@@ -129,14 +131,20 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     ],
   },
   {
-    title: 'หัก ณ ที่จ่าย — พนักงาน',
-    icon: Users,
+    title: 'หัก ณ ที่จ่าย',
+    icon: Percent,
     items: [
       {
-        key: 'payroll_withholding_documents',
-        title: 'เอกสาร หัก ณ ที่จ่าย (พนักงาน)',
+        key: 'withholding_tax_items',
+        title: '1. เอกสาร หัก ณ ที่จ่าย (พนักงาน)',
         href: '/accounting/withholding-payroll',
         icon: FileText,
+      },
+      {
+        key: 'withholding_tax_items',
+        title: '2. เอกสาร หัก ณ ที่จ่าย (คู่ค้า)',
+        href: '/accounting/withholding-vendor',
+        icon: Building2,
       },
     ],
   },
@@ -256,7 +264,8 @@ const ADMIN_EMPLOYEE_DEMO_ITEMS: NavItem[] = [
 function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavGroup[] {
   if (isStoreOfficer(user)) return groups;
   const rk = getPrimaryLegacyRole(user);
-  if (!rk || !['hr_officer', 'payroll_officer', 'hr_manager', 'operations_manager'].includes(rk)) return groups;
+  if (!rk || !['hr_officer', 'payroll_officer', 'hr_manager', 'operations_manager', 'operations_officer'].includes(rk))
+    return groups;
   return groups.map((g) => {
     if (g.label !== 'ภาพรวม (Overview)') return g;
     return {
@@ -668,6 +677,9 @@ export function SidebarNav({
                   return false;
                 }
                 if (sub.audiencePayrollLeadsOnly && !canViewHrPayrollFlowSubsection(user, profile, admin)) {
+                  return false;
+                }
+                if (sub.audienceFieldOpsTimesheets && !canViewHrFieldTimesheetSubsection(user, profile, admin)) {
                   return false;
                 }
                 return canViewHrHubItem(user, profile, admin, item);

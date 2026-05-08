@@ -42,6 +42,10 @@ export interface HrNavSubsection {
    */
   audiencePayrollLeadsOnly?: boolean;
   /**
+   * ลงเวลารายวัน/รายเดือน — แสดงให้หัวหน้างานจ่ายค่าจ้าง + เจ้าหน้าที่ปฏิบัติการ (operations_officer)
+   */
+  audienceFieldOpsTimesheets?: boolean;
+  /**
    * true = หมวดอนุมัติ (Manager) — เฉพาะ hr_manager / operations_manager (+ admin)
    * ไม่แสดงให้ payroll_officer / officer ทั่วไป
    */
@@ -62,6 +66,16 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         icon: Banknote,
       },
       { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
+      { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (สร้างชุด · HR)', href: '/payroll/batches', icon: Coins },
+      { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
+    ],
+  },
+  {
+    title: 'ลงเวลาและภารกิจหน้างาน',
+    description: 'operations_officer · หัวหน้างานจ่ายค่าจ้าง',
+    icon: Grid3X3,
+    audienceFieldOpsTimesheets: true,
+    items: [
       {
         key: 'timesheets',
         title: 'ลงเวลารายวัน(Auto/Manual)',
@@ -69,8 +83,6 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         icon: Grid3X3,
       },
       { key: 'timesheets', title: 'สรุปลงเวลารายเดือน (Wave)', href: '/timesheets/wave-month', icon: CalendarDays },
-      { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (สร้างชุด · HR)', href: '/payroll/batches', icon: Coins },
-      { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
     ],
   },
   {

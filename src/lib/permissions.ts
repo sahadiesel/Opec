@@ -286,6 +286,40 @@ function clonePermission(p: ModulePermission): ModulePermission {
   return { ...p };
 }
 
+/**
+ * สิทธิ์โมดูลสำหรับ primary role `operations_officer` — ต้องสอดคล้องกับ branch ใน getPermissions
+ */
+export function getOperationsOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
+  if (moduleKey === 'overview_dashboard') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'waves' || moduleKey === 'assignments' || moduleKey === 'mobilization') {
+    return { ...FULL_ACCESS };
+  }
+  if (moduleKey === 'timesheets') {
+    return { ...FULL_ACCESS };
+  }
+  if (moduleKey === 'workers') {
+    return { ...FULL_ACCESS, delete: false };
+  }
+  if (moduleKey === 'worker_documents') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'positions') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'store_inventory') {
+    return { ...FULL_ACCESS };
+  }
+  if (moduleKey === 'vendors' || moduleKey === 'purchases') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'employee_self_profile') {
+    return { ...READ_ONLY, create: true, edit: true };
+  }
+  return { ...NO_ACCESS };
+}
+
 export function normalizeCurrentUserPermissions(user: Partial<User> | null | undefined): User | null {
   if (!user) return null;
 
@@ -409,7 +443,8 @@ export function getPermissions(
   if (
     moduleKey === 'tax_invoices' &&
     isSimpleInternalEligible(u) &&
-    !isSimpleAccounting(u)
+    !isSimpleAccounting(u) &&
+    !isOperationsOfficer(u)
   ) {
     return { view: true, create: false, edit: true, delete: false, approve: false };
   }
@@ -489,6 +524,10 @@ export function getPermissions(
 
   if (isPrimaryHrOfficer(u) && HR_OFFICER_BLOCKED_MODULE_KEYS.has(moduleKey)) {
     return clonePermission(NO_ACCESS);
+  }
+
+  if (isOperationsOfficer(u)) {
+    return clonePermission(getOperationsOfficerModulePermission(moduleKey));
   }
 
   return clonePermission(FULL_ACCESS);
@@ -773,14 +812,20 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
     },
     {
       profileKey: 'operations_officer',
-      profileNameEn: 'Internal staff (default)',
-      profileNameTh: 'พนักงานภายใน (ค่าเริ่มต้น)',
+      profileNameEn: 'Operations officer (field / manpower)',
+      profileNameTh: 'เจ้าหน้าที่ปฏิบัติการ (หน้างาน · Manpower)',
       departmentGroup: 'operations',
       primaryRoleTemplateKey: 'operations_officer',
       department: 'operations',
       level: 'officer',
       isActive: true,
-      permissions: internalPerms,
+      permissions: SYSTEM_MODULES.reduce(
+        (acc, mod) => {
+          acc[mod.key] = clonePermission(getOperationsOfficerModulePermission(mod.key as ModuleKey));
+          return acc;
+        },
+        {} as Record<string, ModulePermission>,
+      ),
     },
     {
       profileKey: 'client_user',

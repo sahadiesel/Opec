@@ -1,0 +1,226 @@
+import type { OfficePayrollLine, OfficePayrollRun, OfficeStaff, PaymentMethod } from '@/lib/types';
+import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
+import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import { timestampMsToBangkokYmd } from '@/lib/payroll/payroll-worker-wht-model';
+import type {
+  CompanyDocumentProfileForPayrollWht,
+  PayrollWorkerWhtPrintVm,
+  PayrollWorkerWhtValidationResult,
+} from '@/lib/payroll/payroll-worker-wht-types';
+
+export { buildPayrollWhtElectronicDataFromVm };
+
+function round2(n: number): number {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+function combineAddressTh(c: CompanyDocumentProfileForPayrollWht | null): string {
+  if (!c) return '';
+  return [c.addressLine1, c.addressLine2].filter((x) => (x || '').trim()).join(' ');
+}
+
+function officeRunPaymentTimestamp(run: OfficePayrollRun): number {
+  return run.lockedAt ?? run.updatedAt ?? run.createdAt;
+}
+
+export function resolveOfficePayrollWhtPaymentDateYmd(run: OfficePayrollRun): string | undefined {
+  const pick = officeRunPaymentTimestamp(run);
+  if (pick == null || !Number.isFinite(pick)) return undefined;
+  return timestampMsToBangkokYmd(pick);
+}
+
+export function buildPayrollOfficeWhtDocumentNo(runId: string, staffCode: string, issueYear: number): string {
+  const safeRun = (runId || 'RUN').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
+  const safeCode = (staffCode || 'STF').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
+  return `WHT-OPR-${issueYear}-${safeRun}-${safeCode}`;
+}
+
+function inferOfficePaymentMethod(staff: OfficeStaff): PaymentMethod {
+  const acct = (staff.bankAccountNumber || '').replace(/\D/g, '');
+  return acct.length >= 4 ? 'TRANSFER' : 'CASH';
+}
+
+function pitAmountOffice(line: OfficePayrollLine): number {
+  const v = Number(line.tax ?? 0);
+  return round2(Number.isFinite(v) ? v : 0);
+}
+
+export function buildPayrollOfficeWhtPrintVm(input: {
+  run: OfficePayrollRun;
+  line: OfficePayrollLine;
+  staff: OfficeStaff;
+  company: CompanyDocumentProfileForPayrollWht | null;
+  periodLabel: string;
+  issueDateYmd: string;
+  paymentDateYmd: string | undefined;
+  officialDocumentNo?: boolean;
+}): PayrollWorkerWhtPrintVm {
+  const { run, line, staff, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
+
+  const issueYear = Number(issueDateYmd.slice(0, 4)) || new Date().getFullYear();
+  const documentNo = buildPayrollOfficeWhtDocumentNo(run.id, staff.staffCode, issueYear);
+
+  const slip = buildPayslipFromOfficeLine(line, run, company ?? undefined);
+  const grossAmount = round2(slip.grossTotal);
+  const earningsRows = slip.incomeLines
+    .filter((x) => (Number(x.amount) || 0) !== 0)
+    .map((x) => ({ label: x.label, amount: round2(Number(x.amount) || 0) }));
+  const deductionsRows = slip.deductionLines
+    .filter((x) => (Number(x.amount) || 0) !== 0)
+    .map((x) => ({ label: x.label, amount: round2(Number(x.amount) || 0) }));
+
+  const totalDeductions = round2(slip.deductionsTotal);
+  const netPaidAmount = round2(slip.netPay);
+  const wht = pitAmountOffice(line);
+
+  const thaiId = (staff.nationalId || '').trim();
+  const taxIdField = (staff.taxId || '').trim();
+  const taxIdDisplay = thaiId || taxIdField || '—';
+  const taxIdIsPassport = false;
+
+  const disp = company?.whtCertificateDisplay;
+  const payerAddrTh = combineAddressTh(company);
+  const branchIsHeadOffice = company?.branchType !== 'branch';
+
+  const pitZeroNote =
+    wht <= 0.005 ? 'ไม่มีภาษีหัก ณ ที่จ่ายในงวดนี้ (แสดงยอดภาษี 0.00)' : undefined;
+
+  return {
+    documentNo,
+    issueDateYmd,
+    paymentDateYmd: paymentDateYmd || issueDateYmd,
+    payrollPeriodLabel: periodLabel,
+    batchReference: run.id,
+    subtitleTh: 'สำหรับเงินได้จากการจ้างงาน / เงินเดือนพนักงานออฟฟิศ',
+
+    payer: {
+      legalNameTh: (company?.companyNameTh || '').trim() || '—',
+      legalNameEn: (company?.companyNameEn || '').trim() || undefined,
+      taxId: (company?.taxId || '').trim() || '—',
+      branchIsHeadOffice,
+      branchNo: branchIsHeadOffice ? undefined : (company?.branchNo || '').trim() || undefined,
+      addressTh: payerAddrTh || '—',
+      addressEn: undefined,
+      phone: (company?.phone || '').trim() || undefined,
+      email: (company?.email || '').trim() || undefined,
+      taxpayerType: 'LEGAL_ENTITY',
+    },
+
+    payee: {
+      displayName: (staff.fullName || '').trim() || line.staffName,
+      workerCode: staff.staffCode || staff.id,
+      taxIdDisplay,
+      taxIdIsPassport,
+      nationality: undefined,
+      positionLabel: line.positionTitle || staff.positionTitle || undefined,
+      addressTh: (staff.address || '').trim() || undefined,
+      bankName: (staff.bankName || '').trim() || undefined,
+      bankAccountLast4:
+        (staff.bankAccountNumber || '').replace(/\D/g, '').length >= 4
+          ? (staff.bankAccountNumber || '').replace(/\D/g, '').slice(-4)
+          : undefined,
+    },
+
+    incomeTypeCode: 'PAYROLL_WAGE',
+    incomeTypeNameTh: 'เงินเดือน / ค่าจ้างพนักงาน',
+    formTypeCode: 'PND1',
+
+    earningsRows,
+    deductionsRows,
+
+    grossAmount,
+    totalDeductions,
+    netPaidAmount,
+
+    taxableIncomeAmount: grossAmount,
+    withholdingTaxAmount: wht,
+    withholdingTaxRateDisplayTh: 'ตามการคำนวณ Payroll (พนักงานออฟฟิศ)',
+    withholdingTaxWordsTh: amountToThaiBahtText(wht),
+    pitZeroNote,
+
+    taxCondition: 'WITHHOLDING',
+    paymentMethod: inferOfficePaymentMethod(staff),
+    paymentReferenceNo: run.payrollRunNo,
+
+    authorizedSignerName: disp?.authorizedSignerName,
+    signerPosition: disp?.signerPosition,
+    signatureImageUrl: disp?.signatureImageUrl,
+    companyStampImageUrl: disp?.companyStampImageUrl || company?.documentHeaderStampUrl?.trim() || undefined,
+
+    issuedByName: disp?.authorizedSignerName,
+
+    documentStatusLabel: 'PREVIEW',
+    xmlExportStatus: 'NOT_EXPORTED',
+  };
+}
+
+export function validatePayrollOfficeWhtPrint(input: {
+  company: CompanyDocumentProfileForPayrollWht | null;
+  staff: OfficeStaff | null;
+  run: OfficePayrollRun | null;
+  line: OfficePayrollLine | null;
+  paymentDateYmd: string | undefined;
+}): PayrollWorkerWhtValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const { company, staff, run, line, paymentDateYmd } = input;
+
+  if (!company || !(company.companyNameTh || '').trim()) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ยังไม่มีข้อมูลบริษัทใน Document Header Profile');
+  }
+  if (!company || !(company.taxId || '').trim()) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ยังไม่มีเลขประจำตัวผู้เสียภาษีของบริษัทใน Document Header Profile');
+  }
+  const addr = combineAddressTh(company);
+  if (!addr.trim()) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ยังไม่มีที่อยู่บริษัทใน Document Header Profile');
+  }
+
+  if (!staff) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลพนักงานจากทะเบียน office_staff');
+  } else {
+    if (!(staff.fullName || '').trim()) {
+      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานยังไม่มีชื่อสำหรับแสดงในเอกสาร');
+    }
+    const nidDigits = (staff.nationalId || '').replace(/\D/g, '');
+    const tidDigits = (staff.taxId || '').replace(/\D/g, '');
+    if (nidDigits.length !== 13 && tidDigits.length !== 13) {
+      errors.push(
+        'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลักในระบบ',
+      );
+    }
+    if (!(staff.address || '').trim() || (staff.address || '').trim().length < 5) {
+      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานยังไม่มีที่อยู่ครบในระบบ');
+    }
+  }
+
+  if (!run || !(run.id || '').trim()) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบงวดเงินเดือนออฟฟิศ');
+  }
+
+  if (!line) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลบรรทัดจ่ายของพนักงาน');
+  } else {
+    const gross = round2(Number(line.grossPay) || 0);
+    if (gross <= 0) {
+      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่มียอดรายได้รวมในงวดนี้');
+    }
+    const net = round2(Number(line.netPay) || 0);
+    const ded = round2(Number(line.deductions) || 0);
+    if (Math.abs(round2(gross - ded) - net) > 0.05) {
+      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ยอดสุทธิไม่ตรงกับยอดรายได้หักรายการหัก');
+    }
+
+    const wht = pitAmountOffice(line);
+    if (wht <= 0.005) {
+      warnings.push('ไม่มีภาษีหัก ณ ที่จ่ายในงวดนี้ — แสดงยอดภาษีเป็น 0.00');
+    }
+  }
+
+  if (!paymentDateYmd || !/^\d{4}-\d{2}-\d{2}$/.test(paymentDateYmd)) {
+    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่สามารถระบุวันที่จ่ายเงินจากข้อมูลงวด');
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}

@@ -57,7 +57,11 @@ import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
-import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '@/lib/payroll/labor-cost-model';
+import {
+  canViewWorkerLaborCostFromUser,
+  canEditWorkerLaborCostFromUser,
+  canViewWorkerBankPayrollFieldsFromUser,
+} from '@/lib/payroll/labor-cost-model';
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import { WorkerCertsTab } from './_components/worker-certs-tab';
 import { WorkerMedicalTab } from './_components/worker-medical-tab';
@@ -226,6 +230,10 @@ function WorkerDetailContent({ id }: { id: string }) {
     () => canEditWorkerLaborCostFromUser(currentUser) && canEditWorker,
     [currentUser, canEditWorker],
   );
+  const canViewBankPayrollProfile = useMemo(
+    () => canViewWorkerBankPayrollFieldsFromUser(currentUser),
+    [currentUser],
+  );
 
   const currentPositionForLabor = useMemo(() => {
     const pid = (isEditing ? editedWorker.currentPositionId : worker?.currentPositionId) || '';
@@ -309,6 +317,11 @@ function WorkerDetailContent({ id }: { id: string }) {
       delete base.laborCostUsePositionDefault;
       delete base.laborCostCustomOnshore;
       delete base.laborCostCustomOffshore;
+    }
+    if (!canViewBankPayrollProfile) {
+      delete base.bankName;
+      delete base.bankAccountName;
+      delete base.bankAccountNumber;
     }
     const payload = sanitizeFirestorePayload(base);
     updateDoc(workerRef, payload)
@@ -646,6 +659,7 @@ function WorkerDetailContent({ id }: { id: string }) {
               currentPosition={currentPositionForLabor}
               canViewLaborCost={canViewLaborCost}
               canEditLaborCost={canEditLaborCost}
+              canViewBankPayrollProfile={canViewBankPayrollProfile}
               canEditWorkerReadiness={canEditWorker}
               onReadinessManualHoldChange={handleReadinessManualHoldChange}
               canActivateWorkerLogin={canEditWorker}

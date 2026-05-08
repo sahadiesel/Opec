@@ -26,16 +26,16 @@ import {
   MapPin,
   UsersRound,
   IdCard,
+  Pencil,
 } from 'lucide-react';
 import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import {
   isSystemAdmin,
-  isOperationsPillarExecutive,
   canViewPayrollPerFirestoreRules,
   canEditEmployeeCompensation,
 } from '@/lib/permission-core';
-import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, collection, setDoc, updateDoc, deleteField } from 'firebase/firestore';
 import { OfficeStaff, User, StaffStatus, EmploymentType, StaffSalaryType, Position } from '@/lib/types';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 
@@ -63,6 +63,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canEdit } from '@/lib/permissions';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
+import { buildUserAccessSummaryLines } from '@/lib/hr/user-access-display';
 
 /** ตำแหน่งที่ผูกพนักงานออฟฟิศได้: หมวด Office ทั้งหมด หรือ Onshore/Offshore ที่ฐานเงินเดือนเป็นรายเดือน (เช่น Construction Manager) — ไม่ดึงคนงานรายวัน (DAILY/HOURLY) ทั้งแผง */
 function positionEligibleForOfficeStaff(p: Position): boolean {
@@ -110,13 +111,13 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const staffRef = useMemoFirebase(() => (firestore && !isNew && canViewOfficeStaff ? doc(firestore, 'office_staff', id) : null), [firestore, id, isNew, canViewOfficeStaff]);
   const { data: staffData, isLoading: isStaffLoading } = useDoc<OfficeStaff>(staffRef as any);
 
-  // users list: Firestore rules allow list only for canManageSystem (admin)
+  const canAdminUserLink = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
+
+  /** รายชื่อ users สำหรับ dropdown ผูกบัญชี — เฉพาะผู้ดูแลระบบ (ตามสเปค) */
   const usersQuery = useMemoFirebase(() => {
-    const canListUsers =
-      !!currentUser && (isSystemAdmin(currentUser) || isOperationsPillarExecutive(currentUser));
-    if (!firestore || !canListUsers || !canViewOfficeStaff) return null;
+    if (!firestore || !canAdminUserLink || !canViewOfficeStaff) return null;
     return collection(firestore, 'users');
-  }, [firestore, currentUser, canViewOfficeStaff]);
+  }, [firestore, canAdminUserLink, canViewOfficeStaff]);
   const { data: allUsers } = useCollection<User>(usersQuery as any);
 
   const staffQuery = useMemoFirebase(() => (firestore && canViewOfficeStaff ? collection(firestore, 'office_staff') : null), [firestore, canViewOfficeStaff]);
@@ -167,6 +168,32 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [integrationEditMode, setIntegrationEditMode] = useState(false);
+
+  const linkedUserDocRef = useMemoFirebase(
+    () =>
+      firestore && !isNew && formData.linkedUserId?.trim() && canAdminUserLink
+        ? doc(firestore, 'users', formData.linkedUserId.trim())
+        : null,
+    [firestore, isNew, formData.linkedUserId, canAdminUserLink],
+  );
+  const { data: linkedUserFromFirestore } = useDoc<User>(linkedUserDocRef as any);
+
+  const integrationAccessLines = useMemo(() => {
+    const uid = formData.linkedUserId?.trim();
+    if (!uid) return [] as string[];
+    const u =
+      linkedUserFromFirestore ??
+      (allUsers?.find((x) => x.id === uid) as User | undefined);
+    if (u) return buildUserAccessSummaryLines(u);
+    if (formData.linkedUserAccessSummary?.length) return formData.linkedUserAccessSummary;
+    return [] as string[];
+  }, [
+    formData.linkedUserId,
+    formData.linkedUserAccessSummary,
+    linkedUserFromFirestore,
+    allUsers,
+  ]);
 
   const selectedPosition = useMemo(() => {
     const pid = formData.positionId;
@@ -222,6 +249,62 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     setIsSubmitting(true);
     const now = Date.now();
 
+    const buildUserLinkFirestorePatch = (): Record<string, unknown> => {
+      if (!isSystemAdmin(currentUser)) {
+        if (isNew) return {};
+        return {
+          linkedUserId: staffData?.linkedUserId,
+          linkedUserDisplayName: staffData?.linkedUserDisplayName,
+          linkedUserDisplayEmail: staffData?.linkedUserDisplayEmail,
+          linkedUserAccessSummary: staffData?.linkedUserAccessSummary,
+        };
+      }
+      const uid = (formData.linkedUserId || '').trim();
+      if (!uid) {
+        return {
+          linkedUserId: deleteField(),
+          linkedUserDisplayName: deleteField(),
+          linkedUserDisplayEmail: deleteField(),
+          linkedUserAccessSummary: deleteField(),
+        };
+      }
+      const u =
+        (allUsers?.find((x) => x.id === uid) as User | undefined) ?? linkedUserFromFirestore ?? undefined;
+      if (!u) {
+        if (!isNew && staffData?.linkedUserId === uid) {
+          return {
+            linkedUserId: uid,
+            linkedUserDisplayName: staffData.linkedUserDisplayName,
+            linkedUserDisplayEmail: staffData.linkedUserDisplayEmail,
+            linkedUserAccessSummary: staffData.linkedUserAccessSummary,
+          };
+        }
+        return {
+          linkedUserId: uid,
+          linkedUserDisplayName: deleteField(),
+          linkedUserDisplayEmail: deleteField(),
+          linkedUserAccessSummary: deleteField(),
+        };
+      }
+      const lines = buildUserAccessSummaryLines(u);
+      return {
+        linkedUserId: uid,
+        linkedUserDisplayName: u.displayName?.trim() || deleteField(),
+        linkedUserDisplayEmail: u.email?.trim() || deleteField(),
+        linkedUserAccessSummary: lines.length ? lines : deleteField(),
+      };
+    };
+
+    const userLinkPatch = buildUserLinkFirestorePatch();
+    const {
+      supervisorId: _discardSupervisor,
+      linkedUserId: _stripLk,
+      linkedUserDisplayName: _stripLn,
+      linkedUserDisplayEmail: _stripLe,
+      linkedUserAccessSummary: _stripLs,
+      ...formBody
+    } = formData as Partial<OfficeStaff> & { supervisorId?: string };
+
     const compensationPatch =
       !canEditMoneyFields && !isNew && staffData
         ? {
@@ -252,8 +335,10 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
         await setDoc(
           newRef,
           sanitizeFirestorePayload({
-            ...formData,
+            ...formBody,
             ...compensationPatch,
+            ...userLinkPatch,
+            supervisorId: deleteField(),
             staffCode: finalCode,
             id: newRef.id,
             positionId: resolvedPositionId,
@@ -270,9 +355,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
         await updateDoc(
           staffRef!,
           sanitizeFirestorePayload({
-            ...formData,
+            ...formBody,
             staffCode: staffData!.staffCode,
             ...compensationPatch,
+            ...userLinkPatch,
+            supervisorId: deleteField(),
             positionId: resolvedPositionId,
             positionTitle: resolvedPositionTitle,
             updatedAt: now,
@@ -820,40 +907,86 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
           <TabsContent value="admin" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card className="shadow-sm">
-                <CardHeader className="bg-primary/5 border-b">
+                <CardHeader className="bg-primary/5 border-b flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
                     <ShieldCheck className="h-5 w-5" /> การเชื่อมโยง (Integration)
                   </CardTitle>
+                  {canAdminUserLink ? (
+                    <Button
+                      type="button"
+                      variant={integrationEditMode ? 'secondary' : 'outline'}
+                      size="sm"
+                      className="shrink-0 gap-1"
+                      onClick={() => setIntegrationEditMode((v) => !v)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      {integrationEditMode ? 'เสร็จสิ้น' : 'แก้ไข'}
+                    </Button>
+                  ) : null}
                 </CardHeader>
                 <CardContent className="space-y-6 pt-6">
                   <div className="space-y-2">
                     <Label className="font-bold">เชื่อมโยงกับบัญชีผู้ใช้ (Linked User)</Label>
-                    <Select onValueChange={v => setFormData({...formData, linkedUserId: v})} value={formData.linkedUserId}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="เลือกบัญชีล็อกอิน..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">ไม่เชื่อมโยง (None)</SelectItem>
-                        {allUsers?.map(u => (
-                          <SelectItem key={u.id} value={u.id}>{u.displayName} ({u.email})</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {canAdminUserLink && integrationEditMode ? (
+                      <Select
+                        value={formData.linkedUserId?.trim() ? formData.linkedUserId : '__none__'}
+                        onValueChange={(v) =>
+                          setFormData({
+                            ...formData,
+                            linkedUserId: v === '__none__' ? undefined : v,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue placeholder="เลือกบัญชีที่ลิงก์กัน..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          <SelectItem value="__none__">ไม่เชื่อมโยง (None)</SelectItem>
+                          {allUsers?.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.displayName} ({u.email})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="rounded-md border bg-muted/40 px-3 py-2.5 text-sm">
+                        {formData.linkedUserId?.trim() ? (
+                          <>
+                            <p className="font-medium">
+                              {formData.linkedUserDisplayName?.trim() || formData.linkedUserId}
+                            </p>
+                            <p className="text-muted-foreground text-xs break-all">
+                              {formData.linkedUserDisplayEmail?.trim() || `UID: ${formData.linkedUserId}`}
+                            </p>
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">ยังไม่ผูกบัญชีผู้ใช้</span>
+                        )}
+                      </div>
+                    )}
+                    {canAdminUserLink && !integrationEditMode ? (
+                      <p className="text-[11px] text-muted-foreground">กด «แก้ไข» เพื่อเปลี่ยนบัญชีที่ผูก — บันทึกด้วยปุ่มด้านบนของหน้า</p>
+                    ) : null}
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="font-bold">ผู้บังคับบัญชา (Supervisor / Approver)</Label>
-                    <Select onValueChange={v => setFormData({...formData, supervisorId: v})} value={formData.supervisorId}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="เลือกผู้อนุมัติลำดับที่ 1..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">ไม่มี (None)</SelectItem>
-                        {allOfficeStaff?.filter(s => s.id !== id).map(s => (
-                          <SelectItem key={s.id} value={s.id}>{s.fullName} ({s.positionTitle})</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label className="font-bold">สิทธิ์บัญชีที่ผูก</Label>
+                    <div className="rounded-md border bg-muted/20 px-3 py-2.5 text-sm space-y-1.5 min-h-[4rem]">
+                      {integrationAccessLines.length === 0 ? (
+                        <span className="text-muted-foreground">
+                          {formData.linkedUserId?.trim()
+                            ? '— (ผู้ดูแลระบบบันทึกการผูกแล้วจะมี snapshot สิทธิ์ หรือเปิดจากบัญชีที่มีสิทธิ์อ่าน users)'
+                            : '—'}
+                        </span>
+                      ) : (
+                        integrationAccessLines.map((line, i) => (
+                          <p key={`${line}-${i}`} className="leading-snug">
+                            {line}
+                          </p>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

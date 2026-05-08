@@ -21,6 +21,7 @@ import {
   isHrManager,
   isOperationManager,
   isPayrollOfficer,
+  getPrimaryLegacyRole,
 } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { deriveBusinessRoleKey } from '@/lib/auth-mapping';
@@ -56,6 +57,21 @@ export function canViewHrPayrollFlowSubsection(
   /** สอดคล้องเมนู «อนุมัติ» — กรณี assignedRoleKey/โปรไฟล์ยังไม่ sync กับ getPrimaryLegacyRole */
   const d = deriveBusinessRoleKey(user);
   return d === 'hr_manager' || d === 'operations_manager' || d === 'payroll_officer';
+}
+
+/** หมวดลงเวลา (รายวัน / รายเดือน) — หัวหน้างานจ่ายค่าจ้าง หรือ operations_officer ที่มีสิทธิ์ timesheets */
+export function canViewHrFieldTimesheetSubsection(
+  user: User,
+  profile: PermissionProfile | null,
+  admin: boolean,
+): boolean {
+  if (admin) return true;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  if (canViewHrPayrollFlowSubsection(user, profile, admin)) return true;
+  if (getPrimaryLegacyRole(user) === 'operations_officer' && canView(user, 'timesheets', profile)) {
+    return true;
+  }
+  return false;
 }
 
 /** หมวด «อนุมัติ (Approval)» ใน HR sidebar — เฉพาะผู้จัดการปฏิบัติการ / HR (+ แอดมิน) */
@@ -149,6 +165,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounting/outgoing-review', 'accounts_payable'],
   ['/accounting/withholding-tax', 'withholding_tax_items'],
   ['/accounting/withholding-payroll', 'worker_payroll'],
+  ['/accounting/withholding-vendor', 'withholding_tax_items'],
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
   ['/receipts', 'receipts'],
@@ -214,6 +231,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     '/accounting/executive-payroll',
     '/accounting/withholding-tax',
     '/accounting/withholding-payroll',
+    '/accounting/withholding-vendor',
     '/accounting/dashboard',
   ];
   if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {

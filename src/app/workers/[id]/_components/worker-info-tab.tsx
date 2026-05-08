@@ -26,6 +26,8 @@ interface WorkerInfoTabProps {
   currentPosition: Position | null;
   canViewLaborCost: boolean;
   canEditLaborCost: boolean;
+  /** เลขบัญชี / ข้อมูลการเงิน (จ่ายเงิน) — ซ่อนสำหรับ operations_officer */
+  canViewBankPayrollProfile?: boolean;
   /** แก้สวิตช์พร้อม/ไม่พร้อมที่หัวข้อมูลส่วนตัว */
   canEditWorkerReadiness?: boolean;
   onReadinessManualHoldChange?: (hold: boolean) => void;
@@ -57,6 +59,7 @@ export function WorkerInfoTab({
   currentPosition,
   canViewLaborCost,
   canEditLaborCost,
+  canViewBankPayrollProfile = true,
   canEditWorkerReadiness = false,
   onReadinessManualHoldChange,
   canActivateWorkerLogin = false,
@@ -416,6 +419,7 @@ export function WorkerInfoTab({
           </Card>
         )}
 
+        {canViewBankPayrollProfile ? (
         <Card className="shadow-sm border-blue-100 bg-blue-50/20">
           <CardHeader className="bg-blue-100/50 border-b border-blue-100">
             <CardTitle className="text-lg flex items-center gap-2 text-blue-800">
@@ -453,6 +457,7 @@ export function WorkerInfoTab({
             </div>
           </CardContent>
         </Card>
+        ) : null}
 
         <Card className="shadow-sm border-emerald-100 bg-emerald-50/15">
           <CardHeader className="bg-emerald-100/40 border-b border-emerald-100">

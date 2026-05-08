@@ -470,8 +470,7 @@ ${doc.paymentReferenceNo ? `<div class="field">เลขที่อ้างอ
   <tr><td>VAT 7%</td><td>${fmtBaht(doc.vatAmount)} บาท</td></tr>
   <tr><td><strong>ยอดรวมตามใบแจ้งหนี้ (รวม VAT)</strong></td><td><strong>${fmtBaht(doc.grossAmount)} บาท</strong></td></tr>
   <tr><td>ฐานภาษีหัก ณ ที่จ่าย</td><td>${fmtBaht(doc.withholdingTaxBase)} บาท</td></tr>
-  <tr><td>อัตราภาษีหัก ณ ที่จ่าย</td><td>${escapeHtml(String(doc.withholdingTaxRatePercent))}%</td></tr>
-  <tr><td>จำนวนภาษีที่หักไว้</td><td>${fmtBaht(doc.withholdingTaxAmount)} บาท</td></tr>
+  <tr><td>อัตราภาษีหัก ณ ที่จ่าย ${escapeHtml(String(doc.withholdingTaxRatePercent))} % เป็นเงินที่หักไว้</td><td>${fmtBaht(doc.withholdingTaxAmount)} บาท</td></tr>
   <tr><td><strong>ยอดเงินสุทธิที่จ่ายให้คู่ค้า</strong></td><td><strong>${fmtBaht(doc.netPaidAmount)} บาท</strong></td></tr>
 </table>
 

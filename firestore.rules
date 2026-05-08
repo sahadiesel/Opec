@@ -1227,10 +1227,34 @@ service cloud.firestore {
       allow read, write: if isInternalUser();
     }
 
+    function officeStaffSelfProfileSensitiveKeys() {
+      return [
+        'staffCode', 'department', 'positionId', 'positionTitle', 'employmentType',
+        'salaryType', 'monthlySalary', 'dailyWage', 'monthlyAttendanceExempt',
+        'excludeFromPayrollRuns', 'payrollBand', 'startDate', 'employmentEndDate',
+        'bankName', 'bankAccountName', 'bankAccountNumber', 'taxId',
+        'socialSecurityNo', 'socialSecurityStatus', 'socialSecurityHospital',
+        'linkedUserId', 'linkedUserDisplayName', 'linkedUserDisplayEmail', 'linkedUserAccessSummary',
+        'supervisorId', 'status', 'createdAt', 'createdBy', 'notes', 'id'
+      ];
+    }
+
+    /** พนักงาน employee_self แก้เฉพาะข้อมูลส่วนตัว — ห้ามแตะเงินเดือนและการผูกบัญชี */
+    function officeStaffSelfProfileUpdateOk() {
+      return isEmployeeSelfPortalUser()
+        && resource.data.linkedUserId == request.auth.uid
+        && request.resource.data.linkedUserId == resource.data.linkedUserId
+        && !request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(officeStaffSelfProfileSensitiveKeys());
+    }
+
     /** อ่านสำหรับหน้าคลัง (custody) — รองรับพนักงานภายในที่ยัง pending activation */
     match /office_staff/{id} {
       allow read: if isInternalUser() || isInternalStaffDoc();
-      allow write: if isInternalUser();
+      allow create: if isInternalUser() && !isEmployeeSelfPortalUser();
+      allow update: if (isInternalUser() && !isEmployeeSelfPortalUser())
+        || officeStaffSelfProfileUpdateOk();
+      allow delete: if isInternalUser() && !isEmployeeSelfPortalUser();
     }
 
     match /worker_document_catalog/{id} {
