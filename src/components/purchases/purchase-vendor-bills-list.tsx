@@ -336,7 +336,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                 </>
               ) : (
                 <>
-                  รายการเดียวกับเมนูคลัง <span className="font-medium text-foreground">จัดการเอกสารคลังสินค้า → รับวางบิล</span>{' '}
+                  รายการเดียวกับเมนูคลัง <span className="font-medium text-foreground">การจัดการคลังสินค้า/เอกสาร → รับวางบิล</span>{' '}
                   — ใช้ชุดข้อมูล <span className="font-mono text-xs">purchase_vendor_bills</span> เพื่อให้บัญชีเปิดจากเมนูตัวเองและบันทึกจ่ายได้
                 </>
               )}

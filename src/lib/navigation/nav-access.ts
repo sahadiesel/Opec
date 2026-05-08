@@ -233,7 +233,6 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   if (!admin && getPrimaryLegacyRole(user) === 'operations_officer') {
     const denied = [
       '/vendors',
-      '/store/purchase-requests',
       '/purchases',
       '/store/vendor-bills',
       '/hr/bank-registry',

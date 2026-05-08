@@ -217,7 +217,7 @@ function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
   return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
 
-/** ลำดับเมนูย่อยภายใต้ «จัดการเอกสารคลังสินค้า» — คู่ค้า → PR → PO → รับวางบิล → หน้าคลัง */
+/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า/เอกสาร» — คู่ค้า → PR → PO → รับวางบิล → หน้าคลัง */
 const OPS_WAREHOUSE_SUB_PATHS = [
   '/vendors',
   '/store/purchase-requests',
@@ -774,7 +774,7 @@ export function SidebarNav({
             }
             if (
               getPrimaryLegacyRole(user) === 'operations_officer' &&
-              ['/vendors', '/store/purchase-requests', '/purchases', '/store/vendor-bills'].includes(basePath)
+              ['/vendors', '/purchases', '/store/vendor-bills'].includes(basePath)
             ) {
               return false;
             }
@@ -884,7 +884,7 @@ export function SidebarNav({
                               className="transition-all duration-200"
                             >
                               <Warehouse className="h-4 w-4 text-muted-foreground" />
-                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>จัดการเอกสารคลังสินค้า</span>
+                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>การจัดการคลังสินค้า/เอกสาร</span>
                               <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                             </SidebarMenuButton>
                           </CollapsibleTrigger>
