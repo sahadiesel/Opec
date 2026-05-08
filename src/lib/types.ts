@@ -549,8 +549,8 @@ export interface PositionToolRequirement {
   variantGroupKey?: string;
 }
 
-/** Store catalog categories — keep in sync with `src/app/store/items/page.tsx` */
-export const STORE_ITEM_CATEGORIES = ['PPE', 'Safety', 'Mechanical', 'Electrical', 'General'] as const;
+/** Store catalog categories — PPE แยกหน้าทะเบียน; อุปกรณ์ทั่วไปใช้ Workwear / Tool / Medical Supplies / General */
+export const STORE_ITEM_CATEGORIES = ['PPE', 'Workwear', 'Tool', 'Medical Supplies', 'General'] as const;
 export type StoreItemCatalogCategory = (typeof STORE_ITEM_CATEGORIES)[number];
 
 export interface OfficeStaff {
@@ -2816,6 +2816,12 @@ export interface StoreItem {
   itemCode: string;
   /** ชื่อรายการหลัก (ไม่รวมขนาด/รุ่น) */
   itemName: string;
+  /**
+   * โครงสร้างคลังแบบหลัก–ย่อย: `header` = เมนชื่ออย่างเดียวไม่ถือสต็อกโดยตรง · `line` = รุ่น/ไซส์มีสต็อก · ไม่ระบุ = รายการเดี่ยวแบบเดิม
+   */
+  catalogGroupRole?: 'header' | 'line';
+  /** รายการย่อยอ้างอิงเมนหลัก (`catalogGroupRole === 'line'`) */
+  parentStoreItemId?: string;
   /** ขนาด/รุ่น เช่น Size M, 8\" — แยกจากชื่อเพื่อโควต้ารวมหลาย SKU */
   variantSpecification?: string;
   /** รหัสกลุ่มเดียวกันสำหรับโควต้าเบิกรวม (เช่น เสื้อ M กับ L ใช้คีย์เดียวกัน) */

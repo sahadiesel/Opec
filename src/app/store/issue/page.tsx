@@ -45,7 +45,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
-import { pickDefaultStoreItemForPpe, pickDefaultStoreItemForTool } from '@/lib/store/position-issue-match';
+import {
+  pickDefaultStoreItemForPpe,
+  pickDefaultStoreItemForTool,
+  listStoreItemsMatchingPpeRequirement,
+  listStoreItemsMatchingToolRequirement,
+} from '@/lib/store/position-issue-match';
 import {
   MOBILIZATION_FULFILLMENT_SUBCOLLECTION,
   MOBILIZATION_STATUSES_NOT_CLOSED,
@@ -67,7 +72,28 @@ type QueuePendingLine = {
   quantityIssued: number;
   lineDocId: string;
   defaultItem?: StoreItem;
+  /** SKU ที่จับคู่โควต้านี้ได้ (หลายแถวเมื่อใช้ variantGroupKey เดียวกัน) */
+  candidateItems?: StoreItem[];
 };
+
+function resolveFieldLineStoreItem(
+  line: QueuePendingLine,
+  lineKey: string,
+  skuIdByLineKey: Record<string, string>,
+): StoreItem | undefined {
+  const candidates =
+    line.candidateItems && line.candidateItems.length > 0
+      ? line.candidateItems
+      : line.defaultItem
+        ? [line.defaultItem]
+        : [];
+  if (candidates.length === 0) return undefined;
+  const want = skuIdByLineKey[lineKey]?.trim();
+  if (want && candidates.some((c) => c.id === want)) {
+    return candidates.find((c) => c.id === want);
+  }
+  return line.defaultItem ?? candidates[0];
+}
 
 type QueueCard = {
   assignment: Assignment;
@@ -95,6 +121,8 @@ export default function IssueItemsPage() {
   const [fieldQueue, setFieldQueue] = useState<QueueCard[]>([]);
   const [fieldQueueLoading, setFieldQueueLoading] = useState(false);
   const [fieldLineQty, setFieldLineQty] = useState<Record<string, string>>({});
+  /** เลือก SKU จริงเมื่อโควต้าเป็นกลุ่ม (หลายไซส์) — key = assignmentId__lineDocId */
+  const [fieldLineSkuId, setFieldLineSkuId] = useState<Record<string, string>>({});
   const [fieldActionKey, setFieldActionKey] = useState<string | null>(null);
   const [queueRefreshTick, setQueueRefreshTick] = useState(0);
 
@@ -177,6 +205,7 @@ export default function IssueItemsPage() {
             quantityIssued: Number(line?.quantityIssued || 0),
             lineDocId: lid,
             defaultItem: pickDefaultStoreItemForPpe(p, list),
+            candidateItems: listStoreItemsMatchingPpeRequirement(p, list),
           });
         }
         for (const t of tools) {
@@ -192,6 +221,7 @@ export default function IssueItemsPage() {
             quantityIssued: Number(line?.quantityIssued || 0),
             lineDocId: lid,
             defaultItem: pickDefaultStoreItemForTool(t, list),
+            candidateItems: listStoreItemsMatchingToolRequirement(t, list),
           });
         }
 
@@ -215,6 +245,7 @@ export default function IssueItemsPage() {
     const next = v as 'field' | 'office';
     setIssueMode(next);
     setIssueList([]);
+    setFieldLineSkuId({});
     setCatalogSearch('');
     if (next === 'office') {
       /* field queue reloads via effect */
@@ -327,7 +358,9 @@ export default function IssueItemsPage() {
 
   const handleFieldLineIssue = async (asgn: Assignment, line: QueuePendingLine) => {
     if (!firestore || !currentUser) return;
-    if (!line.defaultItem) {
+    const key = fieldLineInputKey(asgn.id, line.lineDocId);
+    const item = resolveFieldLineStoreItem(line, key, fieldLineSkuId);
+    if (!item) {
       toast({
         variant: 'destructive',
         title: 'ไม่พบรายการในคลัง',
@@ -335,8 +368,6 @@ export default function IssueItemsPage() {
       });
       return;
     }
-    const item = line.defaultItem;
-    const key = fieldLineInputKey(asgn.id, line.lineDocId);
     const raw = Number(fieldLineQty[key] ?? line.quantityRequired - line.quantityIssued);
     const qtyWant = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
     const remaining = line.quantityRequired - line.quantityIssued;
@@ -588,7 +619,7 @@ export default function IssueItemsPage() {
           <AlertDescription className="text-sm">
             {issueMode === 'field' ? (
               <>
-                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า หากต้องการเพิ่มรายการหรือจำนวน ให้ไปแก้ที่เมนูตำแหน่งงาน → แท็บ PPE หรืออุปกรณ์
+                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า · รายการที่ใช้รหัสกลุ่มโควต้าในคลังเดียวกันจะนับรวมหลายไซส์ได้ — เบิกทีละ SKU จนครบยอดที่ตำแหน่งกำหนด · แก้จำนวน/รายการที่เมนูตำแหน่งงาน → PPE / อุปกรณ์
               </>
             ) : (
               <>
@@ -666,24 +697,57 @@ export default function IssueItemsPage() {
                                 {card.pendingLines.map((line) => {
                                   const lk = fieldLineInputKey(card.assignment.id, line.lineDocId);
                                   const remaining = line.quantityRequired - line.quantityIssued;
-                                  const item = line.defaultItem;
+                                  const picked = resolveFieldLineStoreItem(line, lk, fieldLineSkuId);
+                                  const candidates = line.candidateItems?.length
+                                    ? line.candidateItems
+                                    : line.defaultItem
+                                      ? [line.defaultItem]
+                                      : [];
                                   const busy = fieldActionKey === lk;
                                   return (
                                     <TableRow key={line.lineDocId}>
                                       <TableCell>
                                         <Badge variant="secondary">{line.kind === 'ppe' ? 'PPE' : 'อุปกรณ์'}</Badge>
                                       </TableCell>
-                                      <TableCell>
+                                      <TableCell className="min-w-[200px] max-w-[340px]">
                                         <div className="font-medium text-sm">
                                           {line.kind === 'ppe'
                                             ? (line.req as PositionPPERequirement).itemName
                                             : (line.req as PositionToolRequirement).itemName}
                                         </div>
-                                        <div className="text-xs text-muted-foreground">
-                                          {item
-                                            ? `SKU: ${formatStoreItemLabel(item)} · คงเหลือ ${item.currentStock}`
-                                            : 'ยังไม่มี SKU ในคลังที่จับคู่ — แก้ที่ตำแหน่งงาน'}
-                                        </div>
+                                        {candidates.length > 1 ? (
+                                          <div className="mt-2 space-y-1">
+                                            <Label className="text-[10px] text-muted-foreground">
+                                              ตัดสต็อกจาก SKU (เลือกไซส์/เบอร์)
+                                            </Label>
+                                            <Select
+                                              value={picked?.id ?? ''}
+                                              onValueChange={(id) =>
+                                                setFieldLineSkuId((prev) => ({ ...prev, [lk]: id }))
+                                              }
+                                            >
+                                              <SelectTrigger className="h-9 text-xs">
+                                                <SelectValue placeholder="เลือก SKU…" />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                {candidates.map((c) => (
+                                                  <SelectItem key={c.id} value={c.id}>
+                                                    {formatStoreItemLabel(c)} · คงเหลือ {c.currentStock}
+                                                  </SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                            <p className="text-[10px] text-muted-foreground leading-snug">
+                                              เบิกหลายครั้งได้ — ยอดรวมทุก SKU ในกลุ่มนับเข้าโควต้าเดียวกัน
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <div className="text-xs text-muted-foreground mt-1">
+                                            {picked
+                                              ? `SKU: ${formatStoreItemLabel(picked)} · คงเหลือ ${picked.currentStock}`
+                                              : 'ยังไม่มี SKU ในคลังที่จับคู่ — แก้ที่ตำแหน่งงาน'}
+                                          </div>
+                                        )}
                                       </TableCell>
                                       <TableCell className="text-right text-sm">
                                         เบิกแล้ว {line.quantityIssued} / {line.quantityRequired}
@@ -709,7 +773,7 @@ export default function IssueItemsPage() {
                                           <Button
                                             size="sm"
                                             className="h-8"
-                                            disabled={busy || !item || remaining <= 0}
+                                            disabled={busy || !picked || remaining <= 0}
                                             onClick={() => handleFieldLineIssue(card.assignment, line)}
                                           >
                                             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}

@@ -311,8 +311,9 @@ export function getOperationsOfficerModulePermission(moduleKey: ModuleKey): Modu
   if (moduleKey === 'store_inventory') {
     return { ...FULL_ACCESS };
   }
+  /** จัดซื้อ/คู่ค้า — ops officer ใช้คลังและเบิกจ่าย ไม่เปิดเมนู PR/PO/วางบิล */
   if (moduleKey === 'vendors' || moduleKey === 'purchases') {
-    return { ...READ_ONLY };
+    return { ...NO_ACCESS };
   }
   if (moduleKey === 'employee_self_profile') {
     return { ...READ_ONLY, create: true, edit: true };

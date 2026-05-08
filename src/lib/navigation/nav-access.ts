@@ -114,6 +114,18 @@ function hrOfficerExcludedFromHrNavItem(user: User, item: HrNavItem): boolean {
   return false;
 }
 
+/** เมนูทะเบียน HR ที่ ops officer ไม่ต้องเห็น (ธนาคาร / สปส. / ตั้งค่า) */
+function operationsOfficerExcludedHrMasterHref(baseHref: string): boolean {
+  return (
+    baseHref === '/hr/bank-registry' ||
+    baseHref.startsWith('/hr/bank-registry/') ||
+    baseHref === '/hr/hospital-registry' ||
+    baseHref.startsWith('/hr/hospital-registry/') ||
+    baseHref === '/hr/settings' ||
+    baseHref.startsWith('/hr/settings/')
+  );
+}
+
 export function canViewHrHubItem(
   user: User,
   profile: PermissionProfile | null,
@@ -123,6 +135,9 @@ export function canViewHrHubItem(
   if (admin) return true;
   if (hrOfficerExcludedFromHrNavItem(user, item)) return false;
   const baseHref = item.href.split('#')[0].split('?')[0];
+  if (getPrimaryLegacyRole(user) === 'operations_officer' && operationsOfficerExcludedHrMasterHref(baseHref)) {
+    return false;
+  }
   if (baseHref === '/purchases' && canApprovePurchaseAsManager(user)) return true;
   if (baseHref === '/store/purchase-requests' && canApprovePurchaseAsManager(user)) return true;
   /** คิวอนุมัติ (D6/เดือน/Overview) — ไม่อาศัย canSeeHrPillarUi; ops/HR manager อาจไม่มี module HR ใน matrix */
@@ -213,6 +228,21 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
 
   if (p.startsWith('/client-portal')) {
     return false;
+  }
+
+  if (!admin && getPrimaryLegacyRole(user) === 'operations_officer') {
+    const denied = [
+      '/vendors',
+      '/store/purchase-requests',
+      '/purchases',
+      '/store/vendor-bills',
+      '/hr/bank-registry',
+      '/hr/hospital-registry',
+      '/hr/settings',
+    ] as const;
+    if (denied.some((pre) => p === pre || p.startsWith(`${pre}/`))) {
+      return false;
+    }
   }
 
   if (p.startsWith('/users') || p.startsWith('/system-admin')) {

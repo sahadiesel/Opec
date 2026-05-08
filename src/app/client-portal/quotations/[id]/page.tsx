@@ -88,7 +88,8 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
     [lines],
   );
 
-  const isApprover = currentUser?.portalRole === 'approver';
+  /** Firestore allows any portal customer on this quotation to decide; hide actions only for explicit viewers. */
+  const isApprover = currentUser?.portalRole !== 'viewer';
 
   const handlePrint = () => {
     if (!quotation) return;

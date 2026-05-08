@@ -33,7 +33,7 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
-import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff } from '@/lib/types';
+import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff, formatStoreItemLabel } from '@/lib/types';
 import { netCustodyQuantityDelta } from '@/lib/store/store-custody-net';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 import { Badge } from '@/components/ui/badge';
@@ -92,9 +92,10 @@ export default function StoreDashboardPage() {
   // 3. Calculated Stats
   const stats = useMemo(() => {
     if (!items) return { total: 0, low: 0, activePPE: 0, activeTools: 0 };
+    const issuable = (i: StoreItem) => i.catalogGroupRole !== 'header';
     return {
       total: items.length,
-      low: items.filter(i => i.currentStock <= i.minimumStock).length,
+      low: items.filter((i) => i.active && issuable(i) && i.currentStock <= i.minimumStock).length,
       activePPE: items.filter(i => i.isPPE && i.active).length,
       activeTools: items.filter(i => i.isTool && i.active).length,
     };
@@ -110,7 +111,12 @@ export default function StoreDashboardPage() {
 
   const stockAlerts = useMemo(() => {
     if (!items) return [];
-    return items.filter(i => i.currentStock <= i.minimumStock && i.active);
+    return items.filter(
+      (i) =>
+        i.active &&
+        i.catalogGroupRole !== 'header' &&
+        i.currentStock <= i.minimumStock,
+    );
   }, [items]);
 
   /** Net quantity still held off-site per item + person (ISSUE − RETURN). */
@@ -145,36 +151,23 @@ export default function StoreDashboardPage() {
       }
     }
 
-    type Row = { key: string; itemId: string; itemName: string; qty: number; holderLabel: string };
+    type Row = { key: string; itemId: string; displayLabel: string; qty: number; holderLabel: string };
 
     const expanded: Row[] = Array.from(map.entries()).map(([key, v]) => {
       const itemMeta = items.find((i) => i.id === v.itemId);
-      const itemName = itemMeta?.itemName || v.itemId;
+      const displayLabel = itemMeta
+        ? formatStoreItemLabel(itemMeta)
+        : `ไม่พบในทะเบียน (${v.itemId})`;
       const wk = workers?.find((w) => w.id === v.holderId);
       const holderLabel = v.isOffice
         ? `พนักงานออฟฟิศ: ${officeStaff?.find((o) => o.id === v.holderId)?.fullName || v.holderId}`
         : `ลูกจ้างหน้างาน: ${wk ? `${wk.firstName} ${wk.lastName}` : v.holderId}`;
-      return { key, itemId: v.itemId, itemName, qty: v.qty, holderLabel };
+      return { key, itemId: v.itemId, displayLabel, qty: v.qty, holderLabel };
     });
 
-    /** รวมแถวที่ชื่ออุปกรณ์ + ผู้ถือครองเหมือนกัน (หลาย SKU / itemId ซ้ำในทะเบียน) */
-    const byDisplay = new Map<string, Row>();
-    for (const r of expanded) {
-      const dk = `${r.itemName.trim()}|${r.holderLabel.trim()}`;
-      const prev = byDisplay.get(dk);
-      if (!prev) {
-        byDisplay.set(dk, { ...r, key: dk });
-      } else {
-        byDisplay.set(dk, {
-          ...prev,
-          qty: prev.qty + r.qty,
-          key: dk,
-        });
-      }
-    }
-
-    return Array.from(byDisplay.values()).sort((a, b) => {
-      const byItem = a.itemName.localeCompare(b.itemName, 'th');
+    /** แยกแถวตาม SKU (itemId) — ไม่รวมชื่อหลักซ้ำที่ไซส์ต่างกัน */
+    return expanded.sort((a, b) => {
+      const byItem = a.displayLabel.localeCompare(b.displayLabel, 'th');
       if (byItem !== 0) return byItem;
       return a.holderLabel.localeCompare(b.holderLabel, 'th');
     });
@@ -424,7 +417,12 @@ export default function StoreDashboardPage() {
                     {custodyPageRows.map((row) => (
                       <TableRow key={row.key}>
                         <TableCell className="pl-6">
-                          <span className="font-semibold text-primary">{row.itemName}</span>
+                          <span className="font-semibold text-primary">{row.displayLabel}</span>
+                          {row.displayLabel.startsWith('ไม่พบในทะเบียน') ? (
+                            <span className="block text-[10px] font-mono text-muted-foreground mt-0.5">
+                              รหัสเอกสารคลัง: {row.itemId}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-sm">{row.holderLabel}</TableCell>
                         <TableCell className="text-right pr-6 font-bold">{row.qty}</TableCell>
@@ -519,7 +517,8 @@ export default function StoreDashboardPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead className="font-bold pl-6">รหัส</TableHead>
-                        <TableHead className="font-bold">ชื่ออุปกรณ์</TableHead>
+                        <TableHead className="font-bold">ชื่อหลัก</TableHead>
+                        <TableHead className="font-bold">ขนาด / รุ่น</TableHead>
                         <TableHead className="font-bold">หมวดหมู่</TableHead>
                         <TableHead className="text-center font-bold">คงเหลือ</TableHead>
                         <TableHead className="text-center font-bold">เกณฑ์ขั้นต่ำ</TableHead>
@@ -531,7 +530,10 @@ export default function StoreDashboardPage() {
                       {stockAlerts.map((item) => (
                         <TableRow key={item.id} className="hover:bg-muted/30">
                           <TableCell className="pl-6 font-mono text-xs font-bold text-primary">{item.itemCode}</TableCell>
-                          <TableCell className="font-bold text-primary">{item.itemName}</TableCell>
+                          <TableCell className="font-bold text-primary">{(item.itemName || '').trim() || '—'}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {(item.variantSpecification || '').trim() || '—'}
+                          </TableCell>
                           <TableCell><Badge variant="outline">{item.category}</Badge></TableCell>
                           <TableCell className="text-center">
                             <span className={`font-black ${item.currentStock === 0 ? 'text-red-600' : 'text-orange-600'}`}>
@@ -681,7 +683,9 @@ export default function StoreDashboardPage() {
                               {tx.transactionType}
                             </Badge>
                           </TableCell>
-                          <TableCell className="font-medium text-sm">{item?.itemName || 'N/A'}</TableCell>
+                          <TableCell className="font-medium text-sm">
+                            {item ? formatStoreItemLabel(item) : `ไม่พบในทะเบียน (${tx.itemId})`}
+                          </TableCell>
                           <TableCell className="text-center font-bold">{tx.quantity}</TableCell>
                           <TableCell className="text-[10px] text-muted-foreground">
                             {holderLabel ||
@@ -725,9 +729,16 @@ export default function StoreDashboardPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {items?.filter(i => i.currentStock <= i.minimumStock).map(i => (
+                    {items
+                      ?.filter(
+                        (i) =>
+                          i.active &&
+                          i.catalogGroupRole !== 'header' &&
+                          i.currentStock <= i.minimumStock,
+                      )
+                      .map((i) => (
                       <TableRow key={i.id}>
-                        <TableCell className="pl-6 font-bold text-primary">{i.itemName}</TableCell>
+                        <TableCell className="pl-6 font-bold text-primary">{formatStoreItemLabel(i)}</TableCell>
                         <TableCell className="text-center text-muted-foreground">-</TableCell>
                         <TableCell className="text-center font-bold">{i.currentStock}</TableCell>
                         <TableCell className="text-center font-black text-red-600">{i.minimumStock}</TableCell>

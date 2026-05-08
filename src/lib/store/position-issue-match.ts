@@ -5,6 +5,9 @@ export function issueItemMatchesPositionReq(
   posPPE: PositionPPERequirement[],
   posTools: PositionToolRequirement[],
 ): { matchPPE?: PositionPPERequirement; matchTool?: PositionToolRequirement } {
+  if (item.catalogGroupRole === 'header') {
+    return {};
+  }
   const matchPPE = posPPE.find((p) => {
     if (p.storeItemId && p.storeItemId === item.id) return true;
     const pk = (p.variantGroupKey || '').trim();
@@ -90,7 +93,8 @@ export function pickDefaultStoreItemForPpe(
 ): StoreItem | undefined {
   if (req.storeItemId) {
     const direct = storeItems.find((s) => s.id === req.storeItemId);
-    if (direct) return direct;
+    /** `storeItemId` อาจชี้เมน (header) — เบิกได้เฉพาะรุ่นย่อย */
+    if (direct && direct.catalogGroupRole !== 'header') return direct;
   }
   const matches = storeItems.filter((item) => {
     const { matchPPE } = issueItemMatchesPositionReq(item, [req], []);
@@ -106,7 +110,7 @@ export function pickDefaultStoreItemForTool(
 ): StoreItem | undefined {
   if (req.storeItemId) {
     const direct = storeItems.find((s) => s.id === req.storeItemId);
-    if (direct) return direct;
+    if (direct && direct.catalogGroupRole !== 'header') return direct;
   }
   const matches = storeItems.filter((item) => {
     const { matchTool } = issueItemMatchesPositionReq(item, [], [req]);
@@ -114,4 +118,31 @@ export function pickDefaultStoreItemForTool(
   });
   matches.sort((a, b) => (a.itemCode || '').localeCompare(b.itemCode || ''));
   return matches[0];
+}
+
+/** SKU ในคลังที่นับเข้าโควต้ารายการตำแหน่งนี้ได้ (รวมทุกไซส์ที่ใช้ variantGroupKey เดียวกัน) */
+export function listStoreItemsMatchingPpeRequirement(
+  req: PositionPPERequirement,
+  storeItems: StoreItem[],
+): StoreItem[] {
+  const matches = storeItems.filter((item) => {
+    if (item.catalogGroupRole === 'header') return false;
+    const { matchPPE } = issueItemMatchesPositionReq(item, [req], []);
+    return !!matchPPE;
+  });
+  matches.sort((a, b) => (a.itemCode || '').localeCompare(b.itemCode || ''));
+  return matches;
+}
+
+export function listStoreItemsMatchingToolRequirement(
+  req: PositionToolRequirement,
+  storeItems: StoreItem[],
+): StoreItem[] {
+  const matches = storeItems.filter((item) => {
+    if (item.catalogGroupRole === 'header') return false;
+    const { matchTool } = issueItemMatchesPositionReq(item, [], [req]);
+    return !!matchTool;
+  });
+  matches.sort((a, b) => (a.itemCode || '').localeCompare(b.itemCode || ''));
+  return matches;
 }

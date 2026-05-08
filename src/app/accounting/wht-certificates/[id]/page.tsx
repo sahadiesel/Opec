@@ -62,7 +62,6 @@ import {
   validateWhtCertificateForOfficialIssue,
   validateWhtCertificateForOfficialPrint,
   validateWhtCertificateForPayeeCopies12Print,
-  validateWhtCertificateForPreviewPrint,
 } from '@/lib/wht/wht-certificate-validation';
 import { buildWhtElectronicDataFromDocument, stripUndefinedForFirestore } from '@/lib/wht/wht-certificate-build';
 import type { CompanyProfileWhtInput } from '@/lib/wht/wht-certificate-build';
@@ -145,82 +144,74 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
 
   const actorName = currentUser?.displayName?.trim() || currentUser?.email || currentUser?.id || '';
 
-  const runPrint = async (variant: WithholdingCertificateCopyVariant, official: boolean) => {
+  const runPrint = async (variant: WithholdingCertificateCopyVariant) => {
     if (!firestore || !currentUser || !wht || !variant) return;
-    const mode = official ? 'official' : 'preview';
-    const errs = official
-      ? validateWhtCertificateForOfficialPrint(wht, variant)
-      : validateWhtCertificateForPreviewPrint(wht, variant);
+    const errs = validateWhtCertificateForOfficialPrint(wht, variant);
     if (errs.length) {
       toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
       return;
     }
-    setBusy(`print-${mode}`);
+    setBusy('print-official');
     try {
       const html = buildWithholdingCertificateDocumentHtml(wht, {
         copyVariant: variant,
-        official,
+        official: true,
         printedByName: actorName,
         printedAtMs: Date.now(),
         ...displayOpts,
       });
       openWithholdingCertificatePrintWindow(html);
-      if (official) {
-        await updateDoc(certRef!, {
-          lastPrintedCopyVariant: variant,
-          updatedAt: Date.now(),
-          updatedByUid: currentUser.id,
-          updatedByName: actorName,
-        });
-        await appendAudit(firestore, wht.id, {
-          ...buildWhtAuditLogEntry({
-            documentId: wht.id,
-            action: 'PRINT_WHT',
-            actorId: currentUser.id,
-            actorName,
-            payloadSummary: { copyVariant: variant, official: true },
-          }),
-        });
-      }
+      await updateDoc(certRef!, {
+        lastPrintedCopyVariant: variant,
+        updatedAt: Date.now(),
+        updatedByUid: currentUser.id,
+        updatedByName: actorName,
+      });
+      await appendAudit(firestore, wht.id, {
+        ...buildWhtAuditLogEntry({
+          documentId: wht.id,
+          action: 'PRINT_WHT',
+          actorId: currentUser.id,
+          actorName,
+          payloadSummary: { copyVariant: variant, official: true },
+        }),
+      });
     } finally {
       setBusy(null);
     }
   };
 
-  const runPrintPayeeCopies12 = async (official: boolean) => {
+  const runPrintPayeeCopies12 = async () => {
     if (!firestore || !currentUser || !wht || !certRef) return;
-    const mode = official ? 'official' : 'preview';
-    const errs = validateWhtCertificateForPayeeCopies12Print(wht, official);
+    const errs = validateWhtCertificateForPayeeCopies12Print(wht, true);
     if (errs.length) {
       toast({ variant: 'destructive', title: 'พิมพ์ไม่ได้', description: errs.join(' ') });
       return;
     }
-    setBusy(`print-payee12-${mode}`);
+    setBusy('print-payee12-official');
     try {
       const html = buildWithholdingCertificatePayeeCopies12Html(wht, {
-        official,
+        official: true,
         printedByName: actorName,
         printedAtMs: Date.now(),
         ...displayOpts,
       });
       openWithholdingCertificatePrintWindow(html);
-      if (official) {
-        await updateDoc(certRef, {
-          lastPrintedCopyVariant: 'COPY_PAYEE_TAX_RETURN',
-          updatedAt: Date.now(),
-          updatedByUid: currentUser.id,
-          updatedByName: actorName,
-        });
-        await appendAudit(firestore, wht.id, {
-          ...buildWhtAuditLogEntry({
-            documentId: wht.id,
-            action: 'PRINT_WHT',
-            actorId: currentUser.id,
-            actorName,
-            payloadSummary: { payeeCopies12Bundle: true, official: true },
-          }),
-        });
-      }
+      await updateDoc(certRef, {
+        lastPrintedCopyVariant: 'COPY_PAYEE_TAX_RETURN',
+        updatedAt: Date.now(),
+        updatedByUid: currentUser.id,
+        updatedByName: actorName,
+      });
+      await appendAudit(firestore, wht.id, {
+        ...buildWhtAuditLogEntry({
+          documentId: wht.id,
+          action: 'PRINT_WHT',
+          actorId: currentUser.id,
+          actorName,
+          payloadSummary: { payeeCopies12Bundle: true, official: true },
+        }),
+      });
     } finally {
       setBusy(null);
     }
@@ -601,36 +592,17 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
                 ออกเอกสาร (ISSUED)
               </Button>
             )}
-            {canCreateVerifyPrintWhtCertificate(currentUser) && wht.documentStatus !== 'CANCELLED' && (
-              <>
-                <Button variant="outline" disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_TAX_RETURN', false)}>
-                  Preview PDF (ฉบับที่ 1)
-                </Button>
-                <Button variant="outline" disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_RECORD', false)}>
-                  Preview PDF (ฉบับที่ 2)
-                </Button>
-                <Button variant="secondary" disabled={!!busy} onClick={() => void runPrintPayeeCopies12(false)}>
-                  Preview ฉบับที่ 1+2 (ไฟล์เดียว)
-                </Button>
-                <Button variant="outline" disabled={!!busy} onClick={() => void runPrint('COPY_PAYER_RECORD', false)}>
-                  Preview PDF (ผู้หัก)
-                </Button>
-              </>
-            )}
             {canCreateVerifyPrintWhtCertificate(currentUser) && wht.documentStatus === 'ISSUED' && (
               <>
-                <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_TAX_RETURN', true)}>
+                <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_TAX_RETURN')}>
                   <Printer className="h-4 w-4 mr-2" />
                   พิมพ์ฉบับที่ 1
                 </Button>
-                <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYEE_RECORD', true)}>
-                  พิมพ์ฉบับที่ 2
-                </Button>
-                <Button className="font-semibold" disabled={!!busy} onClick={() => void runPrintPayeeCopies12(true)}>
+                <Button className="font-semibold" disabled={!!busy} onClick={() => void runPrintPayeeCopies12()}>
                   <Printer className="h-4 w-4 mr-2" />
                   พิมพ์ฉบับที่ 1+2 (ไฟล์เดียว / PDF)
                 </Button>
-                <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYER_RECORD', true)}>
+                <Button disabled={!!busy} onClick={() => void runPrint('COPY_PAYER_RECORD')}>
                   พิมพ์สำเนาผู้หัก
                 </Button>
               </>

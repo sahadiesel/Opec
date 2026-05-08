@@ -113,6 +113,26 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   store_issue: { label: 'Store Issue', prefix: 'ISS-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_issue_slips', fieldName: 'issueNo' },
   store_return: { label: 'Store Return', prefix: 'RET-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_return_slips', fieldName: 'returnNo' },
   store_writeoff: { label: 'Store Write-off', prefix: 'WOF-', padding: 5, dept: 'store', resetPolicy: 'monthly', collectionName: 'store_writeoffs', fieldName: 'writeoffNo' },
+  /** ทะเบียน SKU คลัง — อุปกรณ์/วัสดุทั่วไป (เสื้อช้อป ฯลฯ — ไม่ใช้คำว่า TOOL ในรหัส) */
+  store_item_equipment: {
+    label: 'Store catalog SKU (equipment / general)',
+    prefix: 'EQM-',
+    padding: 4,
+    dept: 'store',
+    resetPolicy: 'none',
+    collectionName: 'store_items',
+    fieldName: 'itemCode',
+  },
+  /** ทะเบียน SKU คลัง — PPE */
+  store_item_ppe: {
+    label: 'Store catalog SKU (PPE)',
+    prefix: 'PPE-',
+    padding: 4,
+    dept: 'store',
+    resetPolicy: 'none',
+    collectionName: 'store_items',
+    fieldName: 'itemCode',
+  },
   payroll_run: { label: 'Worker Payroll', prefix: 'PR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'payroll_runs', fieldName: 'payrollRunNo' },
   office_payroll_run: { label: 'Office Payroll', prefix: 'OPR-', padding: 4, dept: 'hr', resetPolicy: 'monthly', collectionName: 'office_payroll_runs', fieldName: 'payrollRunNo' },
   executive_payroll_run: { label: 'Executive Payroll', prefix: 'EPR-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'executive_payroll_runs', fieldName: 'payrollRunNo' },

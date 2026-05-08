@@ -1098,9 +1098,11 @@ service cloud.firestore {
           && !('customerRevisionRequestedAt' in resource.data)
           && portalQuotationNegotiationRequestKeysOnly()
         )
+        // Accept/reject quotation: same spirit as negotiation — portal customer for this doc;
+        // omit portalRole == approver (many accounts omit portalRole). Explicit viewers cannot update here.
         || (
-          portalIsApprover()
-          && portalQuotationPortalReadOk()
+          portalQuotationPortalReadOk()
+          && (!('portalRole' in userData()) || userData().portalRole != 'viewer')
           && resource.data.status == 'sent'
           && request.resource.data.status in ['accepted', 'rejected']
           && request.resource.data.customerId == resource.data.customerId

@@ -773,6 +773,12 @@ export function SidebarNav({
               return false;
             }
             if (
+              getPrimaryLegacyRole(user) === 'operations_officer' &&
+              ['/vendors', '/store/purchase-requests', '/purchases', '/store/vendor-bills'].includes(basePath)
+            ) {
+              return false;
+            }
+            if (
               item.href === '/' &&
               item.key === 'overview_dashboard' &&
               isSimpleInternalEligible(user) &&

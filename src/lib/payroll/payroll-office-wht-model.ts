@@ -8,8 +8,6 @@ import type {
   PayrollWorkerWhtValidationResult,
 } from '@/lib/payroll/payroll-worker-wht-types';
 
-export { buildPayrollWhtElectronicDataFromVm };
-
 function round2(n: number): number {
   return Math.round(Number(n) * 100) / 100;
 }
