@@ -25,6 +25,27 @@ function workModeBadgeLabel(mode: JobMode | undefined): string {
   return 'Offshore';
 }
 
+/** กรอบรวมคอลัมน์สัดส่วน (On-site / Standby / โควต้าว่าง) */
+const Q_STATUS_HEAD_L =
+  'text-center font-bold border-l-2 border-t border-b border-primary/35 bg-muted/45 text-foreground/90 rounded-tl-md';
+const Q_STATUS_HEAD_M = 'text-center font-bold border-l border-t border-b border-primary/20 bg-muted/45 text-foreground/90';
+const Q_STATUS_HEAD_R =
+  'text-center font-bold border-l border-r-2 border-t border-b border-primary/35 bg-muted/45 text-foreground/90 rounded-tr-md';
+
+const Q_STATUS_CELL_L = 'text-center border-l-2 border-b border-primary/30 bg-muted/20';
+const Q_STATUS_CELL_M = 'text-center border-l border-b border-primary/15 bg-muted/20';
+const Q_STATUS_CELL_R = 'text-center border-l border-r-2 border-b border-primary/30 bg-muted/20';
+
+const Q_STATUS_SUB_HEAD_L =
+  'text-center border-l-2 border-t border-b border-primary/30 bg-muted/40 text-[11px] font-semibold h-9 rounded-tl-sm';
+const Q_STATUS_SUB_HEAD_M =
+  'text-center border-l border-t border-b border-primary/20 bg-muted/40 text-[11px] font-semibold h-9';
+const Q_STATUS_SUB_HEAD_R =
+  'text-center border-l border-r-2 border-t border-b border-primary/30 bg-muted/40 text-[11px] font-semibold h-9 rounded-tr-sm';
+const Q_STATUS_SUB_CELL_L = 'text-center border-l-2 border-b border-primary/20 bg-muted/15';
+const Q_STATUS_SUB_CELL_M = 'text-center border-l border-b border-primary/12 bg-muted/15';
+const Q_STATUS_SUB_CELL_R = 'text-center border-l border-r-2 border-b border-primary/20 bg-muted/15';
+
 /** บรรทัดโควต้าในคิว — มี po เจ้าของบรรทัดสำหรับแสดงผลรวมหลาย PO ในชุดเดียว */
 export type PoQuotaBundleLineRow = PoLineFulfillmentRow & {
   poId: string;
@@ -256,49 +277,52 @@ export function PoQuotaQueueTable({
   }
 
   return (
-    <Table className="table-fixed w-full">
-      <TableHeader className="bg-muted/40">
-        <TableRow>
-          <TableHead className="pl-6 font-bold w-[min(28%,22rem)] min-w-[12rem]">
-            PO Active / ลูกค้า
-          </TableHead>
-          <TableHead className="font-bold hidden md:table-cell w-[14%] min-w-[7rem] max-w-[11rem]">
-            ลูกค้า
-          </TableHead>
-          <TableHead
-            className="text-center font-bold w-[4.25rem] px-1 tabular-nums"
-            title="โควต้าตามบรรทัด PO"
-          >
-            โควต้า
-          </TableHead>
-          <TableHead
-            className="text-center font-bold w-[4.25rem] px-1 tabular-nums"
-            title="จองโควต้าแล้ว (ยังไม่ถอน / ไม่ปิดรายการ)"
-          >
-            มอบหมาย
-          </TableHead>
-          <TableHead
-            className="text-center font-bold w-[4.5rem] px-1 text-[11px] leading-tight sm:text-xs tabular-nums"
-            title="ขึ้นไซต์และเริ่มงานแล้ว (บันทึกวันเริ่มงาน / เริ่มงานแล้ว / ACTIVE)"
-          >
-            On-site
-          </TableHead>
-          <TableHead
-            className="text-center font-bold w-[4.75rem] px-1 text-[11px] leading-tight sm:text-xs tabular-nums"
-            title="จองโควต้าแล้วแต่ยังรอ mobilization หรือยังไม่เริ่มงานบนไซต์"
-          >
-            Standby
-          </TableHead>
-          <TableHead
-            className="text-center font-bold w-[4rem] px-1 tabular-nums"
-            title="โควต้าว่าง"
-          >
-            ว่าง
-          </TableHead>
-          <TableHead className="text-right pr-6 font-bold w-[7.5rem] sm:w-[8.5rem]">ดำเนินการ</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <div className="w-full min-w-0">
+      <Table className="w-full min-w-[960px] table-fixed">
+        <TableHeader className="bg-muted/40">
+          <TableRow>
+            <TableHead className="pl-4 sm:pl-6 font-bold w-[28%] min-w-[12rem]">
+              PO Active / ลูกค้า
+            </TableHead>
+            <TableHead className="font-bold hidden md:table-cell w-[16%] min-w-[6rem]">
+              ลูกค้า
+            </TableHead>
+            <TableHead
+              className="text-center font-bold w-[8%] min-w-[3.5rem] px-1 tabular-nums"
+              title="โควต้าตามบรรทัด PO"
+            >
+              โควต้า
+            </TableHead>
+            <TableHead
+              className="text-center font-bold w-[8%] min-w-[3.5rem] px-1 tabular-nums"
+              title="จองโควต้าแล้ว (ยังไม่ถอน / ไม่ปิดรายการ)"
+            >
+              มอบหมาย
+            </TableHead>
+            <TableHead
+              className={`${Q_STATUS_HEAD_L} w-[10%] min-w-[4rem] px-1 text-[11px] leading-tight sm:text-xs tabular-nums`}
+              title="ขึ้นไซต์และเริ่มงานแล้ว (บันทึกวันเริ่มงาน / เริ่มงานแล้ว / ACTIVE)"
+            >
+              On-site
+            </TableHead>
+            <TableHead
+              className={`${Q_STATUS_HEAD_M} w-[10%] min-w-[4rem] px-1 text-[11px] leading-tight sm:text-xs tabular-nums`}
+              title="จองโควต้าแล้วแต่ยังรอ mobilization หรือยังไม่เริ่มงานบนไซต์"
+            >
+              Standby
+            </TableHead>
+            <TableHead
+              className={`${Q_STATUS_HEAD_R} w-[10%] min-w-[4rem] px-1 tabular-nums`}
+              title="โควต้าที่ยังว่างจากโควต้ารวม"
+            >
+              โควต้าว่าง
+            </TableHead>
+            <TableHead className="text-right pr-4 sm:pr-6 font-bold w-[10%] min-w-[8rem]">
+              ดำเนินการ
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
         {queueRows.map(({ bundleKey, customerId, workMode, pos, totals, lineRows }) => {
           const cust = customers?.find((c) => c.id === customerId);
           const activeLines = lineRows.filter((r) => r.lineStatus === 'active');
@@ -316,7 +340,7 @@ export function PoQuotaQueueTable({
           return (
             <Fragment key={bundleKey}>
               <TableRow className="align-top">
-                <TableCell className="pl-6 py-4">
+                <TableCell className="pl-4 sm:pl-6 py-4">
                   <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <Layers className="h-4 w-4 shrink-0 text-primary" aria-hidden />
@@ -341,18 +365,18 @@ export function PoQuotaQueueTable({
                 </TableCell>
                 <TableCell className="text-center font-semibold tabular-nums px-1">{totals.required}</TableCell>
                 <TableCell className="text-center tabular-nums px-1">{totals.assigned}</TableCell>
-                <TableCell className="text-center tabular-nums px-1">
+                <TableCell className={`${Q_STATUS_CELL_L} tabular-nums py-4 align-middle`}>
                   <span className="font-semibold text-emerald-800">{totals.onSite}</span>
                 </TableCell>
-                <TableCell className="text-center tabular-nums px-1">
+                <TableCell className={`${Q_STATUS_CELL_M} tabular-nums py-4 align-middle`}>
                   <span className="font-semibold text-sky-800">{totals.onStandby}</span>
                 </TableCell>
-                <TableCell className="text-center px-1">
+                <TableCell className={`${Q_STATUS_CELL_R} px-1 py-4 align-middle`}>
                   <Badge className="bg-amber-100 text-amber-900 border-amber-200 font-bold tabular-nums">
                     {totals.openSlots}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-right pr-6 py-4">
+                <TableCell className="text-right pr-4 sm:pr-6 py-4">
                   <div className="flex flex-col items-end gap-1">
                     <Button size="sm" className="h-8 text-xs font-semibold" asChild>
                       <Link href={assignHref}>
@@ -369,34 +393,36 @@ export function PoQuotaQueueTable({
               </TableRow>
               <TableRow key={`${bundleKey}-lines`} className="border-b-2">
                 <TableCell colSpan={8} className="p-0 bg-muted/15">
-                  <div className="px-4 py-3 md:pl-10 overflow-x-auto">
-                    <Table className="min-w-[640px] table-fixed w-full max-w-4xl">
+                  <div className="px-3 py-3 sm:px-4 md:pl-8 w-full min-w-0 overflow-x-auto">
+                    <Table className="w-full min-w-[720px] table-fixed">
                       <TableHeader className="bg-transparent">
                         <TableRow className="hover:bg-transparent border-0">
-                          <TableHead className="text-[11px] h-8 w-[14%]">PO</TableHead>
-                          <TableHead className="text-[11px] h-8 w-[26%]">ตำแหน่ง</TableHead>
-                          <TableHead className="text-[11px] h-8 hidden sm:table-cell w-[12%]">
+                          <TableHead className="text-[11px] h-9 w-[13%]">PO</TableHead>
+                          <TableHead className="text-[11px] h-9 w-[26%]">ตำแหน่ง</TableHead>
+                          <TableHead className="text-[11px] h-9 hidden sm:table-cell w-[11%]">
                             สถานที่
                           </TableHead>
-                          <TableHead className="text-[11px] h-8 text-center w-[4.5rem] px-1">
+                          <TableHead className="text-[11px] h-9 text-center w-[9%] px-1">
                             โควต้า
                           </TableHead>
-                          <TableHead className="text-[11px] h-8 text-center w-[4.5rem] px-1">
+                          <TableHead className="text-[11px] h-9 text-center w-[9%] px-1">
                             มอบหมาย
                           </TableHead>
                           <TableHead
-                            className="text-[11px] h-8 text-center w-[4.5rem] px-1 leading-tight"
+                            className={`${Q_STATUS_SUB_HEAD_L} w-[10%] px-1 leading-tight`}
                             title="ขึ้นไซต์และเริ่มงานแล้ว"
                           >
                             On-site
                           </TableHead>
                           <TableHead
-                            className="text-[11px] h-8 text-center w-[4.75rem] px-1 leading-tight"
+                            className={`${Q_STATUS_SUB_HEAD_M} w-[10%] px-1 leading-tight`}
                             title="รอ mobilization / ยังไม่เริ่มงานบนไซต์"
                           >
                             Standby
                           </TableHead>
-                          <TableHead className="text-[11px] h-8 text-center w-[4rem] px-1">ว่าง</TableHead>
+                          <TableHead className={`${Q_STATUS_SUB_HEAD_R} w-[10%] px-1`} title="โควต้าที่ยังว่าง">
+                            โควต้าว่าง
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -418,13 +444,13 @@ export function PoQuotaQueueTable({
                               <TableCell className="py-2 text-center text-sm tabular-nums px-1">
                                 {row.assignedCount}
                               </TableCell>
-                              <TableCell className="py-2 text-center text-sm tabular-nums px-1 text-emerald-800 font-medium">
+                              <TableCell className={`${Q_STATUS_SUB_CELL_L} py-2 text-sm tabular-nums text-emerald-800 font-medium`}>
                                 {row.onSiteCount}
                               </TableCell>
-                              <TableCell className="py-2 text-center text-sm tabular-nums px-1 text-sky-800 font-medium">
+                              <TableCell className={`${Q_STATUS_SUB_CELL_M} py-2 text-sm tabular-nums text-sky-800 font-medium`}>
                                 {row.standbyCount}
                               </TableCell>
-                              <TableCell className="py-2 text-center px-1">
+                              <TableCell className={`${Q_STATUS_SUB_CELL_R} py-2 px-1`}>
                                 {row.remainingSlots > 0 ? (
                                   <Badge variant="outline" className="text-[10px] bg-amber-50 border-amber-200">
                                     {row.remainingSlots}
@@ -444,8 +470,9 @@ export function PoQuotaQueueTable({
             </Fragment>
           );
         })}
-      </TableBody>
-    </Table>
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -485,13 +512,15 @@ export function PoQuotaQueueCardShell({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="p-0">
-        <PoQuotaQueueTable
-          queueRows={queueRows}
-          customers={customers}
-          allPositions={allPositions}
-          loading={loading}
-        />
+      <CardContent className="p-0 w-full min-w-0">
+        <div className="w-full overflow-x-auto">
+          <PoQuotaQueueTable
+            queueRows={queueRows}
+            customers={customers}
+            allPositions={allPositions}
+            loading={loading}
+          />
+        </div>
       </CardContent>
     </Card>
   );
@@ -575,7 +604,7 @@ export function PoAssignmentBundleLandingPanel({
               <TableHead className="text-center font-bold min-w-[9rem]" title="ผ่าน = พร้อมลงเวลา · รอ = มอบหมายแล้วแต่ยังไม่ผ่าน mobilization ตามเกณฑ์ Wave Board">
                 สถานะ MOB
               </TableHead>
-              <TableHead className="text-center font-bold">ว่าง</TableHead>
+              <TableHead className="text-center font-bold">โควต้าว่าง</TableHead>
               <TableHead className="text-right pr-6 font-bold">ดำเนินการ</TableHead>
             </TableRow>
           </TableHeader>

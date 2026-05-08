@@ -18,8 +18,10 @@ export type AssignmentLike = {
   positionId: string;
   /** ข้อมูลเก่าอาจว่าง — ใช้ OFFSHORE เป็นค่าเริ่มต้นเช่นเดียวกับ PO */
   workMode?: JobMode;
+  mobStandbyDate?: string;
   mobWorkingStartDate?: string;
   startDate?: string;
+  assignedDate?: string;
   mobLocationEndDate?: string;
   endDate?: string;
   poActiveAutoWorkSuspended?: boolean;
@@ -130,23 +132,61 @@ export function resolvePoActiveAutoDailySyncKind(
     if (!hasSeg) return null;
     if (dateYmd >= sbStart && dateYmd <= sbEnd) return 'standby_day';
   }
+
+  const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  const hasNaturalSb = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
+  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
+  if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd >= mobStandby && dateYmd < mobStart) {
+    return 'standby_day';
+  }
+
   return 'work_day';
 }
 
+/** sync กับ src/lib/timesheet/po-active-auto-daily-build.ts — computePoActiveAutoDailyRange */
 export function computePoActiveAutoDailyRange(
   a: AssignmentLike,
   po: Pick<PurchaseOrderLike, 'endDate'>,
 ): { start: string; end: string } | null {
   const today = thailandTodayYmd();
   const throughYmd = today;
-  const startRaw = ((a.mobWorkingStartDate || a.startDate || '') as string).trim();
+
+  const mobStandby = ((a.mobStandbyDate || '') as string).trim().slice(0, 10);
+  const mobStart = ((a.mobWorkingStartDate || '') as string).trim().slice(0, 10);
+  const assignStart = ((a.startDate || '') as string).trim().slice(0, 10);
+  const assignedFallback = ((a.assignedDate || '') as string).trim().slice(0, 10);
+  const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
+  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
+  const hasAssignStart = /^\d{4}-\d{2}-\d{2}$/.test(assignStart);
+
+  let startRaw = '';
+
+  if (hasStandby && hasMobStart && mobStandby < mobStart) {
+    startRaw = mobStandby;
+  } else if (hasMobStart) {
+    startRaw = mobStart;
+    if (!hasStandby && hasAssignStart && assignStart < mobStart) {
+      startRaw = assignStart;
+    }
+  } else if (hasAssignStart) {
+    startRaw = assignStart;
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) {
+    startRaw = assignedFallback;
+  }
+
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw)) return null;
 
-  const endFromMob = ((a.mobLocationEndDate || a.endDate || '') as string).trim();
+  const mobLocEnd = ((a.mobLocationEndDate || '') as string).trim().slice(0, 10);
+  const assignEnd = ((a.endDate || '') as string).trim().slice(0, 10);
   const endFromPo = msToYmdUtc(po.endDate);
+
   let cap = throughYmd;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(endFromMob)) {
-    cap = minYmd(cap, endFromMob);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) {
+    cap = minYmd(cap, assignEnd);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd >= startRaw) {
+    cap = minYmd(cap, mobLocEnd);
   }
   cap = minYmd(cap, endFromPo);
 

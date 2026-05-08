@@ -15,6 +15,7 @@ import {
   HardHat,
   Hammer,
   Info,
+  ChevronLeft,
   ChevronRight,
   PackageMinus,
   PackagePlus,
@@ -41,10 +42,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
+const CUSTODY_PAGE_SIZE = 10;
+
 export default function StoreDashboardPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+
+  const [custodyPage, setCustodyPage] = useState(1);
 
   const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
   const isOpsOrHR = useMemo(
@@ -114,7 +119,15 @@ export default function StoreDashboardPage() {
     type Acc = { qty: number; itemId: string; holderId: string; isOffice: boolean };
     const map = new Map<string, Acc>();
 
-    for (const tx of transactions) {
+    /** ต้อง replay ตามลำดับเวลา (เก่า → ใหม่); query ดึง desc จะทำให้ยอดสะสมและการลบแถวผิด */
+    const chronological = [...transactions].sort((a, b) => {
+      const ca = a.createdAt ?? 0;
+      const cb = b.createdAt ?? 0;
+      if (ca !== cb) return ca - cb;
+      return (a.id || '').localeCompare(b.id || '');
+    });
+
+    for (const tx of chronological) {
       const delta = netCustodyQuantityDelta(tx);
       if (!delta) continue;
       const isOffice = Boolean((tx.officeStaffId || '').trim());
@@ -132,22 +145,51 @@ export default function StoreDashboardPage() {
       }
     }
 
-    return Array.from(map.entries())
-      .map(([key, v]) => {
-        const itemMeta = items.find((i) => i.id === v.itemId);
-        const itemName = itemMeta?.itemName || v.itemId;
-        const wk = workers?.find((w) => w.id === v.holderId);
-        const holderLabel = v.isOffice
-          ? `พนักงานออฟฟิศ: ${officeStaff?.find((o) => o.id === v.holderId)?.fullName || v.holderId}`
-          : `ลูกจ้างหน้างาน: ${wk ? `${wk.firstName} ${wk.lastName}` : v.holderId}`;
-        return { key, itemId: v.itemId, itemName, qty: v.qty, holderLabel };
-      })
-      .sort((a, b) => {
-        const byItem = a.itemName.localeCompare(b.itemName, 'th');
-        if (byItem !== 0) return byItem;
-        return a.holderLabel.localeCompare(b.holderLabel, 'th');
-      });
+    type Row = { key: string; itemId: string; itemName: string; qty: number; holderLabel: string };
+
+    const expanded: Row[] = Array.from(map.entries()).map(([key, v]) => {
+      const itemMeta = items.find((i) => i.id === v.itemId);
+      const itemName = itemMeta?.itemName || v.itemId;
+      const wk = workers?.find((w) => w.id === v.holderId);
+      const holderLabel = v.isOffice
+        ? `พนักงานออฟฟิศ: ${officeStaff?.find((o) => o.id === v.holderId)?.fullName || v.holderId}`
+        : `ลูกจ้างหน้างาน: ${wk ? `${wk.firstName} ${wk.lastName}` : v.holderId}`;
+      return { key, itemId: v.itemId, itemName, qty: v.qty, holderLabel };
+    });
+
+    /** รวมแถวที่ชื่ออุปกรณ์ + ผู้ถือครองเหมือนกัน (หลาย SKU / itemId ซ้ำในทะเบียน) */
+    const byDisplay = new Map<string, Row>();
+    for (const r of expanded) {
+      const dk = `${r.itemName.trim()}|${r.holderLabel.trim()}`;
+      const prev = byDisplay.get(dk);
+      if (!prev) {
+        byDisplay.set(dk, { ...r, key: dk });
+      } else {
+        byDisplay.set(dk, {
+          ...prev,
+          qty: prev.qty + r.qty,
+          key: dk,
+        });
+      }
+    }
+
+    return Array.from(byDisplay.values()).sort((a, b) => {
+      const byItem = a.itemName.localeCompare(b.itemName, 'th');
+      if (byItem !== 0) return byItem;
+      return a.holderLabel.localeCompare(b.holderLabel, 'th');
+    });
   }, [transactions, items, workers, officeStaff]);
+
+  const custodyTotalPages = Math.max(1, Math.ceil(custodyByHolder.length / CUSTODY_PAGE_SIZE));
+
+  useEffect(() => {
+    setCustodyPage((p) => Math.min(Math.max(1, p), custodyTotalPages));
+  }, [custodyTotalPages]);
+
+  const custodyPageRows = useMemo(() => {
+    const start = (custodyPage - 1) * CUSTODY_PAGE_SIZE;
+    return custodyByHolder.slice(start, start + CUSTODY_PAGE_SIZE);
+  }, [custodyByHolder, custodyPage]);
 
   type PendingReturnRow =
     | {
@@ -369,26 +411,81 @@ export default function StoreDashboardPage() {
             {custodyByHolder.length === 0 ? (
               <div className="py-12 text-center text-muted-foreground text-sm">ไม่มียอดค้างนอกคลัง (หรือยังไม่มีข้อมูลการเบิก)</div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="font-bold pl-6">อุปกรณ์</TableHead>
-                    <TableHead className="font-bold">ผู้ถือครอง</TableHead>
-                    <TableHead className="text-right font-bold pr-6">จำนวนคงค้าง</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {custodyByHolder.map((row) => (
-                    <TableRow key={row.key}>
-                      <TableCell className="pl-6">
-                        <span className="font-semibold text-primary">{row.itemName}</span>
-                      </TableCell>
-                      <TableCell className="text-sm">{row.holderLabel}</TableCell>
-                      <TableCell className="text-right pr-6 font-bold">{row.qty}</TableCell>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="font-bold pl-6">อุปกรณ์</TableHead>
+                      <TableHead className="font-bold">ผู้ถือครอง</TableHead>
+                      <TableHead className="text-right font-bold pr-6">จำนวนคงค้าง</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {custodyPageRows.map((row) => (
+                      <TableRow key={row.key}>
+                        <TableCell className="pl-6">
+                          <span className="font-semibold text-primary">{row.itemName}</span>
+                        </TableCell>
+                        <TableCell className="text-sm">{row.holderLabel}</TableCell>
+                        <TableCell className="text-right pr-6 font-bold">{row.qty}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {custodyByHolder.length > CUSTODY_PAGE_SIZE && (
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-t bg-muted/20 px-3 py-3 sm:px-4">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 justify-self-start">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs font-semibold"
+                        disabled={custodyPage <= 1}
+                        onClick={() => setCustodyPage(1)}
+                      >
+                        หน้าแรก
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        disabled={custodyPage <= 1}
+                        onClick={() => setCustodyPage((p) => Math.max(1, p - 1))}
+                        aria-label="หน้าก่อน"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <span className="text-xs text-muted-foreground tabular-nums text-center whitespace-nowrap px-1">
+                      หน้า {custodyPage} / {custodyTotalPages}
+                    </span>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 justify-self-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        disabled={custodyPage >= custodyTotalPages}
+                        onClick={() => setCustodyPage((p) => Math.min(custodyTotalPages, p + 1))}
+                        aria-label="หน้าถัดไป"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs font-semibold"
+                        disabled={custodyPage >= custodyTotalPages}
+                        onClick={() => setCustodyPage(custodyTotalPages)}
+                      >
+                        หน้าสุดท้าย
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>

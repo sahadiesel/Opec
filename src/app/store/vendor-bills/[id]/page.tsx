@@ -2,6 +2,7 @@
 
 import { use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -70,8 +71,10 @@ import {
 } from '@/lib/ops/vendor-bill-installment-plan';
 import {
   effectiveVendorBillWhtRatePercent,
+  effectiveVendorBillWithholdingEnabled,
+  resolveVendorBillVatAmounts,
   roundMoney2,
-  supplierWithholdingOnMilestone,
+  supplierWithholdingOnVendorBill,
   vendorBillWhtPresetRatePercent,
 } from '@/lib/ops/purchase-payment-milestones';
 import {
@@ -179,6 +182,9 @@ function inferWhtPresetFromEffectiveRate(rate: number): VendorBillWhtPresetCateg
 
 type VatModeUi = 'AUTO' | VendorBillVatTreatmentOverride;
 
+type AccountingVatDraft = 'AUTO' | VendorBillVatTreatmentOverride;
+type AccountingWhtDraftMode = 'inherit' | 'on' | 'off';
+
 function SupportingDocReadOnly({
   title,
   link,
@@ -204,6 +210,8 @@ function SupportingDocReadOnly({
 
 export default function StoreVendorBillDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const pathname = usePathname();
+  const vendorBillsListHref = pathname.startsWith('/ap-bills') ? '/ap-bills' : '/store/vendor-bills';
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const firebaseApp = useFirebaseApp();
@@ -225,6 +233,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     [firestore, id, canOpen]
   );
   const { data: bill, isLoading: billLoading } = useDoc<PurchaseVendorBill>(billRef as any);
+
+  const canEditAccountingBillTax = useMemo(
+    () =>
+      !!bill &&
+      canPay &&
+      (bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID'),
+    [bill, canPay],
+  );
 
   const purchaseRef = useMemoFirebase(
     () =>
@@ -355,6 +371,13 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   /** แบ่งงวดเฉพาะส่วนที่ยัง PENDING — แผนกบัญชีแก้ได้แม้สโตร์ส่งมาเป็นงวดเดียว */
   const [accountingInstallmentDraft, setAccountingInstallmentDraft] = useState<VendorBillPaymentInstallment[]>([]);
   const [accountingPlanSaving, setAccountingPlanSaving] = useState(false);
+  const [accountingVatDialogOpen, setAccountingVatDialogOpen] = useState(false);
+  const [accountingVatDraft, setAccountingVatDraft] = useState<AccountingVatDraft>('AUTO');
+  const [accountingVatSaving, setAccountingVatSaving] = useState(false);
+  const [accountingWhtDialogOpen, setAccountingWhtDialogOpen] = useState(false);
+  const [accountingWhtDraftMode, setAccountingWhtDraftMode] = useState<AccountingWhtDraftMode>('inherit');
+  const [accountingWhtDraftPreset, setAccountingWhtDraftPreset] = useState<VendorBillWhtPresetCategory>('SERVICE');
+  const [accountingWhtSaving, setAccountingWhtSaving] = useState(false);
 
   useEffect(() => {
     if (!bill) return;
@@ -419,6 +442,20 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     return Number(bill.billAmount ?? purchase.totalAmount) || 0;
   }, [purchase, bill, linkedMilestone]);
 
+  /** null = ตามสัดส่วน PO (AUTO / ไม่มี billVatTreatment) */
+  const effectiveVatTreatmentForSlice = useMemo((): VendorBillVatTreatmentOverride | null => {
+    if (!bill || !purchase) return null;
+    if (bill.status === 'DRAFT') {
+      return vatMode === 'AUTO' ? null : vatMode;
+    }
+    return bill.billVatTreatment ?? null;
+  }, [bill, purchase, vatMode]);
+
+  const whtEnabledEffective = useMemo(
+    () => !!(bill && purchase && effectiveVendorBillWithholdingEnabled(bill, purchase)),
+    [bill, purchase],
+  );
+
   const effectiveWhtRatePercent = useMemo(
     () => (bill && purchase ? effectiveVendorBillWhtRatePercent(bill, purchase) : 0),
     [bill, purchase],
@@ -442,8 +479,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   /** ฐานหัก ณ ที่จ่าย — อัตราใช้ override บนใบวางบิล (บัญชีแก้) ถ้ามี ไม่เช่นนั้นใช้จาก PO */
   const withholdingPreview = useMemo(() => {
-    if (!purchase?.supplierWithholdingEnabled) return null;
-    if (!bill) return null;
+    if (!purchase || !bill || !whtEnabledEffective) return null;
     const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
     if (rate < 0.005) return null;
     const grossInclVat =
@@ -451,8 +487,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         ? Number(linkedMilestone.amount) || 0
         : Number(bill.billAmount ?? purchase.totalAmount) || 0;
     if (grossInclVat < 0.01) return null;
-    return supplierWithholdingOnMilestone(grossInclVat, rate, purchase);
-  }, [purchase, linkedMilestone, bill]);
+    return supplierWithholdingOnVendorBill(grossInclVat, rate, purchase, effectiveVatTreatmentForSlice);
+  }, [purchase, linkedMilestone, bill, whtEnabledEffective, effectiveVatTreatmentForSlice]);
 
   const canPrintWithholdingSummary = !!withholdingPreview && withholdingPreview.wht > 0.005;
 
@@ -470,12 +506,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   }, [bill, purchase, billHasInstallmentPlan, installmentPayTargetId, grossInclVatForBill]);
 
   const withholdingAtPayout = useMemo(() => {
-    if (!purchase?.supplierWithholdingEnabled || !bill) return null;
+    if (!purchase || !bill || !whtEnabledEffective) return null;
     const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
     if (rate < 0.005) return null;
     if (payoutGrossInclVat < 0.01) return null;
-    return supplierWithholdingOnMilestone(payoutGrossInclVat, rate, purchase);
-  }, [purchase, bill, payoutGrossInclVat]);
+    return supplierWithholdingOnVendorBill(payoutGrossInclVat, rate, purchase, effectiveVatTreatmentForSlice);
+  }, [purchase, bill, payoutGrossInclVat, whtEnabledEffective, effectiveVatTreatmentForSlice]);
 
   const canPrintWithholdingAtPayout = !!withholdingAtPayout && withholdingAtPayout.wht > 0.005;
 
@@ -545,12 +581,11 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const billFinancialSlice = useMemo(() => {
     if (!purchase || !bill) return null;
     const gross = grossInclVatForBill;
+    const { beforeTax, vat } = resolveVendorBillVatAmounts(gross, effectiveVatTreatmentForSlice, purchase);
     const poTotal = Number(purchase.totalAmount) || 0;
     const ratio = poTotal > 0.0001 ? Math.min(1, gross / poTotal) : 1;
-    const beforeTax = roundMoney2((Number(purchase.amountBeforeTax) || 0) * ratio);
-    const vat = roundMoney2((Number(purchase.vatAmount) || 0) * ratio);
     return { gross, beforeTax, vat, ratio };
-  }, [purchase, bill, grossInclVatForBill]);
+  }, [purchase, bill, grossInclVatForBill, effectiveVatTreatmentForSlice]);
 
   const displayedVatTreatment = useMemo((): VendorBillVatTreatmentOverride => {
     if (!purchase) return 'NONE';
@@ -915,6 +950,81 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       });
     } finally {
       setAccountingPlanSaving(false);
+    }
+  };
+
+  const openAccountingVatDialog = () => {
+    if (!bill) return;
+    setAccountingVatDraft(bill.billVatTreatment ?? 'AUTO');
+    setAccountingVatDialogOpen(true);
+  };
+
+  const saveAccountingVatOverride = async () => {
+    if (!billRef || !canPay || !bill) return;
+    if (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') return;
+    setAccountingVatSaving(true);
+    try {
+      await updateDocumentNonBlocking(billRef, {
+        ...(accountingVatDraft === 'AUTO'
+          ? { billVatTreatment: deleteField() }
+          : { billVatTreatment: accountingVatDraft }),
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'บันทึกการตั้งค่าภาษีมูลค่าเพิ่มแล้ว' });
+      setAccountingVatDialogOpen(false);
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setAccountingVatSaving(false);
+    }
+  };
+
+  const openAccountingWhtDialog = () => {
+    if (!bill || !purchase) return;
+    if (bill.supplierWithholdingEnabledBill === true) setAccountingWhtDraftMode('on');
+    else if (bill.supplierWithholdingEnabledBill === false) setAccountingWhtDraftMode('off');
+    else setAccountingWhtDraftMode('inherit');
+    const r = effectiveVendorBillWhtRatePercent(bill, purchase);
+    setAccountingWhtDraftPreset(
+      bill.vendorBillWhtPresetCategory ?? inferWhtPresetFromEffectiveRate(r),
+    );
+    setAccountingWhtDialogOpen(true);
+  };
+
+  const saveAccountingWhtOverride = async () => {
+    if (!billRef || !canPay || !bill) return;
+    if (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') return;
+    setAccountingWhtSaving(true);
+    try {
+      const patch: Record<string, unknown> = { updatedAt: Date.now() };
+      if (accountingWhtDraftMode === 'inherit') {
+        patch.supplierWithholdingEnabledBill = deleteField();
+        patch.vendorBillWhtPresetCategory = deleteField();
+        patch.supplierWithholdingRatePercentBill = deleteField();
+      } else if (accountingWhtDraftMode === 'off') {
+        patch.supplierWithholdingEnabledBill = false;
+        patch.vendorBillWhtPresetCategory = deleteField();
+        patch.supplierWithholdingRatePercentBill = deleteField();
+      } else {
+        patch.supplierWithholdingEnabledBill = true;
+        patch.vendorBillWhtPresetCategory = accountingWhtDraftPreset;
+        patch.supplierWithholdingRatePercentBill = vendorBillWhtPresetRatePercent(accountingWhtDraftPreset);
+      }
+      await updateDocumentNonBlocking(billRef, patch);
+      toast({ title: 'บันทึกการตั้งค่าหัก ณ ที่จ่ายแล้ว' });
+      setAccountingWhtDialogOpen(false);
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setAccountingWhtSaving(false);
     }
   };
 
@@ -1295,7 +1405,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       <div className="max-w-3xl mx-auto space-y-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/store/vendor-bills">
+            <Link href={vendorBillsListHref}>
               <ArrowLeft className="h-5 w-5" />
             </Link>
           </Button>
@@ -1630,7 +1740,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                     {isCashPo ? (
                       <>
                         ลง cashbook เป็นจ่ายออก — <strong>ตัดบัญชีธนาคารเฉพาะสุทธิโอนให้คู่ค้า</strong>
-                        {purchase?.supplierWithholdingEnabled
+                        {whtEnabledEffective
                           ? ' (ส่วนหัก ณ ที่จ่ายไม่ตัดบัญชีตอนโอน — ออกหนังสือรับรองเมื่อบันทึกจ่าย)'
                           : ''}
                       </>
@@ -1888,22 +1998,42 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               </div>
 
               <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-1">
-                <p className="text-xs font-semibold text-muted-foreground">การแสดงภาษีมูลค่าเพิ่มในใบวางบิล</p>
-                <p className="font-medium">
-                  {displayedVatTreatment === 'VAT_7'
-                    ? 'มีภาษีมูลค่าเพิ่ม (อัตรา 7%) ในยอดอ้างอิงนี้'
-                    : 'ไม่มีภาษีมูลค่าเพิ่มในยอดอ้างอิงนี้ / ยอดก่อนภาษี'}
-                </p>
-                {billFinancialSlice && displayedVatTreatment === 'NONE' && billFinancialSlice.vat > 0.005 ? (
-                  <p className="text-xs text-amber-900 dark:text-amber-200 mt-1 leading-snug">
-                    หมายเหตุ: เลือกว่าไม่มีภาษี แต่ส่วนที่จัดสรรจาก PO ยังมียอดภาษี — ควรตรวจให้ตรงกับเอกสารคู่ค้า
-                  </p>
-                ) : null}
-                {billFinancialSlice && displayedVatTreatment === 'VAT_7' && billFinancialSlice.vat < 0.005 ? (
-                  <p className="text-xs text-amber-900 dark:text-amber-200 mt-1 leading-snug">
-                    หมายเหตุ: เลือกว่ามี VAT แต่ส่วนที่จัดสรรจาก PO ไม่มียอดภาษี — ควรตรวจให้ตรงกับเอกสารคู่ค้า
-                  </p>
-                ) : null}
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-muted-foreground">การแสดงภาษีมูลค่าเพิ่มในใบวางบิล</p>
+                    <p className="font-medium">
+                      {displayedVatTreatment === 'NONE'
+                        ? 'ไม่มีภาษีมูลค่าเพิ่มในยอดอ้างอิงนี้ / ยอดก่อนภาษี'
+                        : displayedVatTreatment === 'VAT_7_INCLUSIVE'
+                          ? 'มีภาษีมูลค่าเพิ่ม 7% (ภาษีในตัว — ยอดรวมในใบรวม VAT)'
+                          : 'มีภาษีมูลค่าเพิ่ม 7% (แยกภาษี — ยอดรวม = ก่อนภาษี + VAT)'}
+                    </p>
+                    {billFinancialSlice && displayedVatTreatment === 'NONE' && billFinancialSlice.vat > 0.005 ? (
+                      <p className="text-xs text-amber-900 dark:text-amber-200 mt-1 leading-snug">
+                        หมายเหตุ: เลือกว่าไม่มีภาษี แต่ส่วนที่จัดสรรจาก PO ยังมียอดภาษี — ควรตรวจให้ตรงกับเอกสารคู่ค้า
+                      </p>
+                    ) : null}
+                    {billFinancialSlice &&
+                    (displayedVatTreatment === 'VAT_7' || displayedVatTreatment === 'VAT_7_INCLUSIVE') &&
+                    billFinancialSlice.vat < 0.005 ? (
+                      <p className="text-xs text-amber-900 dark:text-amber-200 mt-1 leading-snug">
+                        หมายเหตุ: เลือกว่ามี VAT แต่ส่วนที่จัดสรรจาก PO ไม่มียอดภาษี — ควรตรวจให้ตรงกับเอกสารคู่ค้า
+                      </p>
+                    ) : null}
+                  </div>
+                  {canEditAccountingBillTax ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-1.5 font-semibold"
+                      onClick={() => openAccountingVatDialog()}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      แก้ไข
+                    </Button>
+                  ) : null}
+                </div>
               </div>
 
               {billFinancialSlice ? (
@@ -1975,7 +2105,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       })}
                     </p>
                   </div>
-                  {canPay && awaitingVendorPayment && purchase?.supplierWithholdingEnabled ? (
+                  {canPay && awaitingVendorPayment && whtEnabledEffective ? (
                     <div className="flex flex-wrap items-center gap-2 rounded-md border border-violet-300/80 bg-background/80 px-3 py-2.5 dark:bg-background/40">
                       <Button
                         type="button"
@@ -1983,6 +2113,10 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         size="sm"
                         className="gap-1.5 font-semibold border-violet-400/80 bg-background"
                         onClick={() => {
+                          if (canEditAccountingBillTax) {
+                            openAccountingWhtDialog();
+                            return;
+                          }
                           const next =
                             bill.vendorBillWhtPresetCategory ??
                             inferWhtPresetFromEffectiveRate(effectiveWhtRatePercent);
@@ -2007,9 +2141,23 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   ) : null}
                 </div>
               ) : (
-                <p className="text-muted-foreground text-xs leading-relaxed">
-                  ไม่มีหัก ณ ที่จ่ายตามการตั้งค่า PO/คู่ค้า — ยอดที่ต้องจ่ายให้คู่ค้าเท่ากับยอดรวมในใบวางบิลด้านบน
-                </p>
+                <div className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-dashed border-muted-foreground/25 bg-muted/15 px-3 py-2">
+                  <p className="text-muted-foreground text-xs leading-relaxed min-w-0 flex-1">
+                    ไม่มีหัก ณ ที่จ่ายตามการตั้งค่า PO/คู่ค้า — ยอดที่ต้องจ่ายให้คู่ค้าเท่ากับยอดรวมในใบวางบิลด้านบน
+                  </p>
+                  {canEditAccountingBillTax ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-1.5 font-semibold"
+                      onClick={() => openAccountingWhtDialog()}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      แก้ไข
+                    </Button>
+                  ) : null}
+                </div>
               )}
 
               <p className="text-xs text-muted-foreground border-t pt-2">
@@ -2171,7 +2319,13 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   <div className="flex items-center gap-2">
                     <RadioGroupItem value="VAT_7" id="vat-7" />
                     <Label htmlFor="vat-7" className="font-normal cursor-pointer">
-                      ระบุว่ามีภาษีมูลค่าเพิ่ม 7%
+                      มี VAT 7% — แยกภาษี (ยอดรวม = ก่อนภาษี + VAT)
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="VAT_7_INCLUSIVE" id="vat-7-inc" />
+                    <Label htmlFor="vat-7-inc" className="font-normal cursor-pointer">
+                      มี VAT 7% — ภาษีในตัว (ยอดรวมในใบรวม VAT)
                     </Label>
                   </div>
                   <div className="flex items-center gap-2">
@@ -2668,6 +2822,152 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   บันทึก
                 </Button>
               </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={accountingVatDialogOpen} onOpenChange={setAccountingVatDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>แก้ไขภาษีมูลค่าเพิ่ม (บัญชี)</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed">
+                ใช้หลังสโตร์ส่งใบมาแล้ว — เลือกให้ตรงกับใบกำกับภาษี/ใบวางบิลจริง · «ตาม PO» ล้างการทับและคำนวณจากยอดภาษีใน PO
+                เหมือนเดิม
+              </DialogDescription>
+            </DialogHeader>
+            <RadioGroup
+              value={accountingVatDraft}
+              onValueChange={(v) => setAccountingVatDraft(v as AccountingVatDraft)}
+              className="gap-3 py-2"
+            >
+              {(
+                [
+                  { id: 'AUTO' as const, title: 'ตาม PO (ค่าเริ่มต้น)', detail: 'ไม่ทับ — ใช้สัดส่วนภาษีจากใบสั่งซื้อ' },
+                  { id: 'NONE' as const, title: 'ไม่มีภาษีมูลค่าเพิ่ม', detail: 'ทั้งยอดในใบนี้เป็นฐานก่อนภาษี (ไม่แยก VAT)' },
+                  {
+                    id: 'VAT_7' as const,
+                    title: 'มี VAT 7% — แยกภาษี',
+                    detail: 'ยอดรวมในใบ = ก่อนภาษี + VAT (ใช้สำหรับแยกฐานหัก ณ ที่จ่าย)',
+                  },
+                  {
+                    id: 'VAT_7_INCLUSIVE' as const,
+                    title: 'มี VAT 7% — ภาษีในตัว',
+                    detail: 'ยอดรวมในใบรวม VAT แล้ว — แยกฐาน/ภาษีด้วย gross÷1.07',
+                  },
+                ] as const
+              ).map((opt) => (
+                <label
+                  key={opt.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                >
+                  <RadioGroupItem value={opt.id} id={`acc-vat-${opt.id}`} className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold leading-tight">{opt.title}</span>
+                    <span className="text-xs text-muted-foreground">{opt.detail}</span>
+                  </span>
+                </label>
+              ))}
+            </RadioGroup>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={accountingVatSaving}
+                onClick={() => setAccountingVatDialogOpen(false)}
+              >
+                ยกเลิก
+              </Button>
+              <Button
+                type="button"
+                className="font-semibold"
+                disabled={accountingVatSaving}
+                onClick={() => void saveAccountingVatOverride()}
+              >
+                {accountingVatSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                บันทึก
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={accountingWhtDialogOpen} onOpenChange={setAccountingWhtDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>แก้ไขหัก ณ ที่จ่าย (บัญชี)</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed">
+                เปิดหรือปิดการหักเฉพาะใบนี้ได้โดยไม่ต้องแก้ PO · เมื่อเปิดหักให้เลือกประเภทตามระบบ (1% / 3% / 5%)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <RadioGroup
+                value={accountingWhtDraftMode}
+                onValueChange={(v) => setAccountingWhtDraftMode(v as AccountingWhtDraftMode)}
+                className="gap-3"
+              >
+                <label className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+                  <RadioGroupItem value="inherit" id="acc-wht-inherit" className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold leading-tight">ตาม PO และค่าบนใบเดิม</span>
+                    <span className="text-xs text-muted-foreground">ล้างการบังคับบนใบนี้ — กลับไปใช้การตั้งค่าจากใบสั่งซื้อ</span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+                  <RadioGroupItem value="on" id="acc-wht-on" className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold leading-tight">เปิดหัก ณ ที่จ่าย</span>
+                    <span className="text-xs text-muted-foreground">บังคับหักในใบนี้ และเลือกอัตราด้านล่าง</span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+                  <RadioGroupItem value="off" id="acc-wht-off" className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold leading-tight">ไม่หัก ณ ที่จ่าย</span>
+                    <span className="text-xs text-muted-foreground">บังคับไม่หักในใบนี้แม้ PO จะเปิดหักอยู่</span>
+                  </span>
+                </label>
+              </RadioGroup>
+              {accountingWhtDraftMode === 'on' ? (
+                <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                  <p className="text-xs font-semibold text-muted-foreground">ประเภท / อัตรา</p>
+                  <RadioGroup
+                    value={accountingWhtDraftPreset}
+                    onValueChange={(v) => setAccountingWhtDraftPreset(v as VendorBillWhtPresetCategory)}
+                    className="gap-2"
+                  >
+                    {WHT_PRESET_OPTIONS.map((opt) => (
+                      <label
+                        key={opt.id}
+                        className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-background px-3 py-2 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                      >
+                        <RadioGroupItem value={opt.id} id={`acc-wht-preset-${opt.id}`} className="mt-0.5" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold leading-tight">{opt.title}</span>
+                          <span className="text-xs text-muted-foreground">{opt.detail}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </div>
+              ) : null}
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={accountingWhtSaving}
+                onClick={() => setAccountingWhtDialogOpen(false)}
+              >
+                ยกเลิก
+              </Button>
+              <Button
+                type="button"
+                className="font-semibold"
+                disabled={accountingWhtSaving}
+                onClick={() => void saveAccountingWhtOverride()}
+              >
+                {accountingWhtSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                บันทึก
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

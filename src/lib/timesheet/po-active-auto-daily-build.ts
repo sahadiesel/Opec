@@ -50,13 +50,30 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
   if (suspended) {
     if (!hasSeg) return null;
     if (dateYmd >= sbStart && dateYmd <= sbEnd) return 'standby_day';
+    /** นอกช่วงระงับ work อัตโนมัติ — ใช้กฎ SB/ทำงานปกติด้านล่าง */
   }
+
+  /** SB ตามฟิลด์ mobilization ก่อนวันเริ่มงาน — ให้ตรงกับช่องที่ตารางรายเดือนเปิดอยู่แล้ว */
+  const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  const hasNaturalSb = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
+  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
+  if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd >= mobStandby && dateYmd < mobStart) {
+    return 'standby_day';
+  }
+
   return 'work_day';
 }
 
 /**
- * ช่วงสร้างรายวัน: เริ่ม mobWorkingStartDate (หรือ startDate) ถึง min(วันนี้ Bangkok, จบงาน, endDate assignment, PO end)
- * — เมื่อเริ่มวันปฏิทินใหม่ที่ไทย (หลัง 00:00) ให้ซิงก์รายวันได้ถึงวันนี้ทันที (working day อัตโนมัติ)
+ * ช่วงสร้างรายวัน: เริ่มต้นสอดคล้อง `isYmdWithinAssignmentMobTimesheetWindow` (หน้าต่างบนตารางรายเดือน)
+ * — รวมช่วง SB ก่อนวันเริ่มงาน และช่วงหลัง startDate แต่ก่อน mobWorkingStartDate (กรณีไม่มีฟิลด์ SB)
+ *   เพื่อไม่ให้บางคนได้แถวอัตโนมัติแต่คนที่มี mobWorkingStartDate ชัดเจนกลับว่าง
+ * ถึง min(วันนี้ Bangkok, endDate assignment, PO end, mobLocationEndDate เมื่อยังใช้ได้)
+ *
+ * หมายเหตุ: `mobLocationEndDate` อาจเป็นวันจบไซต์ **รอบก่อน** บนเอกสารเดียวกับรอบใหม่
+ * (mobStandby / mobWorkingStartDate หลังวันนั้น) — ถ้านำไปเป็นเพดานโดยตรงจะได้ start > end → ไม่สร้าง auto
+ * จึงใช้เป็นฝาเฉพาะเมื่อ `mobLocationEndDate >= startRaw` (สอดคล้อง `splitPriorAndNewCycleOnDoc` ใน timesheet-ui)
  */
 export function computePoActiveAutoDailyRange(
   a: Assignment,
@@ -64,14 +81,43 @@ export function computePoActiveAutoDailyRange(
 ): { start: string; end: string } | null {
   const today = thailandTodayYmd();
   const throughYmd = today;
-  const startRaw = ((a.mobWorkingStartDate || a.startDate || '') as string).trim();
+
+  const mobStandby = ((a.mobStandbyDate || '') as string).trim().slice(0, 10);
+  const mobStart = ((a.mobWorkingStartDate || '') as string).trim().slice(0, 10);
+  const assignStart = ((a.startDate || '') as string).trim().slice(0, 10);
+  const assignedFallback = ((a.assignedDate || '') as string).trim().slice(0, 10);
+  const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
+  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
+  const hasAssignStart = /^\d{4}-\d{2}-\d{2}$/.test(assignStart);
+
+  let startRaw = '';
+
+  if (hasStandby && hasMobStart && mobStandby < mobStart) {
+    startRaw = mobStandby;
+  } else if (hasMobStart) {
+    startRaw = mobStart;
+    /** ช่วงก่อนเริ่มงานไม่มี mobStandbyDate — ตารางรายเดือนใช้ startDate เป็นพื้น */
+    if (!hasStandby && hasAssignStart && assignStart < mobStart) {
+      startRaw = assignStart;
+    }
+  } else if (hasAssignStart) {
+    startRaw = assignStart;
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) {
+    startRaw = assignedFallback;
+  }
+
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw)) return null;
 
-  const endFromMob = ((a.mobLocationEndDate || a.endDate || '') as string).trim();
+  const mobLocEnd = ((a.mobLocationEndDate || '') as string).trim().slice(0, 10);
+  const assignEnd = ((a.endDate || '') as string).trim().slice(0, 10);
   const endFromPo = msToYmdUtc(po.endDate);
+
   let cap = throughYmd;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(endFromMob)) {
-    cap = minYmd(cap, endFromMob);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) {
+    cap = minYmd(cap, assignEnd);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd >= startRaw) {
+    cap = minYmd(cap, mobLocEnd);
   }
   cap = minYmd(cap, endFromPo);
 

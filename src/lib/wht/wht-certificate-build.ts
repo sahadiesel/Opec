@@ -4,8 +4,9 @@
 
 import {
   roundMoney2,
-  supplierWithholdingOnMilestone,
   effectiveVendorBillWhtRatePercent,
+  resolveVendorBillVatAmounts,
+  supplierWithholdingOnVendorBill,
 } from '@/lib/ops/purchase-payment-milestones';
 import type {
   BankAccount,
@@ -224,9 +225,9 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
       : roundMoney2(Number(bill.billAmount ?? purchase.totalAmount) || 0);
 
   const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
-  const wh = supplierWithholdingOnMilestone(grossInclVat, rate, purchase);
+  const wh = supplierWithholdingOnVendorBill(grossInclVat, rate, purchase, bill.billVatTreatment);
   const baseBeforeVat = wh.baseBeforeVat;
-  const vatAmount = roundMoney2(grossInclVat - baseBeforeVat);
+  const { vat: vatAmount } = resolveVendorBillVatAmounts(grossInclVat, bill.billVatTreatment, purchase);
 
   const income = incomeTypeForVendorBillWht(bill, purchase);
 

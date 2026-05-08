@@ -2440,8 +2440,12 @@ export interface VendorBillSupportingDocumentLink {
   documentDate?: string;
 }
 
-/** ระบุว่ามองยอดในใบวางบิลว่ามี VAT 7% หรือไม่ — ถ้าไม่เก็บฟิลด์นี้ ให้อิงจากยอดภาษีใน PO */
-export type VendorBillVatTreatmentOverride = 'VAT_7' | 'NONE';
+/**
+ * ระบุว่ามองยอดในใบวางบิลว่ามี VAT 7% หรือไม่ — ถ้าไม่เก็บฟิลด์นี้ ให้อิงจากยอดภาษีใน PO
+ * - VAT_7: แยกภาษี (ยอดรวมในใบ = ก่อนภาษี + VAT 7%)
+ * - VAT_7_INCLUSIVE: ภาษีในตัว (ยอดรวมในใบรวม VAT แล้ว — แยกฐาน/ภาษีด้วย gross÷1.07 เหมือนกันในเลข)
+ */
+export type VendorBillVatTreatmentOverride = 'NONE' | 'VAT_7' | 'VAT_7_INCLUSIVE';
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
 export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID';
@@ -2721,6 +2725,11 @@ export interface PurchaseVendorBill {
   billAmount?: number;
   /** ทับการตีความ VAT จาก PO (ถ้าไม่มี = ใช้ยอดภาษีใน PO) */
   billVatTreatment?: VendorBillVatTreatmentOverride;
+  /**
+   * บัญชีบังคับเปิด/ปิดหัก ณ ที่จ่ายเฉพาะใบนี้ (หลังสโตร์ส่งบัญชี)
+   * ไม่ระบุ = ตาม purchase.supplierWithholdingEnabled
+   */
+  supplierWithholdingEnabledBill?: boolean;
   /** 1. ใบส่งของ — เลขที่/วันที่เมื่อมีติ๊ก */
   supportingDeliveryNote?: VendorBillSupportingDocumentLink;
   /** 2. ใบกำกับภาษี */

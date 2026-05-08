@@ -5,6 +5,7 @@ import type {
   PurchasePaymentMilestone,
   PurchasePaymentMilestoneStatus,
   PurchaseVendorBill,
+  VendorBillVatTreatmentOverride,
   VendorBillWhtPresetCategory,
 } from '@/lib/types';
 
@@ -102,6 +103,58 @@ export function milestoneAmountBeforeVAT(
   /** ไม่มียอดแยกก่อนภาษีในเอกสาร — ถือว่าทั้งงวดเป็นฐานหัก (เช่น ไม่มี VAT) */
   if (before < 0.01) return m;
   return roundMoney2((m * before) / total);
+}
+
+/**
+ * แยกยอดก่อนภาษี / VAT สำหรับใบวางบิล
+ * - treatment เป็น null/undefined = ใช้สัดส่วนจาก PO (เดิม)
+ * - NONE = ทั้ง gross เป็นฐาน ไม่มี VAT
+ * - VAT_7 / VAT_7_INCLUSIVE = แยก 7% จากยอดรวมในใบ (gross÷1.07)
+ */
+export function resolveVendorBillVatAmounts(
+  grossInclVat: number,
+  billVatTreatment: VendorBillVatTreatmentOverride | null | undefined,
+  purchase: Pick<Purchase, 'totalAmount' | 'amountBeforeTax' | 'vatAmount'>,
+): { beforeTax: number; vat: number; gross: number } {
+  const gross = roundMoney2(Number(grossInclVat) || 0);
+  if (billVatTreatment == null) {
+    const poTotal = Math.max(0, roundMoney2(Number(purchase.totalAmount) || 0));
+    const ratio = poTotal > 0.0001 ? Math.min(1, gross / poTotal) : 1;
+    return {
+      gross,
+      beforeTax: roundMoney2((Number(purchase.amountBeforeTax) || 0) * ratio),
+      vat: roundMoney2((Number(purchase.vatAmount) || 0) * ratio),
+    };
+  }
+  if (billVatTreatment === 'NONE') {
+    return { gross, beforeTax: gross, vat: 0 };
+  }
+  const beforeTax = roundMoney2(gross / 1.07);
+  const vat = roundMoney2(gross - beforeTax);
+  return { gross, beforeTax, vat };
+}
+
+/** เปิดหัก ณ ที่จ่ายหรือไม่ — ใบวางบิลทับ PO ได้ */
+export function effectiveVendorBillWithholdingEnabled(
+  bill: Pick<PurchaseVendorBill, 'supplierWithholdingEnabledBill'>,
+  purchase: Pick<Purchase, 'supplierWithholdingEnabled'>,
+): boolean {
+  if (bill.supplierWithholdingEnabledBill === true) return true;
+  if (bill.supplierWithholdingEnabledBill === false) return false;
+  return !!purchase.supplierWithholdingEnabled;
+}
+
+/** หัก ณ ที่จ่าย: ฐานก่อนภาษีตามการตั้งค่า VAT บนใบวางบิล (หรือสัดส่วน PO) */
+export function supplierWithholdingOnVendorBill(
+  grossInclVat: number,
+  ratePercent: number,
+  purchase: Pick<Purchase, 'totalAmount' | 'amountBeforeTax' | 'vatAmount'>,
+  billVatTreatment: VendorBillVatTreatmentOverride | null | undefined,
+): { wht: number; netPaid: number; baseBeforeVat: number } {
+  const rate = Math.max(0, Number(ratePercent) || 0);
+  const { beforeTax, gross } = resolveVendorBillVatAmounts(grossInclVat, billVatTreatment, purchase);
+  const wht = rate > 0.005 ? roundMoney2((beforeTax * rate) / 100) : 0;
+  return { wht, netPaid: roundMoney2(gross - wht), baseBeforeVat: beforeTax };
 }
 
 /** อัตราตามเมนูบัญชี (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) */

@@ -161,6 +161,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/mobilization', 'mobilization'],
   ['/store/vendor-bills', 'store_inventory'],
   ['/purchases', 'purchases'],
+  ['/ap-bills/vendor-bills', 'ap_bills'],
   ['/ap-bills', 'ap_bills'],
   ['/cashbook', 'cashbook'],
   ['/office-staff', 'office_staff'],

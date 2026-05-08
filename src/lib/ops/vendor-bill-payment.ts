@@ -28,9 +28,10 @@ import {
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import {
   syncPurchasePaymentClosure,
-  supplierWithholdingOnMilestone,
   effectiveVendorBillWhtRatePercent,
+  effectiveVendorBillWithholdingEnabled,
   roundMoney2,
+  supplierWithholdingOnVendorBill,
 } from '@/lib/ops/purchase-payment-milestones';
 import {
   buildWithholdingCertificateDraft,
@@ -114,11 +115,17 @@ export async function executeVendorBillPayment(params: {
   }
 
   let amountFromBank = grossInclVat;
-  let whtBreakdown: ReturnType<typeof supplierWithholdingOnMilestone> | null = null;
+  let whtBreakdown: ReturnType<typeof supplierWithholdingOnVendorBill> | null = null;
 
   const whtRateEffective = effectiveVendorBillWhtRatePercent(bill, purchase);
-  if (purchase.supplierWithholdingEnabled && whtRateEffective > 0.005) {
-    whtBreakdown = supplierWithholdingOnMilestone(grossInclVat, whtRateEffective, purchase);
+  const whtEnabled = effectiveVendorBillWithholdingEnabled(bill, purchase);
+  if (whtEnabled && whtRateEffective > 0.005) {
+    whtBreakdown = supplierWithholdingOnVendorBill(
+      grossInclVat,
+      whtRateEffective,
+      purchase,
+      bill.billVatTreatment,
+    );
     amountFromBank = whtBreakdown.netPaid;
   }
 
