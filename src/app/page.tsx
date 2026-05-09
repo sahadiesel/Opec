@@ -62,6 +62,7 @@ import {
   normalizeCurrentUserPermissions,
   isSystemAdmin,
   isStoreOfficer,
+  isTimekeeper,
   getPrimaryLegacyRole,
   canSeeHrPillarUi,
   canSeeSalesPillarUi,
@@ -199,6 +200,8 @@ export default function Home() {
 
       if (latestUserDoc.userType !== 'customer_portal' && isStoreOfficer(latestUserDoc)) {
         router.replace('/store');
+      } else if (latestUserDoc.userType !== 'customer_portal' && isTimekeeper(latestUserDoc)) {
+        router.replace('/hr/attendance/kiosk');
       } else if (latestUserDoc.userType !== 'customer_portal') {
         const rk = getPrimaryLegacyRole(latestUserDoc);
         if (rk === 'hr_officer' || rk === 'payroll_officer' || rk === 'hr_manager') {
@@ -273,6 +276,8 @@ export default function Home() {
           router.replace('/client-portal/dashboard');
         } else if (isStoreOfficer(userData)) {
           router.replace('/store');
+        } else if (isTimekeeper(userData)) {
+          router.replace('/hr/attendance/kiosk');
         } else {
           const rk = getPrimaryLegacyRole(userData);
           if (rk === 'hr_officer' || rk === 'payroll_officer' || rk === 'hr_manager') {
@@ -850,13 +855,6 @@ export default function Home() {
                   check('timesheets', 'view') ||
                   check('worker_payroll', 'view')) && (
                   <ShortcutGroup title="HR — Worker Payroll" icon={HardHat} color="border-l-amber-600">
-                    {(check('waves', 'view') || check('assignments', 'view')) && (
-                      <ShortcutLink
-                        href="/po-active-quota-queue"
-                        label="คิวเติมโควต้า (PO Active)"
-                        sub="ชุดลูกค้า×Onshore/Offshore จากสัญญา"
-                      />
-                    )}
                     {check('workers', 'view') && (
                       <ShortcutLink href="/workers" label="ทะเบียนลูกจ้าง" sub="Timesheet + batch" />
                     )}

@@ -20,6 +20,8 @@ import {
   HeartPulse,
   FileQuestion,
   Banknote,
+  QrCode,
+  Clock,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -29,6 +31,11 @@ export interface HrNavItem {
   title: string;
   href: string;
   icon: ComponentType<{ className?: string }>;
+  /**
+   * จัดการลงเวลา Kiosk / สรุป — เฉพาะกลุ่มงานจ่ายค่าจ้าง (payroll_officer · manager · admin)
+   * ไม่ใช้สิทธิ์ operations_officer / timekeeper แม้มีโมดูล timesheets
+   */
+  payrollAttendanceManageOnly?: boolean;
 }
 
 export interface HrNavSubsection {
@@ -42,7 +49,7 @@ export interface HrNavSubsection {
    */
   audiencePayrollLeadsOnly?: boolean;
   /**
-   * ลงเวลารายวัน/รายเดือน — แสดงให้หัวหน้างานจ่ายค่าจ้าง + เจ้าหน้าที่ปฏิบัติการ (operations_officer)
+   * ลงเวลารายวัน/รายเดือน — แสดงให้หัวหน้างานจ่ายค่าจ้าง + ops officer + เจ้าหน้าที่บันทึกเวลา (timekeeper)
    */
   audienceFieldOpsTimesheets?: boolean;
   /**
@@ -72,10 +79,25 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
   },
   {
     title: 'ลงเวลาและภารกิจหน้างาน',
-    description: 'operations_officer · หัวหน้างานจ่ายค่าจ้าง',
+    description:
+      'จัดการ Kiosk/สรุป: payroll_officer · manager · admin — ลงเวลารายวัน/รายเดือน: timekeeper · operations_officer',
     icon: Grid3X3,
     audienceFieldOpsTimesheets: true,
     items: [
+      {
+        key: 'timesheets',
+        title: 'จัดการการลงเวลา (Kiosk / สรุป)',
+        href: '/hr/attendance',
+        icon: Clock,
+        payrollAttendanceManageOnly: true,
+      },
+      {
+        key: 'timesheets',
+        title: 'Kiosk ลงเวลา (QR)',
+        href: '/hr/attendance/kiosk',
+        icon: QrCode,
+        payrollAttendanceManageOnly: true,
+      },
       {
         key: 'timesheets',
         title: 'ลงเวลารายวัน(Auto/Manual)',

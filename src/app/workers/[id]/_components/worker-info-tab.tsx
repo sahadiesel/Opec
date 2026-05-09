@@ -26,7 +26,7 @@ interface WorkerInfoTabProps {
   currentPosition: Position | null;
   canViewLaborCost: boolean;
   canEditLaborCost: boolean;
-  /** เลขบัญชี / ข้อมูลการเงิน (จ่ายเงิน) — ซ่อนสำหรับ operations_officer */
+  /** เลขบัญชี / ข้อมูลการเงิน (จ่ายเงิน) — ซ่อนสำหรับ operations_officer / timekeeper */
   canViewBankPayrollProfile?: boolean;
   /** แก้สวิตช์พร้อม/ไม่พร้อมที่หัวข้อมูลส่วนตัว */
   canEditWorkerReadiness?: boolean;

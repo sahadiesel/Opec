@@ -1,0 +1,178 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { doc, setDoc } from 'firebase/firestore';
+import { AppShell } from '@/components/layout/app-shell';
+import { useAppUser } from '@/hooks/use-app-user';
+import { useFirestore, useUser } from '@/firebase';
+import { canAccessHrAttendanceKioskPages } from '@/lib/navigation/nav-access';
+import type { User } from '@/lib/types';
+import {
+  ATTENDANCE_KIOSK_SESSIONS_COLLECTION,
+  KIOSK_SESSION_TTL_MS,
+} from '@/lib/attendance/constants';
+import type { AttendanceKioskSessionDoc } from '@/lib/attendance/types';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import QRCode from 'qrcode';
+
+export default function HrAttendanceKioskPage() {
+  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { user: fbUser } = useUser();
+  const firestore = useFirestore();
+  const { toast } = useToast();
+
+  const canUse = useMemo(
+    () => !!currentUser && canAccessHrAttendanceKioskPages(currentUser as User, null),
+    [currentUser],
+  );
+
+  const [token, setToken] = useState<string | null>(null);
+  const [expiresAtMs, setExpiresAtMs] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
+  /** data URL from local `qrcode` lib, or fallback to external image API */
+  const [qrImgSrc, setQrImgSrc] = useState('');
+
+  const mobileUrl = useMemo(() => {
+    if (typeof window === 'undefined' || !token) return '';
+    const u = new URL('/hr/attendance/mobile', window.location.origin);
+    u.searchParams.set('t', token);
+    return u.toString();
+  }, [token]);
+
+  useEffect(() => {
+    if (!mobileUrl) {
+      setQrImgSrc('');
+      return;
+    }
+    let cancelled = false;
+    void QRCode.toDataURL(mobileUrl, { width: 280, margin: 2, errorCorrectionLevel: 'M' })
+      .then((dataUrl) => {
+        if (!cancelled) setQrImgSrc(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setQrImgSrc(
+            `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(mobileUrl)}`,
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mobileUrl]);
+
+  const refreshSession = useCallback(async () => {
+    if (!firestore || !fbUser?.uid || !canUse) return;
+    setBusy(true);
+    try {
+      const t = crypto.randomUUID();
+      const now = Date.now();
+      const exp = now + KIOSK_SESSION_TTL_MS;
+      const payload: AttendanceKioskSessionDoc = {
+        expiresAt: exp,
+        active: true,
+        createdByUid: fbUser.uid,
+        createdAt: now,
+      };
+      await setDoc(doc(firestore, ATTENDANCE_KIOSK_SESSIONS_COLLECTION, t), payload);
+      setToken(t);
+      setExpiresAtMs(exp);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้างโค้ดไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [firestore, fbUser?.uid, canUse, toast]);
+
+  useEffect(() => {
+    if (userLoading || !canUse || !firestore || !fbUser?.uid || token) return;
+    void refreshSession();
+    // Initial QR only — further refreshes are explicit (ปุ่มสร้างโค้ดใหม่)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userLoading, canUse, firestore, fbUser?.uid]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((x) => x + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const secondsLeft = useMemo(() => {
+    void tick;
+    if (!expiresAtMs) return 0;
+    return Math.max(0, Math.floor((expiresAtMs - Date.now()) / 1000));
+  }, [expiresAtMs, tick]);
+
+  if (userLoading || !currentUser) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted-foreground text-sm">
+        กำลังโหลด…
+      </div>
+    );
+  }
+
+  if (!canUse) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-3xl mx-auto py-16 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเมนูนี้
+        </div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell user={currentUser} onLogout={() => {}}>
+      <div className="max-w-lg mx-auto space-y-6">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/hr/attendance">
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-primary">Kiosk ลงเวลา (QR)</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              ให้พนักงานสแกน QR เพื่อเปิดหน้าลงเวลาบนมือถือ (ต้องล็อกอินแอปด้วยบัญชีที่ผูกทะเบียนแล้ว)
+            </p>
+          </div>
+        </div>
+
+        <Card className="shadow-md">
+          <CardHeader className="text-center border-b bg-muted/20">
+            <CardTitle className="text-lg">Scan to Clock In / Out</CardTitle>
+            <CardDescription>สแกน QR Code เพื่อเปิดหน้าลงเวลาบนมือถือ</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center gap-4 pt-8 pb-8">
+            {!qrImgSrc && (
+              <div className="flex items-center gap-2 text-muted-foreground text-sm py-12">
+                <Loader2 className="h-5 w-5 animate-spin" /> กำลังสร้างโค้ด…
+              </div>
+            )}
+            {qrImgSrc && (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={qrImgSrc} alt="Attendance QR" className="rounded-lg border bg-white p-2 w-[280px] h-[280px]" />
+                <p className="text-sm text-muted-foreground tabular-nums">
+                  Code expires in: <strong className="text-foreground">{secondsLeft}s</strong>
+                </p>
+              </>
+            )}
+            <Button className="gap-2" variant="secondary" type="button" disabled={busy} onClick={() => void refreshSession()}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              สร้างโค้ดใหม่
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </AppShell>
+  );
+}

@@ -20,6 +20,7 @@ import {
   Package,
   HardHat,
   Wrench,
+  Clock,
 } from 'lucide-react';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -69,11 +70,13 @@ import { WorkerDrugTab } from './_components/worker-drug-tab';
 import { WorkerDocsTab } from './_components/worker-docs-tab';
 import { WorkerWorklogTab } from './_components/worker-worklog-tab';
 import { WorkerPositionStoreTab } from './_components/worker-position-store-tab';
+import { WorkerMonthlyTimesheetTab } from './_components/worker-monthly-timesheet-tab';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const WORKER_TAB_VALUES = [
   'info',
+  'monthly_timesheet',
   'certs',
   'medical',
   'drug',
@@ -84,19 +87,22 @@ const WORKER_TAB_VALUES = [
 ] as const;
 type WorkerProfileTab = (typeof WORKER_TAB_VALUES)[number];
 
-function isWorkerProfileTab(s: string | null): s is WorkerProfileTab {
-  return s != null && (WORKER_TAB_VALUES as readonly string[]).includes(s);
+/** รองรับลิงก์เก่า ?tab=attendance (Kiosk) → แท็บสรุปรายเดือน */
+function normalizeWorkerProfileTabParam(s: string | null): WorkerProfileTab | null {
+  if (s == null) return null;
+  const mapped = s === 'attendance' ? 'monthly_timesheet' : s;
+  return (WORKER_TAB_VALUES as readonly string[]).includes(mapped) ? (mapped as WorkerProfileTab) : null;
 }
 
 function WorkerDetailContent({ id }: { id: string }) {
   const searchParams = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<WorkerProfileTab>(() =>
-    isWorkerProfileTab(tabFromUrl) ? tabFromUrl : 'info',
+    normalizeWorkerProfileTabParam(tabFromUrl) ?? 'info',
   );
   useEffect(() => {
-    const t = searchParams.get('tab');
-    if (isWorkerProfileTab(t)) setActiveTab(t);
+    const t = normalizeWorkerProfileTabParam(searchParams.get('tab'));
+    if (t) setActiveTab(t);
   }, [searchParams]);
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading: authHydrationLoading } = useUser();
@@ -170,7 +176,11 @@ function WorkerDetailContent({ id }: { id: string }) {
         : null,
     [firestore, id, dataLayerReady],
   );
-  const { data: workerTimesheetsAll } = useCollection<DailyTimesheet>(workerTimesheetsQuery as any);
+  const {
+    data: workerTimesheetsAll,
+    isLoading: workerTsLoading,
+    error: workerTsError,
+  } = useCollection<DailyTimesheet>(workerTimesheetsQuery as any);
 
   const workerMobsQuery = useMemoFirebase(() => {
     if (!dataLayerReady) return null;
@@ -560,7 +570,7 @@ function WorkerDetailContent({ id }: { id: string }) {
   }
 
   const workerProfileTabTriggerClassName =
-    'gap-2 py-2.5 px-2 sm:px-3 w-full justify-center text-[11px] sm:text-sm whitespace-normal leading-snug min-h-10 sm:min-h-11 [&_svg]:shrink-0';
+    'inline-flex shrink-0 gap-1.5 px-2.5 py-2 text-center justify-center text-[11px] sm:text-sm whitespace-nowrap sm:whitespace-normal leading-snug min-h-9 sm:min-h-10 [&_svg]:shrink-0';
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -622,9 +632,12 @@ function WorkerDetailContent({ id }: { id: string }) {
           onValueChange={(v) => setActiveTab((v as WorkerProfileTab) || 'info')}
           className="w-full"
         >
-          <TabsList className="grid w-full grid-cols-4 h-auto p-1.5 bg-muted/50 gap-1.5 rounded-md">
+          <TabsList className="flex w-full min-h-10 flex-row flex-nowrap items-center justify-start gap-1 overflow-x-auto overflow-y-hidden p-1 sm:p-1.5 bg-muted/50 rounded-md [scrollbar-width:thin]">
             <TabsTrigger value="info" className={workerProfileTabTriggerClassName}>
               <User className="h-4 w-4" /> ข้อมูลประวัติ (Info)
+            </TabsTrigger>
+            <TabsTrigger value="monthly_timesheet" className={workerProfileTabTriggerClassName}>
+              <Clock className="h-4 w-4" /> สรุปลงเวลารายเดือน
             </TabsTrigger>
             <TabsTrigger value="certs" className={workerProfileTabTriggerClassName}>
               <FileText className="h-4 w-4" /> ใบเซอร์ (Certs)
@@ -665,6 +678,15 @@ function WorkerDetailContent({ id }: { id: string }) {
               canActivateWorkerLogin={canEditWorker}
               onActivateWorkerLogin={handleActivateWorkerLogin}
               activateWorkerLoginBusy={activateLoginBusy}
+            />
+          </TabsContent>
+
+          <TabsContent value="monthly_timesheet" className="mt-6">
+            <WorkerMonthlyTimesheetTab
+              rows={workerTimesheetsAll}
+              isLoading={workerTsLoading}
+              error={workerTsError}
+              currentUser={currentUser}
             />
           </TabsContent>
 

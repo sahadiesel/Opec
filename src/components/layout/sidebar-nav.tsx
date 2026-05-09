@@ -44,6 +44,7 @@ import {
   Calculator,
   Wallet,
   ClipboardCheck,
+  QrCode,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -61,7 +62,16 @@ import {
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
-import { ModuleKey, canView, isClient, canAccess, isStoreOfficer, isPayrollOfficer, getPrimaryLegacyRole } from '@/lib/permissions';
+import {
+  ModuleKey,
+  canView,
+  isClient,
+  canAccess,
+  isStoreOfficer,
+  isPayrollOfficer,
+  isTimekeeper,
+  getPrimaryLegacyRole,
+} from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { UI_LABELS } from '@/lib/constants/labels';
@@ -264,7 +274,16 @@ const ADMIN_EMPLOYEE_DEMO_ITEMS: NavItem[] = [
 function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavGroup[] {
   if (isStoreOfficer(user)) return groups;
   const rk = getPrimaryLegacyRole(user);
-  if (!rk || !['hr_officer', 'payroll_officer', 'hr_manager', 'operations_manager', 'operations_officer'].includes(rk))
+  if (
+    !rk ||
+    ![
+      'hr_officer',
+      'payroll_officer',
+      'hr_manager',
+      'operations_manager',
+      'operations_officer',
+    ].includes(rk)
+  )
     return groups;
   return groups.map((g) => {
     if (g.label !== 'ภาพรวม (Overview)') return g;
@@ -381,8 +400,35 @@ const navGroups: NavGroup[] = [
   },
 ];
 
+/** เมนูเฉพาะ Timekeeper: เฉพาะจัดการลงเวลา + Kiosk QR */
+function navGroupsForTimekeeper(): NavGroup[] {
+  return [
+    {
+      label: 'ลงเวลา',
+      audience: 'internal',
+      items: [
+        {
+          key: 'timesheets',
+          title: 'จัดการการลงเวลา (Kiosk / สรุป)',
+          href: '/hr/attendance',
+          icon: Clock,
+        },
+        {
+          key: 'timesheets',
+          title: 'Kiosk ลงเวลา (QR)',
+          href: '/hr/attendance/kiosk',
+          icon: QrCode,
+        },
+      ],
+    },
+  ];
+}
+
 /** เมนูเฉพาะเจ้าหน้าที่คลัง: หน้าแรก = คลัง, ไม่มี HR/ขาย, เฉพาะคลัง–จัดซื้อ */
 function navGroupsForUser(user: User): NavGroup[] {
+  if (isTimekeeper(user)) {
+    return navGroupsForTimekeeper();
+  }
   if (isPayrollOfficer(user)) {
     return patchOverviewDashboardForHrPillar(
       user,
@@ -772,8 +818,9 @@ export function SidebarNav({
             if (isPayrollOfficer(user) && OPS_WAREHOUSE_SUB_PATHS.some((p) => p === basePath)) {
               return false;
             }
+            const warehouseDenyRole = getPrimaryLegacyRole(user);
             if (
-              getPrimaryLegacyRole(user) === 'operations_officer' &&
+              (warehouseDenyRole === 'operations_officer' || warehouseDenyRole === 'timekeeper') &&
               ['/vendors', '/purchases', '/store/vendor-bills'].includes(basePath)
             ) {
               return false;

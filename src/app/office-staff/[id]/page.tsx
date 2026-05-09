@@ -27,6 +27,7 @@ import {
   UsersRound,
   IdCard,
   Pencil,
+  Clock,
 } from 'lucide-react';
 import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
@@ -64,6 +65,7 @@ import { canView, canCreate, canEdit } from '@/lib/permissions';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 import { buildUserAccessSummaryLines } from '@/lib/hr/user-access-display';
+import { SubjectAttendanceHistory } from '@/components/attendance/subject-attendance-history';
 
 /** ตำแหน่งที่ผูกพนักงานออฟฟิศได้: หมวด Office ทั้งหมด หรือ Onshore/Offshore ที่ฐานเงินเดือนเป็นรายเดือน (เช่น Construction Manager) — ไม่ดึงคนงานรายวัน (DAILY/HOURLY) ทั้งแผง */
 function positionEligibleForOfficeStaff(p: Position): boolean {
@@ -433,6 +435,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
               title={isNew ? undefined : !canOpenPayslipTab ? 'คุณไม่มีสิทธ์ในการทำรายการ' : undefined}
             >
               <Receipt className="h-4 w-4" /> สลิปเงินเดือน
+            </TabsTrigger>
+            <TabsTrigger value="attendance" className="gap-2 py-2 px-8" disabled={isNew}>
+              <Clock className="h-4 w-4" /> ประวัติลงเวลา (Kiosk)
             </TabsTrigger>
           </TabsList>
 
@@ -1025,6 +1030,24 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             ) : (
               <OfficeStaffPayslipHistory staffId={id} currentUser={currentUser} />
             )}
+          </TabsContent>
+
+          <TabsContent value="attendance" className="mt-6">
+            {isNew ? (
+              <Card>
+                <CardContent className="py-10 text-center text-muted-foreground text-sm">
+                  บันทึกพนักงานก่อน จึงจะดูประวัติลงเวลาได้
+                </CardContent>
+              </Card>
+            ) : firestore ? (
+              <SubjectAttendanceHistory
+                firestore={firestore}
+                subjectType="office_staff"
+                subjectId={id}
+                title="ประวัติการลงเวลา (Kiosk)"
+                description="บันทึกเข้า/ออกจากหน้ามือถือหลังสแกน QR ที่ Kiosk"
+              />
+            ) : null}
           </TabsContent>
         </Tabs>
       </div>

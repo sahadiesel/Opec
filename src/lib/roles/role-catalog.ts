@@ -147,6 +147,17 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     canonicalRole: 'operations_officer',
     descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
   },
+  timekeeper: {
+    key: 'timekeeper',
+    displayNameTh: 'เจ้าหน้าที่บันทึกเวลา',
+    displayNameEn: 'Timekeeper',
+    department: 'hr',
+    accessGroup: 'operations',
+    accessLevel: 'officer',
+    permissionProfileKey: 'timekeeper',
+    canonicalRole: 'timekeeper',
+    descriptionTh: 'ลงเวลารายวันและสรุปรายเดือน (Wave) — ไม่เข้าถึงจัดซื้อ/คลังเต็มรูปแบบ',
+  },
   operations_manager: {
     key: 'operations_manager',
     displayNameTh: 'ผู้จัดการปฏิบัติการ',
@@ -170,11 +181,22 @@ export const ACTIVE_BUSINESS_ROLE_KEYS: BusinessRoleKey[] = [
   'store_officer',
   'operations_manager',
   'operations_officer',
+  'timekeeper',
   'accounting_manager',
   'accounting_officer',
   'client_user',
   'employee_self',
 ];
+
+/**
+ * ลำดับสำหรับ dropdown เลือกบทบาท — เรียงตามชื่อไทยให้ค้นหาง่าย (รวม timekeeper)
+ * และไม่ให้รายการด้านบนของลำดับคงที่ถูกตัดออกโดย viewport เล็กของ Select
+ */
+export function getBusinessRoleKeysSortedForSelect(): BusinessRoleKey[] {
+  return [...ACTIVE_BUSINESS_ROLE_KEYS].sort((a, b) =>
+    ROLE_CATALOG[a].displayNameTh.localeCompare(ROLE_CATALOG[b].displayNameTh, 'th'),
+  );
+}
 
 export function getCanonicalBusinessRoleKey(roleKey?: string | null): BusinessRoleKey | null {
   const normalized = normalizeBusinessRoleKey(roleKey);

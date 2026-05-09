@@ -39,6 +39,8 @@ import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useRouter } from 'next/navigation';
 import { useFirestore } from '@/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID } from '@/lib/attendance/constants';
+import type { OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
 import { loadPayrollPoliciesFromFirestore } from '@/lib/payroll/d8/policy-loader';
 import { socialSecurityFromPolicy } from '@/lib/payroll/d8/deductions-from-policy';
 import { resolvePayrollPoliciesForDate } from '@/lib/payroll/d8/policies';
@@ -210,6 +212,11 @@ export default function HrSettingsPage() {
     ...DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
   }));
 
+  /** โควตาวันลาพนักงานออฟฟิศ (ใช้เมื่อมีเมนูจัดการวันลา) — เก็บที่ hr_configuration */
+  const [officeLeavePersonal, setOfficeLeavePersonal] = useState(0);
+  const [officeLeaveSick, setOfficeLeaveSick] = useState(0);
+  const [officeLeaveAnnual, setOfficeLeaveAnnual] = useState(0);
+
   const canViewPage = currentUser && isHRStaff(currentUser);
   const canEdit = canEditHrStatutoryPayrollSettings(currentUser);
 
@@ -250,6 +257,18 @@ export default function HrSettingsPage() {
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
       setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
+
+      const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
+      const leaveSnap = await getDoc(leaveRef);
+      if (leaveSnap.exists()) {
+        const ld = leaveSnap.data() as Partial<OfficeLeaveEntitlementsDoc>;
+        const p = Number(ld.personalDaysPerYear);
+        const s = Number(ld.sickDaysPerYear);
+        const a = Number(ld.annualVacationDaysPerYear);
+        if (Number.isFinite(p) && p >= 0) setOfficeLeavePersonal(Math.round(p));
+        if (Number.isFinite(s) && s >= 0) setOfficeLeaveSick(Math.round(s));
+        if (Number.isFinite(a) && a >= 0) setOfficeLeaveAnnual(Math.round(a));
+      }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'โหลดไม่สำเร็จ');
     } finally {
@@ -479,10 +498,20 @@ export default function HrSettingsPage() {
       await setDoc(mwRef, { ...monthlyWorkPolicy }, { merge: true });
       await setDoc(wlRef, { ...workerLaborPolicy }, { merge: true });
 
+      const leavePayload: OfficeLeaveEntitlementsDoc = {
+        personalDaysPerYear: Math.max(0, Math.round(Number(officeLeavePersonal) || 0)),
+        sickDaysPerYear: Math.max(0, Math.round(Number(officeLeaveSick) || 0)),
+        annualVacationDaysPerYear: Math.max(0, Math.round(Number(officeLeaveAnnual) || 0)),
+        updatedAt: now,
+        updatedByUid: currentUser.id,
+      };
+      const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
+      await setDoc(leaveRef, leavePayload, { merge: true });
+
       toast({
         title: 'บันทึกตั้งค่าแล้ว',
         description:
-          'ภาษี ปสง. วันทำงานมาตรฐาน และตัวคูณ/ปฏิทินค่าจ้างลูกจ้าง — งวดที่คำนวณใหม่จะใช้ชุดนี้ (บรรทัด snapshot เดิมไม่เปลี่ยน)',
+          'ภาษี ปสง. วันทำงานมาตรฐาน ตัวคูณ/ปฏิทินค่าจ้างลูกจ้าง และโควตาวันลาออฟฟิศ — งวดที่คำนวณใหม่จะใช้ชุดนี้ (บรรทัด snapshot เดิมไม่เปลี่ยน)',
       });
       await load();
     } catch (e: unknown) {
@@ -1079,6 +1108,59 @@ export default function HrSettingsPage() {
                 }))
               }
             />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="border-b bg-muted/20">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-primary" />
+              การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
+            </CardTitle>
+            <CardDescription>
+              จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา (รอบถัดไป)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl">
+              <div className="space-y-2">
+                <Label>วันลากิจ / ปี</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  disabled={loading || !canEdit}
+                  value={officeLeavePersonal}
+                  onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>วันลาป่วย / ปี</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  disabled={loading || !canEdit}
+                  value={officeLeaveSick}
+                  onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>วันลาพักร้อน / ปี</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  disabled={loading || !canEdit}
+                  value={officeLeaveAnnual}
+                  onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground max-w-2xl">
+              เก็บใน Firestore ที่ <span className="font-mono">{HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}</span>{' '}
+              — เฉพาะผู้มีสิทธิ์แก้หน้านี้จึงจะบันทึกได้ (สอดคล้องกฎ Firestore)
+            </p>
           </CardContent>
         </Card>
       </div>

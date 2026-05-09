@@ -136,6 +136,7 @@ export async function applyStandardOfficeRunLines(
     const newLine: OfficePayrollLine = {
       id: lineId,
       officePayrollRunId: runId,
+      payrollMonth: run.payrollMonth,
       staffId: staff.id,
       staffName: staff.fullName,
       department: staff.department,

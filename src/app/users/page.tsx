@@ -77,7 +77,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ACTIVE_BUSINESS_ROLE_KEYS, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
+import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
   normalizeBusinessRoleKey,
   normalizePermissionProfileDocumentId,
@@ -162,6 +162,8 @@ export default function UsersPage() {
   }, []);
 
   const isUserAdmin = useMemo(() => isAdminUser(currentUser), [currentUser]);
+
+  const roleKeysForSelect = useMemo(() => getBusinessRoleKeysSortedForSelect(), []);
 
   const usersQuery = useMemoFirebase(() => {
     if (!firestore || !currentUser || !isUserAdmin) return null;
@@ -795,6 +797,9 @@ export default function UsersPage() {
                   <Label className="font-black text-primary uppercase tracking-wider text-[10px]">
                     3. บทบาทหน้าที่ (Role — เมื่อไม่ใช้โปรไฟล์)
                   </Label>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    รายการเรียงตามชื่อภาษาไทย — หากไม่เห็นบทบาทให้เลื่อนในเมนู (รวมเจ้าหน้าที่บันทึกเวลา / Timekeeper)
+                  </p>
                   <Select
                     disabled={!isUserAdmin || !!editedProfileKey}
                     value={editedRole || undefined}
@@ -807,8 +812,8 @@ export default function UsersPage() {
                     <SelectTrigger className="h-12 font-bold border-2">
                       <SelectValue placeholder="เลือกบทบาทหนึ่งรายการ" />
                     </SelectTrigger>
-                    <SelectContent className="max-h-[280px]">
-                      {ACTIVE_BUSINESS_ROLE_KEYS.map((roleKey) => {
+                    <SelectContent className="max-h-[min(70vh,440px)] overflow-y-auto">
+                      {roleKeysForSelect.map((roleKey) => {
                         const role = getRoleCatalogEntry(roleKey);
                         if (!role) return null;
                         return (

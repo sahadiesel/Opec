@@ -22,6 +22,7 @@ import {
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
+  isTimekeeper,
   isPayrollOfficer,
   canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
@@ -74,6 +75,7 @@ export {
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
+  isTimekeeper,
   isPayrollOfficer,
   canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
@@ -321,6 +323,20 @@ export function getOperationsOfficerModulePermission(moduleKey: ModuleKey): Modu
   return { ...NO_ACCESS };
 }
 
+/** สิทธิ์โมดูลสำหรับ `timekeeper` — เน้นลงเวลา + ดูทะเบียนประกอบ (ไม่มีคลัง/จัดซื้อ/manpower) */
+export function getTimekeeperModulePermission(moduleKey: ModuleKey): ModulePermission {
+  if (moduleKey === 'overview_dashboard') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'timesheets') {
+    return { ...FULL_ACCESS };
+  }
+  if (moduleKey === 'workers' || moduleKey === 'worker_documents' || moduleKey === 'positions') {
+    return { ...READ_ONLY };
+  }
+  return { ...NO_ACCESS };
+}
+
 export function normalizeCurrentUserPermissions(user: Partial<User> | null | undefined): User | null {
   if (!user) return null;
 
@@ -445,7 +461,8 @@ export function getPermissions(
     moduleKey === 'tax_invoices' &&
     isSimpleInternalEligible(u) &&
     !isSimpleAccounting(u) &&
-    !isOperationsOfficer(u)
+    !isOperationsOfficer(u) &&
+    !isTimekeeper(u)
   ) {
     return { view: true, create: false, edit: true, delete: false, approve: false };
   }
@@ -525,6 +542,10 @@ export function getPermissions(
 
   if (isPrimaryHrOfficer(u) && HR_OFFICER_BLOCKED_MODULE_KEYS.has(moduleKey)) {
     return clonePermission(NO_ACCESS);
+  }
+
+  if (isTimekeeper(u)) {
+    return clonePermission(getTimekeeperModulePermission(moduleKey));
   }
 
   if (isOperationsOfficer(u)) {
@@ -823,6 +844,23 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       permissions: SYSTEM_MODULES.reduce(
         (acc, mod) => {
           acc[mod.key] = clonePermission(getOperationsOfficerModulePermission(mod.key as ModuleKey));
+          return acc;
+        },
+        {} as Record<string, ModulePermission>,
+      ),
+    },
+    {
+      profileKey: 'timekeeper',
+      profileNameEn: 'Timekeeper',
+      profileNameTh: 'เจ้าหน้าที่บันทึกเวลา',
+      departmentGroup: 'operations',
+      primaryRoleTemplateKey: 'timekeeper',
+      department: 'hr',
+      level: 'officer',
+      isActive: true,
+      permissions: SYSTEM_MODULES.reduce(
+        (acc, mod) => {
+          acc[mod.key] = clonePermission(getTimekeeperModulePermission(mod.key as ModuleKey));
           return acc;
         },
         {} as Record<string, ModulePermission>,

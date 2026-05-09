@@ -23,6 +23,7 @@ export type RoleType =
   | 'hr_officer'
   | 'operations_officer'
   | 'operations_manager'
+  | 'timekeeper'
   | 'store_officer'
   | 'client_user'
   | 'employee_self'; 
@@ -36,6 +37,7 @@ export type BusinessRoleKey =
   | 'hr_officer'
   | 'operations_manager'
   | 'operations_officer'
+  | 'timekeeper'
   | 'accounting_manager'
   | 'accounting_officer'
   | 'store_officer'
@@ -1909,6 +1911,8 @@ export interface OfficePayrollLine {
   id: string;
   /** อ้างอิงงวด — ใช้ค้นประวัติสลิปจาก collection group */
   officePayrollRunId?: string;
+  /** YYYY-MM — snapshot จากหัวงวด (My Profile / สลิป) */
+  payrollMonth?: string;
   staffId: string;
   staffName: string;
   department: string;

@@ -35,7 +35,11 @@ import {
   OfficePayrollRun,
   Purchase,
 } from '@/lib/types';
-import { isWorkerDispatchReady } from '@/lib/worker-readiness';
+import {
+  isWorkerDispatchReady,
+  workerProfileHrefForReadiness,
+  operationsOfficerMayOpenQueuedDashboardLink,
+} from '@/lib/worker-readiness';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit } from 'firebase/firestore';
 import { Badge } from '@/components/ui/badge';
@@ -43,7 +47,7 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
 import { canApprovePurchaseAsManager, canSeeOperationsPillarUi } from '@/lib/permissions';
-import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
+import { getEffectiveAccessLevel, isOperationsOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppUser } from '@/hooks/use-app-user';
 
@@ -60,6 +64,11 @@ export default function OperationsDashboardPage() {
     const level = getEffectiveAccessLevel(currentUser);
     return level === 'officer' || level === 'viewer';
   }, [currentUser]);
+
+  const opsOfficerFieldQueueLinks = useMemo(
+    () => !!currentUser && isOperationsOfficer(currentUser) && !isSystemAdmin(currentUser),
+    [currentUser],
+  );
 
   /** ผู้จัดการปฏิบัติการ / หัวหน้าเสา operations (อนุมัติใบสั่งซื้อ + payroll ตาม matrix) */
   const showManagerApprovalQueue = useMemo(
@@ -207,12 +216,16 @@ export default function OperationsDashboardPage() {
 
     // 3. Workers near expiry (warning) / blocked for assignment
     (allWorkers || []).filter(w => w.complianceAlertLevel === 'warning' || w.readinessStatus === 'BLOCKED').slice(0, 8).forEach((w) => {
+      const workerLink =
+        w.readinessStatus === 'BLOCKED'
+          ? workerProfileHrefForReadiness(w.id, w.readinessStatus)
+          : `/workers/${w.id}?tab=certs`;
       tasks.push({
         id: `worker-policy-${w.id}`,
         type: w.readinessStatus === 'BLOCKED' ? 'Blocked Assign' : 'Expiry Warning',
         label: `${w.firstName} ${w.lastName}`,
         status: w.readinessStatus === 'BLOCKED' ? 'BLOCKED' : `เหลือ ${w.nearestExpiryInDays ?? '-'} วัน`,
-        link: `/workers/${w.id}`,
+        link: workerLink,
         priority: w.readinessStatus === 'BLOCKED' ? 'high' : 'medium',
         icon: AlertTriangle,
       });
@@ -276,9 +289,11 @@ export default function OperationsDashboardPage() {
         {viewerOnly && (
           <Alert className="border-amber-200 bg-amber-50/80 text-amber-950">
             <Info className="h-4 w-4 text-amber-700" />
-            <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
+            <AlertTitle>โหมดติดตาม</AlertTitle>
             <AlertDescription>
-              บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมได้เท่านั้น — แก้ไขและอนุมัติจากเมนูที่ได้รับสิทธิ์
+              {opsOfficerFieldQueueLinks
+                ? 'เจ้าหน้าที่ปฏิบัติการ — เปิดลิงก์ในคิวไปทะเบียนลูกจ้างและ mobilization เพื่อแก้เอกสาร / PPE / ความพร้อมส่งตัวได้'
+                : 'บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมได้เท่านั้น — แก้ไขและอนุมัติจากเมนูที่ได้รับสิทธิ์'}
             </AlertDescription>
           </Alert>
         )}
@@ -305,7 +320,9 @@ export default function OperationsDashboardPage() {
                     </CardTitle>
                     <CardDescription>
                       {viewerOnly
-                        ? 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทนปฏิบัติการได้'
+                        ? opsOfficerFieldQueueLinks
+                          ? 'คิวลูกจ้างและ mobilization คลิกเปิดได้ — แก้ readiness / ใบเซอร์ / PPE · งานอนุมัติเงินเดือนยังเป็นผู้จัดการ'
+                          : 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทนปฏิบัติการได้'
                         : 'งานอนุมัติ (เงินเดือน/ค่าจ้าง, ใบสั่งซื้อ) รวมถึงงานด่วนปฏิบัติการและคำขอเปลี่ยนแปลงจากลูกค้า'}
                     </CardDescription>
                   </div>
@@ -315,8 +332,12 @@ export default function OperationsDashboardPage() {
               <CardContent className="p-0">
                 {urgentTasks.length > 0 ? (
                   <div className="divide-y">
-                    {urgentTasks.map(task =>
-                      viewerOnly ? (
+                    {urgentTasks.map((task) => {
+                      const queueLinkOpen =
+                        !viewerOnly ||
+                        (opsOfficerFieldQueueLinks &&
+                          operationsOfficerMayOpenQueuedDashboardLink(task.link, 'ops_field'));
+                      return !queueLinkOpen ? (
                         <div key={task.id} className="block cursor-default">
                           <div className="p-4 flex items-center justify-between">
                             <div className="flex items-center gap-4">
@@ -353,8 +374,8 @@ export default function OperationsDashboardPage() {
                             <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                           </div>
                         </Link>
-                      )
-                    )}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="py-20 text-center space-y-4">

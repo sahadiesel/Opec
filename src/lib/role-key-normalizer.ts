@@ -36,6 +36,7 @@ export const BUILTIN_PERMISSION_PROFILE_DOC_IDS = new Set([
   'payroll_officer',
   'operations_manager',
   'operations_officer',
+  'timekeeper',
   'accounting_manager',
   'accounting_officer',
   'store_officer',

@@ -142,6 +142,7 @@ export function accessGroupFromAssignedRoleKey(key: string | undefined): Departm
     'payroll_officer',
     'operations_manager',
     'operations_officer',
+    'timekeeper',
     'store_officer',
   ]);
   if (operationRoleKeys.has(k)) return 'operations';
@@ -162,6 +163,7 @@ export function deriveBusinessRoleKeyFromPermissionProfile(profile: PermissionPr
     'payroll_officer',
     'operations_manager',
     'operations_officer',
+    'timekeeper',
     'accounting_manager',
     'accounting_officer',
     'sales_manager',

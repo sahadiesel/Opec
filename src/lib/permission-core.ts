@@ -33,6 +33,7 @@ export type CorePrimaryRoleKey =
   | 'system_admin'
   | 'operations_officer'
   | 'operations_manager'
+  | 'timekeeper'
   | 'accounting_officer'
   | 'accounting_manager'
   | 'client_user'
@@ -43,6 +44,7 @@ export const CORE_PRIMARY_ROLE_KEYS = [
   'system_admin',
   'operations_officer',
   'operations_manager',
+  'timekeeper',
   'accounting_officer',
   'accounting_manager',
   'client_user',
@@ -94,6 +96,7 @@ const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'store_officer',
   'operations_manager',
   'operations_officer',
+  'timekeeper',
   'accounting_officer',
   'accounting_manager',
   'client_user',
@@ -123,6 +126,7 @@ export const BUSINESS_ROLE_TO_CORE: Record<
   accounting_officer: { group: 'accounting', level: 'officer', primaryKey: 'accounting_officer' },
   store_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
   operations_officer: { group: 'operations', level: 'officer', primaryKey: 'operations_officer' },
+  timekeeper: { group: 'operations', level: 'officer', primaryKey: 'timekeeper' },
   operations_manager: { group: 'operations', level: 'manager', primaryKey: 'operations_manager' },
   client_user: { group: 'client', level: 'viewer', primaryKey: 'client_user' },
   employee_self: { group: 'operations', level: 'viewer', primaryKey: 'employee_self' },
@@ -266,6 +270,7 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
     legacyRole === 'sales_manager' ||
     legacyRole === 'sales_officer' ||
     legacyRole === 'operations_officer' ||
+    legacyRole === 'timekeeper' ||
     legacyRole === 'operations_manager' ||
     legacyRole === 'store_officer'
   ) {
@@ -310,6 +315,7 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
     legacyRole === 'payroll_officer' ||
     legacyRole === 'sales_officer' ||
     legacyRole === 'operations_officer' ||
+    legacyRole === 'timekeeper' ||
     legacyRole === 'accounting_officer' ||
     legacyRole === 'store_officer' ||
     legacyRole === 'finance_officer'
@@ -485,6 +491,12 @@ export function canEditMasterContractCostBaseline(user: User | null): boolean {
 export function isOperationsOfficer(user: User | null): boolean {
   if (!user) return false;
   return getPrimaryLegacyRole(user) === 'operations_officer';
+}
+
+/** เจ้าหน้าที่บันทึกเวลา — โมดูลหลัก timesheets + ทะเบียนอ่านอย่างเดียว */
+export function isTimekeeper(user: User | null): boolean {
+  if (!user) return false;
+  return getPrimaryLegacyRole(user) === 'timekeeper';
 }
 
 export function isPayrollOfficer(user: User | null): boolean {

@@ -280,6 +280,123 @@ service cloud.firestore {
         || workerPayrollViewGrantedViaAssignedPermissionProfile();
     }
 
+    /** My Profile — อ่านบรรทัด payroll ของตนเอง (ผูก linkedUserId บน workers / office_staff) */
+    function workersLinkedUidMatchesPayroll(workerId) {
+      let w = /databases/$(database)/documents/workers/$(workerId);
+      return exists(w)
+        && 'linkedUserId' in get(w).data
+        && get(w).data.linkedUserId is string
+        && get(w).data.linkedUserId.size() > 0
+        && get(w).data.linkedUserId == request.auth.uid;
+    }
+
+    function officeStaffLinkedUidMatchesPayroll(staffId) {
+      let s = /databases/$(database)/documents/office_staff/$(staffId);
+      return exists(s)
+        && 'linkedUserId' in get(s).data
+        && get(s).data.linkedUserId is string
+        && get(s).data.linkedUserId.size() > 0
+        && get(s).data.linkedUserId == request.auth.uid;
+    }
+
+    function payrollBatchLineOwnedByLinkedWorker() {
+      return resource.data != null
+        && 'workerId' in resource.data
+        && resource.data.workerId is string
+        && workersLinkedUidMatchesPayroll(resource.data.workerId);
+    }
+
+    function officePayrollLineOwnedByLinkedStaff() {
+      return resource.data != null
+        && 'staffId' in resource.data
+        && resource.data.staffId is string
+        && officeStaffLinkedUidMatchesPayroll(resource.data.staffId);
+    }
+
+    /** ตั้งค่า HR เพิ่มเติม (เช่น โควตาวันลาออฟฟิศ) — เทียบ canEditHrStatutoryPayrollSettings ฝั่งแอป */
+    function canEditHrOrgConfigurationDocs() {
+      return isAdmin()
+        || isOperationsManagerRole()
+        || (
+          hasUserDoc()
+          && isInternalUser()
+          && (
+            effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
+            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
+            || effectiveRoleFromRoleField(userData()) == 'hr_manager'
+            || effectiveRoleFromAssignedKey(userData()) == 'hr_officer'
+            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_officer'
+            || effectiveRoleFromRoleField(userData()) == 'hr_officer'
+            || payrollOfficerRoleOrProfile(userData())
+          )
+        );
+    }
+
+    /** ค่า epoch ms จากเบราว์เซอร์ — ยอมรับทั้ง int/float และเผื่อ clock skew กับเซิร์ฟเวอร์ */
+    function kioskExpiresMsLooksReasonable(expMs) {
+      return (expMs is int || expMs is float)
+        && expMs > request.time.toMillis() - 300000
+        && expMs <= request.time.toMillis() + 900000;
+    }
+
+    /** เซสชันยังไม่หมดอายุ (อ่านจากเอกสารที่สร้างแล้ว) — เผื่อ skew เล็กน้อยตอนพนักงานกดลงเวลา */
+    function kioskSessionStillActive(expMs) {
+      return (expMs is int || expMs is float)
+        && expMs > request.time.toMillis() - 120000;
+    }
+
+    function attendanceKioskSessionGate(token) {
+      let p = /databases/$(database)/documents/attendance_kiosk_sessions/$(token);
+      return exists(p)
+        && get(p).data.keys().hasAll(['expiresAt', 'active', 'createdByUid', 'createdAt'])
+        && get(p).data.active == true
+        && kioskSessionStillActive(get(p).data.expiresAt);
+    }
+
+    function punchSubjectLinkedToCaller(subjectType, subjectId) {
+      let path = subjectType == 'worker'
+        ? /databases/$(database)/documents/workers/$(subjectId)
+        : /databases/$(database)/documents/office_staff/$(subjectId);
+      return exists(path)
+        && 'linkedUserId' in get(path).data
+        && get(path).data.linkedUserId is string
+        && get(path).data.linkedUserId.size() > 0
+        && get(path).data.linkedUserId == request.auth.uid;
+    }
+
+    function attendancePunchCreateValid() {
+      let c = request.resource.data;
+      return isSignedIn()
+        && hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && c.keys().hasAll([
+          'subjectType',
+          'subjectId',
+          'subjectNameSnapshot',
+          'direction',
+          'punchedAt',
+          'linkedUserId',
+          'kioskToken',
+          'source',
+          'createdAt',
+        ])
+        && c.subjectType in ['worker', 'office_staff']
+        && c.subjectId is string
+        && c.subjectId.size() > 0
+        && c.subjectNameSnapshot is string
+        && c.subjectNameSnapshot.size() > 0
+        && c.subjectNameSnapshot.size() < 500
+        && c.direction in ['IN', 'OUT']
+        && (c.punchedAt is int || c.punchedAt is float)
+        && c.linkedUserId == request.auth.uid
+        && c.kioskToken is string
+        && c.kioskToken.size() > 0
+        && c.source == 'kiosk_mobile'
+        && (c.createdAt is int || c.createdAt is float)
+        && attendanceKioskSessionGate(c.kioskToken)
+        && punchSubjectLinkedToCaller(c.subjectType, c.subjectId);
+    }
+
     /**
      * แอดมินระบบ — ต้องสอดคล้องกับ isSystemAdmin() ฝั่งแอป (role / accessGroup / roleIds ฯลฯ)
      * มิฉะนั้นผู้ใช้ที่ UI แสดง Administrator แต่ effectiveRole ไม่ใช่ system_admin จะถูกปฏิเสธ
@@ -844,9 +961,11 @@ service cloud.firestore {
     }
 
     // UI list: admin only; app services append entries as any internal user.
+    // Align create with number_sequences: internal staff doc (pending activation) still runs ISSUE_CODE transactions.
     match /audit_logs/{id} {
       allow read: if isAdmin();
       allow create: if isInternalUser()
+        || isInternalStaffDoc()
         || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
       allow update, delete: if isAdmin();
     }
@@ -1322,7 +1441,7 @@ service cloud.firestore {
       allow write: if isInternalUser();
     }
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read: if internalPayrollDataReader();
+      allow read: if internalPayrollDataReader() || payrollBatchLineOwnedByLinkedWorker();
       allow write: if isInternalUser();
     }
     match /payroll_batches/{batchId}/{document=**} {
@@ -1347,6 +1466,35 @@ service cloud.firestore {
       allow write: if isInternalUser();
     }
 
+    /** ตั้งค่าองค์กร HR (โควตาวันลาออฟฟิศ ฯลฯ) — เขียนจำกัดกว่า payroll_policies */
+    match /hr_configuration/{docId} {
+      allow read: if internalPayrollDataReader();
+      allow write: if canEditHrOrgConfigurationDocs();
+    }
+
+    /** เซสชัน QR Kiosk — token = doc id */
+    match /attendance_kiosk_sessions/{token} {
+      allow read: if isSignedIn() && hasUserDoc() && (isInternalUser() || isInternalStaffDoc());
+      allow create: if isSignedIn()
+        && hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && request.resource.data.keys().hasAll(['expiresAt', 'active', 'createdByUid', 'createdAt'])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.active == true
+        && kioskExpiresMsLooksReasonable(request.resource.data.expiresAt)
+        && (request.resource.data.createdAt is int || request.resource.data.createdAt is float)
+        && token is string
+        && token.size() >= 16;
+      allow update, delete: if false;
+    }
+
+    /** บันทึกเข้า/ออกจากมือถือ (หลังสแกน QR) — ผูกกับ linkedUserId ใน workers/office_staff */
+    match /attendance_punches/{id} {
+      allow read: if internalPayrollDataReader();
+      allow create: if attendancePunchCreateValid();
+      allow update, delete: if false;
+    }
+
     match /payroll_correction_requests/{id} {
       allow read: if internalPayrollDataReader();
       allow write: if isInternalUser();
@@ -1363,7 +1511,7 @@ service cloud.firestore {
       allow write: if isInternalUser();
     }
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if internalPayrollDataReader();
+      allow read: if internalPayrollDataReader() || officePayrollLineOwnedByLinkedStaff();
       allow write: if isInternalUser();
     }
     match /office_payroll_runs/{runId}/{document=**} {

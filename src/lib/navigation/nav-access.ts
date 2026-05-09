@@ -22,6 +22,7 @@ import {
   isOperationManager,
   isPayrollOfficer,
   getPrimaryLegacyRole,
+  isTimekeeper,
 } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { deriveBusinessRoleKey } from '@/lib/auth-mapping';
@@ -59,7 +60,7 @@ export function canViewHrPayrollFlowSubsection(
   return d === 'hr_manager' || d === 'operations_manager' || d === 'payroll_officer';
 }
 
-/** หมวดลงเวลา (รายวัน / รายเดือน) — หัวหน้างานจ่ายค่าจ้าง หรือ operations_officer ที่มีสิทธิ์ timesheets */
+/** หมวดลงเวลา (รายวัน / รายเดือน + เมนูย่อยในหมวดเดียวกัน) — หัวหน้างานจ่ายค่าจ้าง หรือ operations_officer/timekeeper ที่มีสิทธิ์ timesheets; รายการจัดการ Kiosk แยกไปใช้ {@link canViewHrPayrollFlowSubsection} ผ่าน payrollAttendanceManageOnly */
 export function canViewHrFieldTimesheetSubsection(
   user: User,
   profile: PermissionProfile | null,
@@ -68,7 +69,11 @@ export function canViewHrFieldTimesheetSubsection(
   if (admin) return true;
   if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
   if (canViewHrPayrollFlowSubsection(user, profile, admin)) return true;
-  if (getPrimaryLegacyRole(user) === 'operations_officer' && canView(user, 'timesheets', profile)) {
+  const fieldTsRole = getPrimaryLegacyRole(user);
+  if (
+    (fieldTsRole === 'operations_officer' || fieldTsRole === 'timekeeper') &&
+    canView(user, 'timesheets', profile)
+  ) {
     return true;
   }
   return false;
@@ -135,7 +140,17 @@ export function canViewHrHubItem(
   if (admin) return true;
   if (hrOfficerExcludedFromHrNavItem(user, item)) return false;
   const baseHref = item.href.split('#')[0].split('?')[0];
-  if (getPrimaryLegacyRole(user) === 'operations_officer' && operationsOfficerExcludedHrMasterHref(baseHref)) {
+  if (item.payrollAttendanceManageOnly) {
+    if (canViewHrPayrollFlowSubsection(user, profile, admin)) return true;
+    /** เจ้าหน้าที่บันทึกเวลา — เฉพาะเมนูจัดการ Kiosk / QR */
+    if (isTimekeeper(user) && canView(user, 'timesheets', profile)) return true;
+    return false;
+  }
+  const rkForHrHub = getPrimaryLegacyRole(user);
+  if (
+    (rkForHrHub === 'operations_officer' || rkForHrHub === 'timekeeper') &&
+    operationsOfficerExcludedHrMasterHref(baseHref)
+  ) {
     return false;
   }
   if (baseHref === '/purchases' && canApprovePurchaseAsManager(user)) return true;
@@ -159,6 +174,17 @@ export function canViewHrHubItem(
     return canSeeHrPillarUi(user, profile);
   }
   return false;
+}
+
+/** เข้าหน้าจัดการลงเวลา / Kiosk QR — Payroll lead หรือ Timekeeper (มีโมดูล timesheets) */
+export function canAccessHrAttendanceKioskPages(
+  user: User | null,
+  profile: PermissionProfile | null,
+): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  if (canViewHrPayrollFlowSubsection(user, profile, false)) return true;
+  return isTimekeeper(user) && canView(user, 'timesheets', profile);
 }
 
 const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
@@ -230,7 +256,11 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return false;
   }
 
-  if (!admin && getPrimaryLegacyRole(user) === 'operations_officer') {
+  const denyWarehouseDocsRole = getPrimaryLegacyRole(user);
+  if (
+    !admin &&
+    (denyWarehouseDocsRole === 'operations_officer' || denyWarehouseDocsRole === 'timekeeper')
+  ) {
     const denied = [
       '/vendors',
       '/purchases',
@@ -284,6 +314,11 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
 
   if (isHrManagerOnlyApprovalPath(p)) {
     return canViewHrApprovalSubsection(user, admin);
+  }
+
+  /** ลงเวลาผ่านมือถือหลังสแกน QR — พนักงาน internal ที่ล็อกอินแล้ว */
+  if (pathMatches(p, '/hr/attendance/mobile')) {
+    return isSimpleInternalEligible(user);
   }
 
   const hrSorted = getFlattenedHrNavItems().sort((a, b) => b.href.length - a.href.length);

@@ -18,27 +18,96 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Loader2, UserCircle, KeyRound } from 'lucide-react';
+import { Loader2, UserCircle, KeyRound, Clock } from 'lucide-react';
+import { SubjectAttendanceHistory } from '@/components/attendance/subject-attendance-history';
 import { useFirestore, useCollection, useMemoFirebase, useAuth } from '@/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, query, updateDoc, where } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  collectionGroup,
+  doc,
+  getDoc,
+  limit,
+  query,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { getEffectiveSimpleRole } from '@/lib/simple-tier-model';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import type { OfficeStaff } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { fetchLinkedPersonnelForUser } from '@/lib/hr/linked-personnel';
-import type { CashAdvanceRequest, PayrollPolicyRecord, User } from '@/lib/types';
+import type {
+  CashAdvanceRequest,
+  OfficePayrollLine,
+  PayrollBatchLine,
+  PayrollPolicyRecord,
+  User,
+} from '@/lib/types';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   type WorkerGlobalLaborContext,
   workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
-import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+
+function workerBatchLinePitBaht(line: PayrollBatchLine): number {
+  const br = line.deductionsBreakdown || {};
+  const direct =
+    Number(br['pit_withholding']) ||
+    Number(br['PIT_WITHHOLDING']) ||
+    Number(br['pit']) ||
+    Number(br['PIT']) ||
+    0;
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const snapDed = line.d8Snapshot?.deductions as Record<string, number> | undefined;
+  if (snapDed && typeof snapDed === 'object') {
+    const v =
+      Number(snapDed.pit_withholding) ||
+      Number(snapDed.PIT_WITHHOLDING) ||
+      Number(snapDed.pit) ||
+      Number(snapDed.PIT) ||
+      0;
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return 0;
+}
+
+function fmtBahtDisplay(n: number | undefined): string {
+  if (n === undefined || n === null || Number.isNaN(Number(n))) return '—';
+  return Number(n).toLocaleString('th-TH', { maximumFractionDigits: 2 });
+}
+
+function payrollBandLabel(b?: OfficeStaff['payrollBand']) {
+  if (b === 'EXECUTIVE') return 'ผู้บริหาร (Executive payroll)';
+  if (b === 'OFFICE') return 'พนักงานสำนักงาน (Office payroll)';
+  return '—';
+}
+
+function salaryTypeLabel(t?: OfficeStaff['salaryType']) {
+  if (t === 'MONTHLY') return 'รายเดือน (MONTHLY)';
+  if (t === 'DAILY') return 'รายวัน (DAILY)';
+  return '—';
+}
+
+function employmentTypeLabel(t?: OfficeStaff['employmentType']) {
+  if (t === 'FULL_TIME') return 'ประจำ (FULL_TIME)';
+  if (t === 'PART_TIME') return 'พาร์ทไทม์ (PART_TIME)';
+  if (t === 'CONTRACT') return 'สัญญาจ้าง (CONTRACT)';
+  return '—';
+}
+
+function ssStatusLabel(s?: OfficeStaff['socialSecurityStatus']) {
+  if (s === 'ENROLLED') return 'รับประกันสังคม';
+  if (s === 'EXEMPT') return 'ไม่รับประกันสังคม / ยกเว้น';
+  return '—';
+}
 
 export default function MyProfilePage() {
   const router = useRouter();
@@ -161,7 +230,7 @@ export default function MyProfilePage() {
   const [workerLaborLoad, setWorkerLaborLoad] = useState(false);
 
   useEffect(() => {
-    if (!firestore || linked?.kind !== 'worker') {
+    if (!firestore || !linked) {
       setWorkerLaborView(null);
       return;
     }
@@ -180,6 +249,39 @@ export default function MyProfilePage() {
       }
     })();
   }, [firestore, linked]);
+
+  /** ไม่ใช้ orderBy — collection group + orderBy ต้องการ composite index ที่ Firebase มักยังสร้างไม่ทัน; เรียงฝั่ง client แทน */
+  const myPayrollLinesQuery = useMemoFirebase(() => {
+    if (!firestore || !linked) return null;
+    if (linked.kind === 'office_staff') {
+      return query(
+        collectionGroup(firestore, 'lines'),
+        where('staffId', '==', linked.record.id),
+        limit(120),
+      );
+    }
+    if (linked.kind === 'worker') {
+      return query(
+        collectionGroup(firestore, 'lines'),
+        where('workerId', '==', linked.record.id),
+        limit(120),
+      );
+    }
+    return null;
+  }, [firestore, linked]);
+
+  const { data: myPayrollLinesRaw, isLoading: myPayrollLinesLoading } = useCollection<
+    OfficePayrollLine | PayrollBatchLine
+  >(myPayrollLinesQuery as any);
+
+  const myPayrollLines = useMemo(() => {
+    const rows = myPayrollLinesRaw ?? [];
+    const ts = (r: OfficePayrollLine | PayrollBatchLine) => {
+      const x = r as OfficePayrollLine & PayrollBatchLine & { createdAt?: number; updatedAt?: number };
+      return Number(x.updatedAt ?? x.createdAt ?? x.financePaidAt ?? 0) || 0;
+    };
+    return [...rows].sort((a, b) => ts(b) - ts(a)).slice(0, 48);
+  }, [myPayrollLinesRaw]);
 
   const handleChangePassword = async () => {
     const u = auth.currentUser;
@@ -307,7 +409,7 @@ export default function MyProfilePage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6 px-1 sm:px-0">
         <div className="flex items-center gap-3">
           <UserCircle className="h-10 w-10 text-primary shrink-0" />
           <div>
@@ -333,65 +435,49 @@ export default function MyProfilePage() {
           </Card>
         ) : (
           <Tabs defaultValue="personal" className="w-full">
-            <TabsList className="flex flex-wrap h-auto gap-1">
-              <TabsTrigger value="personal">ข้อมูลส่วนตัว</TabsTrigger>
-              <TabsTrigger value="password" className="gap-1">
+            <TabsList className="flex w-full flex-wrap h-auto justify-start gap-1 p-1">
+              <TabsTrigger value="attendance" className="gap-1 text-xs sm:text-sm shrink-0">
+                <Clock className="h-3.5 w-3.5 opacity-80" /> ประวัติการลงเวลา
+              </TabsTrigger>
+              <TabsTrigger value="personal" className="text-xs sm:text-sm shrink-0">
+                ข้อมูลส่วนตัว
+              </TabsTrigger>
+              <TabsTrigger value="holidays" className="text-xs sm:text-sm shrink-0">
+                วันหยุดบริษัท
+              </TabsTrigger>
+              <TabsTrigger value="payslips" className="text-xs sm:text-sm shrink-0">
+                สลิปเงินเดือน
+              </TabsTrigger>
+              <TabsTrigger value="wht" className="text-xs sm:text-sm shrink-0">
+                ใบหัก ณ ที่จ่าย
+              </TabsTrigger>
+              <TabsTrigger value="leave" className="text-xs sm:text-sm shrink-0">
+                การลา
+              </TabsTrigger>
+              <TabsTrigger value="advances" className="text-xs sm:text-sm shrink-0">
+                เบิกล่วงหน้า
+              </TabsTrigger>
+              <TabsTrigger value="password" className="gap-1 text-xs sm:text-sm shrink-0">
                 <KeyRound className="h-3.5 w-3.5 opacity-80" /> เปลี่ยนรหัสผ่าน
               </TabsTrigger>
-              <TabsTrigger value="holidays">วันหยุดบริษัท</TabsTrigger>
-              <TabsTrigger value="payslips">สลิปเงินเดือน</TabsTrigger>
-              <TabsTrigger value="leave">การลา</TabsTrigger>
-              <TabsTrigger value="advances">เบิกล่วงหน้า</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="password" className="mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <KeyRound className="h-5 w-5 text-primary" /> เปลี่ยนรหัสผ่าน
-                  </CardTitle>
-                  <CardDescription>
-                    ใช้ได้เมื่อเข้าระบบด้วยอีเมลและรหัสผ่าน — ถ้าลืมรหัสให้ใช้ลิงก์{' '}
-                    <Link href="/" className="text-primary underline font-medium">
-                      Forgot password
-                    </Link>{' '}
-                    ที่หน้าเข้าสู่ระบบ (ส่งลิงก์รีเซ็ตไปที่อีเมล)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4 max-w-md">
-                  <div className="space-y-2">
-                    <Label>รหัสผ่านปัจจุบัน</Label>
-                    <Input
-                      type="password"
-                      autoComplete="current-password"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>รหัสผ่านใหม่</Label>
-                    <Input
-                      type="password"
-                      autoComplete="new-password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>ยืนยันรหัสผ่านใหม่</Label>
-                    <Input
-                      type="password"
-                      autoComplete="new-password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                    />
-                  </div>
-                  <Button onClick={() => void handleChangePassword()} disabled={passwordBusy}>
-                    {passwordBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    บันทึกรหัสผ่านใหม่
-                  </Button>
-                </CardContent>
-              </Card>
+            <TabsContent value="attendance" className="mt-4">
+              {firestore ? (
+                <SubjectAttendanceHistory
+                  firestore={firestore}
+                  subjectType={linked.kind === 'worker' ? 'worker' : 'office_staff'}
+                  subjectId={linked.record.id}
+                  title="ประวัติการลงเวลา"
+                  description="ข้อมูลเดียวกับการสแกนลงเวลาผ่าน Kiosk / มือถือ — ซิงค์จากชุดข้อมูลเดียวกับเมนูจัดการการลงเวลา"
+                />
+              ) : (
+                <Card>
+                  <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                    ยังไม่เชื่อมต่อ Firestore — โหลดประวัติไม่ได้
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="personal" className="mt-4">
@@ -439,12 +525,53 @@ export default function MyProfilePage() {
                         <br />
                         {linked.record.socialSecurityHospital || '—'}
                       </p>
+                      <div className="sm:col-span-2 rounded-lg border bg-muted/25 p-4 space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">บัญชีธนาคารสำหรับโอนเงิน</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            แก้ไขไม่ได้ — ติดต่อแผนก HR เพื่อแก้ไขข้อมูลการเงินและบัญชี
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>ชื่อธนาคาร</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.bankName ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                              placeholder="—"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>ชื่อบัญชี</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.bankAccountName ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                              placeholder="—"
+                            />
+                          </div>
+                          <div className="space-y-2 sm:col-span-2">
+                            <Label>เลขที่บัญชี</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.bankAccountNumber ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100 font-mono"
+                              placeholder="—"
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </>
                   ) : (
                     <div className="sm:col-span-2 space-y-4 w-full">
                       {canSelfEditOfficeStaffProfile ? (
                         <p className="text-xs text-muted-foreground rounded-md border bg-muted/40 px-3 py-2">
-                          แก้ไขข้อมูลส่วนตัวด้านล่างได้ — เงินเดือน บัญชีธนาคาร และข้อมูลภาษีให้ติดต่อ HR
+                          แก้ไขและบันทึกได้เฉพาะข้อมูลส่วนตัวในช่องด้านล่าง — ข้อมูลการเงิน ภาษี ประกันสังคม และบัญชีธนาคารเป็นการดูอย่างเดียว
+                          หากต้องการแก้ไขให้ติดต่อแผนก HR
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground">
@@ -521,13 +648,158 @@ export default function MyProfilePage() {
                           />
                         </div>
                       </div>
-                      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
+
+                      <div className="rounded-lg border bg-muted/25 p-4 space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">ข้อมูลการเงินและการจ่ายเงิน</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            แก้ไขไม่ได้ — ติดต่อแผนก HR เพื่อแก้ไขข้อมูลการเงิน ภาษี และประกันสังคม
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>ประเภทการจ้าง</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={employmentTypeLabel(linked.record.employmentType)}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>กลุ่มงวดเงินเดือน</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={payrollBandLabel(linked.record.payrollBand)}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>รูปแบบเงินเดือนในระบบ</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={salaryTypeLabel(linked.record.salaryType)}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>เงินเดือน (บาท/เดือน)</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={fmtBahtDisplay(linked.record.monthlySalary)}
+                              className="bg-muted/80 cursor-not-allowed opacity-100 font-mono text-right"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>ค่าแรงรายวัน (บาท/วัน)</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={fmtBahtDisplay(linked.record.dailyWage)}
+                              className="bg-muted/80 cursor-not-allowed opacity-100 font-mono text-right"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>เลขผู้เสียภาษี</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.taxId ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100 font-mono"
+                              placeholder="—"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>เลขประกันสังคม</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.socialSecurityNo ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100 font-mono"
+                              placeholder="—"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>สิทธิประกันสังคม</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={ssStatusLabel(linked.record.socialSecurityStatus)}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                            />
+                          </div>
+                          <div className="space-y-2 sm:col-span-2">
+                            <Label>โรงพยาบาลประกันสังคม</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.socialSecurityHospital ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                              placeholder="—"
+                            />
+                          </div>
+                          {(linked.record.monthlyAttendanceExempt ||
+                            linked.record.excludeFromPayrollRuns) && (
+                            <p className="text-xs text-muted-foreground sm:col-span-2">
+                              {[
+                                linked.record.monthlyAttendanceExempt && 'ยกเว้นการอ้างอิงเวลาเข้างาน (รายเดือน)',
+                                linked.record.excludeFromPayrollRuns && 'ไม่นำเข้างวดจ่ายอัตโนมัติ',
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border bg-muted/25 p-4 space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">บัญชีธนาคาร</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            แก้ไขไม่ได้ — ติดต่อแผนก HR เพื่อแก้ไขข้อมูลบัญชีรับโอน
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>ชื่อธนาคาร</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.bankName ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                              placeholder="—"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>ชื่อบัญชี</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.bankAccountName ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100"
+                              placeholder="—"
+                            />
+                          </div>
+                          <div className="space-y-2 sm:col-span-2">
+                            <Label>เลขที่บัญชี</Label>
+                            <Input
+                              readOnly
+                              disabled
+                              value={linked.record.bankAccountNumber ?? ''}
+                              className="bg-muted/80 cursor-not-allowed opacity-100 font-mono"
+                              placeholder="—"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                         <p>
                           <span className="font-medium text-foreground">รหัส / แผนก / ตำแหน่ง</span> — ดูอย่างเดียว:{' '}
                           {linked.record.staffCode} · {linked.record.department} · {linked.record.positionTitle}
-                        </p>
-                        <p>
-                          สปส.: {linked.record.socialSecurityHospital || '—'} · เลข {linked.record.socialSecurityNo || '—'}
                         </p>
                       </div>
                       {canSelfEditOfficeStaffProfile ? (
@@ -547,35 +819,41 @@ export default function MyProfilePage() {
                 <CardHeader>
                   <CardTitle className="text-base">วันหยุดและกฎค่าจ้างอ้างอิง</CardTitle>
                   <CardDescription>
-                    {linked.kind === 'worker'
-                      ? 'ปฏิทินและตัวคูณเดียวกับที่ HR ตั้งในเมนูตั้งค่า — ใช้ประกอบการคำนวณค่าจ้างเมื่อมีการลงเวลา'
-                      : 'พนักงานออฟฟิศยังไม่มีการลงเวลารายวันในระบบ — ไม่แสดงตารางค่าจ้างแบบลูกจ้าง'}
+                    ปฏิทินวันหยุดและรูปแบบวันหยุดประจำสัปดาห์ — ดึงจาก{' '}
+                    <strong className="text-foreground">ตั้งค่า HR</strong> (นโยบายค่าจ้างลูกจ้าง / ปฏิทินเดียวกับที่ HR
+                    บันทึก)
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4 text-sm">
-                  {linked.kind !== 'worker' ? (
-                    <p className="text-muted-foreground">ข้อมูลนี้ใช้กับลูกจ้างที่มี timesheet เท่านั้น</p>
-                  ) : workerLaborLoad ? (
+                  {workerLaborLoad ? (
                     <div className="flex justify-center py-8">
                       <Loader2 className="h-7 w-7 animate-spin text-primary" />
                     </div>
                   ) : workerLaborView ? (
                     <>
                       <div className="rounded-lg border bg-muted/30 p-3 space-y-1 text-xs">
-                        <p className="font-semibold text-foreground">รูปแบบวันหยุดประจำสัปดาห์ (อ้างอิงค่าจ้าง)</p>
+                        <p className="font-semibold text-foreground">รูปแบบวันหยุดประจำสัปดาห์</p>
                         <p className="text-muted-foreground">
                           {WEEKLY_REST_OPTIONS.find((o) => o.value === workerLaborView.weeklyRestPattern)?.label ??
                             workerLaborView.weeklyRestPattern}
                         </p>
-                        <p className="font-semibold text-foreground pt-2">ตัวคูณ (สรุป)</p>
-                        <p className="text-muted-foreground font-mono leading-relaxed">
-                          OT {workerLaborView.cost.otAfterShift} · Holiday {workerLaborView.cost.holiday} · นักขัตฤกษ์{' '}
-                          {workerLaborView.cost.publicHoliday} · อาทิตย์ {workerLaborView.cost.sunday} · อาทิตย์ OT{' '}
-                          {workerLaborView.cost.sundayOt}
-                          <br />
-                          Standby {workerLaborView.cost.standby} · Mob {workerLaborView.cost.mobilization} · Demob{' '}
-                          {workerLaborView.cost.demobilization} · Travel {workerLaborView.cost.travel}
-                        </p>
+                        {linked.kind === 'worker' ? (
+                          <>
+                            <p className="font-semibold text-foreground pt-2">ตัวคูณค่าจ้าง (ลูกจ้าง)</p>
+                            <p className="text-muted-foreground font-mono leading-relaxed">
+                              OT {workerLaborView.cost.otAfterShift} · Holiday {workerLaborView.cost.holiday} · นักขัตฤกษ์{' '}
+                              {workerLaborView.cost.publicHoliday} · อาทิตย์ {workerLaborView.cost.sunday} · อาทิตย์ OT{' '}
+                              {workerLaborView.cost.sundayOt}
+                              <br />
+                              Standby {workerLaborView.cost.standby} · Mob {workerLaborView.cost.mobilization} · Demob{' '}
+                              {workerLaborView.cost.demobilization} · Travel {workerLaborView.cost.travel}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-muted-foreground pt-2">
+                            ข้อมูลตัวคูณ OT / Holiday เป็นขั้นตอนคำนวณค่าจ้างลูกจ้าง — พนักงานออฟฟิศใช้ตารางวันหยุดด้านล่างเป็นองค์ความรู้ทั่วไป
+                          </p>
+                        )}
                       </div>
                       {workerLaborView.calendarHolidays.length === 0 ? (
                         <p className="text-muted-foreground">ยังไม่มีวันที่เพิ่มในปฏิทิน — ติดต่อ HR หากต้องการตรวจสอบ</p>
@@ -614,6 +892,92 @@ export default function MyProfilePage() {
                   <CardDescription>เฟสถัดไป — ดึงจากงวดจ่ายออฟฟิศ / ลูกจ้างตามสิทธิ์</CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm text-muted-foreground">ยังไม่มีข้อมูลในขณะนี้</CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="wht" className="mt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1)</CardTitle>
+                  <CardDescription>
+                    สรุปยอดภาษีหักจากบรรทัดงวดจ่ายของคุณ — ข้อมูลจากระบบ Payroll (หลัง HR คำนวณงวด)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  {myPayrollLinesLoading ? (
+                    <div className="flex justify-center py-10">
+                      <Loader2 className="h-7 w-7 animate-spin text-primary" />
+                    </div>
+                  ) : !myPayrollLines?.length ? (
+                    <p className="text-muted-foreground">
+                      ยังไม่มีบรรทัดงวดจ่ายในประวัติ — เมื่อมีงวดที่คุณอยู่ในชุดจ่าย จะแสดงที่นี่
+                    </p>
+                  ) : (
+                    <>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>งวด / ช่วง</TableHead>
+                            <TableHead className="text-right">เงินได้รวม</TableHead>
+                            <TableHead className="text-right">ภาษีหัก ณ ที่จ่าย</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">อัปเดตล่าสุด</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {myPayrollLines.map((row) => {
+                            if (linked.kind === 'office_staff') {
+                              const ol = row as OfficePayrollLine & { id: string };
+                              const periodLabel =
+                                ol.payrollMonth?.trim() ||
+                                (ol.officePayrollRunId ? `งวด ${ol.officePayrollRunId.slice(0, 10)}…` : ol.id);
+                              const pit = Number(ol.tax) || 0;
+                              const gross = Number(ol.grossPay) || 0;
+                              return (
+                                <TableRow key={ol.id}>
+                                  <TableCell className="font-medium">{periodLabel}</TableCell>
+                                  <TableCell className="text-right tabular-nums">
+                                    {gross.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-right tabular-nums">
+                                    {pit.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">
+                                    {formatDateTimeThaiBE(ol.updatedAt)}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            }
+                            const wl = row as PayrollBatchLine & { id: string; createdAt?: number; updatedAt?: number };
+                            const pit = workerBatchLinePitBaht(wl);
+                            const gross = Number(wl.grossAmount) || 0;
+                            const spanLabel =
+                              wl.periodStartDate && wl.periodEndDate
+                                ? `${formatDateThaiBE(wl.periodStartDate)} – ${formatDateThaiBE(wl.periodEndDate)}`
+                                : wl.id;
+                            const ts = wl.updatedAt ?? wl.createdAt ?? wl.financePaidAt ?? null;
+                            return (
+                              <TableRow key={wl.id}>
+                                <TableCell className="font-medium">{spanLabel}</TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {gross.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {pit.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                </TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">
+                                  {ts ? formatDateTimeThaiBE(ts) : '—'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                      <p className="text-xs text-muted-foreground">
+                        ใบหัก ณ ที่จ่ายฉบับพิมพ์อย่างเป็นทางการออกจากเมนูบัญชี / งวดจ่าย — ติดต่อ HR หากต้องการสำเนาเพิ่ม
+                      </p>
+                    </>
+                  )}
+                </CardContent>
               </Card>
             </TabsContent>
 
@@ -718,6 +1082,56 @@ export default function MyProfilePage() {
                       </TableBody>
                     </Table>
                   )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="password" className="mt-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <KeyRound className="h-5 w-5 text-primary" /> เปลี่ยนรหัสผ่าน
+                  </CardTitle>
+                  <CardDescription>
+                    ใช้ได้เมื่อเข้าระบบด้วยอีเมลและรหัสผ่าน — ถ้าลืมรหัสให้ใช้ลิงก์{' '}
+                    <Link href="/" className="text-primary underline font-medium">
+                      Forgot password
+                    </Link>{' '}
+                    ที่หน้าเข้าสู่ระบบ (ส่งลิงก์รีเซ็ตไปที่อีเมล)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 max-w-md">
+                  <div className="space-y-2">
+                    <Label>รหัสผ่านปัจจุบัน</Label>
+                    <Input
+                      type="password"
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>รหัสผ่านใหม่</Label>
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>ยืนยันรหัสผ่านใหม่</Label>
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                  </div>
+                  <Button onClick={() => void handleChangePassword()} disabled={passwordBusy}>
+                    {passwordBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    บันทึกรหัสผ่านใหม่
+                  </Button>
                 </CardContent>
               </Card>
             </TabsContent>

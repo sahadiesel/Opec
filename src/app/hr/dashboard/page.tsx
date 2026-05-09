@@ -31,7 +31,11 @@ import {
   ExceptionRequest,
   DailyTimesheet,
 } from '@/lib/types';
-import { isWorkerDispatchReady } from '@/lib/worker-readiness';
+import {
+  isWorkerDispatchReady,
+  workerProfileHrefForReadiness,
+  operationsOfficerMayOpenQueuedDashboardLink,
+} from '@/lib/worker-readiness';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where, limit } from 'firebase/firestore';
 import { isFieldPositionMissingDefaultLabor } from '@/lib/payroll/timesheet-labor-base-cost';
@@ -77,6 +81,12 @@ export default function HRDashboardPage() {
 
   /** เจ้าหน้าที่ปฏิบัติการ: ใช้แดชบอร์ด HR แต่ไม่โหลด/ไม่แสดงคิว payroll และต้นทุนค่าแรง */
   const hidePayrollAndLaborCostUi = useMemo(
+    () => !!currentUser && isOperationsOfficer(currentUser) && !isSystemAdmin(currentUser),
+    [currentUser],
+  );
+
+  /** เจ้าหน้าที่ปฏิบัติการ: เปิดลิงก์คิวไปทะเบียนลูกจ้างได้แม้อยู่โหมด viewer (แก้ใบเซอร์ / แพทย์ / สารเสพติด / PPE) */
+  const opsOfficerHrWorkerQueueLinks = useMemo(
     () => !!currentUser && isOperationsOfficer(currentUser) && !isSystemAdmin(currentUser),
     [currentUser],
   );
@@ -182,7 +192,7 @@ export default function HRDashboardPage() {
           label: `${w.firstName} ${w.lastName}`,
           sub: w.readinessStatus,
           status: 'PENDING',
-          link: `/workers/${w.id}`,
+          link: workerProfileHrefForReadiness(w.id, w.readinessStatus),
           priority: 'high',
           icon: AlertTriangle,
         });
@@ -216,7 +226,7 @@ export default function HRDashboardPage() {
           label: `${w.firstName} ${w.lastName}`,
           sub: `เอกสารใกล้หมดอายุใน ${w.nearestExpiryInDays ?? '-'} วัน`,
           status: 'WARNING',
-          link: `/workers/${w.id}`,
+          link: `/workers/${w.id}?tab=certs`,
           priority: 'medium',
           icon: AlertTriangle,
         });
@@ -279,9 +289,11 @@ export default function HRDashboardPage() {
         {viewerOnly && (
           <Alert className="border-amber-200 bg-amber-50/80 text-amber-950">
             <Info className="h-4 w-4 text-amber-700" />
-            <AlertTitle>โหมดติดตาม (อ่านอย่างเดียว)</AlertTitle>
+            <AlertTitle>โหมดติดตาม</AlertTitle>
             <AlertDescription>
-              บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมและคิวงานได้เท่านั้น — การอนุมัติและแก้ไขทำจากเมนูงานที่ได้รับสิทธิ์
+              {opsOfficerHrWorkerQueueLinks
+                ? 'เจ้าหน้าที่ปฏิบัติการ — เปิดลิงก์ในคิวไปทะเบียนลูกจ้างเพื่อแก้ใบเซอร์ แพทย์ สารเสพติด และติดตาม PPE ได้ · รายการ payroll / correction ในคิวยังไม่เปิดลิงก์แทน HR'
+                : 'บทบาทเจ้าหน้าที่ (officer / viewer) ดูภาพรวมและคิวงานได้เท่านั้น — การอนุมัติและแก้ไขทำจากเมนูงานที่ได้รับสิทธิ์'}
             </AlertDescription>
           </Alert>
         )}
@@ -405,7 +417,9 @@ export default function HRDashboardPage() {
                     </CardTitle>
                     <CardDescription>
                       {viewerOnly
-                        ? 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทน HR ได้'
+                        ? opsOfficerHrWorkerQueueLinks
+                          ? 'รายการทะเบียนลูกจ้างคลิกเปิดได้ — แก้ใบเซอร์ / แพทย์ / สารเสพติด / PPE ที่โปรไฟล์คนงาน · ขั้นตอน payroll / correction ยังเป็นของ HR'
+                          : 'รายการสำหรับติดตามสถานะเท่านั้น — ไม่สามารถเปิดไปดำเนินการแทน HR ได้'
                         : 'รายการด่วนที่ต้องการการตรวจสอบหรืออนุมัติจากฝ่ายบุคคล'}
                     </CardDescription>
                   </div>
@@ -415,8 +429,12 @@ export default function HRDashboardPage() {
               <CardContent className="p-0">
                 {pendingHRTasks.length > 0 ? (
                   <div className="divide-y">
-                    {pendingHRTasks.map(task =>
-                      viewerOnly ? (
+                    {pendingHRTasks.map((task) => {
+                      const queueLinkOpen =
+                        !viewerOnly ||
+                        (opsOfficerHrWorkerQueueLinks &&
+                          operationsOfficerMayOpenQueuedDashboardLink(task.link, 'hr_worker_compliance'));
+                      return !queueLinkOpen ? (
                         <div key={task.id} className="block cursor-default opacity-95">
                           <div className="p-4 flex items-center justify-between">
                             <div className="flex items-center gap-4">
@@ -455,8 +473,8 @@ export default function HRDashboardPage() {
                             <ChevronRight className="h-5 w-5 text-muted-foreground opacity-30 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                           </div>
                         </Link>
-                      )
-                    )}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="py-20 text-center space-y-4">

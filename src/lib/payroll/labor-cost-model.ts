@@ -39,17 +39,19 @@ export function canViewWorkerLaborCostFromUser(
 ): boolean {
   if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
   if (isSystemAdmin(user as User)) return true;
-  if (getPrimaryLegacyRole(user as User) === 'operations_officer') return false;
+  const rkLabor = getPrimaryLegacyRole(user as User);
+  if (rkLabor === 'operations_officer' || rkLabor === 'timekeeper') return false;
   return isLaborCostStaffByRole(getEffectiveSimpleRole(user));
 }
 
-/** เลขบัญชี / ข้อมูลการเงินในทะเบียนลูกจ้าง — ไม่ให้ operations_officer (แยกจากแพทย์/ประกัน) */
+/** เลขบัญชี / ข้อมูลการเงินในทะเบียนลูกจ้าง — ไม่ให้ operations_officer / timekeeper (แยกจากแพทย์/ประกัน) */
 export function canViewWorkerBankPayrollFieldsFromUser(
   user: Partial<User> | null | undefined,
 ): boolean {
   if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
   if (isSystemAdmin(user as User)) return true;
-  return getPrimaryLegacyRole(user as User) !== 'operations_officer';
+  const rkBank = getPrimaryLegacyRole(user as User);
+  return rkBank !== 'operations_officer' && rkBank !== 'timekeeper';
 }
 
 /** ระยะนี้แก้ได้กับ role เดียวกับ who can view — ต่อไปอาจแยก (เช่น ดูได้แต่ HR แก้) */

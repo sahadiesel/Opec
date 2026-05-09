@@ -22,7 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { buildAuthorizationForRepairRole } from '@/lib/auth-mapping';
 import { getBaselineProfiles } from '@/lib/permissions';
-import { ACTIVE_BUSINESS_ROLE_KEYS, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
+import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
 export default function SetupAdminPage() {
@@ -302,8 +302,8 @@ export default function SetupAdminPage() {
                   <SelectTrigger className="h-11 font-bold font-mono text-sm normal-case">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="max-h-[320px]">
-                    {ACTIVE_BUSINESS_ROLE_KEYS.map((key) => {
+                  <SelectContent className="max-h-[min(70vh,440px)] overflow-y-auto">
+                    {getBusinessRoleKeysSortedForSelect().map((key) => {
                       const meta = getRoleCatalogEntry(key);
                       return (
                         <SelectItem key={key} value={key} className="font-mono text-xs normal-case">
