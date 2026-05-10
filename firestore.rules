@@ -397,6 +397,137 @@ service cloud.firestore {
         && punchSubjectLinkedToCaller(c.subjectType, c.subjectId);
     }
 
+    /** คำขอแก้เวลาลงเวลา — สร้างโดย payroll_officer / แอดมิน */
+    function attendanceCorrectionSubmitter() {
+      return hasUserDoc()
+        && isInternalUser()
+        && (
+          isAdmin()
+          || payrollOfficerRoleOrProfile(userData())
+        );
+    }
+
+    /** อนุมัติ/ปฏิเสธคำขอแก้เวลา — HR manager / operations manager / แอดมิน */
+    function attendanceCorrectionManager() {
+      return hasUserDoc()
+        && isInternalUser()
+        && (
+          isAdmin()
+          || (
+            effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
+            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
+            || effectiveRoleFromRoleField(userData()) == 'hr_manager'
+          )
+          || isOperationsManagerRole()
+        );
+    }
+
+    function attendanceCorrectionRequestCreateValid() {
+      let c = request.resource.data;
+      return attendanceCorrectionSubmitter()
+        && c.keys().hasAll([
+          'subjectType',
+          'subjectId',
+          'subjectNameSnapshot',
+          'subjectKey',
+          'payrollMonth',
+          'workDateYmd',
+          'previousInAtMs',
+          'previousOutAtMs',
+          'proposedInAtMs',
+          'proposedOutAtMs',
+          'reason',
+          'status',
+          'requestedByUid',
+          'requestedAt',
+        ])
+        && c.subjectType in ['worker', 'office_staff']
+        && c.subjectId is string
+        && c.subjectId.size() > 0
+        && c.subjectNameSnapshot is string
+        && c.subjectNameSnapshot.size() > 0
+        && c.subjectNameSnapshot.size() < 500
+        && c.subjectKey is string
+        && c.subjectKey.size() > 0
+        && c.subjectKey.size() < 500
+        && c.payrollMonth is string
+        && c.payrollMonth.size() == 7
+        && c.workDateYmd is string
+        && c.workDateYmd.size() == 10
+        && (c.previousInAtMs == null || c.previousInAtMs is int || c.previousInAtMs is float)
+        && (c.previousOutAtMs == null || c.previousOutAtMs is int || c.previousOutAtMs is float)
+        && (c.proposedInAtMs == null || c.proposedInAtMs is int || c.proposedInAtMs is float)
+        && (c.proposedOutAtMs == null || c.proposedOutAtMs is int || c.proposedOutAtMs is float)
+        && c.reason is string
+        && c.reason.size() > 0
+        && c.reason.size() < 2000
+        && c.status == 'PENDING_MANAGER_APPROVAL'
+        && c.requestedByUid == request.auth.uid
+        && (c.requestedAt is int || c.requestedAt is float);
+    }
+
+    function attendanceCorrectionRequestResolveValid() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return attendanceCorrectionManager()
+        && before.status == 'PENDING_MANAGER_APPROVAL'
+        && after.status in ['APPROVED', 'REJECTED']
+        && after.subjectKey == before.subjectKey
+        && after.workDateYmd == before.workDateYmd
+        && after.subjectType == before.subjectType
+        && after.subjectId == before.subjectId
+        && after.diff(before).affectedKeys().hasOnly([
+          'status',
+          'reviewedByUid',
+          'reviewedByName',
+          'reviewedAt',
+          'rejectReason',
+        ])
+        && after.reviewedByUid == request.auth.uid
+        && (after.reviewedAt is int || after.reviewedAt is float)
+        && (
+          (after.status == 'APPROVED')
+          || (
+            after.status == 'REJECTED'
+            && after.rejectReason is string
+            && after.rejectReason.size() > 0
+            && after.rejectReason.size() < 2000
+          )
+        );
+    }
+
+    function attendanceDayOverrideCreateValid() {
+      let c = request.resource.data;
+      return attendanceCorrectionManager()
+        && c.keys().hasAll([
+          'subjectType',
+          'subjectId',
+          'subjectKey',
+          'payrollMonth',
+          'workDateYmd',
+          'effectiveInAtMs',
+          'effectiveOutAtMs',
+          'correctionRequestId',
+          'appliedAt',
+          'appliedByUid',
+        ])
+        && c.subjectType in ['worker', 'office_staff']
+        && c.subjectId is string
+        && c.subjectId.size() > 0
+        && c.subjectKey is string
+        && c.subjectKey.size() > 0
+        && c.payrollMonth is string
+        && c.payrollMonth.size() == 7
+        && c.workDateYmd is string
+        && c.workDateYmd.size() == 10
+        && (c.effectiveInAtMs == null || c.effectiveInAtMs is int || c.effectiveInAtMs is float)
+        && (c.effectiveOutAtMs == null || c.effectiveOutAtMs is int || c.effectiveOutAtMs is float)
+        && c.correctionRequestId is string
+        && c.correctionRequestId.size() > 0
+        && (c.appliedAt is int || c.appliedAt is float)
+        && c.appliedByUid == request.auth.uid;
+    }
+
     /**
      * แอดมินระบบ — ต้องสอดคล้องกับ isSystemAdmin() ฝั่งแอป (role / accessGroup / roleIds ฯลฯ)
      * มิฉะนั้นผู้ใช้ที่ UI แสดง Administrator แต่ effectiveRole ไม่ใช่ system_admin จะถูกปฏิเสธ
@@ -970,16 +1101,6 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    /** Demo: เอกสารโควต้ารวมจากหลาย PO — UI อยู่ภายใต้ /system-admin/employee-demo */
-    match /employee_quota_documents/{id} {
-      allow read, write: if isAdmin();
-    }
-
-    /** Demo: จองลูกจ้างตามเอกสารโควต้า */
-    match /employee_quota_slots/{id} {
-      allow read, write: if isAdmin();
-    }
-
     // Document codes (customers, workers, POs, vendor bills, etc.) — active internal + staff doc (pending activation).
     match /number_sequences/{id} {
       allow read, write: if isInternalUser() || isInternalStaffDoc();
@@ -1472,7 +1593,38 @@ service cloud.firestore {
       allow write: if canEditHrOrgConfigurationDocs();
     }
 
-    /** เซสชัน QR Kiosk — token = doc id */
+    /**
+     * เซสชัน QR Kiosk — token = doc id; QR ใช้ครั้งเดียว (single-use)
+     * update อนุญาตเฉพาะ "consume" → active true→false พร้อม snapshot ของ subject ที่สแกน
+     */
+    function attendanceKioskSessionConsumeUpdate() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return isSignedIn()
+        && hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && before.active == true
+        && kioskSessionStillActive(before.expiresAt)
+        && after.active == false
+        && after.expiresAt == before.expiresAt
+        && after.createdByUid == before.createdByUid
+        && after.createdAt == before.createdAt
+        && after.consumedByUid == request.auth.uid
+        && (after.consumedAt is int || after.consumedAt is float)
+        && after.consumedSubjectType in ['worker', 'office_staff']
+        && after.consumedSubjectId is string
+        && after.consumedSubjectId.size() > 0
+        && after.consumedDirection in ['IN', 'OUT']
+        && after.diff(before).affectedKeys().hasOnly([
+          'active',
+          'consumedAt',
+          'consumedByUid',
+          'consumedSubjectType',
+          'consumedSubjectId',
+          'consumedDirection',
+        ]);
+    }
+
     match /attendance_kiosk_sessions/{token} {
       allow read: if isSignedIn() && hasUserDoc() && (isInternalUser() || isInternalStaffDoc());
       allow create: if isSignedIn()
@@ -1485,7 +1637,8 @@ service cloud.firestore {
         && (request.resource.data.createdAt is int || request.resource.data.createdAt is float)
         && token is string
         && token.size() >= 16;
-      allow update, delete: if false;
+      allow update: if attendanceKioskSessionConsumeUpdate();
+      allow delete: if false;
     }
 
     /** บันทึกเข้า/ออกจากมือถือ (หลังสแกน QR) — ผูกกับ linkedUserId ใน workers/office_staff */
@@ -1493,6 +1646,128 @@ service cloud.firestore {
       allow read: if internalPayrollDataReader();
       allow create: if attendancePunchCreateValid();
       allow update, delete: if false;
+    }
+
+    match /attendance_correction_requests/{id} {
+      allow read: if internalPayrollDataReader();
+      allow create: if attendanceCorrectionRequestCreateValid();
+      allow update: if attendanceCorrectionRequestResolveValid();
+      allow delete: if false;
+    }
+
+    match /attendance_day_overrides/{id} {
+      allow read: if internalPayrollDataReader();
+      allow create: if attendanceDayOverrideCreateValid();
+      allow update, delete: if false;
+    }
+
+    /** ใบลาพนักงานออฟฟิศ — สร้างได้เฉพาะเจ้าของ (uid == linkedUserId) หรือ HR/manager */
+    function officeStaffLinkedToCallerById(staffId) {
+      let s = /databases/$(database)/documents/office_staff/$(staffId);
+      return exists(s)
+        && 'linkedUserId' in get(s).data
+        && get(s).data.linkedUserId is string
+        && get(s).data.linkedUserId.size() > 0
+        && get(s).data.linkedUserId == request.auth.uid;
+    }
+
+    function leaveRequestOwnedByCaller() {
+      return resource.data != null
+        && 'staffId' in resource.data
+        && resource.data.staffId is string
+        && officeStaffLinkedToCallerById(resource.data.staffId);
+    }
+
+    function leaveRequestCreateValid() {
+      return isSignedIn()
+        && hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && request.resource.data.keys().hasAll([
+          'staffId',
+          'staffNameSnapshot',
+          'leaveType',
+          'startDate',
+          'endDate',
+          'days',
+          'reason',
+          'isHalfDay',
+          'year',
+          'status',
+          'createdByUid',
+          'createdAt',
+          'updatedAt',
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.status in ['DRAFT', 'SUBMITTED']
+        && (request.resource.data.status == 'DRAFT'
+          || (request.resource.data.reason is string && request.resource.data.reason.size() > 0))
+        && request.resource.data.leaveType in ['SICK', 'PERSONAL', 'VACATION']
+        && request.resource.data.days is number
+        && request.resource.data.days > 0
+        && (
+          internalPayrollDataReader()
+          || officeStaffLinkedToCallerById(request.resource.data.staffId)
+        );
+    }
+
+    /** แก้ฉบับร่าง / ส่งจากร่าง / ยกเลิกร่าง — เจ้าของคำขอ (ผู้สร้าง) หรือ HR ที่อ่าน payroll ได้ */
+    function leaveRequestDraftEditorAllowed() {
+      return internalPayrollDataReader()
+        || (
+          leaveRequestOwnedByCaller()
+          && resource.data.createdByUid == request.auth.uid
+        );
+    }
+
+    function leaveRequestDraftUpdateValid() {
+      return resource.data.status == 'DRAFT'
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && leaveRequestDraftEditorAllowed()
+        && request.resource.data.leaveType in ['SICK', 'PERSONAL', 'VACATION']
+        && request.resource.data.days is number
+        && request.resource.data.days > 0
+        && request.resource.data.status in ['DRAFT', 'SUBMITTED', 'CANCELLED']
+        && (
+          request.resource.data.status == 'DRAFT'
+          || (
+            request.resource.data.status == 'SUBMITTED'
+            && request.resource.data.reason is string
+            && request.resource.data.reason.size() > 0
+          )
+          || request.resource.data.status == 'CANCELLED'
+        );
+    }
+
+    /** เจ้าของยกเลิกได้เฉพาะคำที่ยังไม่อนุมัติ; HR/manager เปลี่ยน APPROVED/REJECTED ได้ */
+    function leaveRequestSelfCancelValid() {
+      return resource.data.status == 'SUBMITTED'
+        && leaveRequestOwnedByCaller()
+        && request.resource.data.status == 'CANCELLED'
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.leaveType == resource.data.leaveType
+        && request.resource.data.days == resource.data.days
+        && request.resource.data.startDate == resource.data.startDate
+        && request.resource.data.endDate == resource.data.endDate;
+    }
+
+    function leaveRequestManagerDecisionValid() {
+      return internalPayrollDataReader()
+        && resource.data.status == 'SUBMITTED'
+        && (request.resource.data.status == 'APPROVED' || request.resource.data.status == 'REJECTED')
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.leaveType == resource.data.leaveType
+        && request.resource.data.days == resource.data.days
+        && request.resource.data.startDate == resource.data.startDate
+        && request.resource.data.endDate == resource.data.endDate
+        && request.resource.data.year == resource.data.year;
+    }
+
+    match /leave_requests/{id} {
+      allow read: if internalPayrollDataReader() || leaveRequestOwnedByCaller();
+      allow create: if leaveRequestCreateValid();
+      allow update: if leaveRequestSelfCancelValid() || leaveRequestManagerDecisionValid() || leaveRequestDraftUpdateValid();
+      allow delete: if false;
     }
 
     match /payroll_correction_requests/{id} {

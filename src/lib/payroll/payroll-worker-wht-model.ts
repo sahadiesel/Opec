@@ -64,7 +64,9 @@ function workerDisplayName(w: Worker): string {
 
 function inferPaymentMethod(line: PayrollBatchLine): PaymentMethod {
   const m = line.workerPaymentProfileSnapshot?.paymentMethod;
-  if (m === 'TRANSFER' || m === 'CASH' || m === 'CHEQUE') return m;
+  if (m === 'BANK_TRANSFER' || m === 'PROMPTPAY') return 'TRANSFER';
+  if (m === 'CASH') return 'CASH';
+  if (m === 'OTHER') return 'OTHER';
   return 'CASH';
 }
 
@@ -73,11 +75,16 @@ function sumDeductionsMap(d: Record<string, number> | undefined): number {
   return round2(Object.values(d).reduce((a, b) => a + (Number(b) || 0), 0));
 }
 
-function pitAmount(line: PayrollBatchLine): number {
+/** ยอดภาษีหัก ณ ที่จ่าย (ภงด.1) จากบรรทัดงวดลูกจ้าง — ใช้รายการลิสต์เอกสารหักฯ */
+export function workerPayrollLinePitAmount(line: PayrollBatchLine): number {
   const db = line.deductionsBreakdown || {};
   const snap = line.d8Snapshot?.deductions || {};
   const v = Number(db.pit_withholding ?? snap.pit_withholding ?? 0);
   return round2(Number.isFinite(v) ? v : 0);
+}
+
+function pitAmount(line: PayrollBatchLine): number {
+  return workerPayrollLinePitAmount(line);
 }
 
 /**

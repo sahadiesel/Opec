@@ -543,6 +543,18 @@ export function canApproveMonthlyTimesheetReviewQueue(user: User | null): boolea
   return canApproveWorkerPayrollBatchAsManager(user);
 }
 
+/** ขอแก้ไขเวลาลงเวลา (หลังสแกน) — payroll officer / แอดมิน */
+export function canSubmitAttendanceCorrectionRequest(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  return isPayrollOfficer(user);
+}
+
+/** อนุมัติแก้ไขเวลาลงเวลา — HR / operations manager / แอดมิน (ไม่รวม payroll_officer) */
+export function canApproveAttendanceCorrectionRequest(user: User | null): boolean {
+  return canApproveWorkerPayrollBatchAsManager(user);
+}
+
 /** ชื่อเดิมในหน้า HR — ชี้ไปที่ {@link canApproveMonthlyTimesheetReviewQueue} */
 export const canReviewMonthlyQueue = canApproveMonthlyTimesheetReviewQueue;
 

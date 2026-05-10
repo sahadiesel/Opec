@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { doc, setDoc } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
-import { useFirestore, useUser } from '@/firebase';
+import { useFirestore, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import { canAccessHrAttendanceKioskPages } from '@/lib/navigation/nav-access';
 import type { User } from '@/lib/types';
 import {
@@ -15,7 +15,7 @@ import {
 import type { AttendanceKioskSessionDoc } from '@/lib/attendance/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import QRCode from 'qrcode';
 
@@ -36,6 +36,8 @@ export default function HrAttendanceKioskPage() {
   const [tick, setTick] = useState(0);
   /** data URL from local `qrcode` lib, or fallback to external image API */
   const [qrImgSrc, setQrImgSrc] = useState('');
+  /** เก็บข้อมูล punch ล่าสุดเพื่อ flash ขึ้นหน้าจอ Kiosk แล้วค่อยเปลี่ยนเป็น QR ใหม่ */
+  const [recentlyConsumed, setRecentlyConsumed] = useState<{ at: number; direction: string } | null>(null);
 
   const mobileUrl = useMemo(() => {
     if (typeof window === 'undefined' || !token) return '';
@@ -82,6 +84,7 @@ export default function HrAttendanceKioskPage() {
       await setDoc(doc(firestore, ATTENDANCE_KIOSK_SESSIONS_COLLECTION, t), payload);
       setToken(t);
       setExpiresAtMs(exp);
+      setRecentlyConsumed(null);
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
@@ -96,7 +99,7 @@ export default function HrAttendanceKioskPage() {
   useEffect(() => {
     if (userLoading || !canUse || !firestore || !fbUser?.uid || token) return;
     void refreshSession();
-    // Initial QR only — further refreshes are explicit (ปุ่มสร้างโค้ดใหม่)
+    // โค้ดเริ่มต้นเท่านั้น — ที่เหลือ refresh อัตโนมัติเมื่อหมดอายุ/มีคนสแกน
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userLoading, canUse, firestore, fbUser?.uid]);
 
@@ -104,6 +107,42 @@ export default function HrAttendanceKioskPage() {
     const id = window.setInterval(() => setTick((x) => x + 1), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  const sessionRef = useMemoFirebase(() => {
+    if (!firestore || !token) return null;
+    return doc(firestore, ATTENDANCE_KIOSK_SESSIONS_COLLECTION, token);
+  }, [firestore, token]);
+
+  const { data: liveSession } = useDoc<AttendanceKioskSessionDoc>(sessionRef as any);
+
+  const consumed = !!liveSession && liveSession.active === false;
+
+  /** เมื่อโทเคนถูกใช้สแกน: flash หน้าจอแสดงผลสั้น ๆ แล้วสร้างโค้ดใหม่ทันที */
+  useEffect(() => {
+    if (!consumed || !liveSession?.consumedAt) return;
+    setRecentlyConsumed({
+      at: liveSession.consumedAt,
+      direction: liveSession.consumedDirection ?? '',
+    });
+    const t = window.setTimeout(() => {
+      void refreshSession();
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [consumed, liveSession?.consumedAt, liveSession?.consumedDirection, refreshSession]);
+
+  /** เมื่อหมดอายุ 60 วินาที: สร้างโค้ดใหม่อัตโนมัติ */
+  useEffect(() => {
+    if (!expiresAtMs || consumed) return;
+    const remain = expiresAtMs - Date.now();
+    if (remain <= 0) {
+      void refreshSession();
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void refreshSession();
+    }, remain + 200);
+    return () => window.clearTimeout(t);
+  }, [expiresAtMs, consumed, refreshSession]);
 
   const secondsLeft = useMemo(() => {
     void tick;
@@ -141,7 +180,7 @@ export default function HrAttendanceKioskPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-primary">Kiosk ลงเวลา (QR)</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              ให้พนักงานสแกน QR เพื่อเปิดหน้าลงเวลาบนมือถือ (ต้องล็อกอินแอปด้วยบัญชีที่ผูกทะเบียนแล้ว)
+              QR ใช้ครั้งเดียวต่อ 1 คน อายุ 60 วินาที — ระบบจะสร้างโค้ดใหม่ให้อัตโนมัติหลังสแกน
             </p>
           </div>
         </div>
@@ -152,12 +191,19 @@ export default function HrAttendanceKioskPage() {
             <CardDescription>สแกน QR Code เพื่อเปิดหน้าลงเวลาบนมือถือ</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4 pt-8 pb-8">
-            {!qrImgSrc && (
+            {recentlyConsumed && (
+              <div className="flex flex-col items-center gap-2 text-emerald-700 py-6">
+                <CheckCircle2 className="h-12 w-12" />
+                <p className="text-base font-semibold">มีคนสแกนแล้ว</p>
+                <p className="text-xs text-muted-foreground">กำลังสร้างโค้ดใหม่ให้คนถัดไป…</p>
+              </div>
+            )}
+            {!recentlyConsumed && !qrImgSrc && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm py-12">
                 <Loader2 className="h-5 w-5 animate-spin" /> กำลังสร้างโค้ด…
               </div>
             )}
-            {qrImgSrc && (
+            {!recentlyConsumed && qrImgSrc && (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={qrImgSrc} alt="Attendance QR" className="rounded-lg border bg-white p-2 w-[280px] h-[280px]" />

@@ -1412,7 +1412,7 @@ export class PayrollService {
       pitWithholdingOverride:
         mode === 'manual_baht' ? (Number.isFinite(Number(pitOv)) ? Math.max(0, Number(pitOv)) : null) : null,
       pitWithholdingOverrideMaxMarginalRatePercent: storeMr,
-      notes: trimmedNotes ? trimmedNotes : null,
+      notes: trimmedNotes || undefined,
       updatedAt: Date.now(),
       updatedBy: user.displayName || user.email || user.id,
     };

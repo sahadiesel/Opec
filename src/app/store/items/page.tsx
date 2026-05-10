@@ -312,7 +312,7 @@ export default function StoreItemsPage() {
           colRef,
           sanitizeFirestorePayload({
             itemCode,
-            itemName: newItem.itemName.trim(),
+            itemName: (newItem.itemName ?? '').trim(),
             variantSpecification: '',
             variantGroupKey: gk,
             catalogGroupRole: 'header',
@@ -778,7 +778,6 @@ export default function StoreItemsPage() {
                   <Input
                     value={newItem.itemName || ''}
                     onChange={(e) => setNewItem({ ...newItem, itemName: e.target.value })}
-                    disabled={editingCatalogRole === 'line'}
                   />
                 </div>
               )}

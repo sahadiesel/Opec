@@ -18,7 +18,7 @@
  *   npx tsx scripts/po-active-workflow-phase1-migration.ts --daily-only
  */
 
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, getApps, initializeApp, type ServiceAccount } from 'firebase-admin/app';
 import {
   FieldPath,
   getFirestore,
@@ -108,7 +108,7 @@ function initFirebaseAdminFromServiceAccountJson(path: string, projectId: string
   }
   const pid = projectId || (typeof parsed.project_id === 'string' ? parsed.project_id : undefined);
   initializeApp({
-    credential: cert(parsed),
+    credential: cert(parsed as ServiceAccount),
     ...(pid ? { projectId: pid } : {}),
   });
 }
@@ -251,7 +251,7 @@ async function main() {
               ? data.mobCycleNumber
               : 1;
 
-          const patch: Record<string, unknown> = {};
+          const patch: DocumentData = {};
           if (data.poActiveBundleId !== bundleId) {
             patch.poActiveBundleId = bundleId;
           }

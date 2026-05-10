@@ -22,6 +22,7 @@ import {
   Banknote,
   QrCode,
   Clock,
+  CalendarOff,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -75,15 +76,6 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
       { key: 'hr_hub', title: 'ศูนย์งานจ่ายเงิน (Payroll Workbench)', href: '/hr/payroll-workbench', icon: LayoutGrid },
       { key: 'worker_payroll', title: 'งวดจ่ายลูกจ้าง (สร้างชุด · HR)', href: '/payroll/batches', icon: Coins },
       { key: 'office_payroll', title: 'งวดจ่ายพนักงานออฟฟิศ', href: '/office-payroll', icon: Building2 },
-    ],
-  },
-  {
-    title: 'ลงเวลาและภารกิจหน้างาน',
-    description:
-      'จัดการ Kiosk/สรุป: payroll_officer · manager · admin — ลงเวลารายวัน/รายเดือน: timekeeper · operations_officer',
-    icon: Grid3X3,
-    audienceFieldOpsTimesheets: true,
-    items: [
       {
         key: 'timesheets',
         title: 'จัดการการลงเวลา (Kiosk / สรุป)',
@@ -98,6 +90,22 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         icon: QrCode,
         payrollAttendanceManageOnly: true,
       },
+      {
+        key: 'hr_hub',
+        title: 'การจัดการการลา (พนักงานออฟฟิศ)',
+        href: '/hr/leaves',
+        icon: CalendarOff,
+        payrollAttendanceManageOnly: true,
+      },
+    ],
+  },
+  {
+    title: 'ลงเวลาและภารกิจหน้างาน',
+    description:
+      'ลงเวลารายวัน/รายเดือน — timekeeper · operations_officer · payroll lead',
+    icon: Grid3X3,
+    audienceFieldOpsTimesheets: true,
+    items: [
       {
         key: 'timesheets',
         title: 'ลงเวลารายวัน(Auto/Manual)',

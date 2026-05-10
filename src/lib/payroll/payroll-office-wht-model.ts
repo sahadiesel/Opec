@@ -38,9 +38,14 @@ function inferOfficePaymentMethod(staff: OfficeStaff): PaymentMethod {
   return acct.length >= 4 ? 'TRANSFER' : 'CASH';
 }
 
-function pitAmountOffice(line: OfficePayrollLine): number {
+/** ยอดภาษีหัก ณ ที่จ่ายจากบรรทัดงวดพนักงานออฟฟิศ — ใช้รายการลิสต์เอกสารหักฯ */
+export function officePayrollLineTaxAmount(line: OfficePayrollLine): number {
   const v = Number(line.tax ?? 0);
   return round2(Number.isFinite(v) ? v : 0);
+}
+
+function pitAmountOffice(line: OfficePayrollLine): number {
+  return officePayrollLineTaxAmount(line);
 }
 
 export function buildPayrollOfficeWhtPrintVm(input: {

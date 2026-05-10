@@ -9,6 +9,7 @@ import {
   updateDoc,
   type DocumentReference,
   type Firestore,
+  type UpdateData,
 } from 'firebase/firestore';
 import type { User, WithholdingCertificateDocument } from '@/lib/types';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
@@ -82,7 +83,7 @@ export async function assignWhtCertificateNumberIfMissing(params: {
     patch.issuedByName = actorName;
   }
 
-  await updateDoc(certRef, stripUndefinedForFirestore(patch) as Record<string, unknown>);
+  await updateDoc(certRef, stripUndefinedForFirestore(patch) as UpdateData<WithholdingCertificateDocument>);
 
   const logRef = doc(collection(firestore, 'withholding_certificate_documents', wht.id, 'audit_logs'));
   await setDoc(

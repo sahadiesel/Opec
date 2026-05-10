@@ -179,16 +179,6 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     collectionName: 'withholding_certificate_documents',
     fieldName: 'certificateNo',
   },
-  /** เอกสารโควต้ารวม PO (Demo / system-admin) — รูปแบบ QT2026-00001 */
-  employee_quota_document: {
-    label: 'เอกสารโควต้าลูกจ้าง (Demo)',
-    prefix: 'QT',
-    padding: 5,
-    dept: 'admin',
-    resetPolicy: 'yearly',
-    collectionName: 'employee_quota_documents',
-    fieldName: 'quotaDocumentNo',
-  },
 };
 
 /**

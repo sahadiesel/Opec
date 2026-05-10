@@ -3,25 +3,37 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  addDoc,
   collection,
   doc,
   getDocs,
   limit,
+  orderBy,
   query,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
-import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import type { User } from '@/lib/types';
 import { ATTENDANCE_KIOSK_SESSIONS_COLLECTION, ATTENDANCE_PUNCHES_COLLECTION } from '@/lib/attendance/constants';
-import type { AttendanceKioskSessionDoc, AttendanceSubjectType } from '@/lib/attendance/types';
+import type {
+  AttendanceKioskSessionDoc,
+  AttendancePunchDirection,
+  AttendancePunchDoc,
+  AttendanceSubjectType,
+} from '@/lib/attendance/types';
+import {
+  deriveMobileAttendanceUi,
+  getBangkokDayBoundsMs,
+  getCurrentAttendanceShift,
+  summarizeDailyPunches,
+} from '@/lib/attendance/shift-windows';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, LogIn, LogOut } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
 
@@ -51,11 +63,23 @@ function MobileAttendanceInner() {
   const [resolveDone, setResolveDone] = useState(false);
   const [resolveBusy, setResolveBusy] = useState(false);
   const [punchBusy, setPunchBusy] = useState(false);
+  const [lastPunch, setLastPunch] = useState<{ at: number; direction: AttendancePunchDirection } | null>(null);
 
+  /** ติ๊ก clock เพื่ออัปเดต shift descriptor + day bounds เมื่อข้ามนาที (เผื่อข้ามช่วง) */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const sessionConsumed = !!sessionRow && sessionRow.active === false;
   const sessionOk = useMemo(() => {
     if (!sessionRow || typeof sessionRow.expiresAt !== 'number') return false;
     return !!sessionRow.active && sessionRow.expiresAt > Date.now();
   }, [sessionRow]);
+
+  const shift = useMemo(() => getCurrentAttendanceShift(new Date(now)), [now]);
+  const dayBounds = useMemo(() => getBangkokDayBoundsMs(new Date(now)), [now]);
 
   /** Resolve worker/office_staff row linked to current auth user */
   useEffect(() => {
@@ -110,25 +134,70 @@ function MobileAttendanceInner() {
     };
   }, [firestore, fbUser?.uid, eligible, toast]);
 
-  const punch = async (direction: 'IN' | 'OUT') => {
+  /** ดึง punch ของ subject "วันนี้" — ใช้เช็คซ้ำในวันเดียว/ตัดสินช่วงเช้า-บ่าย */
+  const todayPunchesQuery = useMemoFirebase(() => {
+    if (!firestore || !resolved) return null;
+    return query(
+      collection(firestore, ATTENDANCE_PUNCHES_COLLECTION),
+      where('subjectType', '==', resolved.subjectType),
+      where('subjectId', '==', resolved.subjectId),
+      where('punchedAt', '>=', dayBounds.startMs),
+      where('punchedAt', '<', dayBounds.endMs),
+      orderBy('punchedAt', 'desc'),
+    );
+  }, [firestore, resolved, dayBounds.startMs, dayBounds.endMs]);
+
+  const { data: todayPunches, isLoading: punchesLoading } = useCollection<AttendancePunchDoc>(
+    todayPunchesQuery as any,
+  );
+
+  const dailySummary = useMemo(
+    () => summarizeDailyPunches(todayPunches ?? []),
+    [todayPunches],
+  );
+
+  const uiState = useMemo(() => deriveMobileAttendanceUi(shift, dailySummary), [shift, dailySummary]);
+
+  const punch = async (direction: AttendancePunchDirection) => {
     if (!firestore || !fbUser?.uid || !token || !sessionOk || !resolved) return;
+    if (direction === 'IN' && dailySummary.hasIn) {
+      toast({ variant: 'destructive', title: 'สแกนเข้างานวันนี้แล้ว' });
+      return;
+    }
+    if (direction === 'OUT' && dailySummary.hasOut) {
+      toast({ variant: 'destructive', title: 'สแกนออกงานวันนี้แล้ว' });
+      return;
+    }
     setPunchBusy(true);
     try {
-      const now = Date.now();
-      await addDoc(collection(firestore, ATTENDANCE_PUNCHES_COLLECTION), {
+      const tsNow = Date.now();
+      const punchRef = doc(collection(firestore, ATTENDANCE_PUNCHES_COLLECTION));
+      const sessRef = doc(firestore, ATTENDANCE_KIOSK_SESSIONS_COLLECTION, token);
+      const batch = writeBatch(firestore);
+      batch.set(punchRef, {
         subjectType: resolved.subjectType,
         subjectId: resolved.subjectId,
         subjectNameSnapshot: resolved.displayName,
         direction,
-        punchedAt: now,
+        punchedAt: tsNow,
         linkedUserId: fbUser.uid,
         kioskToken: token,
         source: 'kiosk_mobile',
-        createdAt: now,
+        createdAt: tsNow,
       });
+      batch.update(sessRef, {
+        active: false,
+        consumedAt: tsNow,
+        consumedByUid: fbUser.uid,
+        consumedSubjectType: resolved.subjectType,
+        consumedSubjectId: resolved.subjectId,
+        consumedDirection: direction,
+      });
+      await batch.commit();
+      setLastPunch({ at: tsNow, direction });
       toast({
         title: direction === 'IN' ? 'บันทึกเข้างานแล้ว' : 'บันทึกออกงานแล้ว',
-        description: formatDateTimeThaiBE(now),
+        description: formatDateTimeThaiBE(tsNow),
       });
     } catch (e: unknown) {
       toast({
@@ -161,10 +230,12 @@ function MobileAttendanceInner() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-md mx-auto px-4 py-8 space-y-4">
+      <div className="max-w-md mx-auto px-4 py-6 space-y-4">
         <div>
           <h1 className="text-xl font-bold text-primary">ลงเวลา (มือถือ)</h1>
-          <p className="text-sm text-muted-foreground mt-1">สแกนจากหน้าจอ Kiosk แล้วกดเข้า/ออก</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            สแกน QR จากหน้าจอ Kiosk แล้วกดปุ่มตามช่วงเวลาที่แสดง
+          </p>
         </div>
 
         {!token && (
@@ -179,7 +250,7 @@ function MobileAttendanceInner() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">สถานะโค้ด</CardTitle>
-              <CardDescription>โค้ดใช้ได้ชั่วคราวเท่านั้น</CardDescription>
+              <CardDescription>โค้ดใช้ครั้งเดียวและมีอายุ 60 วินาที</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {sessionLoading && (
@@ -187,9 +258,14 @@ function MobileAttendanceInner() {
                   <Loader2 className="h-4 w-4 animate-spin" /> กำลังตรวจสอบโค้ด…
                 </div>
               )}
-              {!sessionLoading && !sessionRow && <p className="text-destructive">ไม่พบโค้ดหรือโค้ดไม่ถูกต้อง</p>}
-              {!sessionLoading && sessionRow && !sessionOk && (
-                <p className="text-destructive">โค้ดหมดอายุแล้ว — ขอให้พนักงาน Timekeeper กดสร้างโค้ดใหม่</p>
+              {!sessionLoading && !sessionRow && (
+                <p className="text-destructive">ไม่พบโค้ดหรือโค้ดไม่ถูกต้อง</p>
+              )}
+              {!sessionLoading && sessionRow && sessionConsumed && !lastPunch && (
+                <p className="text-destructive">โค้ดนี้ถูกใช้สแกนไปแล้ว — กรุณาให้ Timekeeper สร้างโค้ดใหม่</p>
+              )}
+              {!sessionLoading && sessionRow && !sessionConsumed && !sessionOk && (
+                <p className="text-destructive">โค้ดหมดอายุแล้ว — ขอโค้ดใหม่จากหน้า Kiosk</p>
               )}
               {!sessionLoading && sessionOk && (
                 <Badge variant="outline" className="bg-emerald-50 text-emerald-900 border-emerald-200">
@@ -225,27 +301,115 @@ function MobileAttendanceInner() {
                 </p>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <Button
-                type="button"
-                className="h-12 text-base font-semibold"
-                disabled={!sessionOk || !resolved || punchBusy}
-                onClick={() => void punch('IN')}
-              >
-                {punchBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : 'เข้างาน (IN)'}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-12 text-base font-semibold"
-                disabled={!sessionOk || !resolved || punchBusy}
-                onClick={() => void punch('OUT')}
-              >
-                {punchBusy ? <Loader2 className="h-5 w-5 animate-spin" /> : 'ออกงาน (OUT)'}
-              </Button>
-            </div>
           </CardContent>
         </Card>
+
+        {resolveDone && resolved && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">ช่วงเวลาสแกน</CardTitle>
+              <CardDescription>
+                {shift ? `${shift.labelTh} (${shift.rangeLabelTh})` : 'อยู่นอกช่วงเวลาสแกน'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {punchesLoading && (
+                <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดประวัติวันนี้…
+                </div>
+              )}
+
+              <div className="text-xs text-muted-foreground space-y-1">
+                <p>
+                  เข้างานวันนี้:{' '}
+                  {dailySummary.firstInAt
+                    ? formatDateTimeThaiBE(dailySummary.firstInAt)
+                    : 'ยังไม่มี'}
+                </p>
+                <p>
+                  ออกงานวันนี้:{' '}
+                  {dailySummary.lastOutAt
+                    ? formatDateTimeThaiBE(dailySummary.lastOutAt)
+                    : 'ยังไม่มี'}
+                </p>
+              </div>
+
+              {lastPunch && (
+                <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                  <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">
+                      บันทึก{lastPunch.direction === 'IN' ? 'เข้างาน' : 'ออกงาน'}เรียบร้อย
+                    </p>
+                    <p className="text-xs">{formatDateTimeThaiBE(lastPunch.at)}</p>
+                  </div>
+                </div>
+              )}
+
+              {uiState.kind === 'closed' && (
+                <p className="text-sm text-muted-foreground">{uiState.messageTh}</p>
+              )}
+
+              {uiState.kind === 'evening_no_in' && (
+                <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                  <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                  <span>{uiState.messageTh}</span>
+                </div>
+              )}
+
+              {uiState.kind === 'in_only' && (
+                <div className="space-y-3">
+                  {uiState.warningTh && (
+                    <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                      <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                      <span>{uiState.warningTh}</span>
+                    </div>
+                  )}
+                  <Button
+                    type="button"
+                    className="h-14 w-full text-base font-semibold gap-2"
+                    disabled={!sessionOk || !!lastPunch || punchBusy || !!uiState.disabledReasonTh}
+                    onClick={() => void punch('IN')}
+                  >
+                    {punchBusy ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <>
+                        <LogIn className="h-5 w-5" /> เข้างาน
+                      </>
+                    )}
+                  </Button>
+                  {uiState.disabledReasonTh && (
+                    <p className="text-xs text-muted-foreground text-center">{uiState.disabledReasonTh}</p>
+                  )}
+                </div>
+              )}
+
+              {uiState.kind === 'out_only' && (
+                <div className="space-y-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-14 w-full text-base font-semibold gap-2"
+                    disabled={!sessionOk || !!lastPunch || punchBusy || !!uiState.disabledReasonTh}
+                    onClick={() => void punch('OUT')}
+                  >
+                    {punchBusy ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <>
+                        <LogOut className="h-5 w-5" /> ออกงาน
+                      </>
+                    )}
+                  </Button>
+                  {uiState.disabledReasonTh && (
+                    <p className="text-xs text-muted-foreground text-center">{uiState.disabledReasonTh}</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </AppShell>
   );

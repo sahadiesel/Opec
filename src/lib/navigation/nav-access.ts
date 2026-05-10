@@ -229,6 +229,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/operations/petty-cash', 'operations_petty_cash'],
   ['/my-profile', 'employee_self_profile'],
   ['/hr/cash-advances', 'cash_advances'],
+  ['/hr/leaves', 'hr_hub'],
   ['/po-active-quota-queue', 'waves'],
   ['/store', 'store_inventory'],
 ];

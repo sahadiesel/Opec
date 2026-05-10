@@ -11,7 +11,7 @@ import { collection, query, where } from 'firebase/firestore';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
-import { CalendarCheck, Coins, PackageSearch, ShieldCheck, Wallet } from 'lucide-react';
+import { CalendarCheck, CalendarOff, Clock, Coins, PackageSearch, ShieldCheck, Wallet } from 'lucide-react';
 import type {
   CashAdvanceRequest,
   OfficePayrollRun,
@@ -22,6 +22,7 @@ import type {
   User,
   WaveMonthTimesheetReview,
 } from '@/lib/types';
+import { ATTENDANCE_CORRECTION_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
 
 function ApprovalSectionPendingBadge({
   count,
@@ -138,6 +139,29 @@ export default function HrApprovalCenterPage() {
     purchaseRequestPendingQ as any,
   );
 
+  const attendanceCorrectionPendingQ = useMemoFirebase(
+    () =>
+      firestore && approvalGate
+        ? query(
+            collection(firestore, ATTENDANCE_CORRECTION_REQUESTS_COLLECTION),
+            where('status', '==', 'PENDING_MANAGER_APPROVAL'),
+          )
+        : null,
+    [firestore, approvalGate],
+  );
+  const { data: attendanceCorrectionPendingRows, isLoading: loadingAttendanceCorrection } = useCollection(
+    attendanceCorrectionPendingQ as any,
+  );
+
+  const leavePendingQ = useMemoFirebase(
+    () =>
+      firestore && approvalGate
+        ? query(collection(firestore, 'leave_requests'), where('status', '==', 'SUBMITTED'))
+        : null,
+    [firestore, approvalGate],
+  );
+  const { data: leavePendingRows, isLoading: loadingLeavePending } = useCollection(leavePendingQ as any);
+
   const timesheetPendingCount = useMemo(() => {
     return (wavePendingRows?.length ?? 0) + (poMonthPendingRows?.length ?? 0);
   }, [wavePendingRows, poMonthPendingRows]);
@@ -151,6 +175,9 @@ export default function HrApprovalCenterPage() {
   const purchasePendingCount = useMemo(() => {
     return (purchasePendingRows?.length ?? 0) + (purchaseRequestPendingRows?.length ?? 0);
   }, [purchasePendingRows, purchaseRequestPendingRows]);
+
+  const attendanceCorrectionPendingCount = attendanceCorrectionPendingRows?.length ?? 0;
+  const leavePendingCount = leavePendingRows?.length ?? 0;
 
   const canSee = approvalGate;
 
@@ -294,6 +321,60 @@ export default function HrApprovalCenterPage() {
               </Button>
               <Button asChild variant="ghost" size="sm">
                 <Link href="/purchase-orders">ใบสั่งซื้อลูกค้า (Commercial PO)</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="relative flex h-full flex-col overflow-hidden rounded-xl border border-sky-500/20 bg-card shadow-sm ring-1 ring-black/[0.03] transition-shadow hover:shadow-md dark:ring-white/[0.06]">
+            <CardHeader className="relative pb-3 pr-28 pt-6 sm:pr-36">
+              <ApprovalSectionPendingBadge
+                count={attendanceCorrectionPendingCount}
+                loading={loadingAttendanceCorrection}
+                kindLabel="แก้ไขเวลาลงเวลา"
+              />
+              <CardTitle className="flex items-start gap-2.5 pr-0 text-lg leading-snug">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-800 dark:text-sky-300">
+                  <Clock className="h-5 w-5" />
+                </span>
+                <span>อนุมัติแก้ไขเวลาลงเวลา (Kiosk)</span>
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                ฝ่ายเงินเดือนส่งคำขอเมื่อพนักงานลืมสแกนหรือเวลาผิด — ผู้จัดการ HR / ปฏิบัติการอนุมัติแล้วระบบจะใช้เวลาที่แก้ในหน้าสรุปลงเวลา
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link href="/hr/approval-center/attendance-corrections">เปิดคิวอนุมัติแก้ไขเวลา</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/hr/attendance">ไปสรุปลงเวลารายเดือน</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="relative flex h-full flex-col overflow-hidden rounded-xl border border-violet-500/20 bg-card shadow-sm ring-1 ring-black/[0.03] transition-shadow hover:shadow-md dark:ring-white/[0.06]">
+            <CardHeader className="relative pb-3 pr-28 pt-6 sm:pr-36">
+              <ApprovalSectionPendingBadge
+                count={leavePendingCount}
+                loading={loadingLeavePending}
+                kindLabel="คำขอลาพนักงานออฟฟิศ"
+              />
+              <CardTitle className="flex items-start gap-2.5 pr-0 text-lg leading-snug">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-800 dark:text-violet-300">
+                  <CalendarOff className="h-5 w-5" />
+                </span>
+                <span>อนุมัติวันลา (พนักงานออฟฟิศ)</span>
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                คำขอลาป่วย / กิจ / พักร้อนที่รอผู้จัดการ — เปิดเฉพาะคิวรออนุมัติ (ดูรายละเอียดและเหตุผลในแต่ละแถว)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link href="/hr/approval-center/office-leaves">เปิดคิวอนุมัติวันลา</Link>
+              </Button>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/hr/leaves">จัดการลาฝั่ง HR (สรุป / ฉบับร่าง)</Link>
               </Button>
             </CardContent>
           </Card>

@@ -1,6 +1,30 @@
 {
   "indexes": [
     {
+      "collectionGroup": "leave_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "year", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leave_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "staffId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leave_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "waves",
       "queryScope": "COLLECTION",
       "fields": [
@@ -294,6 +318,22 @@
         { "fieldPath": "subjectType", "order": "ASCENDING" },
         { "fieldPath": "subjectId", "order": "ASCENDING" },
         { "fieldPath": "punchedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_correction_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_day_overrides",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "subjectKey", "order": "ASCENDING" },
+        { "fieldPath": "payrollMonth", "order": "ASCENDING" }
       ]
     }
   ],

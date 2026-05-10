@@ -898,60 +898,6 @@ export interface POLine {
   status: 'active' | 'cancelled' | 'completed';
 }
 
-/** ส่วนที่มาจากแต่ละ PO ต่อตำแหน่ง — เอกสารโควต้า Demo (รวมจำนวนข้าม PO) */
-export interface EmployeeQuotaDocumentLineContribution {
-  poId: string;
-  poCode: string;
-  quantity: number;
-}
-
-/** บรรทัดรวมโควต้าตามตำแหน่ง */
-export interface EmployeeQuotaDocumentLine {
-  positionId: string;
-  positionName: string;
-  quantity: number;
-  contributions: EmployeeQuotaDocumentLineContribution[];
-}
-
-/**
- * เอกสารโควต้ารวมจากหลาย Customer PO — เก็บ `quotaJobMode` เพื่ออ้างอิงราคา Onshore/Offshore ในขั้นถัดไป
- * (คอลเลกชัน `employee_quota_documents`; เฉพาะผู้ดูแลระบบ)
- */
-export interface EmployeeQuotaDocument {
-  id: string;
-  /** เลขที่อ่านง่าย เช่น QT2026-00001 — จากระบบเลขที่เอกสาร (เอกสารเก่าอาจไม่มี) */
-  quotaDocumentNo?: string;
-  customerId: string;
-  customerName: string;
-  quotaJobMode: JobMode;
-  purchaseOrderIds: string[];
-  lines: EmployeeQuotaDocumentLine[];
-  createdAt: number;
-  updatedAt: number;
-  createdByUserId: string;
-  createdByDisplayName?: string;
-  updatedByUserId?: string;
-  updatedByDisplayName?: string;
-}
-
-/** การจองลูกจ้างลงในเอกสารโควต้า (Demo) — คอลเลกชัน `employee_quota_slots` */
-export interface EmployeeQuotaSlot {
-  id: string;
-  quotaDocumentId: string;
-  positionId: string;
-  workerId: string;
-  workerCode: string;
-  workerDisplayName: string;
-  /** ราคาขายตาม quotaJobMode + อัตราในสัญญาที่ดึงได้ */
-  sellRateSnapshot: number;
-  billingUnitSnapshot: string;
-  contractIdForRate: string;
-  quotaJobModeSnapshot: JobMode;
-  createdAt: number;
-  createdByUserId: string;
-  createdByDisplayName?: string;
-}
-
 export type SalesContractStatus = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'CLOSED' | 'CANCELLED';
 
 export interface SalesContractTerm {

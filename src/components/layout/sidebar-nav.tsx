@@ -43,7 +43,6 @@ import {
   FileQuestion,
   Calculator,
   Wallet,
-  ClipboardCheck,
   QrCode,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -235,40 +234,6 @@ const OPS_WAREHOUSE_SUB_PATHS = [
   '/store/vendor-bills',
   '/store',
 ] as const;
-
-/** เมนู Demo ภายใต้ «การจัดการระบบ» — เฉพาะผู้ดูแลระบบ (สาขาแสดงใน renderer ไม่ใส่ใน items หลัก) */
-const ADMIN_EMPLOYEE_DEMO_ITEMS: NavItem[] = [
-  {
-    key: 'system_admin',
-    title: 'สร้างเอกสารโควต้า',
-    href: '/system-admin/employee-demo/quota-document',
-    icon: FileText,
-  },
-  {
-    key: 'system_admin',
-    title: 'จองคนลงตามโควต้า',
-    href: '/system-admin/employee-demo/book-by-quota',
-    icon: UserPlus,
-  },
-  {
-    key: 'system_admin',
-    title: 'ตรวจสอบและส่งคนตามโควต้า',
-    href: '/system-admin/employee-demo/verify-send-quota',
-    icon: ClipboardCheck,
-  },
-  {
-    key: 'system_admin',
-    title: 'ตารางเวลาตามโควต้า',
-    href: '/system-admin/employee-demo/quota-schedule',
-    icon: Clock,
-  },
-  {
-    key: 'system_admin',
-    title: 'ตารางสรุปค่าแรงตามโควต้า',
-    href: '/system-admin/employee-demo/quota-wage-summary',
-    icon: FileBarChart,
-  },
-];
 
 /** แดชบอร์ดเดียว: ฝ่าย HR กด «แดชบอร์ด» ที่ Overview ไป /hr/dashboard (ไม่ซ้ำกับลิงก์ใน HR) */
 function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavGroup[] {
@@ -981,8 +946,6 @@ export function SidebarNav({
           }
 
           if (group.label === 'การจัดการระบบ (Administration)') {
-            const demoItems = admin ? ADMIN_EMPLOYEE_DEMO_ITEMS : [];
-            const isDemoOpen = demoItems.some((it) => pathMatches(pathname, it.href));
             return (
               <SidebarGroup key={group.label} className="py-2">
                 <SidebarGroupLabel className="px-4 text-[9px] uppercase tracking-widest font-black text-muted-foreground/40 mb-1">
@@ -991,41 +954,6 @@ export function SidebarNav({
 
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {demoItems.length > 0 ? (
-                      <Collapsible defaultOpen={isDemoOpen} className="group">
-                        <SidebarMenuItem>
-                          <CollapsibleTrigger asChild>
-                            <SidebarMenuButton
-                              tooltip="การจัดการลูกจ้าง (Demo) — โควต้าและตารางสรุป"
-                              className="transition-all duration-200"
-                            >
-                              <Users className="h-4 w-4 text-muted-foreground" />
-                              <span className={SIDEBAR_MAIN_ITEM_TEXT}>การจัดการลูกจ้าง (Demo)</span>
-                              <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
-                            </SidebarMenuButton>
-                          </CollapsibleTrigger>
-                          <CollapsibleContent>
-                            <SidebarMenuSub>
-                              {demoItems.map((item) => {
-                                const active = pathMatches(pathname, item.href);
-                                return (
-                                  <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
-                                    <SidebarMenuSubButton asChild isActive={active} size="sm">
-                                      <Link href={item.href}>
-                                        <item.icon
-                                          className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
-                                        />
-                                        <span>{item.title}</span>
-                                      </Link>
-                                    </SidebarMenuSubButton>
-                                  </SidebarMenuSubItem>
-                                );
-                              })}
-                            </SidebarMenuSub>
-                          </CollapsibleContent>
-                        </SidebarMenuItem>
-                      </Collapsible>
-                    ) : null}
                     {restItems.map((item) => (
                       <SidebarMenuItem key={`${item.key}-${item.href}`}>
                         <SidebarMenuButton

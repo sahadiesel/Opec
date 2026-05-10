@@ -9,6 +9,7 @@ import {
   writeBatch,
   type Firestore,
   type DocumentReference,
+  type UpdateData,
 } from 'firebase/firestore';
 import type {
   APStatus,
@@ -223,7 +224,7 @@ export async function executeVendorBillPayment(params: {
         }
       : {};
 
-  let billPatch: Record<string, unknown>;
+  let billPatch: UpdateData<PurchaseVendorBill>;
 
   if (installmentPlanActive && targetInstallmentId) {
     const plan = bill.paymentInstallments!;

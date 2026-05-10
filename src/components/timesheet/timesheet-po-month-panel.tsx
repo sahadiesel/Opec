@@ -1058,7 +1058,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     const lockDisabled =
       !canEditTs ||
       submittingPoId === po.id ||
-      (r && (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'));
+      (!!r && (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'));
     const canSendToManager = canEditTs && !!r && (r.status === 'entry_locked' || r.status === 'rejected');
     const showUnlock =
       !!currentUser &&

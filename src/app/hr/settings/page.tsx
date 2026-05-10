@@ -59,12 +59,12 @@ import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { CalendarHolidayEditor } from '@/app/main-contracts/[id]/_components/calendar-holiday-editor';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  computeWorkDayEndDisplay,
   DEFAULT_MONTHLY_WORK_NORM,
   monthlyWorkNormFromUnknownConfig,
   validateMonthlyWorkNormForSave,
   type MonthlyWorkNormPolicyConfig,
 } from '@/lib/hr/monthly-work-norm-policy';
+import { MonthlyWorkNormPolicyFields } from '@/components/hr/monthly-work-norm-policy-fields';
 import type { PayrollPolicyRecord } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -207,6 +207,14 @@ export default function HrSettingsPage() {
   );
   const [breakHoursPerDay, setBreakHoursPerDay] = useState(DEFAULT_MONTHLY_WORK_NORM.breakHoursPerDay);
   const [workStartTime, setWorkStartTime] = useState(DEFAULT_MONTHLY_WORK_NORM.workStartTime);
+  const [breakStartTime, setBreakStartTime] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.breakStartTime ?? '12:00',
+  );
+  const [lateGraceMinutes, setLateGraceMinutes] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.lateGraceMinutes ?? 5,
+  );
+  /** เงินเดือนสมมุติเพื่อแสดงตัวอย่างหักรายวัน/รายนาที (ไม่บันทึก) */
+  const [absenceDemoSalary, setAbsenceDemoSalary] = useState(26000);
 
   const [workerLaborDraft, setWorkerLaborDraft] = useState<WorkerGlobalLaborContext>(() => ({
     ...DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
@@ -254,6 +262,8 @@ export default function HrSettingsPage() {
         setNormalWorkHoursPerDay(cfg.normalWorkingHoursPerDay);
         setBreakHoursPerDay(cfg.breakHoursPerDay);
         setWorkStartTime(cfg.workStartTime);
+        setBreakStartTime(cfg.breakStartTime ?? '12:00');
+        setLateGraceMinutes(cfg.lateGraceMinutes ?? 5);
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
       setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
@@ -281,17 +291,6 @@ export default function HrSettingsPage() {
   }, [load]);
 
   const pitRows = useMemo(() => pitBandsToReferenceRows(pitBands), [pitBands]);
-
-  const computedWorkEndLabel = useMemo(
-    () =>
-      computeWorkDayEndDisplay({
-        standardWorkingDaysPerMonth: workDaysPerMonth,
-        normalWorkingHoursPerDay: normalWorkHoursPerDay,
-        breakHoursPerDay: breakHoursPerDay,
-        workStartTime,
-      }),
-    [workDaysPerMonth, normalWorkHoursPerDay, breakHoursPerDay, workStartTime],
-  );
 
   const pitDemoCalc = useMemo(() => {
     const m = Math.max(0, Number(demoMonthlyGross) || 0);
@@ -389,6 +388,8 @@ export default function HrSettingsPage() {
       normalWorkingHoursPerDay: Number(normalWorkHoursPerDay),
       breakHoursPerDay: Number(breakHoursPerDay),
       workStartTime: workStartTime.trim(),
+      breakStartTime: breakStartTime?.trim() || undefined,
+      lateGraceMinutes: Math.max(0, Math.round(Number(lateGraceMinutes) || 0)),
     };
     const mwErr = validateMonthlyWorkNormForSave(monthlyWorkCfg);
     if (mwErr) {
@@ -471,6 +472,8 @@ export default function HrSettingsPage() {
           normalWorkingHoursPerDay: monthlyWorkCfg.normalWorkingHoursPerDay,
           breakHoursPerDay: monthlyWorkCfg.breakHoursPerDay,
           workStartTime: monthlyWorkCfg.workStartTime,
+          breakStartTime: monthlyWorkCfg.breakStartTime ?? '12:00',
+          lateGraceMinutes: monthlyWorkCfg.lateGraceMinutes ?? 0,
         },
         updatedAt: now,
         createdAt: mwCreated,
@@ -659,7 +662,7 @@ export default function HrSettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                <Landmark className="h-5 w-5 text-primary" /> ประกันสังคม และวันทำงานมาตรฐาน
+                <Landmark className="h-5 w-5 text-primary" /> ประกันสังคม และตั้งค่าเวลางานออฟฟิศ
               </CardTitle>
               <CardDescription>
                 ด้านบน: SSO ฝั่งลูกจ้าง — ด้านล่าง: จำนวนวันทำงานต่อเดือนและเวลาทำงานปกติ (เก็บใน{' '}
@@ -703,75 +706,29 @@ export default function HrSettingsPage() {
                 </p>
               </div>
 
-              <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
-                <p className="text-xs font-semibold text-muted-foreground tracking-wide flex items-center gap-2">
-                  <Clock className="h-4 w-4" /> นโยบายวันทำงานประจำเดือน
-                </p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label className="text-muted-foreground">วันทำงานมาตรฐานต่อเดือน (วัน)</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={31}
-                      step={1}
-                      disabled={!canEdit || loading}
-                      value={workDaysPerMonth}
-                      onChange={(e) => setWorkDaysPerMonth(Number(e.target.value))}
-                      className="font-mono max-w-[120px]"
-                    />
-                    <p className="text-[11px] text-muted-foreground leading-snug">
-                      ตัวอย่าง: 26 — เมื่อหักตามวันทำงานไม่ครบ ระบบจะใช้หารเงินเดือนด้วยค่านี้ (เมื่อรองรับใน payroll)
-                    </p>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label className="text-muted-foreground">เวลาเริ่มงาน</Label>
-                    <Input
-                      type="time"
-                      disabled={!canEdit || loading}
-                      value={workStartTime}
-                      onChange={(e) => setWorkStartTime(e.target.value)}
-                      className="font-mono max-w-[140px]"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label className="text-muted-foreground">ชั่วโมงทำงานปกติต่อวัน</Label>
-                    <Input
-                      type="number"
-                      min={0.25}
-                      max={24}
-                      step={0.25}
-                      disabled={!canEdit || loading}
-                      value={normalWorkHoursPerDay}
-                      onChange={(e) => setNormalWorkHoursPerDay(Number(e.target.value))}
-                      className="font-mono max-w-[120px]"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label className="text-muted-foreground">ชั่วโมงพักต่อวัน</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={24}
-                      step={0.25}
-                      disabled={!canEdit || loading}
-                      value={breakHoursPerDay}
-                      onChange={(e) => setBreakHoursPerDay(Number(e.target.value))}
-                      className="font-mono max-w-[120px]"
-                    />
-                  </div>
-                </div>
-                <div className="rounded-md border bg-background px-3 py-2 text-sm">
-                  <span className="text-muted-foreground">เวลาเลิกงาน (คำนวณ: เริ่ม + ชม.ทำงาน + ชม.พัก): </span>
-                  <span className="font-mono font-medium tabular-nums">
-                    {computedWorkEndLabel === '—' ? '—' : `${computedWorkEndLabel} น.`}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground flex gap-2">
-                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                  ใช้ประกอบค่าล่วงเวลา / มาสาย เมื่อระบบคำนวณต่อจากนโยบายนี้ — ค่าที่แสดงเป็นผลคำนวณเท่านั้น ไม่ต้องกรอกเอง
-                </p>
-              </div>
+              <MonthlyWorkNormPolicyFields
+                disabled={!canEdit || loading}
+                workDaysPerMonth={workDaysPerMonth}
+                onWorkDaysPerMonth={setWorkDaysPerMonth}
+                normalWorkHoursPerDay={normalWorkHoursPerDay}
+                onNormalWorkHoursPerDay={setNormalWorkHoursPerDay}
+                breakHoursPerDay={breakHoursPerDay}
+                onBreakHoursPerDay={setBreakHoursPerDay}
+                workStartTime={workStartTime}
+                onWorkStartTime={setWorkStartTime}
+                breakStartTime={breakStartTime}
+                onBreakStartTime={setBreakStartTime}
+                lateGraceMinutes={lateGraceMinutes}
+                onLateGraceMinutes={setLateGraceMinutes}
+                absenceDemoSalary={absenceDemoSalary}
+                onAbsenceDemoSalary={setAbsenceDemoSalary}
+                footerNote={
+                  <>
+                    บันทึกใน <code className="text-[11px] bg-muted px-1 rounded">payroll_policies</code> (kind=
+                    <code>monthly_work_norm</code>) — ใช้คำนวณสลิปพนักงานออฟฟิศและอัตราหักสาย/ขาด
+                  </>
+                }
+              />
             </CardContent>
           </Card>
 
@@ -868,8 +825,7 @@ export default function HrSettingsPage() {
                 </p>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                หมายเหตุ: รัน payroll ออฟฟิศ (D8) ยังคำนวณ ภงด.1 จากยอดเงินเดือน <strong>รวมก่อนหัก</strong> ประกันสังคม
-                กล่องนี้เทียบ “ฐานหลังหัก ปสง. รายเดือน” ก่อน × 12
+                หมายเหตุ: กล่องนี้เทียบ “ฐานหลังหัก ปสง. รายเดือน” ก่อน × 12 — เมื่อมีหักขาด/สาย/ลาก่อนภาษีในงวดจริง D8 จะใช้ฐานหลังหักยอดเหล่านั้นก่อนคิด ภงด.1 และ ปสง. (ตั้งค่าได้ในการ์ดเวลางานด้านล่าง)
               </p>
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-1">ภาษีหัก ณ ที่จ่าย ภงด.1 ต่อเดือน (นำส่ง)</p>
@@ -1106,6 +1062,44 @@ export default function HrSettingsPage() {
                   ...d,
                   calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
                 }))
+              }
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="border-primary/25 shadow-sm">
+          <CardHeader className="border-b bg-muted/20">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              เวลาทำงาน · การคิดสาย · ฐานวันทำงาน (พนักงานออฟฟิศ)
+            </CardTitle>
+            <CardDescription>
+              ชุดเดียวกับการ์ด &quot;ประกันสังคม และตั้งค่าเวลางานออฟฟิศ&quot; ด้านบน — แก้ที่นี่หรือด้านบนก็ได้ กดบันทึกครั้งเดียวจะเขียนไฟล์{' '}
+              <code className="text-xs bg-muted px-1 rounded">payroll_policies</code> ชุดเดียวกัน
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-6">
+            <MonthlyWorkNormPolicyFields
+              disabled={!canEdit || loading}
+              workDaysPerMonth={workDaysPerMonth}
+              onWorkDaysPerMonth={setWorkDaysPerMonth}
+              normalWorkHoursPerDay={normalWorkHoursPerDay}
+              onNormalWorkHoursPerDay={setNormalWorkHoursPerDay}
+              breakHoursPerDay={breakHoursPerDay}
+              onBreakHoursPerDay={setBreakHoursPerDay}
+              workStartTime={workStartTime}
+              onWorkStartTime={setWorkStartTime}
+              breakStartTime={breakStartTime}
+              onBreakStartTime={setBreakStartTime}
+              lateGraceMinutes={lateGraceMinutes}
+              onLateGraceMinutes={setLateGraceMinutes}
+              absenceDemoSalary={absenceDemoSalary}
+              onAbsenceDemoSalary={setAbsenceDemoSalary}
+              showThreePeriodRules
+              footerNote={
+                <>
+                  เมื่อรัน payroll หักจากเวลาสแกน/ลา (และยอดอื่นที่กำหนด) จะถูกหัก<strong className="text-foreground">ก่อน</strong>คำนวณ ภงด.1 — ประกันสังคมยังใช้ฐานเงินได้เต็มงวดตามเดิม — สะท้อนใน snapshot บรรทัดงวด
+                </>
               }
             />
           </CardContent>

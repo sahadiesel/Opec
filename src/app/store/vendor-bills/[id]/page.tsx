@@ -606,11 +606,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   /** พิมพ์ตัวอย่างหนังสือรับรองก่อนบันทึกจ่าย — ใช้วันที่/ธนาคารจากฟอร์มด้านบน (ไม่เผาเลขที่จริง) */
   const handleSubmittedPreviewWhtCertificate = async () => {
+    if (!bill) return;
     const whtPrev =
       bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID' ? withholdingAtPayout : withholdingPreview;
     const grossPrev =
       bill.status === 'SUBMITTED' || bill.status === 'PARTIALLY_PAID' ? payoutGrossInclVat : grossInclVatForBill;
-    if (!currentUser || !purchase || !bill || !vendor || !whtPrev || !(whtPrev.wht > 0.005)) {
+    if (!currentUser || !purchase || !vendor || !whtPrev || !(whtPrev.wht > 0.005)) {
       return;
     }
     if (!canPreviewVendorBillWht) return;

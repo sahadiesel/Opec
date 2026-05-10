@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/table';
 import { Loader2, UserCircle, KeyRound, Clock } from 'lucide-react';
 import { SubjectAttendanceHistory } from '@/components/attendance/subject-attendance-history';
+import { SelfLeavePanel } from '@/components/leaves/self-leave-panel';
 import { useFirestore, useCollection, useMemoFirebase, useAuth } from '@/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import {
@@ -982,13 +983,21 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="leave" className="mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">รายการลา / แบบฟอร์มลา</CardTitle>
-                  <CardDescription>เฟสถัดไป — workflow ลาอนุมัติ</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">ยังไม่มีข้อมูลในขณะนี้</CardContent>
-              </Card>
+              {linked.kind === 'office_staff' && firestore ? (
+                <SelfLeavePanel firestore={firestore} currentUser={currentUser} staff={linked.record} />
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">รายการลา / แบบฟอร์มลา</CardTitle>
+                    <CardDescription>
+                      เปิดใช้งานเฉพาะพนักงานออฟฟิศ (ทะเบียน <code className="text-xs">office_staff</code>)
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ลูกจ้างหน้างานยังไม่อยู่ในขอบเขตของระบบลา (ใช้รอบ timesheet)
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="advances" className="mt-4 space-y-4">

@@ -1,9 +1,5 @@
 import { D8_ENGINE_VERSION } from './constants';
-import {
-  fixedDeductionsFromPolicy,
-  pitFromMonthlyGross,
-  socialSecurityFromPolicy,
-} from './deductions-from-policy';
+import { fixedDeductionsFromPolicy, pitFromPolicy, socialSecurityFromPolicy } from './deductions-from-policy';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
 import type { OfficePayrollPitMode, PayrollLineD8Snapshot } from '@/lib/types';
 
@@ -19,6 +15,11 @@ export type OfficePayrollD8Input = {
   hrAllowanceItems?: Array<{ label: string; amount: number }>;
   /** หักเพิ่ม — ลงเป็น manual_ded_i ใน snapshot */
   hrDeductionItems?: Array<{ label: string; amount: number }>;
+  /**
+   * หักก่อนคำนวณ ปสง. และ ภงด.1 (เช่น ขาด/สาย/ลาไม่จ่ายที่ปรับจากเงินเดือน)
+   * — ยอดรวมจะลดฐานที่นำไปคิดประกันสังคมและภาษี และลงใน deductions ตาม code
+   */
+  preStatutoryDeductions?: Array<{ code: string; amount: number }>;
   /** false = ไม่หักประกันสังคมในงวดนี้ */
   deductSocialSecurity?: boolean;
   pitMode?: OfficePayrollPitMode;
@@ -46,23 +47,36 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
   );
   const grossPay = Math.max(0, input.baseSalary + input.allowance + input.bonus + ot + other + hrAllowanceSum);
 
+  const preStatutoryMap: Record<string, number> = {};
+  for (const row of input.preStatutoryDeductions ?? []) {
+    const code = String(row.code || '').trim() || 'pre_statutory';
+    const amt = Math.max(0, Number(row.amount) || 0);
+    if (amt <= 0) continue;
+    preStatutoryMap[code] = (preStatutoryMap[code] ?? 0) + amt;
+  }
+  const preStatutoryTotal = Object.values(preStatutoryMap).reduce((a, b) => a + b, 0);
+  const statutoryEarningsBase = Math.max(0, Math.round((grossPay - preStatutoryTotal) * 100) / 100);
+
   const deductSs = input.deductSocialSecurity !== false;
+  /** ปสง. ยังใช้ฐานเงินได้เต็มงวด (ก่อนหักขาด/สาย) — ตามที่ระบุให้หักก่อนคำนวณภาษีเท่านั้น */
   const ss = deductSs ? socialSecurityFromPolicy(grossPay, input.policies.sso) : 0;
 
   const pitMode = input.pitMode ?? 'SYSTEM';
   let pit: number;
   if (pitMode === 'MANUAL_PERCENT') {
     const p = Math.max(0, Math.min(100, Number(input.pitManualPercent) || 0));
-    pit = Math.round(((grossPay * p) / 100) * 100) / 100;
+    pit = Math.round(((statutoryEarningsBase * p) / 100) * 100) / 100;
   } else if (pitMode === 'MANUAL_AMOUNT') {
     pit = Math.max(0, Math.round((Number(input.pitManualAmountBaht) || 0) * 100) / 100);
-    if (pit > grossPay) pit = Math.round(grossPay * 100) / 100;
+    if (pit > statutoryEarningsBase) pit = Math.round(statutoryEarningsBase * 100) / 100;
   } else {
-    pit = pitFromMonthlyGross(grossPay, input.policies.tax, input.policies.sso);
+    const pitMonthlyTaxableAfterSs = Math.max(0, Math.round((statutoryEarningsBase - ss) * 100) / 100);
+    pit = pitFromPolicy(pitMonthlyTaxableAfterSs, input.policies.tax);
   }
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
   const deductionsMap: Record<string, number> = {
+    ...preStatutoryMap,
     social_security: ss,
     pit_withholding: pit,
     ...fixed,
@@ -87,6 +101,7 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
       overtime: ot,
       other_income: other,
       hr_additional_income: hrAllowanceSum,
+      ...(preStatutoryTotal > 0 ? { pre_statutory_deductions_total: preStatutoryTotal } : {}),
     },
     gross: grossPay,
     deductions: deductionsMap,

@@ -9,7 +9,7 @@
  *   npm run migrate:po-active-auto-daily -- --credentials=C:\\path\\service.json
  */
 
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, getApps, initializeApp, type ServiceAccount } from 'firebase-admin/app';
 import {
   FieldPath,
   getFirestore,
@@ -97,7 +97,7 @@ function initFirebaseAdminFromServiceAccountJson(path: string, projectId: string
   }
   const pid = projectId || (typeof parsed.project_id === 'string' ? parsed.project_id : undefined);
   initializeApp({
-    credential: cert(parsed),
+    credential: cert(parsed as ServiceAccount),
     ...(pid ? { projectId: pid } : {}),
   });
 }

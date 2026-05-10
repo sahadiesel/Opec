@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc, type UpdateData } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canApprovePurchaseAsManager } from '@/lib/permissions';
 import type {
@@ -234,7 +234,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     return true;
   };
 
-  const persistDocAndLines = async (patch: Record<string, unknown>) => {
+  const persistDocAndLines = async (patch: UpdateData<PurchaseRequest>) => {
     if (!firestore || !prRef) return;
     await updateDoc(prRef, patch);
     await replacePurchaseRequestLines(
@@ -273,9 +273,9 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
       await persistDocAndLines({
         title: title.trim(),
-        notes: notes.trim() || null,
-        vendorId: vendorId || null,
-        needByDate: needByDate || null,
+        notes: notes.trim() || undefined,
+        vendorId: vendorId || undefined,
+        needByDate: needByDate || undefined,
         estimatedAmount: totals.totalAmount,
         amountBeforeTax: totals.amountBeforeTax,
         vatAmount: totals.vatAmount,
@@ -284,7 +284,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         vatTreatment,
         purchasePaymentType,
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
-        paymentMilestoneDrafts: milestonePayload,
+        paymentMilestoneDrafts: milestonePayload ?? undefined,
         updatedAt: Date.now(),
       });
       toast({ title: 'บันทึกแล้ว' });
@@ -318,9 +318,9 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
       await persistDocAndLines({
         title: title.trim(),
-        notes: notes.trim() || null,
+        notes: notes.trim() || undefined,
         vendorId,
-        needByDate: needByDate || null,
+        needByDate: needByDate || undefined,
         estimatedAmount: totals.totalAmount,
         amountBeforeTax: totals.amountBeforeTax,
         vatAmount: totals.vatAmount,
@@ -329,7 +329,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         vatTreatment,
         purchasePaymentType,
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
-        paymentMilestoneDrafts: milestonePayload,
+        paymentMilestoneDrafts: milestonePayload ?? undefined,
         status: 'PENDING_APPROVAL' as PurchaseRequestStatus,
         submittedAt: now,
         updatedAt: now,
@@ -522,7 +522,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
             </div>
 
             {draftEditable ? (
-              <VendorSearchSelect vendors={vendors} value={vendorId} onChange={setVendorId} disabled={saving} />
+              <VendorSearchSelect vendors={vendors ?? undefined} value={vendorId} onChange={setVendorId} disabled={saving} />
             ) : (
               <div>
                 <Label>คู่ค้า (เสนอ)</Label>

@@ -14,9 +14,19 @@ import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { canAccessHrAttendanceKioskPages } from '@/lib/navigation/nav-access';
+import {
+  canSubmitAttendanceCorrectionRequest,
+} from '@/lib/permissions';
 import type { User } from '@/lib/types';
-import { ATTENDANCE_PUNCHES_COLLECTION } from '@/lib/attendance/constants';
-import type { AttendancePunchDoc, AttendanceSubjectType } from '@/lib/attendance/types';
+import {
+  ATTENDANCE_PUNCHES_COLLECTION,
+  ATTENDANCE_DAY_OVERRIDES_COLLECTION,
+} from '@/lib/attendance/constants';
+import type {
+  AttendancePunchDoc,
+  AttendanceSubjectType,
+  AttendanceDayOverrideDoc,
+} from '@/lib/attendance/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -34,10 +44,22 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ExternalLink,
   Loader2,
 } from 'lucide-react';
-import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE } from '@/lib/date-thai';
+import { cn } from '@/lib/utils';
+import {
+  enumerateYmDsForMonth,
+  bangkokIsoWeekdayFromYmd,
+  formatBangkokHmFromUtcMs,
+  isBangkokWeekendYmd,
+} from '@/lib/attendance/bangkok-calendar';
+import { countBangkokWorkingDaysInMonth, isThaiPublicHolidayYmd } from '@/lib/calendar/thailand-public-holidays';
+import {
+  buildAttendanceDayRows,
+  countDaysWithEffectiveRecord,
+} from '@/lib/attendance/correction-merge';
+import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
 
 type SubjectKey = `${AttendanceSubjectType}:${string}`;
 
@@ -45,8 +67,8 @@ function subjectKey(subjectType: AttendanceSubjectType, subjectId: string): Subj
   return `${subjectType}:${subjectId}`;
 }
 
-function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<SubjectKey, AttendancePunchDoc[]> {
-  const m = new Map<SubjectKey, AttendancePunchDoc[]>();
+function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<SubjectKey, (AttendancePunchDoc & { id: string })[]> {
+  const m = new Map<SubjectKey, (AttendancePunchDoc & { id: string })[]>();
   for (const r of rows) {
     const k = subjectKey(r.subjectType, r.subjectId);
     const arr = m.get(k) ?? [];
@@ -59,6 +81,24 @@ function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<S
   return m;
 }
 
+function dayKindBadges(ymd: string) {
+  const tags: string[] = [];
+  if (isThaiPublicHolidayYmd(ymd)) tags.push('วันหยุดนักขัตฤกษ์');
+  const iso = bangkokIsoWeekdayFromYmd(ymd);
+  if (iso === 7) tags.push('วันอาทิตย์');
+  else if (iso === 6) tags.push('วันเสาร์');
+  if (tags.length === 0) return <span className="text-muted-foreground text-xs">วันทำงาน</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {tags.map((t) => (
+        <Badge key={t} variant="outline" className="text-[10px] font-normal">
+          {t}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 export default function HrAttendanceManagePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
@@ -66,14 +106,35 @@ export default function HrAttendanceManagePage() {
   const [search, setSearch] = useState('');
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
 
+  const [corrOpen, setCorrOpen] = useState(false);
+  const [corrCtx, setCorrCtx] = useState<{
+    subjectType: AttendanceSubjectType;
+    subjectId: string;
+    subjectNameSnapshot: string;
+    workDateYmd: string;
+    previousInAtMs: number | null;
+    previousOutAtMs: number | null;
+    previousInPunchId: string | null;
+    previousOutPunchId: string | null;
+  } | null>(null);
+
   const range = useMemo(() => {
     const startMs = viewMonth.getTime();
     const endExclusiveMs = addMonths(viewMonth, 1).getTime();
     return { startMs, endExclusiveMs };
   }, [viewMonth]);
 
+  const payrollMonth = format(viewMonth, 'yyyy-MM');
+  const ymDs = useMemo(() => enumerateYmDsForMonth(viewMonth), [viewMonth]);
+  const workingDaysInCalendarMonth = useMemo(() => countBangkokWorkingDaysInMonth(ymDs), [ymDs]);
+
   const canUse = useMemo(
     () => !!currentUser && canAccessHrAttendanceKioskPages(currentUser as User, null),
+    [currentUser],
+  );
+
+  const canRequestCorrection = useMemo(
+    () => canSubmitAttendanceCorrectionRequest(currentUser),
     [currentUser],
   );
 
@@ -90,24 +151,57 @@ export default function HrAttendanceManagePage() {
   const { data: punchRows, isLoading: punchesLoading, error: punchesError } =
     useCollection<AttendancePunchDoc>(punchesQuery as any);
 
+  const overridesQuery = useMemoFirebase(() => {
+    if (!firestore || !canUse) return null;
+    return query(
+      collection(firestore as Firestore, ATTENDANCE_DAY_OVERRIDES_COLLECTION),
+      where('payrollMonth', '==', payrollMonth),
+    );
+  }, [firestore, canUse, payrollMonth]);
+
+  const { data: overrideRows } = useCollection<AttendanceDayOverrideDoc>(overridesQuery as any);
+
   const grouped = useMemo(() => groupBySubject((punchRows ?? []) as any), [punchRows]);
+
+  const overridesBySubject = useMemo(() => {
+    const m = new Map<SubjectKey, AttendanceDayOverrideDoc[]>();
+    for (const o of overrideRows ?? []) {
+      const k = o.subjectKey as SubjectKey;
+      const arr = m.get(k) ?? [];
+      arr.push(o);
+      m.set(k, arr);
+    }
+    return m;
+  }, [overrideRows]);
 
   const summaryRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const entries = [...grouped.entries()].map(([key, punches]) => {
       const name = punches[0]?.subjectNameSnapshot ?? key;
-      const inCount = punches.filter((p) => p.direction === 'IN').length;
-      const outCount = punches.filter((p) => p.direction === 'OUT').length;
-      const last = punches[0];
-      return { key, name, punches, inCount, outCount, last };
+      const subjectOverrides = overridesBySubject.get(key) ?? [];
+      const dayRows = buildAttendanceDayRows(ymDs, punches as AttendancePunchDoc[], subjectOverrides);
+      const daysRecorded = countDaysWithEffectiveRecord(dayRows);
+      return {
+        key,
+        name,
+        punches: punches as (AttendancePunchDoc & { id: string })[],
+        dayRows,
+        daysRecorded,
+        workingDaysInCalendarMonth,
+      };
     });
     entries.sort((a, b) => a.name.localeCompare(b.name, 'th'));
     if (!q) return entries;
     return entries.filter((r) => r.name.toLowerCase().includes(q));
-  }, [grouped, search]);
+  }, [grouped, search, ymDs, overridesBySubject, workingDaysInCalendarMonth]);
 
   const toggleOpen = (key: string) => {
     setOpenRows((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const openCorrection = (ctx: NonNullable<typeof corrCtx>) => {
+    setCorrCtx(ctx);
+    setCorrOpen(true);
   };
 
   if (userLoading || !currentUser) {
@@ -143,7 +237,7 @@ export default function HrAttendanceManagePage() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-primary">จัดการการลงเวลา</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                สรุปการลงเวลาผ่าน Kiosk (QR) รายเดือน — พนักงานที่มีบันทึกในเดือนที่เลือก
+                สรุปการลงเวลาผ่าน Kiosk (QR) รายเดือน — แสดงทุกวันในปฏิทิน (รวมวันหยุด) และการขอแก้ไขเวลาหลังอนุมัติจากผู้จัดการ
               </p>
             </div>
           </div>
@@ -182,11 +276,11 @@ export default function HrAttendanceManagePage() {
           <CardHeader className="border-b bg-muted/20">
             <CardTitle className="text-lg">สรุปรายเดือน</CardTitle>
             <CardDescription>
-              ค้นหาชื่อพนักงาน — ขยายแถวเพื่อดูบันทึกเข้า/ออกทั้งหมดในเดือน
+              วันทำงานตามปฏิทิน = จันทร์–ศุกร์ ไม่รวมเสาร์–อาทิตย์และวันหยุดนักขัตฤกษ์ (รายการประกาศในระบบ) · วันมีบันทึก = มีเวลาเข้าและ/หรือออกที่ใช้จริง (รวมหลังแก้ไขที่อนุมัติแล้ว)
             </CardDescription>
             <div className="pt-2 max-w-md">
               <Input
-                placeholder="Search employee…"
+                placeholder="ค้นหาชื่อพนักงาน…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 aria-label="ค้นหาพนักงาน"
@@ -216,21 +310,14 @@ export default function HrAttendanceManagePage() {
                   <TableRow>
                     <TableHead className="w-10" />
                     <TableHead>พนักงาน</TableHead>
-                    <TableHead className="text-right">ครั้งเข้า (IN)</TableHead>
-                    <TableHead className="text-right">ครั้งออก (OUT)</TableHead>
-                    <TableHead>ลงเวลาล่าสุด</TableHead>
-                    <TableHead className="w-24 text-right">โปรไฟล์</TableHead>
+                    <TableHead className="text-right">วันทำงานตามปฏิทิน</TableHead>
+                    <TableHead className="text-right">วันที่มีบันทึกเวลา</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {summaryRows.map((row) => {
                     const colon = row.key.indexOf(':');
                     const st = row.key.slice(0, colon) as AttendanceSubjectType;
-                    const sid = row.key.slice(colon + 1);
-                    const href =
-                      st === 'office_staff'
-                        ? `/office-staff/${sid}?tab=attendance`
-                        : `/workers/${sid}?tab=monthly_timesheet`;
                     const isOpen = !!openRows[row.key];
                     return (
                       <Fragment key={row.key}>
@@ -257,45 +344,97 @@ export default function HrAttendanceManagePage() {
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-right align-top tabular-nums">{row.inCount}</TableCell>
-                          <TableCell className="text-right align-top tabular-nums">{row.outCount}</TableCell>
-                          <TableCell className="align-top text-sm text-muted-foreground whitespace-nowrap">
-                            {row.last ? formatDateTimeThaiBE(row.last.punchedAt) : '—'}
+                          <TableCell className="text-right align-top tabular-nums">
+                            {row.workingDaysInCalendarMonth}
                           </TableCell>
-                          <TableCell className="text-right align-top">
-                            <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
-                              <Link href={href}>
-                                <ExternalLink className="h-3.5 w-3.5" /> เปิด
-                              </Link>
-                            </Button>
-                          </TableCell>
+                          <TableCell className="text-right align-top tabular-nums">{row.daysRecorded}</TableCell>
                         </TableRow>
                         {isOpen && (
                           <TableRow className="bg-muted/10 hover:bg-muted/10 border-b">
-                            <TableCell colSpan={6} className="p-3">
+                            <TableCell colSpan={4} className="p-3">
                               <Table>
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead>วันเวลา</TableHead>
-                                    <TableHead>การกระทำ</TableHead>
+                                    <TableHead className="w-[140px]">วันที่</TableHead>
+                                    <TableHead>ประเภทวัน</TableHead>
+                                    <TableHead className="whitespace-nowrap">เข้างาน</TableHead>
+                                    <TableHead className="whitespace-nowrap">ออกงาน</TableHead>
+                                    <TableHead className="w-[120px] text-right">จัดการ</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {row.punches.map((p, idx) => (
-                                    <TableRow key={`${row.key}-${p.punchedAt}-${p.direction}-${idx}`}>
-                                      <TableCell className="font-mono text-sm whitespace-nowrap">
-                                        {formatDateTimeThaiBE(p.punchedAt)}
-                                      </TableCell>
-                                      <TableCell>
-                                        <Badge
-                                          variant={p.direction === 'IN' ? 'default' : 'secondary'}
-                                          className="font-normal"
-                                        >
-                                          {p.direction === 'IN' ? 'เข้างาน (IN)' : 'ออกงาน (OUT)'}
-                                        </Badge>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
+                                  {row.dayRows.map((d) => {
+                                    const weekendOrHol =
+                                      isBangkokWeekendYmd(d.ymd) || isThaiPublicHolidayYmd(d.ymd);
+                                    return (
+                                      <TableRow
+                                        key={d.ymd}
+                                        className={cn(
+                                          weekendOrHol && 'bg-muted/40',
+                                          d.override && 'border-l-2 border-l-primary',
+                                        )}
+                                      >
+                                        <TableCell className="font-mono text-sm whitespace-nowrap align-top">
+                                          {formatDateThaiBE(d.ymd)}
+                                        </TableCell>
+                                        <TableCell className="align-top">{dayKindBadges(d.ymd)}</TableCell>
+                                        <TableCell className="font-mono text-sm align-top">
+                                          {d.effectiveInMs != null ? (
+                                            <span>
+                                              {formatBangkokHmFromUtcMs(d.effectiveInMs)}
+                                              {d.override ? (
+                                                <Badge variant="secondary" className="ml-2 text-[9px]">
+                                                  หลังแก้
+                                                </Badge>
+                                              ) : null}
+                                            </span>
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-sm align-top">
+                                          {d.effectiveOutMs != null ? (
+                                            <span>
+                                              {formatBangkokHmFromUtcMs(d.effectiveOutMs)}
+                                              {d.override ? (
+                                                <Badge variant="secondary" className="ml-2 text-[9px]">
+                                                  หลังแก้
+                                                </Badge>
+                                              ) : null}
+                                            </span>
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="text-right align-top">
+                                          {canRequestCorrection ? (
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-8"
+                                              onClick={() =>
+                                                openCorrection({
+                                                  subjectType: st,
+                                                  subjectId: row.key.slice(colon + 1),
+                                                  subjectNameSnapshot: row.name,
+                                                  workDateYmd: d.ymd,
+                                                  previousInAtMs: d.effectiveInMs,
+                                                  previousOutAtMs: d.effectiveOutMs,
+                                                  previousInPunchId: d.rawFirstIn?.id ?? null,
+                                                  previousOutPunchId: d.rawLastOut?.id ?? null,
+                                                })
+                                              }
+                                            >
+                                              ขอแก้ไข
+                                            </Button>
+                                          ) : (
+                                            <span className="text-[11px] text-muted-foreground">—</span>
+                                          )}
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
                                 </TableBody>
                               </Table>
                             </TableCell>
@@ -316,6 +455,27 @@ export default function HrAttendanceManagePage() {
           </Button>
         </div>
       </div>
+
+      {corrCtx && currentUser ? (
+        <AttendanceCorrectionRequestDialog
+          open={corrOpen}
+          onOpenChange={(v) => {
+            setCorrOpen(v);
+            if (!v) setCorrCtx(null);
+          }}
+          firestore={firestore}
+          currentUser={currentUser as User}
+          subjectType={corrCtx.subjectType}
+          subjectId={corrCtx.subjectId}
+          subjectNameSnapshot={corrCtx.subjectNameSnapshot}
+          payrollMonth={payrollMonth}
+          workDateYmd={corrCtx.workDateYmd}
+          previousInAtMs={corrCtx.previousInAtMs}
+          previousOutAtMs={corrCtx.previousOutAtMs}
+          previousInPunchId={corrCtx.previousInPunchId}
+          previousOutPunchId={corrCtx.previousOutPunchId}
+        />
+      ) : null}
     </AppShell>
   );
 }

@@ -278,7 +278,7 @@ export default function StorePpeCatalogPage() {
           colRef,
           sanitizeFirestorePayload({
             itemCode,
-            itemName: newItem.itemName.trim(),
+            itemName: (newItem.itemName ?? '').trim(),
             variantSpecification: '',
             variantGroupKey: gk,
             catalogGroupRole: 'header',
