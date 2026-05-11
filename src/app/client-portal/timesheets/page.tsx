@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { assignmentReadyForWaveTimesheet } from '@/lib/constants/timesheet-ui';
 import { isAssignmentActiveOnWaveRoster } from '@/lib/ops/assignment-roster';
@@ -55,7 +55,7 @@ type ApprovedPoMonthRow = {
 };
 
 export default function ClientPortalTimesheetHubPage() {
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { t, locale } = usePortalLocale();
 

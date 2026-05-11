@@ -4,21 +4,20 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { isClient } from '@/lib/permissions';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 
 /**
  * ฉบับ DRAFT ใบกำกับ — ลูกค้า **ไม่** เปิดดูใน portal (ตรวจ/กดออกฉบับจริงฝั่ง OPEC เท่านั้น)
  */
 export default function ClientTaxDraftInvoiceUnpublishedPage() {
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const { locale } = usePortalLocale();
   const en = locale === 'en';
 
   if (userLoading) return <p className="text-sm text-muted-foreground">…</p>;
 
-  if (!currentUser || !isClient(currentUser)) {
+  if (!currentUser || !canAccessPortal) {
     return <p className="text-sm text-muted-foreground">{en ? 'Portal only.' : 'เฉพาะพอร์ทัล'}</p>;
   }
 

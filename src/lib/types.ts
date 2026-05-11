@@ -277,6 +277,11 @@ export interface User {
   allowedModules?: string[];
   portalRole?: 'approver' | 'viewer';
   customerId?: string | null;
+  /**
+   * Client portal session overlay only (not stored on Firestore): system admin previewing this customer's portal.
+   * When set and matches customerId, CustomerQueryService scopes queries like a portal user.
+   */
+  portalActingCustomerId?: string;
 
   // LEGACY / TRANSITIONAL ONLY — DO NOT EXPAND (kept for Firestore + UI until accessGroup migration)
   /** @deprecated Legacy authorization — replace with FUTURE PRIMARY ACCESS MODEL. */
@@ -1626,6 +1631,8 @@ export interface CommercialInvoiceLine {
   quantity: number;
   unitPrice: number;
   amount: number;
+  /** ลำดับแสดงบนใบเรียกเก็บ/ใบกำกับ (0-based) — ตรงกับ BillingNoteLine.displayOrder เมื่อสร้างชุดภาษี */
+  displayOrder?: number;
   /** จาก timesheet อัตโนมัติ vs ปรับยอดด้วยมือ (ส่วนลด/เพิ่ม) vs รายการ PO vs รายการใบเสนอราคา */
   lineSource?: 'timesheet' | 'manual' | 'po_line' | 'quotation_line';
 }

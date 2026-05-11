@@ -60,6 +60,7 @@ import {
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
+import { runPortalParityBackfillForPoMonth } from '@/lib/timesheet/portal-parity-backfill';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -243,6 +244,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   const [uploadingMonthlyPhoto, setUploadingMonthlyPhoto] = useState(false);
   const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
   const [payrollSyncBusy, setPayrollSyncBusy] = useState(false);
+  const [portalParityBusy, setPortalParityBusy] = useState(false);
   const [submitDialogPo, setSubmitDialogPo] = useState<PurchaseOrder | null>(null);
   const [submitQ1, setSubmitQ1] = useState(false);
   const [submitQ2, setSubmitQ2] = useState(false);
@@ -793,6 +795,33 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       setPayrollSyncBusy(false);
     }
   }, [firestore, currentUser, canEditTs, monthYm, toast]);
+
+  const runPortalParityForToolbarPo = useCallback(async () => {
+    if (!firestore || !toolbarTargetPo || !/^\d{4}-\d{2}$/.test(monthYm) || !canEditTs) return;
+    const label = toolbarTargetPo.poCode || toolbarTargetPo.id;
+    if (
+      !window.confirm(
+        `ซิงก์ customerId / purchaseOrderId บน mobilizations และ daily_timesheets ของ PO ${label} งวด ${monthYm} เพื่อให้พอร์ทัลลูกค้าแสดงครบ (ชุด legacy จาก flow เดิม)?`,
+      )
+    )
+      return;
+    setPortalParityBusy(true);
+    try {
+      const r = await runPortalParityBackfillForPoMonth(firestore, toolbarTargetPo.id, monthYm);
+      toast({
+        title: 'ซิงก์ข้อมูลพอร์ทัลแล้ว',
+        description: `Mobilizations อัปเดต ${r.mobilizationsUpdated}/${r.mobilizationsScanned} · แถวรายวัน ${r.dailySheetsUpdated}/${r.dailySheetsScanned}`,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ซิงก์พอร์ทัลไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPortalParityBusy(false);
+    }
+  }, [firestore, toolbarTargetPo, monthYm, canEditTs, toast]);
 
   const appendPhoto = useCallback(
     async (po: PurchaseOrder, file: File) => {
@@ -1393,6 +1422,22 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           </Button>
           <Button variant="outline" asChild>
             <Link href="/hr/timesheet-month-approval">คิวอนุมัติ (Manager)</Link>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-1 border-amber-600/40 text-amber-950 dark:text-amber-100"
+            title="เติม customerId / PO ใน mobilizations และ daily_timesheets ให้พอร์ทัลอ่านได้ครบ (ข้อมูลเก่า)"
+            disabled={
+              !canEditTs ||
+              portalParityBusy ||
+              !toolbarTargetPo ||
+              !/^\d{4}-\d{2}$/.test(monthYm)
+            }
+            onClick={() => void runPortalParityForToolbarPo()}
+          >
+            {portalParityBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            ซิงก์ให้พอร์ทัล (legacy)
           </Button>
         </div>
 

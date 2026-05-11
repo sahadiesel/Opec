@@ -9,7 +9,6 @@ import {
   Clock,
   FileEdit,
   ChevronRight,
-  AlertCircle,
   Wallet,
   Waves,
   FileSignature,
@@ -19,8 +18,7 @@ import { collection, query, where, orderBy } from 'firebase/firestore';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import type { CommercialInvoice, Quotation } from '@/lib/types';
 import { QUOTATION_PORTAL_VISIBLE_STATUSES } from '@/lib/types';
-import { isClient } from '@/lib/permissions';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import type { LucideIcon } from 'lucide-react';
@@ -35,11 +33,9 @@ const TILES: { id: string; href: string; key: PortalDictKey; icon: LucideIcon }[
 ];
 
 export default function ClientDashboardPage() {
-  const { currentUser, isLoading: appUserLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading, canAccessPortal } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { t } = usePortalLocale();
-
-  const isClientUser = useMemo(() => isClient(currentUser), [currentUser]);
 
   const queryService = useMemo(() => (firestore ? new CustomerQueryService(firestore) : null), [firestore]);
 
@@ -87,17 +83,7 @@ export default function ClientDashboardPage() {
     [customerQuotations],
   );
 
-  if (appUserLoading || !currentUser) return null;
-
-  if (!isClientUser) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-white py-16 text-center dark:border-zinc-800 dark:bg-zinc-900/50">
-        <AlertCircle className="mb-3 h-10 w-10 text-amber-500" />
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{t('accessRestricted')}</h2>
-        <p className="mt-1 max-w-sm text-sm text-zinc-500">{t('portalOnly')}</p>
-      </div>
-    );
-  }
+  if (appUserLoading || !currentUser || !canAccessPortal) return null;
 
   const activeWaves = waves?.filter((w: { status: string }) => w.status === 'ACTIVE').length ?? 0;
 

@@ -278,46 +278,46 @@ export function PoQuotaQueueTable({
 
   return (
     <div className="w-full min-w-0">
-      <Table className="w-full min-w-[960px] table-fixed">
+      <Table className="w-full min-w-[920px] table-fixed">
         <TableHeader className="bg-muted/40">
           <TableRow>
-            <TableHead className="pl-4 sm:pl-6 font-bold w-[28%] min-w-[12rem]">
+            <TableHead className="pl-4 sm:pl-6 font-bold w-[27%] min-w-[11rem]">
               PO Active / ลูกค้า
             </TableHead>
-            <TableHead className="font-bold hidden md:table-cell w-[16%] min-w-[6rem]">
+            <TableHead className="font-bold hidden md:table-cell w-[15%] min-w-[5.5rem]">
               ลูกค้า
             </TableHead>
             <TableHead
-              className="text-center font-bold w-[8%] min-w-[3.5rem] px-1 tabular-nums"
+              className="text-center font-bold w-[6%] min-w-[2.25rem] px-0.5 tabular-nums text-[11px] sm:text-xs"
               title="โควต้าตามบรรทัด PO"
             >
               โควต้า
             </TableHead>
             <TableHead
-              className="text-center font-bold w-[8%] min-w-[3.5rem] px-1 tabular-nums"
+              className="text-center font-bold w-[6%] min-w-[2.25rem] px-0.5 tabular-nums text-[11px] sm:text-xs"
               title="จองโควต้าแล้ว (ยังไม่ถอน / ไม่ปิดรายการ)"
             >
               มอบหมาย
             </TableHead>
             <TableHead
-              className={`${Q_STATUS_HEAD_L} w-[10%] min-w-[4rem] px-1 text-[11px] leading-tight sm:text-xs tabular-nums`}
+              className={`${Q_STATUS_HEAD_L} w-[7%] min-w-[2.5rem] px-0.5 text-[10px] leading-tight sm:text-[11px] tabular-nums`}
               title="ขึ้นไซต์และเริ่มงานแล้ว (บันทึกวันเริ่มงาน / เริ่มงานแล้ว / ACTIVE)"
             >
               On-site
             </TableHead>
             <TableHead
-              className={`${Q_STATUS_HEAD_M} w-[10%] min-w-[4rem] px-1 text-[11px] leading-tight sm:text-xs tabular-nums`}
+              className={`${Q_STATUS_HEAD_M} w-[7%] min-w-[2.5rem] px-0.5 text-[10px] leading-tight sm:text-[11px] tabular-nums`}
               title="จองโควต้าแล้วแต่ยังรอ mobilization หรือยังไม่เริ่มงานบนไซต์"
             >
               Standby
             </TableHead>
             <TableHead
-              className={`${Q_STATUS_HEAD_R} w-[10%] min-w-[4rem] px-1 tabular-nums`}
+              className={`${Q_STATUS_HEAD_R} w-[7%] min-w-[2.5rem] px-0.5 tabular-nums text-[11px] sm:text-xs`}
               title="โควต้าที่ยังว่างจากโควต้ารวม"
             >
               โควต้าว่าง
             </TableHead>
-            <TableHead className="text-right pr-4 sm:pr-6 font-bold w-[10%] min-w-[8rem]">
+            <TableHead className="text-right pr-4 sm:pr-6 font-bold w-[25%] min-w-[11.5rem]">
               ดำเนินการ
             </TableHead>
           </TableRow>
@@ -363,29 +363,40 @@ export function PoQuotaQueueTable({
                 <TableCell className="hidden md:table-cell text-sm text-muted-foreground max-w-[180px]">
                   {cust?.name ?? '—'}
                 </TableCell>
-                <TableCell className="text-center font-semibold tabular-nums px-1">{totals.required}</TableCell>
-                <TableCell className="text-center tabular-nums px-1">{totals.assigned}</TableCell>
-                <TableCell className={`${Q_STATUS_CELL_L} tabular-nums py-4 align-middle`}>
+                <TableCell className="text-center font-semibold tabular-nums px-0.5 text-sm">
+                  {totals.required}
+                </TableCell>
+                <TableCell className="text-center tabular-nums px-0.5 text-sm">{totals.assigned}</TableCell>
+                <TableCell className={`${Q_STATUS_CELL_L} tabular-nums px-0.5 py-3 align-middle text-sm`}>
                   <span className="font-semibold text-emerald-800">{totals.onSite}</span>
                 </TableCell>
-                <TableCell className={`${Q_STATUS_CELL_M} tabular-nums py-4 align-middle`}>
+                <TableCell className={`${Q_STATUS_CELL_M} tabular-nums px-0.5 py-3 align-middle text-sm`}>
                   <span className="font-semibold text-sky-800">{totals.onStandby}</span>
                 </TableCell>
-                <TableCell className={`${Q_STATUS_CELL_R} px-1 py-4 align-middle`}>
-                  <Badge className="bg-amber-100 text-amber-900 border-amber-200 font-bold tabular-nums">
+                <TableCell className={`${Q_STATUS_CELL_R} px-0.5 py-3 align-middle`}>
+                  <Badge className="bg-amber-100 text-amber-900 border-amber-200 font-bold tabular-nums text-xs px-1.5 py-0">
                     {totals.openSlots}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-right pr-4 sm:pr-6 py-4">
-                  <div className="flex flex-col items-end gap-1">
-                    <Button size="sm" className="h-8 text-xs font-semibold" asChild>
+                <TableCell className="text-right pr-4 sm:pr-6 py-4 align-middle">
+                  <div className="flex flex-col items-stretch gap-1 min-w-0">
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs font-semibold whitespace-nowrap justify-center"
+                      asChild
+                    >
                       <Link href={assignHref}>
-                        มอบหมาย (Assign) <ChevronRight className="h-3 w-3 ml-0.5" />
+                        มอบหมาย (Assign) <ChevronRight className="h-3 w-3 ml-0.5 shrink-0" />
                       </Link>
                     </Button>
-                    <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs whitespace-nowrap justify-center"
+                      asChild
+                    >
                       <Link href={secondaryHref}>
-                        {secondaryLabel} <ChevronRight className="h-3 w-3 ml-0.5" />
+                        {secondaryLabel} <ChevronRight className="h-3 w-3 ml-0.5 shrink-0" />
                       </Link>
                     </Button>
                   </div>
@@ -394,33 +405,36 @@ export function PoQuotaQueueTable({
               <TableRow key={`${bundleKey}-lines`} className="border-b-2">
                 <TableCell colSpan={8} className="p-0 bg-muted/15">
                   <div className="px-3 py-3 sm:px-4 md:pl-8 w-full min-w-0 overflow-x-auto">
-                    <Table className="w-full min-w-[720px] table-fixed">
+                    <Table className="w-full min-w-[680px] table-fixed">
                       <TableHeader className="bg-transparent">
                         <TableRow className="hover:bg-transparent border-0">
-                          <TableHead className="text-[11px] h-9 w-[13%]">PO</TableHead>
-                          <TableHead className="text-[11px] h-9 w-[26%]">ตำแหน่ง</TableHead>
-                          <TableHead className="text-[11px] h-9 hidden sm:table-cell w-[11%]">
+                          <TableHead className="text-[11px] h-9 w-[16%]">PO</TableHead>
+                          <TableHead className="text-[11px] h-9 w-[32%]">ตำแหน่ง</TableHead>
+                          <TableHead className="text-[11px] h-9 hidden sm:table-cell w-[14%]">
                             สถานที่
                           </TableHead>
-                          <TableHead className="text-[11px] h-9 text-center w-[9%] px-1">
+                          <TableHead className="text-[11px] h-9 text-center w-[7%] px-0.5">
                             โควต้า
                           </TableHead>
-                          <TableHead className="text-[11px] h-9 text-center w-[9%] px-1">
+                          <TableHead className="text-[11px] h-9 text-center w-[7%] px-0.5">
                             มอบหมาย
                           </TableHead>
                           <TableHead
-                            className={`${Q_STATUS_SUB_HEAD_L} w-[10%] px-1 leading-tight`}
+                            className={`${Q_STATUS_SUB_HEAD_L} w-[8%] px-0.5 leading-tight text-[10px]`}
                             title="ขึ้นไซต์และเริ่มงานแล้ว"
                           >
                             On-site
                           </TableHead>
                           <TableHead
-                            className={`${Q_STATUS_SUB_HEAD_M} w-[10%] px-1 leading-tight`}
+                            className={`${Q_STATUS_SUB_HEAD_M} w-[8%] px-0.5 leading-tight text-[10px]`}
                             title="รอ mobilization / ยังไม่เริ่มงานบนไซต์"
                           >
                             Standby
                           </TableHead>
-                          <TableHead className={`${Q_STATUS_SUB_HEAD_R} w-[10%] px-1`} title="โควต้าที่ยังว่าง">
+                          <TableHead
+                            className={`${Q_STATUS_SUB_HEAD_R} w-[8%] px-0.5 text-[10px]`}
+                            title="โควต้าที่ยังว่าง"
+                          >
                             โควต้าว่าง
                           </TableHead>
                         </TableRow>
@@ -438,10 +452,10 @@ export function PoQuotaQueueTable({
                               <TableCell className="py-2 text-xs text-muted-foreground max-w-[140px] hidden sm:table-cell">
                                 {(row.workLocation || '').trim() || '—'}
                               </TableCell>
-                              <TableCell className="py-2 text-center text-sm tabular-nums px-1">
+                              <TableCell className="py-2 text-center text-sm tabular-nums px-0.5">
                                 {row.requiredQty}
                               </TableCell>
-                              <TableCell className="py-2 text-center text-sm tabular-nums px-1">
+                              <TableCell className="py-2 text-center text-sm tabular-nums px-0.5">
                                 {row.assignedCount}
                               </TableCell>
                               <TableCell className={`${Q_STATUS_SUB_CELL_L} py-2 text-sm tabular-nums text-emerald-800 font-medium`}>

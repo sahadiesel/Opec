@@ -1,39 +1,32 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use } from 'react';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type {
-  User,
   Worker,
   WorkerCertificate,
   WorkerMedicalRecord,
   WorkerDrugTest,
   WorkerDocument,
 } from '@/lib/types';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
-import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 
 export default function ClientWorkerDocumentsPage({ params }: { params: Promise<{ workerId: string }> }) {
   const { workerId } = use(params);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  useUser();
+  const { effectiveUser: currentUser, canAccessPortal, appUserLoading } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { locale } = usePortalLocale();
 
-  useEffect(() => {
-    const raw = localStorage.getItem('opsflow_user');
-    if (raw) setCurrentUser(JSON.parse(raw));
-  }, []);
-
-  const ready = Boolean(firestore && currentUser && isClient(currentUser));
+  const ready = Boolean(firestore && currentUser && canAccessPortal);
 
   const workerRef = useMemoFirebase(() => (ready ? doc(firestore!, 'workers', workerId) : null), [firestore, workerId, ready]);
   const { data: worker, error: workerErr } = useDoc<Worker>(workerRef as any);
@@ -62,7 +55,11 @@ export default function ClientWorkerDocumentsPage({ params }: { params: Promise<
   );
   const { data: wdocs } = useCollection<WorkerDocument>(docsQ as any);
 
-  if (!currentUser || !isClient(currentUser)) {
+  if (appUserLoading) {
+    return <p className="text-sm text-muted-foreground">…</p>;
+  }
+
+  if (!currentUser || !canAccessPortal) {
     return <p className="text-sm text-muted-foreground">Portal only.</p>;
   }
 

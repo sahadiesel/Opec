@@ -62,6 +62,10 @@ export const portalNav = {
     rosterFromTeam: 'Open wave roster',
     accessRestricted: 'Access restricted',
     portalOnly: 'This area is for customer portal accounts.',
+    portalAdminPickCustomer: 'Choose customer (admin)',
+    portalAdminPreviewBanner: 'Admin preview — acting as customer',
+    portalAdminExitPreview: 'Exit preview',
+    portalAdminPreviewRole: 'Internal admin · customer preview',
     open: 'Open',
     printHint: 'Open the document, then use your browser print (e.g. Ctrl+P).',
     viewerNoApprove: 'View-only account — you can still request corrections. Ask your OPEC contact for Approver access to approve billing.',
@@ -119,7 +123,7 @@ export const portalNav = {
     tsMonthlyNoAttach: 'No files attached for this period.',
     tsMonthlySummary: '{month} · {people} people · {rows} timesheet rows this month',
     tsMonthlyKey:
-      'Letters show day type (W=work, SB=standby, …). A dash means no entry or unpaid day. Ring styles match OPEC internal view.',
+      'Letters show day type (W=work, SB=standby, …). A dash means no entry or unpaid day. Ring styles match OPEC internal view. Total hrs = work hours only (standby excluded).',
     tsGoMonthly: 'Monthly wave grid',
     tsGoDaily: 'Daily activity list',
     tsMonthlyFilterSection: 'Filter',
@@ -155,10 +159,20 @@ export const portalNav = {
     tsHubViewPoMonth: 'View PO+month document',
     tsPoMonthPageTitle: 'PO + month timesheet',
     tsPoMonthPageLead:
-      'The photos/PDFs here are the same signed-off timesheet OPEC uses for this PO and month. The grids below split the same month by wave/site for easier review.',
+      'The photos/PDFs here are the same signed-off timesheet OPEC uses for this PO and month. The monthly grid below is one combined table for everyone on this PO in this month (same basis as the OPEC monthly summary).',
     tsPoMonthWavesEmpty: 'No wave breakdown is linked for this period — use the document attachments above.',
     tsPoMonthWavesSection: 'By wave (this month)',
+    tsPoMonthUnifiedSection: 'Monthly summary (all personnel on this PO)',
+    tsPoMonthUnifiedEmpty:
+      'No roster rows found for this PO and month in the portal — refer to the approved attachments above or contact OPEC.',
     tsPoMonthNotApproved: 'This PO+month timesheet is not available or is not yet manager-approved.',
+    tsPoMonthParitySyncBtn: 'Fix portal linkage (legacy)',
+    tsPoMonthParitySyncOkTitle: 'Firestore linkage updated',
+    tsPoMonthParitySyncConfirm:
+      'Backfill customerId on mobilizations and customerId / purchaseOrderId on daily_timesheets for this PO and month so the client portal matches OPEC? (Legacy data repair.)',
+    tsPoMonthParitySyncRunning: 'Repairing Firestore…',
+    tsPoMonthParitySyncDone: 'Updated {mobs} mobilizations and {sheets} daily rows (scanned {mobScan} mobs, {sheetScan} sheet docs). Refresh if counts look stale.',
+    tsPoMonthParitySyncFail: 'Repair failed',
     tsHubFootnote:
       'Read-only. If totals match, confirm the billing document under Billing & documents. If not, use Dispute on that billing row — OPEC will follow up. Rows disappear here after the related tax invoice and receipt are fully settled.',
     tsHubPolicyTitle: 'How this relates to billing (not payroll)',
@@ -311,6 +325,10 @@ export const portalNav = {
     rosterFromTeam: 'ดูรอบงาน (เวฟ)',
     accessRestricted: 'ไม่มีสิทธิ์เข้าใช้',
     portalOnly: 'ส่วนนี้สำหรับบัญชีพอร์ทัลลูกค้าเท่านั้น',
+    portalAdminPickCustomer: 'เลือกลูกค้า (ผู้ดูแลระบบ)',
+    portalAdminPreviewBanner: 'โหมดแอดมิน — กำลังดูในนามลูกค้า',
+    portalAdminExitPreview: 'ออกจากโหมดดูลูกค้า',
+    portalAdminPreviewRole: 'แอดมินภายใน · ดูพอร์ทัลแทนลูกค้า',
     open: 'เปิด',
     printHint: 'เปิดเอกสารแล้วใช้พิมพ์จากเบราว์เซอร์ (เช่น Ctrl+P)',
     viewerNoApprove: 'บัญชีดูอย่างเดียว — ยังแจ้งขอแก้ไขได้ ติดต่อ OPEC เพื่อขอสิทธิ์ Approver หากต้องอนุมัติ billing',
@@ -367,7 +385,7 @@ export const portalNav = {
     tsMonthlyNoAttach: 'ไม่มีไฟล์แนบในช่วงนี้',
     tsMonthlySummary: '{month} · {people} คน · {rows} แถว timesheet ในเดือน',
     tsMonthlyKey:
-      'ตัวอักษร = ประเภทวัน (W=ทำงาน, SB=สแตนด์บาย, …) · « - » = ไม่มีบันทึกหรือไม่จ่าย — สไตล์วงแหวนตรงกับมุมมองภายใน OPEC',
+      'ตัวอักษร = ประเภทวัน (W=ทำงาน, SB=สแตนด์บาย, …) · « - » = ไม่มีบันทึกหรือไม่จ่าย — สไตล์วงแหวนตรงกับมุมมองภายใน OPEC · รวมชม. = ชม.ทำงาน (ไม่รวม standby)',
     tsGoMonthly: 'ตารางรายเดือนตามเวฟ',
     tsGoDaily: 'รายการรายวัน',
     tsMonthlyFilterSection: 'ตัวกรอง',
@@ -403,10 +421,21 @@ export const portalNav = {
     tsHubViewPoMonth: 'ดูเอกสาร PO+เดือน',
     tsPoMonthPageTitle: 'เอกสาร timesheet ราย PO+เดือน',
     tsPoMonthPageLead:
-      'รูป/PDF ชุดนี้คือเอกสาร timesheet งวดเดียวกับที่ OPEC ใช้สำหรับ PO และเดือนนี้ ตารางด้านล่างแยกเดือนเดียวกันตามเวฟ/สถานที่เพื่ออ่านง่าย',
+      'รูป/PDF ชุดนี้คือเอกสาร timesheet งวดเดียวกับที่ OPEC ใช้สำหรับ PO และเดือนนี้ ตารางด้านล่างเป็นตารางเดียวรวมทุกคนที่เกี่ยวข้องกับ PO นี้ในเดือนเดียวกัน (หลักการเดียวกับสรุปยอดรายเดือนฝั่ง OPEC)',
     tsPoMonthWavesEmpty: 'ยังไม่เชื่อมราย wave สำหรับงวดนี้ — อ้างอิงไฟล์แนบด้านบน',
     tsPoMonthWavesSection: 'รายเวฟ (เดือนเดียวกัน)',
+    tsPoMonthUnifiedSection: 'สรุปยอดรายเดือน (รวมทุกคนใน PO นี้)',
+    tsPoMonthUnifiedEmpty:
+      'ไม่พบแถว roster สำหรับ PO และเดือนนี้ใน portal — อ้างอิงไฟล์แนบที่อนุมัติด้านบน หรือติดต่อ OPEC',
     tsPoMonthNotApproved: 'เอกสาร PO+เดือนนี้ยังไม่อนุมัติ หรือยังไม่สามารถดูได้',
+    tsPoMonthParitySyncBtn: 'ซ่อมข้อมูลให้พอร์ทัล (legacy)',
+    tsPoMonthParitySyncOkTitle: 'อัปเดตการผูกข้อมูลแล้ว',
+    tsPoMonthParitySyncConfirm:
+      'เติม customerId ใน mobilizations และ customerId / purchaseOrderId ใน daily_timesheets ของ PO+เดือนนี้ เพื่อให้พอร์ทัลลูกค้าตรงกับ OPEC หรือไม่? (ซ่อมชุดเก่าจาก flow เดิม)',
+    tsPoMonthParitySyncRunning: 'กำลังซ่อมข้อมูลใน Firestore…',
+    tsPoMonthParitySyncDone:
+      'อัปเดต mobilizations {mobs} รายการ และแถวรายวัน {sheets} แถว (สแกน mob {mobScan} รายการ แผ่นรายวัน {sheetScan} แผ่น) — ถ้าตัวเลขยังไม่เปลี่ยนให้รีเฟรช',
+    tsPoMonthParitySyncFail: 'ซ่อมข้อมูลไม่สำเร็จ',
     tsHubFootnote:
       'ดูอย่างเดียว หายอดตรงกัน ให้ยืนยันเอกสารเรียกเก็บใน Billing & documents ถ้าไม่ตรงให้ใช้ ทักท้วง ที่แถวเรียกเก็บ — OPEC จะติดตาม แถวจะหายจากรายการนี้เมื่อใบกำกับภาษีและการรับชำระปิดงบแล้ว',
     tsHubPolicyTitle: 'ความเกี่ยวข้องกับการวางบิล (ไม่ใช่ payroll)',

@@ -1,7 +1,8 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -25,13 +26,14 @@ import {
   Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { User as AppUser, Worker, Assignment, Wave } from '@/lib/types';
+import { Worker, Assignment, Wave } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useAuth } from '@/firebase';
+import { signOut } from 'firebase/auth';
 import { collection, query, where, orderBy, doc } from 'firebase/firestore';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
-import { isClient } from '@/lib/permissions';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { ExceptionRequestService } from '@/lib/services/exception-request-service';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -48,9 +50,15 @@ import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import Link from 'next/link';
 
 export default function ClientManpowerPage() {
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const { isUserLoading } = useUser();
+  const {
+    effectiveUser: currentUser,
+    rawUser,
+    appUserLoading: userLoading,
+    canAccessPortal,
+  } = useClientPortalIdentity();
   const firestore = useFirestore();
+  const auth = useAuth();
+  const router = useRouter();
   const { toast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -58,11 +66,6 @@ export default function ClientManpowerPage() {
   const [selectedAsgn, setSelectedAsgn] = useState<Assignment | null>(null);
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
 
   // 1. Data Queries using Scoping Service
   const queryService = useMemo(() => firestore ? new CustomerQueryService(firestore) : null, [firestore]);
@@ -73,18 +76,14 @@ export default function ClientManpowerPage() {
   const asgnQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
   const { data: assignments, isLoading: isAsgnLoading } = useCollection<Assignment>(asgnQuery as any);
 
-  /** ลูกค้า: อ่านเฉพาะ workers ที่ assignedCustomerIds มี customerId (ตรงกับ firestore.rules) — ห้าม list ทั้งคอลเลกชัน */
+  /** ลูกค้า / แอดมินดูแทน: อ่านเฉพาะ workers ที่ assignedCustomerIds มี customerId — ห้าม list ทั้งคอลเลกชัน */
   const workersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser) return null;
-    if (isClient(currentUser)) {
-      if (!currentUser.customerId) return null;
-      return query(
-        collection(firestore, 'workers'),
-        where('assignedCustomerIds', 'array-contains', currentUser.customerId),
-      );
-    }
-    return collection(firestore, 'workers');
-  }, [firestore, currentUser]);
+    if (!firestore || !currentUser?.customerId || !canAccessPortal) return null;
+    return query(
+      collection(firestore, 'workers'),
+      where('assignedCustomerIds', 'array-contains', currentUser.customerId),
+    );
+  }, [firestore, currentUser?.customerId, canAccessPortal]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
   const activePersonnel = useMemo(() => {
@@ -128,10 +127,19 @@ export default function ClientManpowerPage() {
     }
   };
 
-  if (isUserLoading || !currentUser) return null;
+  if (userLoading || !currentUser || !canAccessPortal || !rawUser) return null;
+
+  const handleShellLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch {
+      /* ignore */
+    }
+    router.push('/');
+  };
 
   return (
-    <AppShell user={currentUser} onLogout={() => {}}>
+    <AppShell user={rawUser} onLogout={() => void handleShellLogout()}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">

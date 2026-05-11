@@ -20,29 +20,31 @@ import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 export class CustomerQueryService {
   constructor(private db: Firestore) {}
 
+  /** Portal customer account, or system admin preview (portalActingCustomerId + customerId). */
+  private shouldScopeLikePortalCustomer(user: User | null): boolean {
+    if (!user) return false;
+    if (isClient(user)) return true;
+    const cid = (user.customerId || '').trim();
+    const acting = (user.portalActingCustomerId || '').trim();
+    return !!cid && !!acting && cid === acting;
+  }
+
   /**
-   * Scopes a base collection query by customerId if the user is a client.
-   * If the user is internal staff, it returns the collection (or a broader query).
+   * Scopes a base collection query by customerId for portal users (including admin preview).
+   * Otherwise returns the full collection for internal staff.
    */
-  private applyCustomerScope(
-    collectionName: string, 
-    user: User | null
-  ): Query<DocumentData> | null {
+  private applyCustomerScope(collectionName: string, user: User | null): Query<DocumentData> | null {
     if (!user) return null;
     const colRef = collection(this.db, collectionName);
 
-    const isCustomer = isClient(user);
-
-    if (isCustomer) {
+    if (this.shouldScopeLikePortalCustomer(user)) {
       if (!user.customerId) {
         console.warn(`User ${user.email} is marked as customer but has no customerId.`);
-        // Return a query that will always be empty for safety
         return query(colRef, where('customerId', '==', 'UNAUTHORIZED_ID_BLOCK'));
       }
       return query(colRef, where('customerId', '==', user.customerId));
     }
 
-    // For internal staff, return the full collection (unscoped)
     return colRef;
   }
 
@@ -84,7 +86,7 @@ export class CustomerQueryService {
    * Uses composite index customerId + date (desc).
    */
   getScopedDailyTimesheetsForMonth(user: User | null, yearMonth: string): Query<DocumentData> | null {
-    if (!user || !isClient(user) || !user.customerId) return null;
+    if (!user || !this.shouldScopeLikePortalCustomer(user) || !user.customerId) return null;
     if (!/^\d{4}-\d{2}$/.test(yearMonth)) return null;
     const monthStart = `${yearMonth}-01`;
     const monthEnd = lastDayOfCalendarMonth(yearMonth);

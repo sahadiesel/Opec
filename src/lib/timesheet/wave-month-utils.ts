@@ -1,8 +1,12 @@
 import type { Assignment, DailyTimesheet, RateConditionEventType, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
 import {
+  assignmentIncludedInWaveTimesheetRoster,
+  assignmentHasAnyMobTimesheetDayInCalendarMonth,
   isHtmlDateAfterMobLocationEnd,
   isYmdWithinAssignmentMobTimesheetWindow,
 } from '@/lib/constants/timesheet-ui';
+import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
+import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 
 /** คืน yyyy-mm-dd สำหรับวันสุดท้ายของเดือน yyyy-mm */
 /** แนบเป็น PDF หรือไม่ (รองรับข้อมูลเก่าที่ไม่มี contentType) */
@@ -209,6 +213,65 @@ export function resolveTimesheetForWaveMonthCell(
   if (outsideMobWindow && afterRecordedSiteEnd) return undefined;
 
   return lookupIgnoringMobWindow(false);
+}
+
+/**
+ * มีแถว daily_timesheet อย่างน้อยหนึ่งแถวในเดือนปฏิทินนี้ที่ผูก mobilization นี้
+ * — ใช้เมื่อช่วง mobilization ไม่ทับวันในปฏิทินตามฟิลด์ แต่มีข้อมูลลงเวลาจริงในเดือน (ข้อมูลขอบเขตไม่ตรงกัน)
+ */
+export function assignmentHasTimesheetRowInCalendarMonth(
+  m: Pick<Assignment, 'id'>,
+  monthYm: string,
+  sheets: readonly Pick<DailyTimesheet, 'assignmentId' | 'date'>[] | undefined,
+): boolean {
+  if (!sheets?.length || !/^\d{4}-\d{2}$/.test(monthYm)) return false;
+  const prefix = `${monthYm}-`;
+  return sheets.some(
+    (t) => typeof t.date === 'string' && t.date.startsWith(prefix) && t.assignmentId === m.id,
+  );
+}
+
+/** คนละหนึ่งแถวในงวดเดือนต่อ wave — สอดคล้อง `/timesheets/wave-month` (รองรับ PO scope / remob) */
+export function mobilizationsEligibleForWaveMonthGrid(
+  mobs: Assignment[],
+  monthYm: string,
+  /** ถ้ามี — รวม mobilization ที่มีแถวลงเวลาในเดือนแม้ช่วง mob ไม่ทับปฏิทินตามฟิลด์ */
+  monthTimesheets?: readonly Pick<DailyTimesheet, 'assignmentId' | 'date'>[],
+): Assignment[] {
+  const eligible = mobs.filter((m) => {
+    if (!assignmentIncludedInWaveTimesheetRoster(m)) return false;
+    const rowInMonth = assignmentHasTimesheetRowInCalendarMonth(m, monthYm, monthTimesheets);
+    /** มีแถวจริงในเดือนแล้ว — แสดงได้แม้ฟิลด์ช่วง mob / DEMOBILIZED ทำให้ overlap เทียบปฏิทินเป็น false (สอดคล้อง wave-month ภายในเมื่อมีข้อมูลลงเวลา) */
+    if (rowInMonth) return true;
+    return (
+      assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
+      assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm)
+    );
+  });
+  return pickRosterLinePerWorker(eligible);
+}
+
+/**
+ * PO ใต้หลาย wave: ใช้กฎเดียวกับ wave-month **แยกตาม waveId** แล้วรวม —
+ * ไม่หุบเหลือคนละหนึ่ง mobilization ทั้ง PO (พอร์ทัล PO+เดือนเดียวต้องสอดคล้องจำนวนแถวกับ mobilizations ที่เกี่ยวข้อง)
+ */
+export function mobilizationsEligibleForPoMonthGrid(
+  assignmentsForPo: Assignment[],
+  monthYm: string,
+  monthTimesheets?: readonly Pick<DailyTimesheet, 'assignmentId' | 'date'>[],
+): Assignment[] {
+  const byWave = new Map<string, Assignment[]>();
+  for (const a of assignmentsForPo) {
+    const key = (a.waveId || '').trim() || '_';
+    const list = byWave.get(key) ?? [];
+    list.push(a);
+    byWave.set(key, list);
+  }
+  const out: Assignment[] = [];
+  for (const waveMobs of byWave.values()) {
+    out.push(...mobilizationsEligibleForWaveMonthGrid(waveMobs, monthYm, monthTimesheets));
+  }
+  return out;
 }
 
 export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {

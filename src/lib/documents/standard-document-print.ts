@@ -93,6 +93,31 @@ export function sortBillingNoteLinesForDisplay(
   });
 }
 
+/** ลำดับแสดงใบเรียกเก็บ — สอดคล้องใบวางบิล / พิมพ์ใบกำกับ */
+export function sortCommercialInvoiceLinesForDisplay(
+  lines: CommercialInvoiceLine[] | null | undefined,
+): CommercialInvoiceLine[] {
+  return [...(lines || [])].sort((a, b) => {
+    const ao = a.displayOrder;
+    const bo = b.displayOrder;
+    if (ao != null && bo != null) return ao - bo;
+    if (ao != null) return -1;
+    if (bo != null) return 1;
+    return (a.id || '').localeCompare(b.id || '');
+  });
+}
+
+/** เลขลำดับบนเอกสาร (1-based) — `displayOrder` จากระบบเป็น 0-based */
+export function invoiceLineSequenceNumberFromDisplayOrder(
+  displayOrder: number | undefined | null,
+  sortedIndexZeroBased: number,
+): number {
+  if (displayOrder != null && Number.isFinite(Number(displayOrder))) {
+    return Number(displayOrder) + 1;
+  }
+  return sortedIndexZeroBased + 1;
+}
+
 function formatIssueDateYmdForPrint(issueYmd: string | undefined, locale: PrintDocumentLocale): string {
   if (!issueYmd?.trim()) return '—';
   return locale === 'en' ? formatStoredDateGregorian(issueYmd) : formatStoredDateThaiBE(issueYmd);
@@ -455,6 +480,19 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
 `;
 
+/**
+ * ที่อยู่บริษัทชุดเดียวตามภาษาเอกสารพิมพ์ — อังกฤษ = addressLine1 ก่อน, ไทย = addressLine2 ก่อน (fallback อีกภาษาเมื่อข้างหนึ่งว่าง)
+ * ใช้ร่วมกับ `buildStandardCompanyColumnHtml` และพรีวิวหน้าเว็บให้ตรงกับหน้าพิมพ์
+ */
+export function companyProfileAddressForPrintLocale(
+  company: Pick<CompanyProfilePrint, 'addressLine1' | 'addressLine2'> | null | undefined,
+  locale: PrintDocumentLocale = 'th',
+): string {
+  const addrEn = (company?.addressLine1 || '').trim();
+  const addrTh = (company?.addressLine2 || '').trim();
+  return (locale === 'en' ? addrEn || addrTh : addrTh || addrEn) || '';
+}
+
 /** คอลัมน์ซ้าย: ชื่อ (บรรทัดเดียว) + ที่อยู่ **ชุดเดียว** ตาม locale — ความกว้าง ~60% หน้า */
 export function buildStandardCompanyColumnHtml(
   company: CompanyProfilePrint | null | undefined,
@@ -463,11 +501,8 @@ export function buildStandardCompanyColumnHtml(
   const nameTh = company?.companyNameTh?.trim();
   const nameEn = company?.companyNameEn?.trim();
   const cn = locale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
-  const addrEn = (company?.addressLine1 || '').trim();
-  const addrTh = (company?.addressLine2 || '').trim();
   const L = locale;
-  /** ที่อยู่เดียว: อังกฤษ = addressLine1, ไทย = addressLine2 (สลับรองรับกรณีกรอกข้างเดียว) */
-  const singleAddr = (L === 'en' ? addrEn || addrTh : addrTh || addrEn) || '';
+  const singleAddr = companyProfileAddressForPrintLocale(company, L);
   const ph = (company?.phone || '').trim();
   const phoneP = ph
     ? `<p class="sd-company-line">${escapeHtmlDoc(printT(L, 'tel'))} ${escapeHtmlDoc(ph)}</p>`
@@ -887,7 +922,8 @@ export function buildCommercialInvoicePrintHtml(params: {
     detailLines: customerPartyDetailLines(customer, L),
   });
 
-  const lineRows = (lines || [])
+  const sortedCommercialForPrint = sortCommercialInvoiceLinesForDisplay(lines);
+  const lineRows = sortedCommercialForPrint
     .map((line, idx) => {
       const sub = line.workerName ? ` (${line.workerName})` : '';
       const rawDesc = (line.description || '—') + sub;
@@ -898,8 +934,9 @@ export function buildCommercialInvoicePrintHtml(params: {
       const amt = Number(line.amount ?? line.quantity * line.unitPrice).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', {
         minimumFractionDigits: 2,
       });
+      const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
       return `<tr>
-        <td class="sd-num">${idx + 1}</td>
+        <td class="sd-num">${seq}</td>
         <td>${desc}</td>
         <td class="sd-right">${qty}</td>
         <td class="sd-right">${up}</td>
@@ -1012,7 +1049,8 @@ function buildCommercialLinesTableRowsForPrint(
   L: PrintDocumentLocale,
 ): string {
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
-  return (lines ?? [])
+  const sorted = sortCommercialInvoiceLinesForDisplay(lines);
+  return sorted
     .map((line, idx) => {
       const sub = line.workerName ? ` (${line.workerName})` : '';
       const rawDesc = (line.description || '—') + sub;
@@ -1021,8 +1059,9 @@ function buildCommercialLinesTableRowsForPrint(
       const qty = Number(line.quantity).toLocaleString(loc);
       const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
       const amt = Number(line.amount ?? line.quantity * line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
+      const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
       return `<tr>
-        <td class="sd-num">${idx + 1}</td>
+        <td class="sd-num">${seq}</td>
         <td>${desc}</td>
         <td class="sd-right">${qty}</td>
         <td class="sd-right">${up}</td>
@@ -1102,8 +1141,9 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
             const qty = Number(line.quantity).toLocaleString(loc);
             const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
             const amt = Number(line.amount).toLocaleString(loc, { minimumFractionDigits: 2 });
+            const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
             return `<tr>
-        <td class="sd-num">${idx + 1}</td>
+        <td class="sd-num">${seq}</td>
         <td>${desc}</td>
         <td class="sd-right">${qty}</td>
         <td class="sd-right">${up}</td>

@@ -6,16 +6,15 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { ChevronLeft, Loader2 } from 'lucide-react';
 import { collection, doc, getDoc, orderBy, query, where } from 'firebase/firestore';
 import {
-  dailyTimesheetsQueryForPortalWaveMonth,
+  dailyTimesheetsQueryForPortalPoMonth,
   yearMonthFromCommercialInvoice,
 } from '@/lib/client-portal/timesheet-portal-utils';
 import { Button } from '@/components/ui/button';
 import { PortalWaveMonthReadonlyCard } from '@/components/client-portal/portal-wave-month-readonly-card';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useDoc } from '@/firebase/firestore/use-doc';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
-import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import type {
   Assignment,
@@ -40,7 +39,11 @@ function ClientPortalWaveMonthDetailContent() {
   const monthYm =
     monthYmRaw && /^\d{4}-\d{2}$/.test(monthYmRaw) ? monthYmRaw : ymNow();
 
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const {
+    effectiveUser: currentUser,
+    appUserLoading: userLoading,
+    canAccessPortal,
+  } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { t } = usePortalLocale();
 
@@ -58,12 +61,14 @@ function ClientPortalWaveMonthDetailContent() {
   const asgnQuery = useMemoFirebase(() => queryService?.getScopedAssignmentsQuery(currentUser), [queryService, currentUser]);
   const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
 
-  const waveMonthTsQuery = useMemoFirebase(() => {
+  const poMonthTsQuery = useMemoFirebase(() => {
     if (!firestore || !currentUser?.customerId || !wave || !monthYm) return null;
     if (wave.customerId !== currentUser.customerId) return null;
-    return dailyTimesheetsQueryForPortalWaveMonth(firestore, wave.id, monthYm);
+    return dailyTimesheetsQueryForPortalPoMonth(firestore, wave.poId, monthYm);
   }, [firestore, wave, monthYm, currentUser?.customerId]);
-  const { data: waveSheets, isLoading: tsLoading } = useCollection<DailyTimesheet>(waveMonthTsQuery as any);
+  const { data: poMonthDailySheets, isLoading: tsLoading } = useCollection<DailyTimesheet>(
+    poMonthTsQuery as any,
+  );
 
   const commercialQ = useMemoFirebase(() => {
     if (!firestore || !currentUser?.customerId) return null;
@@ -81,10 +86,10 @@ function ClientPortalWaveMonthDetailContent() {
   const [metaLoading, setMetaLoading] = useState(true);
 
   const accessOk = useMemo(() => {
-    if (!currentUser || !wave) return false;
-    if (!isClient(currentUser) || !currentUser.customerId) return false;
+    if (!currentUser || !wave || !canAccessPortal) return false;
+    if (!currentUser.customerId) return false;
     return wave.customerId === currentUser.customerId;
-  }, [currentUser, wave]);
+  }, [currentUser, wave, canAccessPortal]);
 
   useEffect(() => {
     if (!firestore || !wave || !monthYm) {
@@ -170,7 +175,7 @@ function ClientPortalWaveMonthDetailContent() {
     );
   }
 
-  if (!isClient(currentUser)) {
+  if (!canAccessPortal) {
     return <p className="text-sm text-muted-foreground">{t('portalOnly')}</p>;
   }
 
@@ -211,7 +216,7 @@ function ClientPortalWaveMonthDetailContent() {
           reviewBadge={reviewBadge}
           bundle={bundle}
           waveAssignments={waveAssignments}
-          waveSheets={waveSheets ?? []}
+          poMonthDailySheets={poMonthDailySheets ?? []}
           t={t}
         />
       )}

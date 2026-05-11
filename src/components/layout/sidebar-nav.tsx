@@ -44,6 +44,7 @@ import {
   Calculator,
   Wallet,
   QrCode,
+  ExternalLink,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -351,6 +352,12 @@ const navGroups: NavGroup[] = [
       { key: 'system_admin', title: 'หัวเอกสารบริษัท (Document Header)', href: '/system-admin/document-profile', icon: Building2 },
       { key: 'system_admin', title: 'ตั้งค่าแผงตรวจสารเสพติด', href: '/system-admin/drug-test-panel', icon: FlaskConical },
       { key: 'audit_logs', title: 'ประวัติกิจกรรม (Audit Logs)', href: '/system-admin/audit-logs', icon: History },
+      {
+        key: 'system_admin',
+        title: 'เข้าสู่ Client Portal',
+        href: '/system-admin/enter-client-portal',
+        icon: ExternalLink,
+      },
     ],
   },
   {

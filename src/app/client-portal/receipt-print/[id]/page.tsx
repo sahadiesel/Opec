@@ -5,11 +5,10 @@ import Link from 'next/link';
 import { ArrowLeft, Loader2, Printer, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import type { Customer, MoneyReceipt, TaxInvoice, User } from '@/lib/types';
+import type { Customer, MoneyReceipt, TaxInvoice } from '@/lib/types';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc } from 'firebase/firestore';
-import { isClient } from '@/lib/permissions';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { buildMoneyReceiptPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
@@ -19,7 +18,7 @@ import { usePortalLocale } from '@/contexts/portal-locale-context';
 
 export default function ClientReceiptPrintPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -27,7 +26,7 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
   const en = locale === 'en';
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
-  const ready = Boolean(firestore && currentUser && isClient(currentUser));
+  const ready = Boolean(firestore && currentUser && canAccessPortal);
 
   const rRef = useMemoFirebase(() => (ready ? doc(firestore!, 'receipts', id) : null), [firestore, id, ready]);
   const { data: receipt, isLoading } = useDoc<MoneyReceipt>(rRef as any);
@@ -91,7 +90,7 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
     );
   }
 
-  if (!isClient(currentUser as User)) {
+  if (!canAccessPortal) {
     return <p className="text-sm text-muted-foreground">{en ? 'Portal only.' : 'เฉพาะพอร์ทัล'}</p>;
   }
 

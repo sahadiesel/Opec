@@ -6,9 +6,8 @@ import { FileText, Loader2 } from 'lucide-react';
 import { PortalWaveMonthReadonlyCard } from '@/components/client-portal/portal-wave-month-readonly-card';
 import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
 import { useDoc } from '@/firebase/firestore/use-doc';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
-import { dailyTimesheetsQueryForPortalWaveMonth } from '@/lib/client-portal/timesheet-portal-utils';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
 import {
   formatCustomerPoNumberForPortal,
@@ -100,15 +99,17 @@ export function PortalPoMonthWaveBlock({
   waveId,
   po,
   yearMonth,
+  poMonthDailySheets,
   t,
 }: {
   waveId: string;
   po: PurchaseOrder | null | undefined;
   yearMonth: string;
+  poMonthDailySheets: DailyTimesheet[];
   t: (k: PortalDictKey) => string;
 }) {
   const firestore = useFirestore();
-  const { currentUser } = useAppUser();
+  const { effectiveUser: currentUser } = useClientPortalIdentity();
   const waveRef = useMemo(
     () => (firestore && waveId ? doc(firestore, 'waves', waveId) : null),
     [firestore, waveId],
@@ -128,16 +129,7 @@ export function PortalPoMonthWaveBlock({
     [allAssignments, waveId],
   );
 
-  const tsQuery = useMemoFirebase(
-    () =>
-      firestore && currentUser?.customerId && wave && yearMonth && wave.customerId === currentUser.customerId
-        ? dailyTimesheetsQueryForPortalWaveMonth(firestore, waveId, yearMonth)
-        : null,
-    [firestore, currentUser?.customerId, wave, yearMonth, waveId],
-  );
-  const { data: waveSheets, isLoading: tsLoading } = useCollection<DailyTimesheet>(tsQuery as any);
-
-  if (waveLoading || mLoading || tsLoading) {
+  if (waveLoading || mLoading) {
     return (
       <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -159,7 +151,7 @@ export function PortalPoMonthWaveBlock({
       bundle={null}
       hideAttachmentSection
       waveAssignments={waveAssignments}
-      waveSheets={waveSheets ?? []}
+      poMonthDailySheets={poMonthDailySheets}
       t={t}
     />
   );

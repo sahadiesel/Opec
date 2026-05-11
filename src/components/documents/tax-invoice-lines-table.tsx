@@ -2,12 +2,19 @@
 
 import { useMemo } from 'react';
 import type { BillingNoteLine, CommercialInvoiceLine } from '@/lib/types';
-import { sortBillingNoteLinesForDisplay } from '@/lib/documents/standard-document-print';
+import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
+import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import {
+  invoiceLineSequenceNumberFromDisplayOrder,
+  sortBillingNoteLinesForDisplay,
+  sortCommercialInvoiceLinesForDisplay,
+} from '@/lib/documents/standard-document-print';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export function TaxInvoiceLinesTable({
   lines,
   commercialLines,
+  documentLocale = 'th',
   numberLocale,
   columnHeaders,
   emptyLabel,
@@ -16,6 +23,8 @@ export function TaxInvoiceLinesTable({
   lines: BillingNoteLine[] | null | undefined;
   /** ลำดับ/ข้อความเดียวกับใบเรียกเก็บ (ลูกค้า approve) — ถ้ามีจะแสดงแทนรายการใบวางบิล */
   commercialLines?: CommercialInvoiceLine[] | null;
+  /** ภาษาตัวอย่างบนหน้าจอ — EN + รายการจากใบเรียกเก็บ ให้คำอธิบายตรงกับตอนพิมพ์ (`translateCommercialLineDescriptionToEn`) */
+  documentLocale?: PrintDocumentLocale;
   numberLocale: string;
   columnHeaders: {
     no: string;
@@ -27,29 +36,38 @@ export function TaxInvoiceLinesTable({
   emptyLabel: string;
   currency: string;
 }) {
-  const sorted = useMemo(() => sortBillingNoteLinesForDisplay(lines), [lines]);
+  const sortedBilling = useMemo(() => sortBillingNoteLinesForDisplay(lines), [lines]);
   const useCommercial = (commercialLines?.length ?? 0) > 0;
-  const rows: Array<{ key: string; desc: string; q: number; up: number; am: number }> = useMemo(() => {
+  const sortedCommercial = useMemo(
+    () => sortCommercialInvoiceLinesForDisplay(commercialLines),
+    [commercialLines],
+  );
+  const rows: Array<{ key: string; lineNo: number; desc: string; q: number; up: number; am: number }> = useMemo(() => {
     if (useCommercial) {
-      return (commercialLines ?? []).map((line, idx) => {
+      return sortedCommercial.map((line, idx) => {
         const sub = line.workerName ? ` (${line.workerName})` : '';
+        const rawDesc = (line.description || '—') + sub;
+        const desc =
+          documentLocale === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
         return {
           key: line.id || `c-${idx}`,
-          desc: (line.description || '—') + sub,
+          lineNo: invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx),
+          desc,
           q: Number(line.quantity),
           up: Number(line.unitPrice),
           am: Number(line.amount ?? line.quantity * line.unitPrice),
         };
       });
     }
-    return sorted.map((line) => ({
+    return sortedBilling.map((line, idx) => ({
       key: line.id,
+      lineNo: invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx),
       desc: line.description || '—',
       q: Number(line.quantity),
       up: Number(line.unitPrice),
       am: Number(line.amount),
     }));
-  }, [useCommercial, commercialLines, sorted]);
+  }, [useCommercial, sortedCommercial, sortedBilling, documentLocale]);
 
   return (
     <div className="overflow-x-auto rounded-md border">
@@ -71,9 +89,9 @@ export function TaxInvoiceLinesTable({
               </TableCell>
             </TableRow>
           ) : (
-            rows.map((row, idx) => (
+            rows.map((row) => (
               <TableRow key={row.key}>
-                <TableCell className="text-center tabular-nums text-muted-foreground">{idx + 1}</TableCell>
+                <TableCell className="text-center tabular-nums text-muted-foreground">{row.lineNo}</TableCell>
                 <TableCell>{row.desc}</TableCell>
                 <TableCell className="text-right tabular-nums">{row.q.toLocaleString(numberLocale)}</TableCell>
                 <TableCell className="text-right tabular-nums">

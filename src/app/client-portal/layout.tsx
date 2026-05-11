@@ -2,6 +2,7 @@
 
 import { Loader2 } from 'lucide-react';
 import { PortalLocaleProvider } from '@/contexts/portal-locale-context';
+import { ClientPortalUserProvider } from '@/contexts/client-portal-user-context';
 import { ClientPortalShell } from '@/components/layout/client-portal-shell';
 import { useAppUser } from '@/hooks/use-app-user';
 
@@ -18,7 +19,9 @@ export default function ClientPortalLayout({ children }: { children: React.React
 
   return (
     <PortalLocaleProvider accountKey={currentUser?.id ?? null}>
-      <ClientPortalShell user={currentUser}>{children}</ClientPortalShell>
+      <ClientPortalUserProvider>
+        <ClientPortalShell>{children}</ClientPortalShell>
+      </ClientPortalUserProvider>
     </PortalLocaleProvider>
   );
 }

@@ -9,13 +9,12 @@ import { ChevronRight, FileBarChart, Receipt } from 'lucide-react';
 import type { TaxInvoice, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy } from 'firebase/firestore';
-import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 type MainTab = 'invoices' | 'tax' | 'receipts';
@@ -71,7 +70,7 @@ function TaxInvoiceRowActions({
 }
 
 export function AccountingContent() {
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { locale, t } = usePortalLocale();
   const router = useRouter();
@@ -159,7 +158,7 @@ export function AccountingContent() {
     return <p className="text-sm text-muted-foreground">…</p>;
   }
 
-  if (!currentUser || !isClient(currentUser)) {
+  if (!currentUser || !canAccessPortal) {
     return <p className="text-sm text-muted-foreground">{locale === 'en' ? 'Portal only.' : 'เฉพาะพอร์ทัล'}</p>;
   }
 
@@ -222,8 +221,12 @@ export function AccountingContent() {
                       >
                         <TableCell className="font-mono font-semibold">{inv.invoiceNo}</TableCell>
                         <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
-                        <TableCell className="text-right text-sm">
-                          {inv.currency} {inv.totalAmount.toLocaleString()}
+                        <TableCell className="text-right text-sm tabular-nums">
+                          {inv.currency}{' '}
+                          {inv.totalAmount.toLocaleString(en ? 'en-GB' : 'th-TH', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </TableCell>
                         <TableCell>
                           {inv.status === 'PENDING_CUSTOMER' ? (
@@ -292,8 +295,12 @@ export function AccountingContent() {
                         <TableRow key={inv.id} className="cursor-pointer" onClick={() => openTax(inv)}>
                           <TableCell className="font-mono text-sm font-medium">{inv.taxInvoiceNo}</TableCell>
                           <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
-                          <TableCell className="text-right text-sm">
-                            {inv.currency} {inv.totalAmount.toLocaleString()}
+                          <TableCell className="text-right text-sm tabular-nums">
+                            {inv.currency}{' '}
+                            {inv.totalAmount.toLocaleString(en ? 'en-GB' : 'th-TH', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
                           </TableCell>
                           <TableCell>
                             <TaxInvoiceStatusBadge inv={inv} t={t} en={en} />

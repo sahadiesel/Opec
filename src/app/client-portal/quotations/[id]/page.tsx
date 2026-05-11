@@ -31,8 +31,7 @@ import type { Quotation, QuotationLine, User } from '@/lib/types';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, updateDoc } from 'firebase/firestore';
 import { DisputeService } from '@/lib/services/dispute-service';
-import { isClient } from '@/lib/permissions';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
@@ -44,7 +43,7 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 
 export default function ClientPortalQuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -58,7 +57,7 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
-  const ready = Boolean(firestore && currentUser && isClient(currentUser));
+  const ready = Boolean(firestore && currentUser && canAccessPortal);
 
   const qRef = useMemoFirebase(() => (ready ? doc(firestore!, 'quotations', id) : null), [firestore, id, ready]);
   const { data: quotation, isLoading, error: quotationError } = useDoc<Quotation>(qRef as any);
@@ -208,7 +207,7 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
     );
   }
 
-  if (!currentUser || !isClient(currentUser)) {
+  if (!currentUser || !canAccessPortal) {
     return <p className="text-sm text-muted-foreground">{t('portalOnly')}</p>;
   }
 

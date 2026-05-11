@@ -304,6 +304,8 @@ function billingNonWorkDayFromPoAndContract(
   map: Map<string, LineAcc>,
   warnings: string[],
 ) {
+  if (ts.eventType === 'unpaid_leave') return;
+
   const sellRate = sellSnapshotForWorkMode(poLine, ts.workMode);
   const otRules: OtRulesSnapshot = poLine.sellOtRulesSnapshot || {};
   const wid = ts.workerId;

@@ -2,15 +2,17 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LogOut, Menu } from 'lucide-react';
+import { Loader2, LogOut, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { User } from '@/lib/types';
 import { useAuth } from '@/firebase';
 import { signOut } from 'firebase/auth';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
+import { isClient } from '@/lib/permissions';
+import { isSystemAdmin } from '@/lib/permission-core';
 
 /** เมนูหลักเรียบง่าย — ไม่รวม Billing (ลิงก์จากหน้าแรก) */
 const NAV_PATHS: { href: string; key: PortalDictKey }[] = [
@@ -22,17 +24,19 @@ const NAV_PATHS: { href: string; key: PortalDictKey }[] = [
   { href: '/client-portal/accounting', key: 'accounting' },
 ];
 
-export function ClientPortalShell({
-  children,
-  user,
-}: {
-  children: React.ReactNode;
-  user: User | null;
-}) {
+export function ClientPortalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const auth = useAuth();
   const { locale, setLocale, t } = usePortalLocale();
+  const {
+    effectiveUser: user,
+    rawUser,
+    appUserLoading,
+    canAccessPortal,
+    isPortalAdminPreview,
+    clearPortalAdminSession,
+  } = useClientPortalIdentity();
 
   const handleLogout = async () => {
     try {
@@ -107,8 +111,55 @@ export function ClientPortalShell({
     </div>
   );
 
+  if (appUserLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!canAccessPortal || !user) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center gap-4 px-4 py-16 text-center">
+        <p className="text-muted-foreground">{t('portalOnly')}</p>
+        {rawUser && isSystemAdmin(rawUser) && !isClient(rawUser) ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <Button asChild variant="default">
+              <Link href="/system-admin/enter-client-portal">{t('portalAdminPickCustomer')}</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/">หน้าหลัก OPEC</Link>
+            </Button>
+          </div>
+        ) : (
+          <Button asChild variant="outline">
+            <Link href="/">หน้าหลัก</Link>
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      {isPortalAdminPreview ? (
+        <div className="border-b border-amber-600/40 bg-amber-50 px-4 py-2 text-center text-xs text-amber-950 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-50 sm:px-6">
+          <span className="font-medium">{t('portalAdminPreviewBanner')}</span>
+          <span className="mx-2 font-mono opacity-90">{user.customerId}</span>
+          <Button
+            type="button"
+            variant="link"
+            className="h-auto p-0 text-xs font-semibold text-amber-900 underline dark:text-amber-100"
+            onClick={() => {
+              clearPortalAdminSession();
+              router.push('/system-admin/enter-client-portal');
+            }}
+          >
+            {t('portalAdminExitPreview')}
+          </Button>
+        </div>
+      ) : null}
       <div className="border-b border-zinc-200/90 bg-zinc-100/95 dark:border-zinc-800 dark:bg-zinc-900/95">
         <div className="mx-auto flex w-full max-w-[min(100%,96rem)] items-center justify-end gap-2 px-4 py-2 sm:px-6 lg:px-8">
           <LangLogout />
@@ -120,12 +171,20 @@ export function ClientPortalShell({
             <div className="min-w-0">
               <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-400">OPEC</p>
               <h1 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">{t('portalTitle')}</h1>
-              {user && (
-                <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-                  {user.displayName}
-                  {roleLabel ? ` · ${roleLabel}` : ''}
-                </p>
-              )}
+              <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                {isPortalAdminPreview && rawUser ? (
+                  <>
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{rawUser.displayName}</span>
+                    <span> · {t('portalAdminPreviewRole')}</span>
+                    {roleLabel ? ` · ${roleLabel}` : ''}
+                  </>
+                ) : (
+                  <>
+                    {user.displayName}
+                    {roleLabel ? ` · ${roleLabel}` : ''}
+                  </>
+                )}
+              </p>
             </div>
             <div className="flex shrink-0 items-center sm:hidden">
               <Sheet>

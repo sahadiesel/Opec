@@ -1,13 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, FileSignature, AlertCircle } from 'lucide-react';
+import { ChevronRight, FileSignature } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy } from 'firebase/firestore';
 import type { Quotation } from '@/lib/types';
 import { QUOTATION_PORTAL_VISIBLE_STATUSES } from '@/lib/types';
-import { isClient } from '@/lib/permissions';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
@@ -33,7 +32,7 @@ function statusBadge(q: Quotation, en: boolean, t: (key: PortalDictKey) => strin
 }
 
 export default function ClientPortalQuotationsListPage() {
-  const { currentUser, isLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: isLoading, canAccessPortal } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { locale, t } = usePortalLocale();
   const en = locale === 'en';
@@ -50,16 +49,7 @@ export default function ClientPortalQuotationsListPage() {
 
   const { data: rows, isLoading: loading } = useCollection<Quotation>(listQuery as any);
 
-  if (isLoading || !currentUser) return null;
-
-  if (!isClient(currentUser)) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed py-16 text-center">
-        <AlertCircle className="mb-3 h-10 w-10 text-amber-500" />
-        <p className="text-sm text-muted-foreground">{t('portalOnly')}</p>
-      </div>
-    );
-  }
+  if (isLoading || !currentUser || !canAccessPortal) return null;
 
   return (
     <div className="space-y-6">

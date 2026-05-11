@@ -5,18 +5,17 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import Link from 'next/link';
 import { FileText, ChevronDown, ChevronRight } from 'lucide-react';
-import type { MainContract, PurchaseOrder, User } from '@/lib/types';
+import type { MainContract, PurchaseOrder } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
-import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { Button } from '@/components/ui/button';
 import { formatCustomerPoNumberForPortal } from '@/lib/client-portal/timesheet-portal-utils';
 export default function ClientContractsPage() {
-  const { currentUser, isLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: isLoading, canAccessPortal } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { locale, t } = usePortalLocale();
   const [openId, setOpenId] = useState<string | null>(null);
@@ -72,7 +71,7 @@ export default function ClientContractsPage() {
     return <p className="text-sm text-muted-foreground">…</p>;
   }
 
-  if (!currentUser || !isClient(currentUser as User)) {
+  if (!currentUser || !canAccessPortal) {
     return (
       <p className="text-sm text-muted-foreground">
         {locale === 'en' ? 'Customer portal only.' : 'เฉพาะบัญชีลูกค้า'}

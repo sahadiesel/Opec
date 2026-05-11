@@ -53,11 +53,12 @@ import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-
 import { syncPoActiveAutoDailyForAssignment } from '@/lib/timesheet/po-active-auto-daily-sync';
 import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
-import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import {
+  assignmentHasTimesheetRowInCalendarMonth,
   isWaveMonthAttachmentPdf,
   lastDayOfCalendarMonth,
   listDaysInMonth,
+  mobilizationsEligibleForWaveMonthGrid,
   resolveTimesheetForWaveMonthCell,
   sumWorkHoursForWaveMonthRow,
   timesheetWaveMonthCellDisplay,
@@ -92,17 +93,6 @@ import { isSystemAdmin } from '@/lib/permission-core';
 function ymNow(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-/** แถวสรุปรายเดือน — เฉพาะคนที่มีอย่างน้อยหนึ่งวันในเดือนที่อยู่ในหน้าต่าง mobilization (ไม่โผล่แถวว่างเมื่อรอ Mob รอบใหม่) */
-function mobilizationsEligibleForWaveMonthGrid(mobs: Assignment[], monthYm: string): Assignment[] {
-  const eligible = mobs.filter(
-    (m) =>
-      assignmentIncludedInWaveTimesheetRoster(m) &&
-      assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
-      assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm),
-  );
-  return pickRosterLinePerWorker(eligible);
 }
 
 function chunkIds<T>(arr: T[], size: number): T[][] {
@@ -526,13 +516,14 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (
         assignmentIncludedInWaveTimesheetRoster(m) &&
         assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
-        assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm)
+        (assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm) ||
+          assignmentHasTimesheetRowInCalendarMonth(m, monthYm, monthSheetsForOpenPos))
       ) {
         s.add(m.waveId);
       }
     }
     return s;
-  }, [mobAssignments, monthYm]);
+  }, [mobAssignments, monthYm, monthSheetsForOpenPos]);
 
   const missingWaveIdsForMonth = useMemo(
     () => [...waveIdsWithEligibleMobInMonth].filter((id) => !sortedWaveIdSet.has(id)).sort(),
@@ -619,10 +610,10 @@ export default function WaveMonthTimesheetSummaryPage() {
     const map = new Map<string, Assignment[]>();
     for (const wave of displayWaves) {
       const waveMobsAll = mobAssignments.filter((m) => m.waveId === wave.id);
-      map.set(wave.id, mobilizationsEligibleForWaveMonthGrid(waveMobsAll, monthYm));
+      map.set(wave.id, mobilizationsEligibleForWaveMonthGrid(waveMobsAll, monthYm, monthSheetsForOpenPos));
     }
     return map;
-  }, [displayWaves, mobAssignments, monthYm]);
+  }, [displayWaves, mobAssignments, monthYm, monthSheetsForOpenPos]);
 
   const tableRows = useMemo(() => {
     const out: {

@@ -16,11 +16,10 @@ import type {
 } from '@/lib/types';
 import { useFirebaseApp, useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import {
   confirmCommercialInvoiceBilling,
   reportCustomerPaymentForIssuedCommercial,
@@ -48,7 +47,7 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 
 export default function ClientCommercialInvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -63,7 +62,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
   const [disputeText, setDisputeText] = useState('');
   const [disputeBusy, setDisputeBusy] = useState(false);
 
-  const ready = Boolean(firestore && currentUser && isClient(currentUser));
+  const ready = Boolean(firestore && currentUser && canAccessPortal);
 
   const invRef = useMemoFirebase(
     () => (ready ? doc(firestore!, 'commercial_invoices', id) : null),
@@ -267,7 +266,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
     return <Loader2 className="h-8 w-8 animate-spin text-primary" />;
   }
 
-  if (!currentUser || !isClient(currentUser)) {
+  if (!currentUser || !canAccessPortal) {
     return <p className="text-sm text-muted-foreground">{en ? 'Portal only.' : 'เฉพาะพอร์ทัล'}</p>;
   }
 

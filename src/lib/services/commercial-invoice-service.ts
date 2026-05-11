@@ -259,7 +259,7 @@ export async function createCommercialDraftFromQuotationPoLines(
   let auditLineSource: string;
 
   if (activePoLines.length > 0) {
-    lines = activePoLines.map((line) => {
+    lines = activePoLines.map((line, idx) => {
       const qty = Math.max(0, Number(line.quantity) || 0);
       const unit = roundMoney(Number(line.sellRateSnapshot) || 0);
       const amount = roundMoney(qty * unit);
@@ -267,6 +267,7 @@ export async function createCommercialDraftFromQuotationPoLines(
       const unitLabel = line.billingUnitSnapshot || 'unit';
       return {
         id: newLineId(),
+        displayOrder: idx,
         description: loc
           ? `${loc} — ${qty} × ${unit.toLocaleString()} (${unitLabel})`
           : `PO Line — ${qty} × ${unit.toLocaleString()} (${unitLabel})`,
@@ -296,7 +297,7 @@ export async function createCommercialDraftFromQuotationPoLines(
         'ไม่มีรายการในใบเสนอราคา — เพิ่มรายการในใบเสนอราคาก่อน หรือเพิ่มรายการใน PO',
       );
     }
-    lines = quoLines.map((line) => {
+    lines = quoLines.map((line, idx) => {
       const qty = Math.max(0, Number(line.quantity) || 0);
       const unit = roundMoney(Number(line.unitPrice) || 0);
       const rawTotal = Number(line.lineTotal);
@@ -311,6 +312,7 @@ export async function createCommercialDraftFromQuotationPoLines(
       const description = `${tail} — ${qty} × ${unit.toLocaleString()}`;
       return {
         id: newLineId(),
+        displayOrder: idx,
         description,
         quantity: qty,
         unitPrice: unit,
@@ -527,8 +529,9 @@ export async function createCommercialDraftInvoiceForPoMonth(
   const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
   const totalAmount = roundMoney(amountBeforeTax + vatAmount);
 
-  const lines: CommercialInvoiceLine[] = gen.lines.map((l) => ({
+  const lines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
     id: newLineId(),
+    displayOrder: idx,
     description: l.description,
     ...(l.workerId ? { workerId: l.workerId } : {}),
     ...(l.workerName ? { workerName: l.workerName } : {}),
@@ -631,8 +634,9 @@ export async function createCommercialDraftInvoice(
   const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
   const totalAmount = roundMoney(amountBeforeTax + vatAmount);
 
-  const lines: CommercialInvoiceLine[] = gen.lines.map((l) => ({
+  const lines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
     id: newLineId(),
+    displayOrder: idx,
     description: l.description,
     ...(l.workerId ? { workerId: l.workerId } : {}),
     ...(l.workerName ? { workerName: l.workerName } : {}),
@@ -902,7 +906,7 @@ export async function confirmCommercialInvoiceBilling(
 }
 
 function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceLine[] {
-  return lines.map((l) => {
+  return lines.map((l, idx) => {
     const id = l.id || newLineId();
     const qty = roundMoney(Number(l.quantity) || 0);
     const unit = roundMoney(Number(l.unitPrice) || 0);
@@ -910,6 +914,7 @@ function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceL
     return {
       ...l,
       id,
+      displayOrder: idx,
       quantity: qty,
       unitPrice: unit,
       amount,

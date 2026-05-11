@@ -6,8 +6,7 @@ import { useParams } from 'next/navigation';
 import { Calendar, ChevronLeft, FileText, Loader2 } from 'lucide-react';
 import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { useAppUser } from '@/hooks/use-app-user';
-import { isClient } from '@/lib/permissions';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatCustomerPoNumberForPortal } from '@/lib/client-portal/timesheet-portal-utils';
 import { formatDateRangeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
@@ -21,7 +20,7 @@ export default function ClientPortalPoDetailPage() {
   const params = useParams();
   const poId = typeof params?.poId === 'string' ? params.poId : '';
   const firestore = useFirestore();
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const { locale, t } = usePortalLocale();
   const [po, setPo] = useState<PurchaseOrder | null | undefined>(undefined);
   const [positionLabels, setPositionLabels] = useState<Record<string, string>>({});
@@ -96,7 +95,7 @@ export default function ClientPortalPoDetailPage() {
     );
   }
 
-  if (!isClient(currentUser)) {
+  if (!canAccessPortal) {
     return (
       <p className="text-sm text-muted-foreground">{locale === 'en' ? 'Customer portal only.' : 'เฉพาะบัญชีลูกค้า'}</p>
     );

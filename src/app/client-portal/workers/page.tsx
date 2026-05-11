@@ -7,14 +7,13 @@ import { HardHat, ChevronRight, MapPin } from 'lucide-react';
 import type { Assignment, POLine, Position, Wave, Worker } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
-import { isClient } from '@/lib/permissions';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { useWorkersByIds } from '@/hooks/use-workers-by-ids';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
-import { useAppUser } from '@/hooks/use-app-user';
+import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
 
 function workerDisplayName(a: Assignment, w: Worker | undefined): string {
@@ -39,7 +38,7 @@ function siteDisplayLabel(a: Assignment, waveById: Map<string, Wave>, poLineByKe
 }
 
 export default function ClientWorkersPage() {
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { locale } = usePortalLocale();
   const [positionLabels, setPositionLabels] = useState<Record<string, string>>({});
@@ -168,7 +167,7 @@ export default function ClientWorkersPage() {
     return <p className="text-sm text-muted-foreground">…</p>;
   }
 
-  if (!currentUser || !isClient(currentUser)) {
+  if (!currentUser || !canAccessPortal) {
     return (
       <p className="text-sm text-muted-foreground">{locale === 'en' ? 'Customer portal only.' : 'เฉพาะบัญชีลูกค้า'}</p>
     );
