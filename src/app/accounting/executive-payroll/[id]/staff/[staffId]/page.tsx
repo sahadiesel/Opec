@@ -35,14 +35,16 @@ import {
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
-import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { collection, query, where, limit, doc } from 'firebase/firestore';
+import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
+import { doc } from 'firebase/firestore';
 import {
   ExecutivePayrollLine,
   ExecutivePayrollRun,
+  ExecutivePayrollStaff,
   OfficePayrollPitMode,
   User,
 } from '@/lib/types';
+import { executivePayrollLineDocumentId } from '@/lib/payroll/executive-payroll-line-id';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canEdit, canView } from '@/lib/permissions';
@@ -88,19 +90,27 @@ export default function ExecutivePayrollRunStaffLinePage({
   );
   const { data: run, isLoading: runLoading } = useDoc<ExecutivePayrollRun>(runRef as any);
 
-  const lineQuery = useMemoFirebase(
+  const staffDocRef = useMemoFirebase(
+    () => (firestore && isAuthorized ? doc(firestore, 'executive_payroll_staff', staffId) : null),
+    [firestore, isAuthorized, staffId],
+  );
+  const { data: staffRow, isLoading: staffLoading } = useDoc<ExecutivePayrollStaff>(staffDocRef as any);
+
+  const lineDocRef = useMemoFirebase(
     () =>
-      firestore && isAuthorized
-        ? query(
-            collection(firestore, 'executive_payroll_runs', runId, 'lines'),
-            where('staffId', '==', staffId),
-            limit(1),
+      firestore && isAuthorized && staffRow?.staffCode
+        ? doc(
+            firestore,
+            'executive_payroll_runs',
+            runId,
+            'lines',
+            executivePayrollLineDocumentId(staffRow.staffCode, runId),
           )
         : null,
-    [firestore, isAuthorized, runId, staffId],
+    [firestore, isAuthorized, runId, staffRow?.staffCode],
   );
-  const { data: lineRows, isLoading: lineLoading } = useCollection<ExecutivePayrollLine>(lineQuery as any);
-  const line = lineRows?.[0] ?? null;
+  const { data: lineRow, isLoading: lineLoading } = useDoc<ExecutivePayrollLine>(lineDocRef as any);
+  const line = lineRow ?? null;
 
   const [allowanceRows, setAllowanceRows] = useState<Array<{ label: string; amount: string }>>([
     { label: '', amount: '' },
@@ -225,7 +235,7 @@ export default function ExecutivePayrollRunStaffLinePage({
     );
   }
 
-  if (runLoading || lineLoading) {
+  if (runLoading || staffLoading || lineLoading) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex min-h-[40vh] items-center justify-center">
@@ -250,12 +260,28 @@ export default function ExecutivePayrollRunStaffLinePage({
 
   const isLocked = run.status === 'LOCKED';
 
+  if (!staffRow) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-lg mx-auto space-y-4 py-12 text-center">
+          <p className="text-muted-foreground">ไม่พบผู้บริหารในระบบทะเบียน (รหัส staff ไม่ตรงหรือถูกลบ)</p>
+          <Button asChild>
+            <Link href={`/accounting/executive-payroll/${runId}`}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              กลับงวดเงินเดือน
+            </Link>
+          </Button>
+        </div>
+      </AppShell>
+    );
+  }
+
   if (!line) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="max-w-lg mx-auto space-y-4 py-12 text-center">
           <p className="text-muted-foreground">
-            ไม่พบรายการจ่ายของผู้บริหารท่านนี้ในงวดนี้ หรือรหัสไม่ตรง
+            ไม่พบบรรทัดจ่ายในงวดนี้ (ลองกดคำนวณรายละเอียดงวดใหม่ หรือตรวจรหัสพนักงาน/งวด)
           </p>
           <Button asChild>
             <Link href={`/accounting/executive-payroll/${runId}`}>

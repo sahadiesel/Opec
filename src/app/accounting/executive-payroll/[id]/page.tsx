@@ -31,7 +31,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { ExecutivePayrollWhtBatchDialog } from '@/components/payroll/executive-payroll-wht-batch-dialog';
+import { ExecutivePayrollWhtSingleDialog } from '@/components/payroll/executive-payroll-wht-single-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
+import { canPreviewOfficePayrollWht } from '@/lib/payroll/payroll-office-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, query, where, type DocumentData } from 'firebase/firestore';
 import {
@@ -102,6 +106,31 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
   const linesQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'executive_payroll_runs', id, 'lines') : null), [firestore, id, isAuthorized]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<OfficePayrollLine>(linesQuery as any);
 
+  const linesSorted = useMemo(() => {
+    const list = [...(lines ?? [])];
+    list.sort((a, b) =>
+      (a.staffName || '').localeCompare(b.staffName || '', 'th', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+    return list;
+  }, [lines]);
+
+  const executiveWhtPeriodLabel = useMemo(() => {
+    if (!run) return '';
+    return `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`;
+  }, [run]);
+
+  const canExecutiveWhtPreview =
+    !!run && !!currentUser && canPreviewOfficePayrollWht(currentUser as AppUser, run.status) && linesSorted.length > 0;
+  const executiveWhtDisabledReason =
+    linesSorted.length === 0
+      ? 'ยังไม่มีรายการจ่ายในทะเบียนงวดนี้'
+      : !run || !currentUser || !canPreviewOfficePayrollWht(currentUser as AppUser, run.status)
+        ? 'งวดนี้ยังไม่พร้อมใบหัก ณ ที่จ่าย (ต้องคำนวณแล้ว)'
+        : undefined;
+
   const [isProcessing, setIsProcessing] = useState(false);
 
   const rosterQuery = useMemoFirebase(
@@ -111,6 +140,11 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
   const { data: executiveRoster } = useCollection<ExecutivePayrollStaff>(rosterQuery as any);
 
   const { profile: companyProfile } = useCompanyDocumentProfile();
+  const companyProfileWhtRef = useMemoFirebase(
+    () => (firestore && isAuthorized ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: companyProfileForWht } = useDoc<CompanyDocumentProfileForPayrollWht>(companyProfileWhtRef as any);
   const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
@@ -319,11 +353,25 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {lines && lines.length > 0 && (
-              <Button variant="outline" size="sm" className="gap-2" asChild>
-                <Link href={`/accounting/executive-payroll/${id}/print`}>
-                  <Printer className="h-4 w-4" /> พิมพ์สลิปทั้งงวด
-                </Link>
-              </Button>
+              <>
+                {firestore && run ? (
+                  <ExecutivePayrollWhtBatchDialog
+                    firestore={firestore}
+                    run={run}
+                    linesSorted={linesSorted}
+                    periodLabel={executiveWhtPeriodLabel}
+                    companyProfile={companyProfileForWht ?? null}
+                    currentUser={currentUser as AppUser}
+                    disabled={!canExecutiveWhtPreview}
+                    disabledTitle={executiveWhtDisabledReason}
+                  />
+                ) : null}
+                <Button variant="outline" size="sm" className="gap-2" asChild>
+                  <Link href={`/accounting/executive-payroll/${id}/print`}>
+                    <Printer className="h-4 w-4" /> พิมพ์สลิปทั้งงวด
+                  </Link>
+                </Button>
+              </>
             )}
             {isAdmin && (
               <Button
@@ -404,6 +452,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                       <TableHead className="text-right">ยอดรวม (Gross)</TableHead>
                       <TableHead className="text-right">รายการหัก</TableHead>
                       <TableHead className="text-right font-bold">สุทธิ (Net)</TableHead>
+                      <TableHead className="text-center w-[88px] px-1">ใบหักฯ</TableHead>
                       <TableHead className="text-right w-[100px]">สลิป</TableHead>
                       <TableHead className="text-right">จัดการ</TableHead>
                     </TableRow>
@@ -411,7 +460,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                   <TableBody>
                     {isLinesLoading && (
                       <TableRow>
-                        <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                        <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
                           <Loader2 className="h-6 w-6 inline animate-spin mr-2" />
                           กำลังโหลดรายการ…
                         </TableCell>
@@ -419,7 +468,12 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                     )}
                     {!isLinesLoading &&
                       (lines ?? []).map((line) => {
-                        const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
+                        const slipModel = buildPayslipFromOfficeLine(
+                          line,
+                          run,
+                          companyProfile ?? undefined,
+                          'ผู้บริหาร / Executive Payroll (รายเดือน)',
+                        );
                         return (
                           <TableRow key={line.id} className="hover:bg-muted/20">
                             <TableCell>
@@ -436,6 +490,22 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                             <TableCell className="text-right font-medium">฿{line.grossPay.toLocaleString()}</TableCell>
                             <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
                             <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
+                            <TableCell className="text-center align-middle px-1">
+                              {firestore && run ? (
+                                <ExecutivePayrollWhtSingleDialog
+                                  firestore={firestore}
+                                  run={run}
+                                  line={line}
+                                  periodLabel={executiveWhtPeriodLabel}
+                                  companyProfile={companyProfileForWht ?? null}
+                                  currentUser={currentUser as AppUser}
+                                  disabled={!canExecutiveWhtPreview}
+                                  disabledTitle={executiveWhtDisabledReason}
+                                />
+                              ) : (
+                                '—'
+                              )}
+                            </TableCell>
                             <TableCell className="text-right">
                               <PayslipDialog model={slipModel} />
                             </TableCell>
@@ -453,7 +523,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                       })}
                     {!isLinesLoading && (!lines || lines.length === 0) && (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                        <TableCell colSpan={9} className="text-center py-20 text-muted-foreground italic">
                           ยังไม่มีข้อมูลรายการจ่ายเงิน กรุณากดปุ่ม &quot;คำนวณเงินเดือนผู้บริหาร&quot;
                         </TableCell>
                       </TableRow>

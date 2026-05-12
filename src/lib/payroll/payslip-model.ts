@@ -352,6 +352,8 @@ export function buildPayslipFromOfficeLine(
   line: OfficePayrollLine,
   run: OfficePayrollRun,
   companyProfile?: PayslipCompanyProfileSource,
+  /** เช่น ผู้บริหาร — ค่าเริ่มต้นข้อความสลิปพนักงานออฟฟิศ */
+  payrollTypeLabelOverride?: string,
 ): PayslipViewModel {
   const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
   const ot = Number(line.overtimeAmount ?? 0);
@@ -423,7 +425,8 @@ export function buildPayslipFromOfficeLine(
     companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.staffName,
     periodLabel: `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`,
-    payrollTypeLabel: 'พนักงานออฟฟิศ / Office Payroll (รายเดือน)',
+    payrollTypeLabel:
+      payrollTypeLabelOverride?.trim() || 'พนักงานออฟฟิศ / Office Payroll (รายเดือน)',
     documentRef: run.payrollRunNo,
     paymentDateLabel: formatPaymentDate(officePaymentTimestamp(run)),
     policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),

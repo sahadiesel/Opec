@@ -1,12 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { collection, orderBy, query } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -31,11 +39,53 @@ function fmtBaht(n: number): string {
   return `฿${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const TH_MONTHS = [
+  'ม.ค.',
+  'ก.พ.',
+  'มี.ค.',
+  'เม.ย.',
+  'พ.ค.',
+  'มิ.ย.',
+  'ก.ค.',
+  'ส.ค.',
+  'ก.ย.',
+  'ต.ค.',
+  'พ.ย.',
+  'ธ.ค.',
+] as const;
+
+function ymLabelTh(ym: string): string {
+  const [y, m] = ym.split('-');
+  const mi = Number(m);
+  if (!y || !Number.isFinite(mi) || mi < 1 || mi > 12) return ym;
+  return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
+}
+
+/** YYYY-MM จากวันที่จ่าย หรือจากวันที่สร้างเอกสาร (Bangkok) */
+function vendorWhtDocYm(d: WithholdingCertificateDocument): string | null {
+  const pd = (d.paymentDate || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(pd)) return pd.slice(0, 7);
+  if (Number.isFinite(d.createdAt) && d.createdAt > 0) {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+    });
+    const parts = fmt.formatToParts(new Date(d.createdAt));
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    if (y && m) return `${y}-${m}`;
+  }
+  return null;
+}
+
 export default function AccountingWithholdingVendorDocumentsPage() {
   const { currentUser, isLoading } = useAppUser();
   const { profile } = usePermissions(currentUser);
   const firestore = useFirestore();
   const [q, setQ] = useState('');
+  /** 'ALL' | YYYY-MM */
+  const [monthFilter, setMonthFilter] = useState<string>('ALL');
 
   const whtQuery = useMemoFirebase(() => {
     if (!firestore) return null;
@@ -46,7 +96,22 @@ export default function AccountingWithholdingVendorDocumentsPage() {
 
   const vendorDocs = useMemo(() => (rows || []).filter(isVendorPartnerWhtDoc), [rows]);
 
-  const filtered = useMemo(() => {
+  const monthOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of vendorDocs) {
+      const ym = vendorWhtDocYm(d);
+      if (ym) set.add(ym);
+    }
+    return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  }, [vendorDocs]);
+
+  useEffect(() => {
+    if (monthFilter !== 'ALL' && !monthOptions.includes(monthFilter)) {
+      setMonthFilter('ALL');
+    }
+  }, [monthFilter, monthOptions]);
+
+  const vendorDocsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return vendorDocs;
     return vendorDocs.filter((d) => {
@@ -57,6 +122,16 @@ export default function AccountingWithholdingVendorDocumentsPage() {
       return payee.includes(t) || cert.includes(t) || bill.includes(t) || po.includes(t) || d.id.toLowerCase().includes(t);
     });
   }, [vendorDocs, q]);
+
+  const filtered = useMemo(() => {
+    if (monthFilter === 'ALL') return vendorDocsBySearch;
+    return vendorDocsBySearch.filter((d) => vendorWhtDocYm(d) === monthFilter);
+  }, [vendorDocsBySearch, monthFilter]);
+
+  const totalWithholding = useMemo(
+    () => filtered.reduce((sum, d) => sum + (Number(d.withholdingTaxAmount) || 0), 0),
+    [filtered],
+  );
 
   if (isLoading || !currentUser) {
     return (
@@ -90,16 +165,46 @@ export default function AccountingWithholdingVendorDocumentsPage() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">ค้นหา</CardTitle>
-            <CardDescription>ชื่อคู่ค้า เลขที่หนังสือ เลขที่ใบวางบิล เลข PO หรือรหัสเอกสาร</CardDescription>
-            <div className="relative max-w-md pt-2">
-              <Search className="absolute left-2.5 top-4 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="พิมพ์คำค้น..."
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+            <CardTitle className="text-base">ค้นหาและกรองเดือน</CardTitle>
+            <CardDescription>
+              ชื่อคู่ค้า เลขที่หนังสือ เลขที่ใบวางบิล เลข PO หรือรหัสเอกสาร — กรองเดือนตามวันที่จ่าย (หรือเดือนที่สร้างเอกสารถ้าไม่มีวันที่จ่าย)
+            </CardDescription>
+            <div className="flex flex-col gap-4 pt-3 lg:flex-row lg:items-end lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-col gap-4 sm:flex-row sm:items-end">
+                <div className="relative max-w-md flex-1">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    placeholder="พิมพ์คำค้น..."
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                  />
+                </div>
+                <div className="w-full space-y-1.5 rounded-lg border bg-muted/50 p-3 sm:max-w-[260px] sm:shrink-0">
+                  <Label htmlFor="vendor-wht-month-filter" className="text-xs text-muted-foreground">
+                    กรองตามเดือน
+                  </Label>
+                  <Select value={monthFilter} onValueChange={setMonthFilter}>
+                    <SelectTrigger id="vendor-wht-month-filter" className="bg-background">
+                      <SelectValue placeholder="เลือกเดือน" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">ทุกเดือน</SelectItem>
+                      {monthOptions.map((ym) => (
+                        <SelectItem key={ym} value={ym}>
+                          {ymLabelTh(ym)} ({ym})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {!loadingDocs && !error ? (
+                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm shrink-0 sm:min-w-[180px]">
+                  <p className="text-xs font-medium text-muted-foreground">ยอดหักรวม (ในตาราง)</p>
+                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(totalWithholding)}</p>
+                </div>
+              ) : null}
             </div>
           </CardHeader>
           <CardContent>
@@ -113,7 +218,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
               <p className="text-sm text-muted-foreground py-8 text-center">
                 {vendorDocs.length === 0
                   ? 'ยังไม่มีเอกสารหัก ณ ที่จ่ายจากคู่ค้า (จะถูกสร้างเมื่อบันทึกจ่ายใบวางบิลที่มีหัก ณ ที่จ่าย)'
-                  : 'ไม่พบรายการที่ตรงกับคำค้น'}
+                  : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
               </p>
             ) : (
               <div className="rounded-md border overflow-x-auto">

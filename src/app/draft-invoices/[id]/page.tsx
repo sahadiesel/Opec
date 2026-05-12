@@ -39,6 +39,7 @@ import { canCreate, canEdit, canView, isSystemAdmin } from '@/lib/permissions';
 import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, doc, query, where } from 'firebase/firestore';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { shouldOmitCommercialInvoiceGenerationWarning } from '@/lib/services/billing-line-generator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
@@ -174,6 +175,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       (a.accountName || '').localeCompare(b.accountName || '', 'th', { sensitivity: 'base' }),
     );
   }, [bankListRaw]);
+
+  const visibleGenerationWarnings = useMemo(() => {
+    const raw = invoice?.generationWarnings;
+    if (!raw?.length) return [];
+    return raw.filter((w) => !shouldOmitCommercialInvoiceGenerationWarning(w));
+  }, [invoice?.generationWarnings]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -820,12 +827,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </Alert>
         )}
 
-        {invoice.generationWarnings && invoice.generationWarnings.length > 0 && (
+        {visibleGenerationWarnings.length > 0 && (
           <Alert className="border-amber-200 bg-amber-50/80">
             <AlertTitle>คำเตือนตอนคำนวณ</AlertTitle>
             <AlertDescription>
               <ul className="list-disc pl-4 text-sm space-y-1">
-                {invoice.generationWarnings.map((w, i) => (
+                {visibleGenerationWarnings.map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}
               </ul>

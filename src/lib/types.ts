@@ -635,6 +635,17 @@ export interface ExecutivePayrollStaff {
   notes?: string;
   /** อ้างอิงทะเบียน office_staff เดิม (ถ้ามี) — ไม่บังคับ */
   linkedOfficeStaffId?: string;
+  /** เชื่อมบัญชีล็อกอิน (My Profile / portal) — จัดการได้เฉพาะผู้ดูแลระบบ */
+  linkedUserId?: string;
+  linkedUserDisplayName?: string;
+  linkedUserDisplayEmail?: string;
+  linkedUserAccessSummary?: string[];
+  /** สำหรับออกใบหัก ณ ที่จ่าย — ถ้าไม่กรอกและมี linkedOfficeStaffId ระบบดึงจาก office_staff */
+  nationalId?: string;
+  taxId?: string;
+  address?: string;
+  bankName?: string;
+  bankAccountNumber?: string;
   createdAt: number;
   updatedAt: number;
   createdBy?: string;

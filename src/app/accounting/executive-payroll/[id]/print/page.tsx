@@ -41,7 +41,9 @@ export default function ExecutivePayrollPrintAllPage({ params }: { params: Promi
 
   const models = useMemo(() => {
     if (!run || !lines?.length) return [];
-    return lines.map((line) => buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined));
+    return lines.map((line) =>
+      buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined, 'ผู้บริหาร / Executive Payroll (รายเดือน)'),
+    );
   }, [run, lines, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl]);
 
   if (loadingRun || !currentUser) {

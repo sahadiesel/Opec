@@ -645,6 +645,19 @@ service cloud.firestore {
         );
     }
 
+    /** ผู้จัดการขาย / ผู้จัดการปฏิบัติการ — ดูข้อมูลบัญชีได้ ไม่ใช่เจ้าหน้าที่บัญชี (สอดคล้อง permissions.ts) */
+    function isAccountingDepartmentReadOnlyObserver() {
+      return hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && !isAdmin()
+        && !isAccounting()
+        && (
+          effectiveRole(userData()) == 'sales_manager'
+          || effectiveRole(userData()) == 'operations_manager'
+          || isOperationsManagerRole()
+        );
+    }
+
     /** บัญชี: master data — ผู้จัดการปฏิบัติการบันทึก Petty Cash / โอน (อัปเดตยอด) ได้ */
     function canAccessBankAccountsAndCashbook() {
       return isAccountingOrAdmin() || isOperationsManagerRole();
@@ -1108,18 +1121,20 @@ service cloud.firestore {
 
     // ---------- Accounting-only modules ----------
     match /billing_notes/{id} {
-      allow read: if isAccountingOrAdmin() || portalOwnsResourceCustomerId();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver() || portalOwnsResourceCustomerId();
       allow write: if isAccountingOrAdmin();
     }
     match /billing_notes/{billingNoteId}/lines/{lineId} {
       allow read: if isAccountingOrAdmin()
+        || isAccountingDepartmentReadOnlyObserver()
         || (portalCustomerIdOk()
             && exists(/databases/$(database)/documents/billing_notes/$(billingNoteId))
             && get(/databases/$(database)/documents/billing_notes/$(billingNoteId)).data.customerId == userData().customerId);
       allow write: if isAccountingOrAdmin();
     }
     match /billing_notes/{billingNoteId}/{document=**} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
+      allow write: if isAccountingOrAdmin();
     }
 
     // DRAFT: บัญชีสร้าง/ออกเอกสารจริง — พนักงานภายในดูได้และแนบรูปสลิปขณะยัง DRAFT เท่านั้น
@@ -1228,6 +1243,7 @@ service cloud.firestore {
 
     match /ap_bills/{id} {
       allow read: if isAccountingOrAdmin()
+        || isAccountingDepartmentReadOnlyObserver()
         || (
           (isInternalUser() || isInternalStaffDoc())
           && resource.data != null
@@ -1243,7 +1259,7 @@ service cloud.firestore {
     }
 
     match /accounts_receivable/{id} {
-      allow read: if isAccountingOrAdmin() || portalOwnsResourceCustomerId();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver() || portalOwnsResourceCustomerId();
       allow create: if isAccountingOrAdmin() || portalArComFromCommercialCreateOk();
       allow update, delete: if isAccountingOrAdmin();
     }
@@ -1282,18 +1298,22 @@ service cloud.firestore {
     }
 
     match /executive_payroll_runs/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
+      allow write: if isAccountingOrAdmin();
     }
     match /executive_payroll_runs/{runId}/lines/{lineId} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
+      allow write: if isAccountingOrAdmin();
     }
     match /executive_payroll_runs/{runId}/{document=**} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
+      allow write: if isAccountingOrAdmin();
     }
 
     /** รายชื่อผู้บริหาร + ฐานเงินเดือน — ใช้เฉพาะงวด executive payroll (เมนูบัญชี) */
     match /executive_payroll_staff/{id} {
-      allow read, write: if isAccountingOrAdmin();
+      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
+      allow write: if isAccountingOrAdmin();
     }
 
     // ---------- System docs (read widened where app needs) ----------

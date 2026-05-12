@@ -82,6 +82,22 @@ function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function isUnpaidLeaveEvent(eventType: string | undefined | null): boolean {
+  return String(eventType ?? '').trim() === 'unpaid_leave';
+}
+
+/**
+ * คำเตือนที่สร้างก่อนแก้ไข / ข้อมูล eventType มีช่องว่าง — ลาไม่จ่ายไม่คิดบิลอยู่แล้ว ไม่ต้องแสดง
+ */
+export function shouldOmitCommercialInvoiceGenerationWarning(warning: string): boolean {
+  const t = String(warning);
+  if (!t.includes('unpaid_leave')) return false;
+  return (
+    t.includes('ยังไม่รองรับในโหมด PO + สัญญา') ||
+    t.includes('ไม่มี PO line สำหรับตำแหน่ง')
+  );
+}
+
 function applySellRestMultiplier(
   amount: number,
   rest: SellRestDayResolution,
@@ -304,7 +320,7 @@ function billingNonWorkDayFromPoAndContract(
   map: Map<string, LineAcc>,
   warnings: string[],
 ) {
-  if (ts.eventType === 'unpaid_leave') return;
+  if (isUnpaidLeaveEvent(ts.eventType)) return;
 
   const sellRate = sellSnapshotForWorkMode(poLine, ts.workMode);
   const otRules: OtRulesSnapshot = poLine.sellOtRulesSnapshot || {};
@@ -478,7 +494,9 @@ export async function generateBillingLines(
     const poLine = poLinesByPosition.get(ts.positionId);
 
     if (!poLine) {
-      warnings.push(`ข้าม ${ts.date} (${ts.eventType}) — ไม่มี PO line สำหรับตำแหน่ง`);
+      if (!isUnpaidLeaveEvent(ts.eventType)) {
+        warnings.push(`ข้าม ${ts.date} (${ts.eventType}) — ไม่มี PO line สำหรับตำแหน่ง`);
+      }
       continue;
     }
 
@@ -526,7 +544,7 @@ export async function generateBillingLines(
     lines,
     totalAmount,
     timesheetCount: timesheets.length,
-    warnings: [...new Set(warnings)],
+    warnings: [...new Set(warnings)].filter((w) => !shouldOmitCommercialInvoiceGenerationWarning(w)),
   };
 }
 

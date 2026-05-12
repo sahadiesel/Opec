@@ -19,6 +19,8 @@ import {
   isHrManager,
   canManageWaveRecords,
   isOperationManager,
+  isSalesManager,
+  isAccountingDepartmentReadOnlyObserver,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
@@ -74,6 +76,8 @@ export {
   isHrManager,
   canManageWaveRecords,
   isOperationManager,
+  isSalesManager,
+  isAccountingDepartmentReadOnlyObserver,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
@@ -472,7 +476,9 @@ export function getPermissions(
   }
 
   if (ACCOUNTING_ONLY_MODULE_KEYS.has(moduleKey)) {
-    return isSimpleAccounting(u) ? clonePermission(FULL_ACCESS) : clonePermission(NO_ACCESS);
+    if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
+    if (isAccountingDepartmentReadOnlyObserver(u)) return clonePermission(READ_ONLY);
+    return clonePermission(NO_ACCESS);
   }
 
   /**
@@ -483,6 +489,7 @@ export function getPermissions(
    * (สอดคล้องเงื่อนไขเดียวกับโมดูล operations_petty_cash — ไม่เปิดให้ sales_manager / store_officer)
    */
   if (moduleKey === 'draft_invoices') {
+    if (isSalesManager(u)) return clonePermission(READ_ONLY);
     if (isOperationManager(u) || isHrManager(u)) return clonePermission(FULL_ACCESS);
     if (
       isOperationsPillarExecutive(u) &&
@@ -532,6 +539,14 @@ export function getPermissions(
       return clonePermission(FULL_ACCESS);
     }
     return clonePermission(NO_ACCESS);
+  }
+
+  /** ผู้จัดการขาย/ปฏิบัติการ — เงินเดือนใต้เมนูบัญชี: ดูอย่างเดียว */
+  if (
+    isAccountingDepartmentReadOnlyObserver(u) &&
+    (moduleKey === 'office_payroll' || moduleKey === 'worker_payroll')
+  ) {
+    return clonePermission(READ_ONLY);
   }
 
   /** HR Officer: จัดการทะเบียนเอกสารกลางได้ แต่ไม่ลบ (manager/admin ผ่าน FULL_ACCESS ด้านล่าง) */

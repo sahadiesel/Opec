@@ -13,6 +13,7 @@ import {
   canSeeOperationsPillarUi,
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
+  isAccountingDepartmentReadOnlyObserver,
   isClient,
   isPrimaryHrOfficer,
 } from '@/lib/permissions';
@@ -245,7 +246,8 @@ const SORTED_PREFIXES = [...MODULE_PREFIXES].sort((a, b) => b[0].length - a[0].l
 export function userMayAccessPath(user: User, profile: PermissionProfile | null, pathname: string): boolean {
   const p = (pathname.split('?')[0] || '/').trim() || '/';
   const admin = isSystemAdmin(user) || isSimpleAdmin(user);
-  const accounting = admin || isSimpleAccounting(user);
+  const accounting =
+    admin || isSimpleAccounting(user) || isAccountingDepartmentReadOnlyObserver(user);
 
   if (admin) return true;
 

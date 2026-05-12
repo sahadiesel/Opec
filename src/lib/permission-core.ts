@@ -451,6 +451,39 @@ export function isOperationManager(user: User | null): boolean {
   return getPrimaryLegacyRole(user) === 'operations_manager';
 }
 
+/** ผู้จัดการฝ่ายขาย — primary / assignedRoleKey / matrix sales + manager */
+export function isSalesManager(user: User | null): boolean {
+  if (!user) return false;
+  if (getPrimaryLegacyRole(user) === 'sales_manager') return true;
+  const rk = String(user.assignedRoleKey || '')
+    .trim()
+    .toLowerCase();
+  if (rk === 'sales_manager') return true;
+  const rf = String((user as { role?: string }).role || '')
+    .trim()
+    .toLowerCase();
+  if (rf === 'sales_manager') return true;
+  return getEffectiveAccessGroup(user) === 'sales' && getEffectiveAccessLevel(user) === 'manager';
+}
+
+/**
+ * เข้าเมนูบัญชีแบบอ่านอย่างเดียว — ผู้จัดการขาย / ผู้จัดการปฏิบัติการ (ไม่ใช่เจ้าหน้าที่บัญชี)
+ * รองรับ matrix manager ฝั่ง operations ที่ legacy role ยังไม่ sync
+ */
+export function isAccountingDepartmentReadOnlyObserver(user: User | null): boolean {
+  if (!user) return false;
+  if (!isActiveForApp(user) || !isInternalTypeUser(user)) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user) || isSimpleAccounting(user)) return false;
+  if (isSalesManager(user) || isOperationManager(user)) return true;
+  const rk = getPrimaryLegacyRole(user);
+  const g = getEffectiveAccessGroup(user);
+  const lvl = getEffectiveAccessLevel(user);
+  if (g === 'operations' && lvl === 'manager' && !isHrManager(user) && rk !== 'sales_manager' && rk !== 'store_officer') {
+    return true;
+  }
+  return false;
+}
+
 export function isStoreOfficer(user: User | null): boolean {
   if (!user) return false;
   return getPrimaryLegacyRole(user) === 'store_officer';

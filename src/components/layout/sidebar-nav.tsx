@@ -71,6 +71,7 @@ import {
   isPayrollOfficer,
   isTimekeeper,
   getPrimaryLegacyRole,
+  isAccountingDepartmentReadOnlyObserver,
 } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
@@ -455,7 +456,8 @@ function navGroupsForUser(user: User): NavGroup[] {
 
 function canSeeGroup(group: NavGroup, user: User, admin: boolean): boolean {
   const clientUser = isClient(user);
-  const acct = admin || isSimpleAccounting(user) || isSimpleAdmin(user);
+  const acct =
+    admin || isSimpleAccounting(user) || isSimpleAdmin(user) || isAccountingDepartmentReadOnlyObserver(user);
 
   if (group.audience === 'admin') return admin;
   if (group.audience === 'accounting') return acct && !clientUser;

@@ -1721,6 +1721,9 @@ export class PayrollService {
     const policies = await loadPayrollPoliciesFromFirestore(this.db);
     const resolved = resolvePayrollPoliciesForDate(asOf, policies, 'office');
 
+    /** งวดผู้บริหาร — คิดจากอัตราเงินเดือน/รายรับที่กำหนดในงวดเท่านั้น ไม่ใช้ OT หรือรายได้จากเวลาสแกน */
+    const isExecutivePayrollRun = runCollection === 'executive_payroll_runs';
+
     const pitMode: OfficePayrollPitMode = input.pitMode ?? 'SYSTEM';
     const deductSocialSecurity = input.deductSocialSecurity !== false;
 
@@ -1730,8 +1733,8 @@ export class PayrollService {
       baseSalary: line.baseSalary,
       allowance: line.allowance ?? 0,
       bonus: line.bonus ?? 0,
-      overtimeAmount: line.overtimeAmount ?? 0,
-      otherIncome: line.otherIncome ?? 0,
+      overtimeAmount: isExecutivePayrollRun ? 0 : (line.overtimeAmount ?? 0),
+      otherIncome: isExecutivePayrollRun ? 0 : (line.otherIncome ?? 0),
       hrAllowanceItems: input.allowanceItems,
       hrDeductionItems: input.deductionItems,
       deductSocialSecurity,
@@ -1764,6 +1767,7 @@ export class PayrollService {
       d8Snapshot: d8.snapshot,
       hrLineAdjustments,
       updatedAt: Date.now(),
+      ...(isExecutivePayrollRun ? { overtimeAmount: 0, otherIncome: 0 } : {}),
     });
 
     await this.recalculatePayrollRunTotalsFromLines(runCollection, runId, user);

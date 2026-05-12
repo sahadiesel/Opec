@@ -1,6 +1,8 @@
 /**
  * งวดเงินเดือนผู้บริหาร — สูตร D8 เดียวกับ Office Payroll (นโยบาย HR `office`)
  * แหล่งรายชื่อ: `executive_payroll_staff` (เมนูบัญชี)
+ *
+ * ฐานเงินเดือนใช้ `monthlySalary` โดยตรง — ไม่นำเวลาสแกน/OT จากระบบลงเวลามาคำนวณ
  */
 
 import { collection, deleteDoc, doc, getDocs, writeBatch, type Firestore } from 'firebase/firestore';
@@ -16,6 +18,7 @@ import {
   resolvePayrollPoliciesForDate,
   runStatusToD8Lifecycle,
 } from '@/lib/payroll/d8';
+import { executivePayrollLineDocumentId } from '@/lib/payroll/executive-payroll-line-id';
 
 export function isExecutivePayrollStaffEligible(s: ExecutivePayrollStaff): boolean {
   if (s.status !== 'ACTIVE') return false;
@@ -82,7 +85,7 @@ export async function applyExecutivePayrollRunLines(
   let totalDeductions = 0;
 
   for (const staff of staffList) {
-    const lineId = `EPL-${staff.staffCode}-${runId.substring(0, 5)}`;
+    const lineId = executivePayrollLineDocumentId(staff.staffCode, runId);
     const lineDoc = doc(linesCol, lineId);
 
     const baseSalary = staff.monthlySalary || 0;

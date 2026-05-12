@@ -57,13 +57,15 @@ export function buildPayrollOfficeWhtPrintVm(input: {
   issueDateYmd: string;
   paymentDateYmd: string | undefined;
   officialDocumentNo?: boolean;
+  /** ข้อความประเภทงวดบนสลิปฝังในใบหัก (เช่น ผู้บริหาร) */
+  payslipPayrollTypeLabelOverride?: string;
 }): PayrollWorkerWhtPrintVm {
   const { run, line, staff, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
 
   const issueYear = Number(issueDateYmd.slice(0, 4)) || new Date().getFullYear();
   const documentNo = buildPayrollOfficeWhtDocumentNo(run.id, staff.staffCode, issueYear);
 
-  const slip = buildPayslipFromOfficeLine(line, run, company ?? undefined);
+  const slip = buildPayslipFromOfficeLine(line, run, company ?? undefined, input.payslipPayrollTypeLabelOverride);
   const grossAmount = round2(slip.grossTotal);
   const earningsRows = slip.incomeLines
     .filter((x) => (Number(x.amount) || 0) !== 0)
@@ -163,9 +165,12 @@ export function validatePayrollOfficeWhtPrint(input: {
   run: OfficePayrollRun | null;
   line: OfficePayrollLine | null;
   paymentDateYmd: string | undefined;
+  /** ข้อความ error เมื่อไม่พบทะเบียน — ค่าเริ่มต้น office_staff */
+  staffRegistry?: 'office_staff' | 'executive_payroll_staff';
 }): PayrollWorkerWhtValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const reg = input.staffRegistry ?? 'office_staff';
 
   const { company, staff, run, line, paymentDateYmd } = input;
 
@@ -181,7 +186,11 @@ export function validatePayrollOfficeWhtPrint(input: {
   }
 
   if (!staff) {
-    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลพนักงานจากทะเบียน office_staff');
+    errors.push(
+      reg === 'executive_payroll_staff'
+        ? 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลจากทะเบียน executive_payroll_staff (หรือผูก linkedOfficeStaffId กับ office_staff เพื่อดึงเลขบัตร/ที่อยู่)'
+        : 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลพนักงานจากทะเบียน office_staff',
+    );
   } else {
     if (!(staff.fullName || '').trim()) {
       errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานยังไม่มีชื่อสำหรับแสดงในเอกสาร');
@@ -190,16 +199,26 @@ export function validatePayrollOfficeWhtPrint(input: {
     const tidDigits = (staff.taxId || '').replace(/\D/g, '');
     if (nidDigits.length !== 13 && tidDigits.length !== 13) {
       errors.push(
-        'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลักในระบบ',
+        reg === 'executive_payroll_staff'
+          ? 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลัก (กรอกในทะเบียนผู้บริหาร หรือผูก linkedOfficeStaffId เพื่อดึงจากทะเบียน office_staff)'
+          : 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลักในระบบ',
       );
     }
     if (!(staff.address || '').trim() || (staff.address || '').trim().length < 5) {
-      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานยังไม่มีที่อยู่ครบในระบบ');
+      errors.push(
+        reg === 'executive_payroll_staff'
+          ? 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ยังไม่มีที่อยู่ครบในระบบ (กรอกในทะเบียนผู้บริหาร หรือผูก linkedOfficeStaffId เพื่อดึงจาก office_staff)'
+          : 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานยังไม่มีที่อยู่ครบในระบบ',
+      );
     }
   }
 
   if (!run || !(run.id || '').trim()) {
-    errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบงวดเงินเดือนออฟฟิศ');
+    errors.push(
+      reg === 'executive_payroll_staff'
+        ? 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบงวดเงินเดือนผู้บริหาร'
+        : 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบงวดเงินเดือนออฟฟิศ',
+    );
   }
 
   if (!line) {
