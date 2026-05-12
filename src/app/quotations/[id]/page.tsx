@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection, useUser } from '@/firebase';
 import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField } from 'firebase/firestore';
-import { Quotation, QuotationLine, QuotationStatus, User } from '@/lib/types';
+import { Quotation, QuotationLine, QuotationStatus, User, Customer } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -91,6 +91,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   );
   const { data: companyProfile } = useDoc<CompanyDocumentProfile>(companyProfileRef as any);
 
+  const customerRef = useMemoFirebase(
+    () =>
+      firestore && canViewQuotations && quotation?.customerId
+        ? doc(firestore, 'customers', quotation.customerId)
+        : null,
+    [firestore, canViewQuotations, quotation?.customerId],
+  );
+  const { data: customerRow } = useDoc<Customer>(customerRef as any);
+
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
   const [isEditMode, setIsEditMode] = useState(false);
@@ -137,13 +146,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     return { subtotal, taxAmount, grandTotal, discountAmount, taxPercent };
   };
 
-  const handlePrintQuotation = () => {
+  const handlePrintQuotation = async () => {
     if (!quotation) return;
-    const headerSlice = isEditMode ? editedHeader : quotation;
+    const headerSlice = { ...quotation, ...editedHeader } as Quotation;
     const t = computeTotals(displayLines, headerSlice);
     const body = buildQuotationPrintHtml({
       company: companyProfile ?? undefined,
-      quotation,
+      quotation: headerSlice,
+      customer: customerRow ?? undefined,
       lines: displayLines,
       totalsOverride: {
         subtotal: t.subtotal,
@@ -156,11 +166,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       locale: printLocale,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: quotation.quotationNo,
         bodyInnerHtml: body,
         htmlLang: printLocale,
-      })
+      }))
     ) {
       toast({
         variant: 'destructive',
@@ -892,6 +902,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <QuotationPreviewTab
               quotation={quotation}
               companyProfile={companyProfile ?? null}
+              customer={customerRow ?? null}
               displayLines={displayLines}
               editedHeader={editedHeader}
               totals={computeTotals(displayLines, editedHeader)}

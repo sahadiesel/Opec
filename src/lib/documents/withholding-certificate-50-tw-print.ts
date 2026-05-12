@@ -4,7 +4,7 @@
 
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
-import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type {
   PaymentMethod,
   WithholdingCertificateCopyVariant,
@@ -13,6 +13,7 @@ import type {
 } from '@/lib/types';
 import { whtCertificateThaiAddressDisplay } from '@/lib/wht/wht-address-display';
 import { effectiveWhtCertificateDocumentNo } from '@/lib/wht/wht-certificate-validation';
+import { escapeHtmlDoc, sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 
 /** @deprecated ใช้ snapshot จาก {@link WithholdingCertificateDocument} แทน — เก็บไว้ให้โค้ดเก่าอ้างอิงชื่อฟิลด์ */
 export type CompanyProfileForWhtCert = {
@@ -493,8 +494,7 @@ ${taxConditionChecks(doc.taxCondition, doc.taxConditionOtherRemark)}
 </div>
 <div class="field" style="margin-top:8px;">
   <strong>ผู้ออกเอกสาร:</strong> ${escapeHtml(doc.issuedByName || '—')} &nbsp;|&nbsp;
-  <strong>ผู้พิมพ์:</strong> ${escapeHtml(opts.printedByName)} &nbsp;|&nbsp;
-  <strong>วันเวลาที่พิมพ์:</strong> ${escapeHtml(formatDateTimeThaiBE(opts.printedAtMs) || '—')}
+  <strong>ผู้พิมพ์:</strong> ${escapeHtml(opts.printedByName)}
 </div>
 
 <p class="footer-sys">
@@ -512,14 +512,13 @@ export function buildWithholdingCertificateDocumentHtml(
   opts: WithholdingCertificateDocumentPrintOptions,
 ): string {
   const cnRaw = effectiveWhtCertificateDocumentNo(doc);
-  const cnPlaceholderDraft = '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)';
-  const cnResolved =
-    opts.official && cnRaw ? cnRaw : opts.hideDraftChrome ? cnRaw || '—' : cnRaw || cnPlaceholderDraft;
-  const cn = escapeHtml(cnResolved);
+  const printFileTitle = cnRaw?.trim()
+    ? sanitizePrintFileBaseName(cnRaw.trim())
+    : sanitizePrintFileBaseName('WHT-50TW-draft');
   const css = withholdingCertificatePrintCss();
   const inner = buildWithholdingCertificateBodyHtml(doc, opts);
 
-  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองการหักภาษี ณ ที่จ่าย ${cn}</title>
+  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>${escapeHtmlDoc(printFileTitle)}</title>
 <style>${css}</style></head><body>${inner}
 </body></html>`;
 }
@@ -532,15 +531,14 @@ export function buildWithholdingCertificatePayeeCopies12Html(
   opts: WithholdingCertificateDocumentPrintBaseOptions,
 ): string {
   const cnRaw = effectiveWhtCertificateDocumentNo(doc);
-  const cnPlaceholderDraft = '(ฉบับร่าง — ยังไม่ออกเลขที่อย่างเป็นทางการ)';
-  const cnResolved =
-    opts.official && cnRaw ? cnRaw : opts.hideDraftChrome ? cnRaw || '—' : cnRaw || cnPlaceholderDraft;
-  const cn = escapeHtml(cnResolved);
+  const printFileTitle = cnRaw?.trim()
+    ? sanitizePrintFileBaseName(`${cnRaw.trim()}-payee-copies-1-2`)
+    : sanitizePrintFileBaseName('WHT-50TW-payee-copies-draft');
   const css = withholdingCertificatePrintCss();
   const inner1 = buildWithholdingCertificateBodyHtml(doc, { ...opts, copyVariant: 'COPY_PAYEE_TAX_RETURN' });
   const inner2 = buildWithholdingCertificateBodyHtml(doc, { ...opts, copyVariant: 'COPY_PAYEE_RECORD' });
 
-  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองการหักภาษี ณ ที่จ่าย (ฉบับที่ 1 และ 2) ${cn}</title>
+  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>${escapeHtmlDoc(printFileTitle)}</title>
 <style>${css}</style></head><body>
 <div class="wht-print-page">${inner1}</div>
 <div class="wht-print-page">${inner2}</div>
@@ -562,6 +560,11 @@ export function openWithholdingCertificatePrintWindow(html: string): void {
   const w = openWithholdingCertificatePreviewTab(html);
   if (!w) return;
   requestAnimationFrame(() => {
+    try {
+      w.document.title = sanitizePrintFileBaseName(w.document.title || 'WHT-50TW');
+    } catch {
+      /* ignore */
+    }
     w.print();
   });
 }

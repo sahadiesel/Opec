@@ -9,6 +9,7 @@ import { collection, doc } from 'firebase/firestore';
 import type { PayrollBatch, PayrollBatchLine, PayrollPeriod, User } from '@/lib/types';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
+import { sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -25,6 +26,16 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
 
   const batchRef = useMemoFirebase(() => (firestore ? doc(firestore, 'payroll_batches', id) : null), [firestore, id]);
   const { data: batch, isLoading: loadingBatch } = useDoc<PayrollBatch>(batchRef as any);
+
+  useEffect(() => {
+    if (!batch?.id) return;
+    const next = sanitizePrintFileBaseName(`payslips-worker-${batch.id}`);
+    const prev = document.title;
+    document.title = next;
+    return () => {
+      document.title = prev;
+    };
+  }, [batch?.id]);
 
   const linesQuery = useMemoFirebase(() => (firestore ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id]);
   const { data: lines, isLoading: loadingLines } = useCollection<PayrollBatchLine>(linesQuery as any);

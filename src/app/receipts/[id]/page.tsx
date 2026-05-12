@@ -60,7 +60,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     addressLine2?: string;
   }>(companyRef as any);
 
-  const handlePrint = useCallback(() => {
+  const handlePrint = useCallback(async () => {
     if (!receipt || !taxInv) return;
     const body = buildMoneyReceiptPrintHtml({
       company: companyProfile ?? undefined,
@@ -71,11 +71,11 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
       locale: printLocale,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: receipt.receiptNo,
         bodyInnerHtml: body,
         htmlLang: printLocale,
-      })
+      }))
     ) {
       toast({
         variant: 'destructive',

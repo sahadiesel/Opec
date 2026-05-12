@@ -4,6 +4,7 @@ import { useRef, type ReactNode } from 'react';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import { PayslipDocument } from '@/components/payroll/payslip-document';
 import { Button } from '@/components/ui/button';
+import { sanitizePrintFileBaseName, escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 import {
   Dialog,
   DialogContent,
@@ -30,8 +31,9 @@ export function PayslipDialog({
     if (!w) return;
     const node = printRef.current;
     if (!node) return;
+    const printTitle = sanitizePrintFileBaseName(model.documentRef || 'payslip');
     w.document.write(
-      `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Payslip</title>
+      `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${escapeHtmlDoc(printTitle)}</title>
       <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap" rel="stylesheet"/>
       <style>
         body { font-family: "Sarabun", system-ui, sans-serif; margin: 16px; color: #111827; background: #fff; }
@@ -42,6 +44,7 @@ export function PayslipDialog({
     w.document.close();
 
     const runPrint = () => {
+      w.document.title = printTitle;
       w.focus();
       w.print();
       w.close();

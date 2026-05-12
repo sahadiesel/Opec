@@ -125,7 +125,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
     };
   }, [printLocale]);
 
-  const handlePrintCommercial = () => {
+  const handlePrintCommercial = async () => {
     if (!invoice) return;
     const body = buildCommercialInvoicePrintHtml({
       company: companyProfile ?? undefined,
@@ -146,11 +146,11 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
       locale: printLocale,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: invoice.invoiceNo,
         bodyInnerHtml: body,
         htmlLang: printLocale,
-      })
+      }))
     ) {
       toast({
         variant: 'destructive',

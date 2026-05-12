@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import type { Quotation, QuotationLine, User } from '@/lib/types';
+import type { Quotation, QuotationLine, User, Customer } from '@/lib/types';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, updateDoc } from 'firebase/firestore';
 import { DisputeService } from '@/lib/services/dispute-service';
@@ -68,6 +68,13 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
   );
   const { data: lines } = useCollection<QuotationLine>(linesQ as any);
 
+  const customerRef = useMemoFirebase(() => {
+    if (!ready || !quotation?.customerId || !currentUser?.customerId) return null;
+    if (currentUser.customerId !== quotation.customerId) return null;
+    return doc(firestore!, 'customers', quotation.customerId);
+  }, [ready, quotation?.customerId, currentUser?.customerId, firestore]);
+  const { data: customerRow } = useDoc<Customer>(customerRef as any);
+
   const companyProfileRef = useMemoFirebase(
     () => (ready ? doc(firestore!, 'system', 'company_profile') : null),
     [firestore, ready],
@@ -90,21 +97,22 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
   /** Firestore allows any portal customer on this quotation to decide; hide actions only for explicit viewers. */
   const isApprover = currentUser?.portalRole !== 'viewer';
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!quotation) return;
     const body = buildQuotationPrintHtml({
       company: companyProfile ?? undefined,
       quotation,
+      customer: customerRow ?? undefined,
       lines: sortedLines,
       printedAtMs: Date.now(),
       locale: printLocale as PrintDocumentLocale,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: quotation.quotationNo,
         bodyInnerHtml: body,
         htmlLang: printLocale,
-      })
+      }))
     ) {
       toast({
         variant: 'destructive',

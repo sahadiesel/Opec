@@ -223,7 +223,7 @@ function CustomerPOsPageContent() {
         startDate,
         endDate,
         customerPoIssueDate: newPO.customerPoIssueDate,
-        poWorkMode: newPO.poType === 'contract' ? (newPO.poWorkMode ?? 'OFFSHORE') : undefined,
+        poWorkMode: newPO.poWorkMode ?? 'OFFSHORE',
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
@@ -393,7 +393,7 @@ function CustomerPOsPageContent() {
                         quotationId: '',
                         customerId: '',
                         serviceAgreementNo: '',
-                        poWorkMode: v === 'contract' ? (newPO.poWorkMode ?? 'OFFSHORE') : undefined,
+                        poWorkMode: newPO.poWorkMode ?? 'OFFSHORE',
                       })
                     }
                     value={(newPO.poType as any) || 'contract'}

@@ -377,7 +377,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  const executeTaxInvoicePrint = (sheets: TaxInvoicePrintSheet[]) => {
+  const executeTaxInvoicePrint = async (sheets: TaxInvoicePrintSheet[]) => {
     if (!invoice) return;
     const body = buildTaxInvoicePrintHtml({
       company: companyProfile ?? undefined,
@@ -391,11 +391,18 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       sheets,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: invoice.taxInvoiceNo,
         bodyInnerHtml: body,
         htmlLang: printLocale,
-      })
+        onClipboardFilenameCopied: () => {
+          toast({
+            title: 'คัดลอกชื่อไฟล์แนะนำแล้ว',
+            description:
+              'ถ้าหน้าต่างบันทึก PDF ไม่เติมชื่อ — คลิกในช่องชื่อไฟล์แล้วกด Ctrl+V หรือ Shift+Insert หรือคลิกขวาแล้ววาง · หรือเลือกเครื่องพิมพ์ Save as PDF / บันทึกเป็น PDF ของ Edge หรือ Chrome แทน Microsoft Print to PDF',
+          });
+        },
+      }))
     ) {
       toast({
         variant: 'destructive',
@@ -412,12 +419,12 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       setPrintPresetOpen(true);
       return;
     }
-    executeTaxInvoicePrint(['original']);
+    void executeTaxInvoicePrint(['original']);
   };
 
   const handleConfirmAccountingPrint = () => {
     const preset = ACCOUNTING_TAX_INVOICE_PRINT_PRESETS[accountingPrintPreset];
-    executeTaxInvoicePrint(preset.sheets);
+    void executeTaxInvoicePrint(preset.sheets);
     setPrintPresetOpen(false);
   };
 

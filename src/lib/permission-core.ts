@@ -463,7 +463,10 @@ export function isSalesManager(user: User | null): boolean {
     .trim()
     .toLowerCase();
   if (rf === 'sales_manager') return true;
-  return getEffectiveAccessGroup(user) === 'sales' && getEffectiveAccessLevel(user) === 'manager';
+  const dept = String(user.department || '')
+    .trim()
+    .toLowerCase();
+  return dept === 'sales' && getEffectiveAccessLevel(user) === 'manager';
 }
 
 /**

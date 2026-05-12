@@ -10,6 +10,7 @@ import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { canView } from '@/lib/permissions';
+import { sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -31,6 +32,16 @@ export default function OfficePayrollPrintAllPage({ params }: { params: Promise<
     [firestore, id, isAuthorized]
   );
   const { data: run, isLoading: loadingRun } = useDoc<OfficePayrollRun>(runRef as any);
+
+  useEffect(() => {
+    if (!run?.payrollRunNo) return;
+    const next = sanitizePrintFileBaseName(run.payrollRunNo);
+    const prev = document.title;
+    document.title = next;
+    return () => {
+      document.title = prev;
+    };
+  }, [run?.payrollRunNo]);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'office_payroll_runs', id, 'lines') : null),

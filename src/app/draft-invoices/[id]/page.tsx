@@ -249,7 +249,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     return { before, vat, total: roundMoney(before + vat) };
   }, [draftLines, invoice]);
 
-  const handlePrintCommercial = () => {
+  const handlePrintCommercial = async () => {
     if (!invoice) return;
     const invoiceForPrint =
       invoice.status === 'DRAFT' && canAct ? { ...invoice, notes: notesDraft } : invoice;
@@ -268,11 +268,11 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       locale: printLocale,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: invoice.invoiceNo,
         bodyInnerHtml: body,
         htmlLang: printLocale,
-      })
+      }))
     ) {
       toast({
         variant: 'destructive',

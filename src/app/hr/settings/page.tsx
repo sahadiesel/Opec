@@ -330,7 +330,7 @@ export default function HrSettingsPage() {
     };
   }, [demoMonthlyGross, annualAllowance, pitBands, ssoRate, ssoCeiling]);
 
-  const handlePrintPitDemo = useCallback(() => {
+  const handlePrintPitDemo = useCallback(async () => {
     const body = buildPitSettingsDemoPrintHtml({
       generatedAt: new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }),
       ssoRate,
@@ -340,7 +340,7 @@ export default function HrSettingsPage() {
       calc: pitDemoCalc,
       pitRows: pitRows as PitRefRow[],
     });
-    if (!openStandardPrintWindow({ windowTitle: 'ตัวอย่าง ภงด.1 รายเดือน', bodyInnerHtml: body, htmlLang: 'th' })) {
+    if (!(await openStandardPrintWindow({ windowTitle: 'ตัวอย่าง ภงด.1 รายเดือน', bodyInnerHtml: body, htmlLang: 'th' }))) {
       toast({
         variant: 'destructive',
         title: 'เปิดหน้าต่างพิมพ์ไม่ได้',

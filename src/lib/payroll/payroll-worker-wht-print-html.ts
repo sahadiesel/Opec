@@ -4,8 +4,9 @@
  */
 
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
-import { formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { payrollWorkerWhtPrintCss } from '@/lib/documents/withholding-certificate-50-tw-print';
+import { escapeHtmlDoc, sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 import type { PaymentMethod, WithholdingCertificateCopyVariant } from '@/lib/types';
 import type { PayrollWorkerWhtPrintVm } from '@/lib/payroll/payroll-worker-wht-types';
 
@@ -178,8 +179,7 @@ ${taxConditionChecks()}
 </div>
 <div class="field pwht-after-sign">
   <strong>ผู้ออกเอกสาร:</strong> ${escapeHtml(vm.issuedByName || '—')} &nbsp;|&nbsp;
-  <strong>ผู้พิมพ์:</strong> ${escapeHtml(opts.printedByName)} &nbsp;|&nbsp;
-  <strong>วันเวลาที่พิมพ์:</strong> ${escapeHtml(formatDateTimeThaiBE(opts.printedAtMs) || '—')}
+  <strong>ผู้พิมพ์:</strong> ${escapeHtml(opts.printedByName)}
 </div>
 
 <p class="footer-sys">
@@ -195,10 +195,10 @@ export function buildPayrollWorkerWhtCertificateHtml(
   opts: PayrollWorkerWhtPrintBaseOptions,
 ): string {
   const cnRaw = (vm.documentNo || '').trim();
-  const cn = escapeHtml(opts.official && cnRaw ? cnRaw : cnRaw || '(preview)');
+  const printFileTitle = sanitizePrintFileBaseName(cnRaw || 'PND1-worker-preview');
   const css = payrollWorkerWhtPrintCss();
   const inner = buildPayrollWorkerWhtBodyHtml(vm, copyVariant, opts);
-  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองหัก ณ ที่จ่าย (ลูกจ้าง) ${cn}</title>
+  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>${escapeHtmlDoc(printFileTitle)}</title>
 <style>${css}</style></head><body class="payroll-wht-print"><div class="wht-print-page">${inner}</div></body></html>`;
 }
 
@@ -208,12 +208,12 @@ export function buildPayrollWorkerWhtCertificateMultiHtml(
   opts: PayrollWorkerWhtPrintBaseOptions,
 ): string {
   const cnRaw = (vm.documentNo || '').trim();
-  const cn = escapeHtml(opts.official && cnRaw ? cnRaw : cnRaw || '(preview)');
+  const printFileTitle = sanitizePrintFileBaseName(cnRaw || 'PND1-worker-preview');
   const css = payrollWorkerWhtPrintCss();
   const pages = variants
     .map((v) => `<div class="wht-print-page">${buildPayrollWorkerWhtBodyHtml(vm, v, opts)}</div>`)
     .join('');
-  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>หนังสือรับรองหัก ณ ที่จ่าย (ลูกจ้าง) ${cn}</title>
+  return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>${escapeHtmlDoc(printFileTitle)}</title>
 <style>${css}</style></head><body class="payroll-wht-print">${pages}</body></html>`;
 }
 
@@ -224,6 +224,11 @@ export function openPayrollWorkerWhtPrintWindow(html: string): void {
   w.document.close();
   w.focus();
   requestAnimationFrame(() => {
+    try {
+      w.document.title = sanitizePrintFileBaseName(w.document.title || 'PND1-worker');
+    } catch {
+      /* ignore */
+    }
     w.print();
   });
 }

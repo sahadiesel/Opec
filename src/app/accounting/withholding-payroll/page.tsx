@@ -111,10 +111,13 @@ export default function AccountingWithholdingPayrollHubPage() {
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
   const [workerRows, setWorkerRows] = useState<WorkerWhtRow[]>([]);
   const [officeRows, setOfficeRows] = useState<OfficeWhtRow[]>([]);
+  const [executiveRows, setExecutiveRows] = useState<ExecutiveWhtRow[]>([]);
   const [loadingWorkerLines, setLoadingWorkerLines] = useState(false);
   const [loadingOfficeLines, setLoadingOfficeLines] = useState(false);
+  const [loadingExecutiveLines, setLoadingExecutiveLines] = useState(false);
   const [workerLinesErr, setWorkerLinesErr] = useState<string | null>(null);
   const [officeLinesErr, setOfficeLinesErr] = useState<string | null>(null);
+  const [executiveLinesErr, setExecutiveLinesErr] = useState<string | null>(null);
 
   const batchesQuery = useMemoFirebase(() => {
     if (!firestore) return null;

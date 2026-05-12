@@ -1,7 +1,8 @@
 'use client';
 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { Quotation, QuotationLine } from '@/lib/types';
+import type { Quotation, QuotationLine, Customer } from '@/lib/types';
+import { resolveQuotationCustomerBillingAddress } from '@/lib/documents/standard-document-print';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 
 type CompanyDocumentProfile = {
@@ -25,12 +26,24 @@ interface Totals {
 interface QuotationPreviewTabProps {
   quotation: Quotation;
   companyProfile: CompanyDocumentProfile | null;
+  /** ทะเบียนลูกค้า — แสดงที่อยู่เมื่อยังไม่ snapshot บนใบ */
+  customer?: Customer | null;
   displayLines: QuotationLine[];
   editedHeader: Partial<Quotation>;
   totals: Totals;
 }
 
-export function QuotationPreviewTab({ quotation, companyProfile, displayLines, editedHeader, totals }: QuotationPreviewTabProps) {
+export function QuotationPreviewTab({
+  quotation,
+  companyProfile,
+  customer,
+  displayLines,
+  editedHeader,
+  totals,
+}: QuotationPreviewTabProps) {
+  const mergedQuotation = { ...quotation, ...editedHeader } as Quotation;
+  const billingDisplay =
+    resolveQuotationCustomerBillingAddress(mergedQuotation, customer ?? null).trim() || 'N/A';
   return (
     <div className="bg-white border rounded-lg shadow-xl max-w-[21cm] mx-auto p-8 space-y-6 font-serif text-slate-900 overflow-hidden print-container print:shadow-none print:border-none">
       <div className="flex justify-between items-start border-b-4 border-primary pb-4">
@@ -56,7 +69,7 @@ export function QuotationPreviewTab({ quotation, companyProfile, displayLines, e
           <p className="font-black text-xs uppercase tracking-widest text-slate-400 border-b pb-1">Issued To:</p>
           <div className="space-y-1">
             <p className="font-bold text-lg">{quotation.customerNameSnapshot}</p>
-            <p className="text-slate-600 leading-relaxed text-xs">{quotation.billingAddressSnapshot || 'N/A'}</p>
+            <p className="text-slate-600 leading-relaxed text-xs whitespace-pre-line">{billingDisplay}</p>
             <p className="text-slate-600">Contact: {quotation.contactPerson || '-'}</p>
           </div>
         </div>

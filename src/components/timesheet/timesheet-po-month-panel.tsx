@@ -62,6 +62,7 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { runPortalParityBackfillForPoMonth } from '@/lib/timesheet/portal-parity-backfill';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
+import { sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useToast } from '@/hooks/use-toast';
@@ -1409,7 +1410,19 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
               </SelectContent>
             </Select>
           </div>
-          <Button type="button" variant="secondary" className="gap-1" onClick={() => window.print()}>
+          <Button
+            type="button"
+            variant="secondary"
+            className="gap-1"
+            onClick={() => {
+              const prev = document.title;
+              document.title = sanitizePrintFileBaseName(`timesheet-po-month-${monthYm}`);
+              window.print();
+              window.setTimeout(() => {
+                document.title = prev;
+              }, 0);
+            }}
+          >
             <Printer className="h-4 w-4" />
             พิมพ์มุมมองนี้
           </Button>

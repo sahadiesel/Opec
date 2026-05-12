@@ -149,7 +149,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
     return raw.replace(/\s+/g, ' ').trim();
   }, [companyProfile, printLocale]);
 
-  const handlePrint = useCallback(() => {
+  const handlePrint = useCallback(async () => {
     if (!invoice) return;
     const L = printLocale;
     const body = buildTaxInvoicePrintHtml({
@@ -163,11 +163,19 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
       locale: L,
     });
     if (
-      !openStandardPrintWindow({
+      !(await openStandardPrintWindow({
         windowTitle: invoice.taxInvoiceNo,
         bodyInnerHtml: body,
         htmlLang: L,
-      })
+        onClipboardFilenameCopied: () => {
+          toast({
+            title: en ? 'Suggested filename copied' : 'คัดลอกชื่อไฟล์แนะนำแล้ว',
+            description: en
+              ? 'If the save dialog has no filename, click the field and press Ctrl+V or Shift+Insert. Or use the browser “Save as PDF” printer instead of Microsoft Print to PDF.'
+              : 'ถ้าไม่มีชื่อไฟล์ — คลิกในช่องแล้ว Ctrl+V หรือ Shift+Insert หรือคลิกขวาแล้ววาง · หรือใช้ Save as PDF ของเบราว์เซอร์แทน Microsoft Print to PDF',
+          });
+        },
+      }))
     ) {
       toast({
         variant: 'destructive',

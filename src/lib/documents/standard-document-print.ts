@@ -17,7 +17,6 @@
  * - กล่องคู่ค้า/ลูกค้า → ตารางรายการ → ยอดรวม + จำนวนเงินเป็นตัวอักษรไทย
  * - เนื้อหาเพิ่มเติมตามประเภทเอกสาร (เงื่อนไขชำระ ฯลฯ) ต่อท้ายแบบไหลธรรมชาติ ไม่ดันลายเซ็นไปชิดขอบล่างแบบ flex/min-height เต็มหน้า
  * - ฟุตเตอร์ลายเซ็น: `sd-sign-footer` มี break-inside: avoid
- * - สแตมป์เวลาพิมพ์มุมล่างซ้าย
  */
 
 import type {
@@ -75,6 +74,65 @@ export function escapeHtmlDoc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * Chrome/Edge use `document.title` as the default "Save as" name for Print → PDF.
+ * Strip characters invalid on common filesystems.
+ */
+export function sanitizePrintFileBaseName(raw: string): string {
+  let s = raw
+    .trim()
+    .replace(/[/\\:*?"<>|]+/g, '-')
+    .replace(/[\x00-\x1f\x7f]+/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/-{2,}/g, '-')
+    .replace(/[. ]+$/g, '')
+    .trim();
+  if (s.length > 180) s = s.slice(0, 180).replace(/[. ]+$/g, '').trim();
+  return s || 'document';
+}
+
+/** คัดลอกแบบ synchronous ใน user gesture — textarea ต้องโฟกัสได้จริง มิฉะนั้น Edge มักคืน true แต่คลิปบอร์ดว่าง */
+function copyTextToClipboardSync(text: string): boolean {
+  if (!text) return false;
+  const onCopy = (e: ClipboardEvent) => {
+    e.clipboardData?.setData('text/plain', text);
+    e.preventDefault();
+  };
+  let ta: HTMLTextAreaElement | null = null;
+  try {
+    document.addEventListener('copy', onCopy, true);
+    ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.setAttribute('aria-hidden', 'true');
+    ta.style.cssText =
+      'position:fixed;top:4px;left:4px;width:min(90vw,420px);height:44px;opacity:0.12;z-index:2147483647;font:12px system-ui,monospace;padding:6px;border:1px solid #888;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.removeEventListener('copy', onCopy, true);
+    ta?.remove();
+  }
+}
+
+async function copyPrintFileNameBestEffort(text: string): Promise<boolean> {
+  if (!text) return false;
+  if (typeof window !== 'undefined' && window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  return copyTextToClipboardSync(text);
 }
 
 /** ลำดับรายการใบวางบิล: เอา displayOrder (เดียวกับลำดับใบเรียกเก็บ) ก่อน แล้วค่อย createdAt + id */
@@ -468,16 +526,6 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
       padding-top: 2mm;
     }
   }
-  .sd-print-stamp {
-    position: fixed;
-    left: 10mm;
-    bottom: 6mm;
-    max-width: 42%;
-    font-size: 8pt;
-    color: #737373;
-    z-index: 2;
-    line-height: 1.3;
-  }
 `;
 
 /**
@@ -599,15 +647,9 @@ export function buildStandardPartyBoxHtml(params: {
   </div>`;
 }
 
-/** สแตมป์เวลาพิมพ์ (มุมล่างซ้าย — ใส่ใน `.sd-page`) */
-export function buildStandardPrintStampHtml(printedAtMs?: number, locale: PrintDocumentLocale = 'th'): string {
-  const at = printedAtMs ?? Date.now();
-  const L = locale;
-  const line =
-    L === 'en'
-      ? `${printT(L, 'printStamp')}: ${formatDateTimeGregorian(at)}`
-      : `${printT(L, 'printStamp')} ${formatDateTimeThaiBE(at)}`;
-  return `<div class="sd-print-stamp">${escapeHtmlDoc(line)}</div>`;
+/** Kept for API compatibility; print documents no longer render a print date/time stamp. */
+export function buildStandardPrintStampHtml(_printedAtMs?: number, _locale: PrintDocumentLocale = 'th'): string {
+  return '';
 }
 
 /** บล็อกยอดรวมขวาล่าง (แถวธรรมดา + แถวยอดสุทธิ teal + ตัวอักษรเงินไทย) */
@@ -676,7 +718,7 @@ export function buildStandardSignFooterHtml(params: {
 }
 
 /**
- * ห่อเนื้อหาในหน้าเดียว: สแตมป์ + header + main + footer
+ * ห่อเนื้อหาในหน้าเดียว: header + main + footer
  * ใช้เมื่อสร้างเอกสารประเภทใหม่ — ส่ง `mainHtml` เป็นตาราง/ยอด/เงื่อนไขของแต่ละชนิด
  */
 export function assembleStandardPrintPageHtml(params: {
@@ -707,60 +749,88 @@ export function wrapStandardPrintDocument(
   options?: { lang?: PrintDocumentLocale },
 ): string {
   const lang = options?.lang === 'en' ? 'en' : 'th';
+  const safeTitle = sanitizePrintFileBaseName(title);
+  /** ตั้งชื่อแท็บ + คัดลอกชื่อไฟล์อีกครั้งก่อนพิมพ์ (ใกล้เวลาเปิดไดอะล็อก Windows มากกว่าตอนกดในแอปหลัก) */
+  const titleHoldScript = `<script>(function(){var base=${JSON.stringify(safeTitle)};var fn=base+".pdf";function docTitle(){try{document.title=base}catch(e){}}function syncCopy(){try{var ta=document.createElement("textarea");ta.value=fn;ta.readOnly=true;ta.style.cssText="position:fixed;top:4px;left:4px;width:280px;height:44px;opacity:0.1;z-index:2147483647;font:12px monospace;padding:6px;border:1px solid #999";document.body.appendChild(ta);ta.focus();ta.select();if(ta.setSelectionRange)ta.setSelectionRange(0,fn.length);document.execCommand("copy");document.body.removeChild(ta);}catch(e){}}docTitle();addEventListener("beforeprint",function(){docTitle();syncCopy();},{capture:true});})();</script>`;
   return `<!DOCTYPE html><html lang="${lang}"><head>
     <meta charset="utf-8"/>
-    <title>${escapeHtmlDoc(title)}</title>
+    <title>${escapeHtmlDoc(safeTitle)}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com"/>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap" rel="stylesheet"/>
     <style>${STANDARD_DOCUMENT_PRINT_CSS}</style>
-  </head><body>${bodyHtml}</body></html>`;
+  </head><body>${bodyHtml}${titleHoldScript}</body></html>`;
 }
 
 /**
  * เปิดหน้าต่างพิมพ์แบบเดียวกับเมนูจัดซื้อ: HTML มาตรฐานเต็มหน้า (ไม่พิมพ์ shell ของแอป)
+ * เปิดหน้าต่างว่างและเขียน HTML แบบ synchronous ก่อน `await` ใดๆ เพื่อไม่ให้ถูกบล็อกป๊อปอัป
  * @returns true ถ้าเปิดหน้าต่างได้
  */
-export function openStandardPrintWindow(params: {
+export async function openStandardPrintWindow(params: {
   windowTitle: string;
+  /**
+   * Suggested PDF filename (Chrome/Edge use document title). Defaults to `windowTitle`.
+   * Use the app document number when `windowTitle` is a longer human-readable label.
+   */
+  suggestedFileName?: string;
+  /**
+   * Microsoft Print to PDF บน Windows มักไม่เติมชื่อไฟล์จากหน้าเว็บ — ระบบจะพยายามคัดลอก `ชื่อ.pdf` ลงคลิปบอร์ด
+   * และเรียก callback นี้เมื่อคัดลอกสำเร็จ (เช่น แสดง toast)
+   */
+  onClipboardFilenameCopied?: (fileNameWithPdfExt: string) => void;
   bodyInnerHtml: string;
   /** ภาษาของหน้า HTML พิมพ์ (ส่งต่อจาก locale เอกสาร) */
   htmlLang?: PrintDocumentLocale;
-}): boolean {
-  const html = wrapStandardPrintDocument(params.windowTitle, params.bodyInnerHtml, {
+}): Promise<boolean> {
+  const printFileTitle = sanitizePrintFileBaseName(params.suggestedFileName ?? params.windowTitle);
+  const clipName = `${printFileTitle}.pdf`;
+  const html = wrapStandardPrintDocument(printFileTitle, params.bodyInnerHtml, {
     lang: params.htmlLang ?? 'th',
   });
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const w = window.open(url, '_blank');
+  const w = window.open('', '_blank');
   if (!w) {
-    URL.revokeObjectURL(url);
     return false;
   }
   let didPrint = false;
+  const scheduleClose = () => {
+    window.setTimeout(() => {
+      try {
+        w.close();
+      } catch {
+        /* ignore */
+      }
+    }, 500);
+  };
   const runPrint = () => {
     if (didPrint || w.closed) return;
     didPrint = true;
     try {
+      w.document.title = printFileTitle;
       w.focus();
       w.print();
     } finally {
-      window.setTimeout(() => {
-        try {
-          w.close();
-        } catch {
-          /* ignore */
-        }
-        URL.revokeObjectURL(url);
-      }, 500);
+      scheduleClose();
     }
   };
-  if (w.document.readyState === 'complete') {
-    runPrint();
-  } else {
-    w.addEventListener('load', runPrint, { once: true });
-    window.setTimeout(runPrint, 600);
+  try {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.document.title = printFileTitle;
+  } catch {
+    scheduleClose();
+    return false;
   }
+
+  const copied =
+    (await copyPrintFileNameBestEffort(clipName)) || copyTextToClipboardSync(clipName);
+  if (copied) {
+    params.onClipboardFilenameCopied?.(clipName);
+  }
+
+  const raf = w.requestAnimationFrame?.bind(w) ?? ((cb: FrameRequestCallback) => window.setTimeout(() => cb(0), 0));
+  raf(() => raf(() => runPrint()));
   return true;
 }
 
@@ -1250,11 +1320,27 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   });
 }
 
+/**
+ * ที่อยู่วางบิลบนใบเสนอราคา — ใช้ snapshot บนใบก่อน ถ้าไม่มีค่อยดึงจากทะเบียนลูกค้า (billing → registered)
+ */
+export function resolveQuotationCustomerBillingAddress(
+  quotation: Pick<Quotation, 'billingAddressSnapshot'>,
+  customer?: Pick<Customer, 'billingAddress' | 'registeredAddress'> | null,
+): string {
+  const snap = quotation.billingAddressSnapshot?.trim();
+  if (snap) return snap;
+  const bill = customer?.billingAddress?.trim();
+  if (bill) return bill;
+  return customer?.registeredAddress?.trim() || '';
+}
+
 /** ใบเสนอราคา */
 export function buildQuotationPrintHtml(params: {
   company: CompanyProfilePrint | null | undefined;
   quotation: Quotation;
   lines: QuotationLine[];
+  /** ทะเบียนลูกค้า — ใช้เติมที่อยู่เมื่อยังไม่มี billingAddressSnapshot บนใบ */
+  customer?: Pick<Customer, 'billingAddress' | 'registeredAddress'> | null;
   /** ใช้เมื่อพิมพ์จากหน้าแก้ไข — ยอดที่คำนวณจากรายการบนหน้าจอ */
   totalsOverride?: {
     subtotal: number;
@@ -1274,8 +1360,12 @@ export function buildQuotationPrintHtml(params: {
   const issueStr = formatIssueDateYmdForPrint(q.issueDate, L);
   const validStr =
     L === 'en' ? formatStoredDateGregorian(q.validUntilDate) : formatYmdLocalThaiBE(q.validUntilDate);
+  const addressBlock = resolveQuotationCustomerBillingAddress(q, params.customer ?? null);
   const partyLines: string[] = [];
-  if (q.billingAddressSnapshot?.trim()) partyLines.push(q.billingAddressSnapshot.trim());
+  for (const segment of addressBlock.split(/\r\n|\r|\n/)) {
+    const t = segment.trim();
+    if (t) partyLines.push(t);
+  }
   if (q.contactPerson?.trim()) partyLines.push(`${printT(L, 'contact')}: ${q.contactPerson.trim()}`);
   if (q.referenceNo?.trim()) partyLines.push(`${printT(L, 'reference')}: ${q.referenceNo.trim()}`);
 
@@ -1568,10 +1658,16 @@ export function buildMoneyReceiptPrintHtml(params: {
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
   const issueStr = formatIssueDateYmdForPrint(receipt.receiptDate, L);
   const partyName = customer?.name?.trim() || '—';
-  const refLines = [
-    `${L === 'en' ? 'Tax invoice no.' : 'อ้างอิงใบกำกับภาษี'}: ${taxInvoice.taxInvoiceNo}`,
-    `${L === 'en' ? 'Tax invoice date' : 'วันที่ออกใบกำกับ'}: ${formatIssueDateYmdForPrint(taxInvoice.issueDate, L)}`,
-  ];
+  const refNoLabel = L === 'en' ? 'Tax invoice no.' : 'อ้างอิงใบกำกับภาษี';
+  const refDateLabel = L === 'en' ? 'Tax invoice date' : 'วันที่ออกใบกำกับ';
+  const taxInvIssueStr = formatIssueDateYmdForPrint(taxInvoice.issueDate, L);
+  const lineItemTitle =
+    L === 'en' ? 'Payment received for goods/services per referenced tax invoice' : 'รับเงินค่าสินค้า/บริการ ตามใบกำกับภาษีอ้างอิง';
+  const lineDescriptionHtml = `<strong>${escapeHtmlDoc(lineItemTitle)}</strong>
+    <div class="sd-receipt-tax-ref" style="margin-top:5px;font-size:9.5pt;font-weight:normal;line-height:1.35">
+      ${escapeHtmlDoc(refNoLabel)}: ${escapeHtmlDoc(taxInvoice.taxInvoiceNo)}<br/>
+      ${escapeHtmlDoc(refDateLabel)}: ${escapeHtmlDoc(taxInvIssueStr)}
+    </div>`;
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,
     documentTitleTh: 'ใบเสร็จรับเงิน',
@@ -1585,14 +1681,12 @@ export function buildMoneyReceiptPrintHtml(params: {
   const partyHtml = buildStandardPartyBoxHtml({
     boxLabel: printT(L, 'customerBuyer'),
     partyName,
-    detailLines: [...refLines, ...customerPartyDetailLines(customer, L)],
+    detailLines: customerPartyDetailLines(customer, L),
   });
   const amountWords = L === 'en' ? amountToEnglishBahtText(receipt.amount) : amountToThaiBahtText(receipt.amount);
   const mainHtml = `${partyHtml}
   <table class="sd-table"><tbody>
-    <tr><td class="sd-num">1</td><td><strong>${escapeHtmlDoc(
-      L === 'en' ? 'Payment received' : 'รับเงินค่าสินค้า/บริการ ตามใบกำกับภาษีอ้างอิง',
-    )}</strong></td>
+    <tr><td class="sd-num">1</td><td>${lineDescriptionHtml}</td>
     <td class="sd-right">1</td>
     <td class="sd-right">—</td>
     <td class="sd-right">${receipt.amount.toLocaleString(loc, { minimumFractionDigits: 2 })}</td></tr>

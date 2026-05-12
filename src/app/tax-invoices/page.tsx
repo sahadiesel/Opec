@@ -7,13 +7,12 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  ChevronRight, 
-  FileBadge, 
-  Building2, 
+import {
+  Plus,
+  Search,
+  ChevronRight,
+  FileBadge,
+  Building2,
   Calendar,
   Info,
   Loader2,
@@ -22,7 +21,7 @@ import {
 import {
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
-import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice } from '@/lib/types';
+import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -85,6 +84,12 @@ export default function TaxInvoicesPage() {
   const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
+  const receiptsQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? query(collection(firestore, 'receipts')) : null),
+    [firestore, isAuthorized],
+  );
+  const { data: receipts } = useCollection<MoneyReceipt>(receiptsQuery as any);
+
   /** ใบแจ้งหนี้เชิงพาณิชย์ที่อนุมัติแล้ว (ISSUED) และยังไม่มีใบกำกับภาษี */
   const commercialIssuedQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -107,6 +112,49 @@ export default function TaxInvoicesPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<TaxInvoice | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [monthFilter, setMonthFilter] = useState('');
+
+  const receiptNoById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of receipts ?? []) {
+      if (r.id && r.receiptNo) m.set(r.id, r.receiptNo);
+    }
+    return m;
+  }, [receipts]);
+
+  const receiptNoByTaxInvoiceId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of receipts ?? []) {
+      if (r.taxInvoiceId && r.receiptNo) m.set(r.taxInvoiceId, r.receiptNo);
+    }
+    return m;
+  }, [receipts]);
+
+  const resolveReceiptNo = (inv: TaxInvoice): string => {
+    if (inv.linkedReceiptId) {
+      const fromLink = receiptNoById.get(inv.linkedReceiptId)?.trim();
+      if (fromLink) return fromLink;
+    }
+    return receiptNoByTaxInvoiceId.get(inv.id)?.trim() || '-';
+  };
+
+  const filteredInvoices = useMemo(() => {
+    const list = invoices ?? [];
+    const term = searchTerm.trim().toLowerCase();
+    return list.filter((inv) => {
+      if (monthFilter) {
+        const ym = (inv.issueDate || '').slice(0, 7);
+        if (ym !== monthFilter) return false;
+      }
+      if (!term) return true;
+      const no = (inv.taxInvoiceNo || '').toLowerCase();
+      const cust = customers?.find((c) => c.id === inv.customerId);
+      const custName = (cust?.name || '').toLowerCase();
+      return no.includes(term) || custName.includes(term);
+    });
+  }, [invoices, searchTerm, monthFilter, customers]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -203,13 +251,37 @@ export default function TaxInvoicesPage() {
           </AlertDescription>
         </Alert>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
+        <div className="flex flex-col gap-3 bg-card rounded-lg border p-4 shadow-sm md:flex-row md:flex-wrap md:items-center md:justify-between">
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่ใบกำกับภาษี..." className="pl-9 h-11" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="ค้นหาเลขที่ใบกำกับภาษี, ลูกค้า…"
+                className="h-11 pl-9"
+                aria-label="ค้นหาใบกำกับภาษี"
+              />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor="tax-inv-month" className="whitespace-nowrap text-sm text-muted-foreground">
+                เดือนออกเอกสาร
+              </Label>
+              <Input
+                id="tax-inv-month"
+                type="month"
+                value={monthFilter}
+                onChange={(e) => setMonthFilter(e.target.value)}
+                className="h-11 w-[min(100%,11rem)]"
+                aria-label="กรองตามเดือนที่ออกใบกำกับภาษี"
+              />
+              {monthFilter ? (
+                <Button type="button" variant="ghost" size="sm" className="h-9 px-2" onClick={() => setMonthFilter('')}>
+                  ล้างเดือน
+                </Button>
+              ) : null}
+            </div>
           </div>
           
           <Dialog
@@ -224,7 +296,7 @@ export default function TaxInvoicesPage() {
           >
             <DialogTrigger asChild>
               <Button
-                className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
+                className="h-11 shrink-0 gap-2 bg-primary px-6 text-base font-bold shadow-md"
                 disabled={!canCreateInvoice}
               >
                 <Plus className="h-5 w-5" /> สร้างใบกำกับภาษีร่าง
@@ -330,17 +402,19 @@ export default function TaxInvoicesPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">เลขที่ (Invoice No.)</TableHead>
+                    <TableHead className="py-4 pl-6 font-bold">เลขที่ (Invoice No.)</TableHead>
                     <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
                     <TableHead className="font-bold">วันที่ออก</TableHead>
-                    <TableHead className="font-bold text-right">ยอดรวมสุทธิ</TableHead>
+                    <TableHead className="font-bold">เลขที่ใบเสร็จ</TableHead>
+                    <TableHead className="text-right font-bold">ยอดรวมสุทธิ</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                    <TableHead className="pr-6 text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {invoices?.map((inv) => {
+                  {filteredInvoices.map((inv) => {
                     const customer = customers?.find(c => c.id === inv.customerId);
+                    const receiptNo = resolveReceiptNo(inv);
                     return (
                       <TableRow 
                         key={inv.id} 
@@ -360,6 +434,7 @@ export default function TaxInvoicesPage() {
                             {formatStoredDateThaiBE(inv.issueDate)}
                           </div>
                         </TableCell>
+                        <TableCell className="font-mono text-sm text-muted-foreground">{receiptNo}</TableCell>
                         <TableCell className="text-right font-black text-primary">
                           {inv.currency} {inv.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
@@ -399,9 +474,18 @@ export default function TaxInvoicesPage() {
                       </TableRow>
                     );
                   })}
-                  {(!invoices || invoices.length === 0) && !isLoading && (
+                  {!isLoading && (!invoices || invoices.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการใบกำกับภาษีในระบบ</TableCell>
+                      <TableCell colSpan={7} className="py-20 text-center italic text-muted-foreground">
+                        ไม่มีรายการใบกำกับภาษีในระบบ
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!isLoading && (invoices?.length ?? 0) > 0 && filteredInvoices.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-20 text-center text-muted-foreground">
+                        ไม่พบรายการที่ตรงกับการค้นหาหรือเดือนที่เลือก
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

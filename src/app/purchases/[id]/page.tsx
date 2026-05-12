@@ -26,6 +26,7 @@ import { roundMoney2, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-
 import {
   buildPurchaseOrderPrintHtml,
   openStandardPrintWindow,
+  sanitizePrintFileBaseName,
 } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -66,7 +67,6 @@ import {
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, canApprovePurchaseAsManager } from '@/lib/permissions';
 import { Switch } from '@/components/ui/switch';
-import { formatDateThaiBE } from '@/lib/date-thai';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 
 function escapeHtml(s: string): string {
@@ -396,7 +396,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       purchase.issuedAt != null ||
       (hasPurchaseRequisition && purchase.status === 'APPROVED'));
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!purchase) return;
     if (!canPrintPurchase) {
       toast({
@@ -419,11 +419,11 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         locale: printLocale,
       });
       if (
-        !openStandardPrintWindow({
+        !(await openStandardPrintWindow({
           windowTitle: purchase.purchaseNo || 'PO',
           bodyInnerHtml: body,
           htmlLang: printLocale,
-        })
+        }))
       ) {
         toast({
           variant: 'destructive',
@@ -498,12 +498,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     const totalWht = wht;
     const totalNet = net;
     const vn = vendor?.vendorName || '—';
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปหัก ณ ที่จ่าย ${escapeHtml(purchase.purchaseNo)}</title>
+    const titleBase = sanitizePrintFileBaseName(`PO-WHT-summary-${purchase.purchaseNo || 'PO'}`);
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(titleBase)}</title>
   <style>body{font-family:system-ui,sans-serif;padding:24px;max-width:900px;margin:0 auto} table{border-collapse:collapse;width:100%;margin-top:16px} th{background:#f3f4f6;text-align:left;padding:8px;border:1px solid #ccc}</style></head><body>
   <h1>สรุปหัก ณ ที่จ่าย — ผู้รับเงิน (คู่ค้า)</h1>
   <p><strong>เลขที่ PO:</strong> ${escapeHtml(purchase.purchaseNo)} &nbsp;|&nbsp; <strong>คู่ค้า:</strong> ${escapeHtml(vn)}</p>
   <p><strong>อัตราหัก ณ ที่จ่าย:</strong> ${rate}% (ฐานคำนวณ = ส่วนยอดก่อนภาษีมูลค่าเพิ่มตามสัดส่วนยอดสุทธิ PO — สุทธิจ่าย = ยอดรวม VAT − หัก ณ ที่จ่าย; การแบ่งงวดจ่ายทำในเอกสารรับวางบิล ไม่ระบุใน PO)</p>
-  <p><strong>พิมพ์เมื่อ:</strong> ${escapeHtml(formatDateThaiBE(Date.now()))}</p>
   <table>
     <thead><tr>
       <th>งวด</th><th>รายละเอียด</th><th style="text-align:right">ฐานจ่าย (บาท)</th><th style="text-align:right">หัก ณ ที่จ่าย (บาท)</th><th style="text-align:right">สุทธิจ่าย (บาท)</th>
@@ -520,6 +520,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   <p style="margin-top:24px;font-size:12px;color:#666">เอกสารสำหรับแผนกบัญชีและแผนกจัดซื้อ/สโตร์ — ตรวจสอบประเภทเงินได้รับและอัตราตามประกาศกรมสรรพากร</p>
   </body></html>`);
     w.document.close();
+    w.document.title = titleBase;
     w.focus();
     w.print();
   };

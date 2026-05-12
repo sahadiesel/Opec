@@ -1,12 +1,14 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ChevronRight, Receipt, Building2, Calendar } from 'lucide-react';
+import { ChevronRight, Receipt, Building2, Calendar, Search } from 'lucide-react';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import type { Customer, MoneyReceipt, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -43,6 +45,31 @@ export default function MoneyReceiptsListPage() {
     return m;
   }, [customers]);
 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [monthFilter, setMonthFilter] = useState('');
+
+  const filteredRows = useMemo(() => {
+    const list = rows ?? [];
+    const term = searchTerm.trim().toLowerCase();
+    return list.filter((r) => {
+      if (monthFilter) {
+        const ym = (r.receiptDate || '').slice(0, 7);
+        if (ym !== monthFilter) return false;
+      }
+      if (!term) return true;
+      const receiptNo = (r.receiptNo || '').toLowerCase();
+      const taxNo = (r.taxInvoiceNo || '').toLowerCase();
+      const custId = (r.customerId || '').toLowerCase();
+      const custName = (custById.get(r.customerId) || '').toLowerCase();
+      return (
+        receiptNo.includes(term) ||
+        taxNo.includes(term) ||
+        custId.includes(term) ||
+        custName.includes(term)
+      );
+    });
+  }, [rows, searchTerm, monthFilter, custById]);
+
   if (userLoading || !currentUser) return null;
 
   if (!isAuthorized) {
@@ -68,8 +95,39 @@ export default function MoneyReceiptsListPage() {
 
         <Card>
           <CardContent className="p-0">
-            <div className="flex flex-col gap-2 border-b p-4 md:flex-row md:items-center md:justify-end">
-              <Button type="button" variant="outline" onClick={() => router.push('/tax-invoices')}>
+            <div className="flex flex-col gap-3 border-b p-4 md:flex-row md:flex-wrap md:items-center md:justify-between">
+              <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative min-w-0 flex-1 sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="ค้นหาเลขที่ใบเสร็จ, ใบกำกับ, ลูกค้า…"
+                    className="h-10 pl-9"
+                    aria-label="ค้นหาใบเสร็จรับเงิน"
+                  />
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Label htmlFor="receipt-month-filter" className="text-sm text-muted-foreground whitespace-nowrap">
+                    เดือนออกเอกสาร
+                  </Label>
+                  <Input
+                    id="receipt-month-filter"
+                    type="month"
+                    value={monthFilter}
+                    onChange={(e) => setMonthFilter(e.target.value)}
+                    className="h-10 w-[min(100%,11rem)]"
+                    aria-label="กรองตามเดือนที่ออกใบเสร็จ"
+                  />
+                  {monthFilter ? (
+                    <Button type="button" variant="ghost" size="sm" className="h-9 px-2" onClick={() => setMonthFilter('')}>
+                      ล้างเดือน
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <Button type="button" variant="outline" className="shrink-0" onClick={() => router.push('/tax-invoices')}>
                 ไปใบกำกับภาษี
               </Button>
             </div>
@@ -96,7 +154,7 @@ export default function MoneyReceiptsListPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(rows ?? []).map((r) => (
+                  {filteredRows.map((r) => (
                     <TableRow key={r.id} className="cursor-pointer" onClick={() => router.push(`/receipts/${r.id}`)}>
                       <TableCell className="font-mono text-sm font-medium">{r.receiptNo}</TableCell>
                       <TableCell className="font-mono text-sm">{r.taxInvoiceNo}</TableCell>
@@ -118,6 +176,13 @@ export default function MoneyReceiptsListPage() {
                     <TableRow>
                       <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                         ยังไม่มีใบเสร็จ — ออกหลังยืนยันรับเงินจากใบกำกับภาษี
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {(rows?.length ?? 0) > 0 && filteredRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                        ไม่พบรายการที่ตรงกับการค้นหาหรือเดือนที่เลือก
                       </TableCell>
                     </TableRow>
                   )}
