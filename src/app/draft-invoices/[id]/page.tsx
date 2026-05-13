@@ -63,6 +63,7 @@ import {
   voidCommercialInvoice,
   updateCommercialDraftInvoice,
   QUOTATION_PO_WAVE_PLACEHOLDER,
+  PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
 import {
   buildCommercialInvoicePrintHtml,
@@ -848,6 +849,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             </CardTitle>
             <CardDescription>
               จาก timesheet ที่พร้อมวางบิล — รวม {invoice.timesheetCount ?? '—'} แถว timesheet
+              {invoice.waveId === PO_MONTH_WAVE_PLACEHOLDER && (
+                <span className="block mt-2 rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
+                  <strong className="font-semibold">หมายเหตุ PO+งวด (รวมทุก wave):</strong> ยอดต่อตำแหน่งรวมจาก timesheet ทุก wave / mobilization ใต้ PO ในงวดวันที่เดียวกัน
+                  — ไม่เท่ากับการนับเฉพาะหนึ่ง wave บนหน้า «สรุปรายเดือน» คอลัมน์ «รวมชม.» เป็นชั่วโมงทำงาน (เช่น 1 วัน W ≈ 12 ชม.) ไม่ใช่จำนวนวันในคอลัมน์จำนวนของใบนี้
+                </span>
+              )}
               {invoice.status === 'DRAFT' && canAct && (
                 <span className="block mt-1 text-xs">
                   รายการรวมตามตำแหน่งจาก PO — แก้จำนวน/ราคาได้ และเพิ่มบรรทัดส่วนลดหรือค่าเพิ่ม (จำนวน × ราคา/หน่วย = ยอด;

@@ -265,12 +265,11 @@ export async function createCommercialDraftFromQuotationPoLines(
       const amount = roundMoney(qty * unit);
       const loc = (line.workLocation || '').trim();
       const unitLabel = line.billingUnitSnapshot || 'unit';
+      const baseLabel = loc || 'PO Line';
       return {
         id: newLineId(),
         displayOrder: idx,
-        description: loc
-          ? `${loc} — ${qty} × ${unit.toLocaleString()} (${unitLabel})`
-          : `PO Line — ${qty} × ${unit.toLocaleString()} (${unitLabel})`,
+        description: unitLabel ? `${baseLabel} (${unitLabel})` : baseLabel,
         positionId: line.positionId,
         quantity: qty,
         unitPrice: unit,
@@ -308,8 +307,7 @@ export async function createCommercialDraftFromQuotationPoLines(
       const unitLabel = (line.unit || '').trim();
       const remarks = (line.remarks || '').trim();
       const head = unitLabel ? `${desc} (${unitLabel})` : desc;
-      const tail = remarks ? `${head} — ${remarks}` : head;
-      const description = `${tail} — ${qty} × ${unit.toLocaleString()}`;
+      const description = remarks ? `${head} — ${remarks}` : head;
       return {
         id: newLineId(),
         displayOrder: idx,
@@ -485,6 +483,7 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
         issueDate,
         actor,
         sourcePoMonthReviewId: review.id,
+        poMonthRelatedWaveIds: review.relatedWaveIds,
       },
     );
     return { ok: true, id, invoiceNo };
@@ -495,7 +494,9 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
 }
 
 /**
- * สร้างใบแจ้งหนี้จาก timesheet ทุก wave ใต้ PO ในช่วงงวด (กรองด้วย readyForBilling ใน generateBillingLines)
+ * สร้างใบแจ้งหนี้จาก timesheet ในช่วงงวด PO+เดือน
+ * — ถ้า `poMonthRelatedWaveIds` หรือฟิลด์ `relatedWaveIds` ในเอกสารรีวิวมีค่า จะดึงเฉพาะ wave เหล่านั้น (สอดคล้องตารางรีวิว)
+ * — ถ้าไม่มี จะดึงทุก wave ใต้ PO (พฤติกรรมเดิม)
  */
 export async function createCommercialDraftInvoiceForPoMonth(
   db: Firestore,
@@ -508,21 +509,45 @@ export async function createCommercialDraftInvoiceForPoMonth(
     actor: User;
     notes?: string;
     sourcePoMonthReviewId: string;
+    /** จากรอบอนุมัติ — ใช้แทนการอ่านซ้ำจาก `po_month_timesheet_reviews` */
+    poMonthRelatedWaveIds?: readonly string[] | null;
   },
 ): Promise<{ id: string; invoiceNo: string }> {
   const { poId, periodStart, periodEnd, issueDate, actor, sourcePoMonthReviewId } = params;
   const currency = params.currency || 'THB';
-  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined);
+
+  const normalizeWaveIds = (raw: readonly string[] | null | undefined): string[] | undefined => {
+    const ids = (raw ?? []).map((x) => String(x).trim()).filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  };
+
+  let scopedWaveIds = normalizeWaveIds(params.poMonthRelatedWaveIds ?? null);
+  if (!scopedWaveIds) {
+    const reviewSnap = await getDoc(doc(db, 'po_month_timesheet_reviews', sourcePoMonthReviewId));
+    if (reviewSnap.exists()) {
+      const rev = reviewSnap.data() as PoMonthTimesheetReview;
+      scopedWaveIds = normalizeWaveIds(rev.relatedWaveIds);
+    }
+  }
+
+  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
+    poMonthWaveIds: scopedWaveIds,
+  });
   if (gen.lines.length === 0) {
     throw new Error(
-      'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / สถานะ readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)',
+      scopedWaveIds?.length
+        ? 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / readyForBilling และว่า wave ใน relatedWaveIds มี timesheet ในงวดนี้หรือไม่'
+        : 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / สถานะ readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)',
     );
   }
 
   const [poSnap] = await Promise.all([getDoc(doc(db, 'purchase_orders', poId))]);
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
-  const waveCodeLabel = 'PO+งวด (รวม wave)';
+  const waveCodeLabel =
+    scopedWaveIds && scopedWaveIds.length > 0
+      ? `PO+งวด (${scopedWaveIds.length} wave ตามเอกสารรีวิว)`
+      : 'PO+งวด (รวม wave)';
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
   const amountBeforeTax = roundMoney(gen.totalAmount);

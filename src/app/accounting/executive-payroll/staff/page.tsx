@@ -41,7 +41,9 @@ export default function ExecutivePayrollStaffListPage() {
     return collection(firestore, 'executive_payroll_staff');
   }, [firestore, userLoading, currentUser, isAuthorized]);
 
-  const { data: roster, isLoading } = useCollection<ExecutivePayrollStaff>(staffQuery as any);
+  const { data: roster, isLoading, error: rosterError } = useCollection<ExecutivePayrollStaff>(
+    staffQuery as any,
+  );
 
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -112,6 +114,16 @@ export default function ExecutivePayrollStaffListPage() {
             ข้อมูลในหน้านี้อยู่ภายใต้เมนูบัญชีเท่านั้น — ไม่แสดงในเมนู HR ปรับนโยบายหักภาษี/ประกันสังคมได้ที่การตั้งค่า HR (Payroll / Office)
           </AlertDescription>
         </Alert>
+
+        {rosterError ? (
+          <Alert variant="destructive">
+            <ShieldAlert className="h-4 w-4" />
+            <AlertTitle>โหลดรายชื่อผู้บริหารไม่สำเร็จ</AlertTitle>
+            <AlertDescription className="text-sm">
+              มักเกิดจากสิทธิ์ Firestore ยังไม่ตรงกับบทบาทในระบบ — ให้ deploy กฎ `firestore.rules` ล่าสุด หรือตรวจว่าโปรเจกต์ Firebase ตรงกับสภาพแวดล้อมที่ทดสอบ
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <div className="rounded-lg border bg-card p-4 shadow-sm">
           <div className="relative max-w-md">
@@ -209,9 +221,13 @@ export default function ExecutivePayrollStaffListPage() {
                     {filtered.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={6} className="py-16 text-center text-sm text-muted-foreground">
-                          {roster?.length === 0
-                            ? 'ยังไม่มีรายชื่อ — กด «เพิ่มผู้บริหาร» เพื่อเริ่มทะเบียน'
-                            : 'ไม่พบรายการที่ตรงกับการค้นหา'}
+                          {rosterError
+                            ? 'ไม่สามารถแสดงรายการได้ — ดูข้อความด้านบน'
+                            : roster?.length === 0
+                              ? canAdd
+                                ? 'ยังไม่มีรายชื่อ — กด «เพิ่มผู้บริหาร» เพื่อเริ่มทะเบียน'
+                                : 'ยังไม่มีรายชื่อในระบบ'
+                              : 'ไม่พบรายการที่ตรงกับการค้นหา'}
                         </TableCell>
                       </TableRow>
                     )}

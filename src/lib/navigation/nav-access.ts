@@ -337,10 +337,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return true;
   }
 
-  /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) — ไม่ต้องมี module worker_payroll ทั้งชุด */
+  /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) — บัญชีเต็ม หรือมุมมองบัญชีแบบอ่านอย่างเดียว */
   if (
     !admin &&
-    isSimpleAccounting(user) &&
+    (isSimpleAccounting(user) || isAccountingDepartmentReadOnlyObserver(user)) &&
     (p === '/payroll/batches' ||
       p.startsWith('/payroll/batches/') ||
       p === '/accounting/worker-payroll' ||
@@ -349,10 +349,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return true;
   }
 
-  /** บัญชี: คิวจ่ายเบิกล่วงหน้าหลังผู้จัดการอนุมัติ */
+  /** บัญชี: คิวจ่ายเบิกล่วงหน้าหลังผู้จัดการอนุมัติ — บัญชีเต็ม หรือมุมมองบัญชีแบบอ่านอย่างเดียว */
   if (
     !admin &&
-    isSimpleAccounting(user) &&
+    (isSimpleAccounting(user) || isAccountingDepartmentReadOnlyObserver(user)) &&
     (p === '/accounting/cash-advances-payout' || p.startsWith('/accounting/cash-advances-payout/'))
   ) {
     return true;

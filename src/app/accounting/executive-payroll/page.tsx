@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -41,8 +41,8 @@ import { Label } from '@/components/ui/label';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { canView } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { canView, canCreate, canDelete } from '@/lib/permissions';
+import { useAppUser } from '@/hooks/use-app-user';
 import Link from 'next/link';
 import {
   AlertDialog,
@@ -61,6 +61,7 @@ import {
   isExecutivePayrollStaffEligible,
 } from '@/lib/payroll/executive-payroll-run-apply';
 import { getPayrollMonthPeriodBounds } from '@/lib/payroll/office-payroll-run-apply';
+import { firebaseConfig } from '@/firebase/config';
 
 function initialNewExecutiveRun(): Partial<OfficePayrollRun> {
   const payrollMonth = new Date().toISOString().slice(0, 7);
@@ -76,24 +77,20 @@ function initialNewExecutiveRun(): Partial<OfficePayrollRun> {
 
 export default function ExecutivePayrollPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) setCurrentUser(JSON.parse(stored));
-  }, []);
-
   const isAuthorized = useMemo(() => canView(currentUser, 'executive_payroll'), [currentUser]);
-  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const canCreateRun = useMemo(() => canCreate(currentUser, 'executive_payroll'), [currentUser]);
+  const canDeleteRun = useMemo(() => canDelete(currentUser, 'executive_payroll'), [currentUser]);
 
   const runsQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
+    if (!firestore || userLoading || !currentUser || !isAuthorized) return null;
     return query(collection(firestore, 'executive_payroll_runs'), orderBy('payrollMonth', 'desc'));
-  }, [firestore, isAuthorized]);
-  
-  const { data: runs, isLoading } = useCollection<OfficePayrollRun>(runsQuery as any);
+  }, [firestore, userLoading, currentUser, isAuthorized]);
+
+  const { data: runs, isLoading, error: runsError } = useCollection<OfficePayrollRun>(runsQuery as any);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -102,7 +99,7 @@ export default function ExecutivePayrollPage() {
   const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>(initialNewExecutiveRun);
 
   const handleCreateRun = async () => {
-    if (!firestore || !currentUser) return;
+    if (!firestore || !currentUser || !canCreateRun) return;
     if (!newRun.payrollMonth) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาเลือกเดือนที่จ่าย' });
       return;
@@ -188,7 +185,7 @@ export default function ExecutivePayrollPage() {
   };
 
   const handleConfirmDeleteRun = async () => {
-    if (!firestore || !deleteTarget || !currentUser || !isAdmin) return;
+    if (!firestore || !deleteTarget || !currentUser || !canDeleteRun) return;
     if (adminExecutivePayrollDeleteBlocked(deleteTarget)) {
       toast({
         variant: 'destructive',
@@ -226,7 +223,7 @@ export default function ExecutivePayrollPage() {
     }
   };
 
-  if (!currentUser) return null;
+  if (userLoading || !currentUser) return null;
 
   if (!isAuthorized) {
     return (
@@ -269,6 +266,36 @@ export default function ExecutivePayrollPage() {
           </Alert>
         </div>
 
+        {runsError ? (
+          <Alert variant="destructive">
+            <ShieldAlert className="h-4 w-4" />
+            <AlertTitle>โหลดรายการงวดไม่สำเร็จ</AlertTitle>
+            <AlertDescription className="text-sm space-y-2">
+              <p>
+                มักเกิดจากสิทธิ์ Firestore หรือโปรเจกต์ Firebase ไม่ตรงกับที่ deploy กฎ / ที่มีข้อมูลจริง (เช่น บน{' '}
+                <span className="font-medium">opec.co.th</span>) — ตรวจว่า deploy กฎไปโปรเจกต์เดียวกับค่าด้านล่าง
+              </p>
+              <p className="font-mono text-xs break-all rounded-md bg-muted/80 px-2 py-1.5 text-foreground">
+                projectId ที่แอปใช้ตอนนี้: {firebaseConfig.projectId}
+              </p>
+              <p>
+                ถ้า local ต้องใช้ข้อมูลเดียวกับ production: สร้าง <code className="rounded bg-muted px-1 py-0.5 text-xs">.env.local</code> แล้วใส่ชุด{' '}
+                <code className="rounded bg-muted px-1 py-0.5 text-xs">NEXT_PUBLIC_FIREBASE_*</code> จาก Firebase Console → Project settings → Your apps (โปรเจกต์เดียวกับ opec.co.th) จากนั้นรีสตาร์ท dev server
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {!canCreateRun && (
+          <Alert className="border-primary/25 bg-primary/5">
+            <Info className="h-4 w-4 text-primary" />
+            <AlertTitle className="font-bold text-foreground">โหมดดูอย่างเดียว</AlertTitle>
+            <AlertDescription className="text-sm text-foreground/90">
+              คุณสามารถดูรายการงวด เปิดรายละเอียด และพิมพ์สลิปได้ — การสร้างงวด คำนวณ ลบ หรือบันทึกทำจ่ายทำได้เฉพาะฝ่ายบัญชี
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex flex-wrap items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
@@ -280,7 +307,9 @@ export default function ExecutivePayrollPage() {
               <Link href="/accounting/executive-payroll/staff">รายชื่อผู้บริหาร</Link>
             </Button>
           </div>
-          
+
+          <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:items-end md:shrink-0">
+            {canCreateRun ? (
           <Dialog
             open={isAuthorized && isDialogOpen}
             onOpenChange={(open) => {
@@ -348,6 +377,15 @@ export default function ExecutivePayrollPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+            ) : (
+              <div
+                role="status"
+                className="rounded-md border border-dashed border-muted-foreground/40 bg-muted/40 px-4 py-3 text-sm font-medium text-foreground md:max-w-sm md:text-right"
+              >
+                โหมดดูอย่างเดียว — สร้างหรือแก้ไขงวดได้เฉพาะฝ่ายบัญชี
+              </div>
+            )}
+          </div>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
@@ -387,7 +425,7 @@ export default function ExecutivePayrollPage() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="inline-flex items-center justify-end gap-0.5">
-                          {isAdmin && (
+                          {canDeleteRun && (
                             <Button
                               type="button"
                               variant="ghost"
@@ -397,7 +435,7 @@ export default function ExecutivePayrollPage() {
                               title={
                                 adminExecutivePayrollDeleteBlocked(run)
                                   ? 'ลบไม่ได้ — งวดล็อกหรืออนุมัติการเงิน/จ่ายแล้ว'
-                                  : 'ลบงวดนี้ (เฉพาะผู้ดูแลระบบ)'
+                                  : 'ลบงวดนี้ (ผู้มีสิทธิ์ลบ)'
                               }
                               onClick={() => setDeleteTarget(run)}
                             >
@@ -419,7 +457,24 @@ export default function ExecutivePayrollPage() {
                   ))}
                   {(!runs || runs.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีงวดการจ่ายเงินในขณะนี้</TableCell>
+                      <TableCell colSpan={7} className="py-16 text-center">
+                        {runsError ? (
+                          <p className="text-base font-medium text-destructive">ไม่สามารถแสดงรายการได้ — ดูข้อความด้านบน</p>
+                        ) : (
+                          <>
+                            <p className="text-base font-medium text-foreground">ไม่มีงวดการจ่ายเงินในขณะนี้</p>
+                            {canCreateRun ? (
+                              <p className="mt-2 text-sm text-muted-foreground">
+                                กดปุ่ม «สร้างงวดเงินเดือนผู้บริหาร» ด้านบนเพื่อเริ่มงวดใหม่
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-sm text-muted-foreground">
+                                เมื่อฝ่ายบัญชีสร้างงวดแล้ว รายการจะแสดงที่นี่ — คุณเปิดดูรายละเอียดและพิมพ์สลิปได้ตามสิทธิ์
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

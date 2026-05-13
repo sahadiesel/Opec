@@ -151,12 +151,6 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         href: '/store/purchase-requests',
         icon: FileQuestion,
       },
-      {
-        key: 'operations_petty_cash',
-        title: 'เบิกจ่าย Petty Cash (หน้างาน)',
-        href: '/operations/petty-cash',
-        icon: Banknote,
-      },
     ],
   },
   {

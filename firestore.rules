@@ -107,8 +107,8 @@ service cloud.firestore {
     }
 
     /**
-     * Legacy effectiveRole: role field ก่อน assignedRoleKey — ใช้ที่อื่นในไฟล์นี้
-     * ผู้จัดการปฏิบัติการ Petty Cash: แอปใช้ assignedRoleKey ก่อน role + รองรับ permissionProfileKey
+     * Legacy effectiveRole: role field ก่อน assignedRoleKey — ยังใช้ในบางกฎเดิม
+     * สำหรับ RBAC ที่ต้องสอดคล้องแอป ให้ใช้ primaryBusinessRoleForAdminGate (assigned ก่อน)
      */
     function effectiveRole(d) {
       return effectiveRoleFromRoleField(d).size() > 0
@@ -601,18 +601,22 @@ service cloud.firestore {
         ]);
     }
 
+    /**
+     * บัญชีในกฎ — สอดคล้อง isSimpleAccounting ในแอป (ดู assigned/keys ก่อน role)
+     * โปรไฟล์ accounting นับเฉพาะเมื่อยังไม่มี primary จากเมทริกซ์/role (กันโปรไฟล์ค้าง + assigned operations_manager แล้วถูกบล็อก observer)
+     */
     function isAccounting() {
       return isInternalUser()
         && (
-          (
-            effectiveRole(userData()).size() > 0
+          primaryBusinessRoleForAdminGate(userData()) == 'accounting_manager'
+          || primaryBusinessRoleForAdminGate(userData()) == 'accounting_officer'
+          || (
+            primaryBusinessRoleForAdminGate(userData()).size() == 0
             && (
-              effectiveRole(userData()) == 'accounting_manager'
-              || effectiveRole(userData()) == 'accounting_officer'
+              permissionProfileKeyIndicatesAccounting(userData())
+              || permissionProfileKeysListIndicatesAccounting(userData())
             )
           )
-          || permissionProfileKeyIndicatesAccounting(userData())
-          || permissionProfileKeysListIndicatesAccounting(userData())
         );
     }
 
@@ -645,16 +649,30 @@ service cloud.firestore {
         );
     }
 
-    /** ผู้จัดการขาย / ผู้จัดการปฏิบัติการ — ดูข้อมูลบัญชีได้ ไม่ใช่เจ้าหน้าที่บัญชี (สอดคล้อง permissions.ts) */
+    /** ผู้จัดการขาย / ผู้จัดการปฏิบัติการ — ดูข้อมูลบัญชีได้ ไม่ใช่เจ้าหน้าที่บัญชี (ลำดับบทบาทเดียวกับ getPrimaryLegacyRole ในแอป) */
     function isAccountingDepartmentReadOnlyObserver() {
       return hasUserDoc()
         && (isInternalUser() || isInternalStaffDoc())
         && !isAdmin()
         && !isAccounting()
         && (
-          effectiveRole(userData()) == 'sales_manager'
-          || effectiveRole(userData()) == 'operations_manager'
+          primaryBusinessRoleForAdminGate(userData()) == 'sales_manager'
+          || primaryBusinessRoleForAdminGate(userData()) == 'operations_manager'
           || isOperationsManagerRole()
+          || (
+            (
+              ('accessGroup' in userData() && (userData().accessGroup == 'operations' || userData().accessGroup == 'operation'))
+              || ('departmentGroup' in userData() && (userData().departmentGroup == 'operations' || userData().departmentGroup == 'operation'))
+            )
+            && ('accessLevel' in userData() && userData().accessLevel == 'manager')
+            && !(
+              effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
+              || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
+              || effectiveRoleFromRoleField(userData()) == 'hr_manager'
+            )
+            && primaryBusinessRoleForAdminGate(userData()) != 'sales_manager'
+            && primaryBusinessRoleForAdminGate(userData()) != 'store_officer'
+          )
         );
     }
 
@@ -697,9 +715,9 @@ service cloud.firestore {
       return hasUserDoc()
         && isInternalUser()
         && (
-          effectiveRole(userData()) == 'operations_manager'
-          || effectiveRole(userData()) == 'hr_manager'
-          || effectiveRole(userData()) == 'sales_manager'
+          primaryBusinessRoleForAdminGate(userData()) == 'operations_manager'
+          || primaryBusinessRoleForAdminGate(userData()) == 'hr_manager'
+          || primaryBusinessRoleForAdminGate(userData()) == 'sales_manager'
           || (
             (
               ('accessGroup' in userData() && (userData().accessGroup == 'operations' || userData().accessGroup == 'operation'))
@@ -1289,7 +1307,9 @@ service cloud.firestore {
     }
 
     match /cashbook_entries/{id} {
-      allow read, write: if canAccessBankAccountsAndCashbook();
+      allow read: if canAccessBankAccountsAndCashbook()
+        || isAccountingDepartmentReadOnlyObserver();
+      allow write: if canAccessBankAccountsAndCashbook();
     }
 
     /** รับ/จ่าย Petty Cash หน้างาน — ไม่ใช่รายการ cashbook หลัก */

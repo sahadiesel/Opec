@@ -44,6 +44,13 @@ function compareMovement(
   return a.entryNo.localeCompare(b.entryNo, undefined, { numeric: true });
 }
 
+/** กอง Petty — รองรับข้อมูลเก่าที่อาจไม่มี accountType แต่ตั้ง bankName เป็น Petty Cash ตอนสร้าง */
+function isPettyCashLikeAccount(a: Partial<BankAccount>): boolean {
+  if (a.accountType === 'PETTY_CASH') return true;
+  const bn = String(a.bankName ?? '').trim().toLowerCase();
+  return bn === 'petty cash';
+}
+
 /** คำอธิบายรายการที่ฝ่ายบัญชีลงในสมุดกลาง — ฝั่ง Petty ไม่ใช่ “รายรับ-รายจ่าย P&L” แต่คือ เงินเข้า-ออกกอง */
 function ledgerLineLabelForPettyFund(
   t: CashbookEntry['entryType'],
@@ -78,12 +85,22 @@ export default function OperationsPettyCashPage() {
     [currentUser]
   );
 
-  const pettyAccountsQuery = useMemoFirebase(() => {
+  const activeBankAccountsQuery = useMemoFirebase(() => {
     if (!firestore || !firebaseUser || !allowed) return null;
-    return query(collection(firestore, 'bank_accounts'), where('accountType', '==', 'PETTY_CASH'));
+    return query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'));
   }, [firestore, firebaseUser, allowed]);
 
-  const { data: pettyAccounts, isLoading: loadingPetty } = useCollection<BankAccount>(pettyAccountsQuery as any);
+  const { data: activeBankAccounts, isLoading: loadingPetty } = useCollection<BankAccount>(
+    activeBankAccountsQuery as any,
+  );
+
+  const pettyAccounts = useMemo(
+    () =>
+      (activeBankAccounts ?? [])
+        .filter(isPettyCashLikeAccount)
+        .sort((a, b) => String(a.accountCode || '').localeCompare(String(b.accountCode || ''))),
+    [activeBankAccounts],
+  );
 
   const [selectedAccountId, setSelectedAccountId] = useState('');
 

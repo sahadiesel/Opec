@@ -408,6 +408,14 @@ export function isInternalUser(user: User | null): boolean {
   return isSimpleInternalEligible(u);
 }
 
+const ACCOUNTING_OBSERVER_PAYROLL_VIEW_KEYS = new Set<ModuleKey>([
+  'office_payroll',
+  'worker_payroll',
+  'payroll_runs',
+  'payslips',
+  'payment_export_batches',
+]);
+
 export function getPermissions(
   user: User | null,
   rawModuleKey: string,
@@ -464,13 +472,14 @@ export function getPermissions(
     return clonePermission(NO_ACCESS);
   }
 
-  /** ใบกำกับร่าง + แนบสลิป: พนักงานภายใน (ไม่ใช่บัญชี) ดู/แก้ไขได้ แต่ไม่สร้างเอกสารใหม่ใน UI */
+  /** ใบกำกับร่าง + แนบสลิป: พนักงานภายใน (ไม่ใช่บัญชี) ดู/แก้ไขได้ แต่ไม่สร้างเอกสารใหม่ใน UI — ยกเว้นมุมมองบัญชีแบบอ่านอย่างเดียว */
   if (
     moduleKey === 'tax_invoices' &&
     isSimpleInternalEligible(u) &&
     !isSimpleAccounting(u) &&
     !isOperationsOfficer(u) &&
-    !isTimekeeper(u)
+    !isTimekeeper(u) &&
+    !isAccountingDepartmentReadOnlyObserver(u)
   ) {
     return { view: true, create: false, edit: true, delete: false, approve: false };
   }
@@ -486,7 +495,6 @@ export function getPermissions(
    * ไม่รวม accounting officer / หัวหน้าสายอื่น
    *
    * รองรับผู้จัดการปฏิบัติการที่ accessGroup/level ชัด แต่ primary legacy role ยังไม่ sync เป็น operations_manager
-   * (สอดคล้องเงื่อนไขเดียวกับโมดูล operations_petty_cash — ไม่เปิดให้ sales_manager / store_officer)
    */
   if (moduleKey === 'draft_invoices') {
     if (isSalesManager(u)) return clonePermission(READ_ONLY);
@@ -520,32 +528,27 @@ export function getPermissions(
     if (isSystemAdmin(u) || isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
     if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
     if (isPayrollOfficer(u) || isHrManager(u) || isOperationManager(u)) return clonePermission(FULL_ACCESS);
+    /** มุมมองบัญชีแบบอ่านอย่างเดียว (ผู้จัดการขาย / ผจก.ปฏิบัติการฯ) — ดูคิวจ่ายเบิกล่วงหน้าได้ ไม่บันทึก */
+    if (isAccountingDepartmentReadOnlyObserver(u)) return clonePermission(READ_ONLY);
     return clonePermission(NO_ACCESS);
   }
 
-  /** Petty Cash หน้างาน — ฝ่ายบัญชี + ผจก.ปฏิบัติการ (รวมกรณี level=manager + operations แต่ legacy role ยังไม่ sync) */
+  /**
+   * Petty Cash หน้างาน — เฉพาะผู้จัดการปฏิบัติการ (operations_manager) + แอดมิน
+   * ต้องสอดคล้อง firestore `canAccessBankAccountsAndCashbook` — ถ้าเปิดในแอปกว้างกว่า rules
+   * จะ query bank_accounts ได้ว่างทั้งที่มีกอง Petty อยู่จริง
+   */
   if (moduleKey === 'operations_petty_cash') {
-    if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
+    if (isSystemAdmin(u) || isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
     if (isOperationManager(u)) return clonePermission(FULL_ACCESS);
-    if (
-      isOperationsPillarExecutive(u) &&
-      isOperationGroupMember(u) &&
-      getEffectiveAccessLevel(u) === 'manager' &&
-      getEffectiveAccessGroup(u) === 'operations' &&
-      !isHrManager(u) &&
-      getPrimaryLegacyRole(u) !== 'sales_manager' &&
-      getPrimaryLegacyRole(u) !== 'store_officer'
-    ) {
-      return clonePermission(FULL_ACCESS);
-    }
     return clonePermission(NO_ACCESS);
   }
 
-  /** ผู้จัดการขาย/ปฏิบัติการ — เงินเดือนใต้เมนูบัญชี: ดูอย่างเดียว */
-  if (
-    isAccountingDepartmentReadOnlyObserver(u) &&
-    (moduleKey === 'office_payroll' || moduleKey === 'worker_payroll')
-  ) {
+  /**
+   * ผู้จัดการขาย / ผู้จัดการปฏิบัติการ (มุมมองบัญชีแบบอ่านอย่างเดียว) —
+   * เงินเดือน สลิป ไฟล์โอน ฯลฯ ใต้เมนูบัญชี: ดูและพิมพ์ได้ ไม่สร้าง/ไม่แก้ไข
+   */
+  if (isAccountingDepartmentReadOnlyObserver(u) && ACCOUNTING_OBSERVER_PAYROLL_VIEW_KEYS.has(moduleKey)) {
     return clonePermission(READ_ONLY);
   }
 

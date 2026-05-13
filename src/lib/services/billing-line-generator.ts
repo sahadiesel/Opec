@@ -11,6 +11,7 @@ import {
   addDoc,
 } from 'firebase/firestore';
 import type {
+  Assignment,
   DailyTimesheet,
   POLine,
   OtRulesSnapshot,
@@ -19,6 +20,8 @@ import type {
   RateConditionEventType,
   MainContract,
 } from '@/lib/types';
+import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
+import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
 import { derivePackageNormalHourlyRate, PACKAGE_OT_TIER_MULT } from '@/lib/commercial/package-hourly-rate';
 import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
@@ -43,6 +46,15 @@ export interface BillingLineGenerationResult {
   totalAmount: number;
   timesheetCount: number;
   warnings: string[];
+}
+
+/** ตัวเลือกเพิ่มเติมสำหรับ `generateBillingLines` */
+export interface GenerateBillingLinesOptions {
+  /**
+   * งวด PO+เดือน: จำกัดเฉพาะ wave ที่บันทึกใน `po_month_timesheet_reviews.relatedWaveIds`
+   * — ว่างหรือไม่ส่ง = ดึงทุก wave ใต้ PO (พฤติกรรมเดิม)
+   */
+  poMonthWaveIds?: readonly string[] | null;
 }
 
 interface LineAcc {
@@ -84,6 +96,33 @@ function roundMoney(n: number): number {
 
 function isUnpaidLeaveEvent(eventType: string | undefined | null): boolean {
   return String(eventType ?? '').trim() === 'unpaid_leave';
+}
+
+/**
+ * วางบิลลูกค้า: หนึ่งคน + หนึ่งวันปฏิทิน + หนึ่งตำแหน่ง + หนึ่ง eventType = หนึ่งหน่วยนับ
+ * (กันซ้ำเมื่อมีหลายเอกสาร daily_timesheets จาก mobilization/แก้ไขซ้ำ — ไม่คิดเงินสองครั้งในวันเดียวกัน)
+ */
+function dedupeTimesheetsForBilling(tsList: readonly DailyTimesheet[]): DailyTimesheet[] {
+  const sorted = [...tsList].sort((a, b) => {
+    const ua = a.updatedAt ?? a.createdAt ?? 0;
+    const ub = b.updatedAt ?? b.createdAt ?? 0;
+    if (ua !== ub) return ub - ua;
+    return String(b.id).localeCompare(String(a.id));
+  });
+  const seen = new Set<string>();
+  const out: DailyTimesheet[] = [];
+  for (const ts of sorted) {
+    const wid = String(ts.workerId || '').trim();
+    const d = String(ts.date || '').trim();
+    const pos = String(ts.positionId || '').trim();
+    const ev = String(ts.eventType || '').trim();
+    if (!wid || !d || !pos || !ev) continue;
+    const k = `${wid}\0${d}\0${pos}\0${ev}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(ts);
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
 }
 
 /**
@@ -370,61 +409,34 @@ async function loadPositionLabels(
   return map;
 }
 
-/** คำอธิบายจำนวนวางบิล — แยกคน-วันกับชม. ไม่ใช้คำว่า "วัน" อย่างเดียวเพื่อกันเข้าใจผิดกับจำนวนปฏิทิน */
-function billingQuantityPhrase(acc: LineAcc): string {
-  const nw = acc.workerIds.size;
-  const q = acc.totalQuantity;
-  const tsN = acc.timesheetIds.length;
-  const workerBit = nw > 0 ? ` · พนักงาน ${nw} คน` : '';
-
-  if (
-    acc.eventType === 'ot_1.5' ||
-    acc.eventType === 'ot_2.0' ||
-    acc.eventType === 'ot_3.0' ||
-    acc.eventType === 'sell_overflow_normal'
-  ) {
-    return `รวม ${q} ชม.${workerBit}`;
-  }
-
-  if (acc.eventType === 'work_day') {
-    const mandayLike = tsN > 0 && q === tsN;
-    if (mandayLike) {
-      return `รวม ${q} คน-วัน${workerBit}`;
-    }
-    return `รวม ${q} ชม. (ชม.ปกติในแพ็กขาย)${workerBit}`;
-  }
-
-  return `รวม ${q} คน-วัน${workerBit}`;
-}
-
+/** คำอธิบายบรรทัด — ไม่ใส่จำนวน/ราคาในข้อความ (มีคอลัมน์ Qty / Unit price / Amount แล้ว) */
 function descriptionForLine(acc: LineAcc, positionTitle: string): string {
   const title = positionTitle || acc.positionId;
-  const qtyPhrase = billingQuantityPhrase(acc);
   switch (acc.eventType) {
     case 'work_day':
-      return `${title} — ค่าแรงวันทำงาน (${qtyPhrase})`;
+      return `${title} — ค่าแรงวันทำงาน`;
     case 'ot_1.5':
-      return `${title} — OT x1.5 (${qtyPhrase})`;
+      return `${title} — OT x1.5`;
     case 'ot_2.0':
-      return `${title} — OT x2 (${qtyPhrase})`;
+      return `${title} — OT x2`;
     case 'ot_3.0':
-      return `${title} — OT x3 (${qtyPhrase})`;
+      return `${title} — OT x3`;
     case 'off_day_worked':
-      return `${title} — ทำงานวันหยุด (${qtyPhrase})`;
+      return `${title} — ทำงานวันหยุด`;
     case 'standby_day':
-      return `${title} — สแตนด์บาย (${qtyPhrase})`;
+      return `${title} — สแตนด์บาย`;
     case 'travel_day':
-      return `${title} — วันเดินทาง (${qtyPhrase})`;
+      return `${title} — วันเดินทาง`;
     case 'public_holiday_worked':
-      return `${title} — ทำงานวันหยุดนักขัตฤกษ์ (${qtyPhrase})`;
+      return `${title} — ทำงานวันหยุดนักขัตฤกษ์`;
     case 'mobilization_day':
-      return `${title} — โมบิไลเซชัน (${qtyPhrase})`;
+      return `${title} — โมบิไลเซชัน`;
     case 'demobilization_day':
-      return `${title} — ดีโมบิไลเซชัน (${qtyPhrase})`;
+      return `${title} — ดีโมบิไลเซชัน`;
     case 'sell_overflow_normal':
-      return `${title} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย) (${qtyPhrase})`;
+      return `${title} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย)`;
     default:
-      return `${title} — ${acc.eventType} (${qtyPhrase})`;
+      return `${title} — ${acc.eventType}`;
   }
 }
 
@@ -441,6 +453,7 @@ export async function generateBillingLines(
   periodStart: string,
   periodEnd: string,
   waveId?: string,
+  options?: GenerateBillingLinesOptions,
 ): Promise<BillingLineGenerationResult> {
   const warnings: string[] = [];
 
@@ -466,9 +479,32 @@ export async function generateBillingLines(
     where('date', '>=', periodStart),
     where('date', '<=', periodEnd),
   ];
-  if (waveId) tsConstraints.push(where('waveId', '==', waveId));
+  if (waveId) {
+    tsConstraints.push(where('waveId', '==', waveId));
+  } else {
+    const scope = (options?.poMonthWaveIds ?? [])
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+    if (scope.length === 1) {
+      tsConstraints.push(where('waveId', '==', scope[0]));
+      warnings.push(
+        'จำกัด timesheet เฉพาะ 1 wave ตามเอกสาร PO+เดือน (relatedWaveIds) — ไม่รวม wave อื่นใต้ PO ที่ไม่ได้ผูกในงวดนี้',
+      );
+    } else if (scope.length > 1) {
+      const capped = scope.slice(0, 30);
+      if (scope.length > 30) {
+        warnings.push(
+          `relatedWaveIds มี ${scope.length} wave — Firestore จำกัดคำสั่ง "in" ที่ 30 จึงดึง timesheet เฉพาะ ${capped.length} wave แรกตามลำดับในเอกสารรีวิว`,
+        );
+      }
+      tsConstraints.push(where('waveId', 'in', capped));
+      warnings.push(
+        `จำกัด timesheet เฉพาะ ${capped.length} wave ตามเอกสาร PO+เดือน (relatedWaveIds) — ไม่รวม wave อื่นใต้ PO ที่ไม่ได้ผูกในงวดนี้`,
+      );
+    }
+  }
 
-  const [poLinesSnap, tsSnap] = await Promise.all([
+  const [poLinesSnap, tsSnap, mobSnap] = await Promise.all([
     getDocs(
       query(
         collection(db, 'purchase_orders', poId, 'po_lines'),
@@ -476,6 +512,7 @@ export async function generateBillingLines(
       ),
     ),
     getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints)),
+    getDocs(query(collection(db, 'mobilizations'), where('poId', '==', poId))),
   ]);
 
   const poLines = poLinesSnap.docs.map(
@@ -486,15 +523,55 @@ export async function generateBillingLines(
     poLinesByPosition.set(pl.positionId, pl);
   }
 
-  const timesheets = tsSnap.docs.map(
+  const timesheetsRaw = tsSnap.docs.map(
     (d) => ({ ...d.data(), id: d.id } as DailyTimesheet),
   );
 
-  if (timesheets.length === 0) {
+  const mobById = new Map<string, Assignment>();
+  for (const d of mobSnap.docs) {
+    mobById.set(d.id, { ...(d.data() as Assignment), id: d.id });
+  }
+
+  const normalized = normalizeTimesheetsForPayrollLine(timesheetsRaw);
+  const inMobWindow = normalized.filter((ts) => {
+    const aid = String(ts.assignmentId || '').trim();
+    if (!aid) return true;
+    const a = mobById.get(aid);
+    if (!a) return true;
+    return isYmdWithinAssignmentMobTimesheetWindow(a, ts.date);
+  });
+  const beforeBillingDedupe = inMobWindow.length;
+  const timesheets = dedupeTimesheetsForBilling(inMobWindow);
+  const billingDeduped = beforeBillingDedupe - timesheets.length;
+
+  const payrollMobDropped = timesheetsRaw.length - inMobWindow.length;
+  if (payrollMobDropped > 0) {
     warnings.push(
-      'ไม่พบ timesheet ที่พร้อมวางบิล (readyForBilling) ในช่วงเวลาที่เลือก',
+      `ตัด ${payrollMobDropped} แถว timesheet ก่อนรวมยอดวางบิล (ซ้ำตามกฎ payroll หรือวันที่อยู่นอกหน้าต่าง mobilization ของมอบหมาย)`,
     );
-    return { lines: [], totalAmount: 0, timesheetCount: 0, warnings };
+  }
+  if (billingDeduped > 0) {
+    warnings.push(
+      `รวมเป็นหนึ่งใบงานต่อคน/วัน/ตำแหน่ง/ประเภทวันสำหรับวางบิล — ตัด ${billingDeduped} แถวที่ซ้ำกัน`,
+    );
+  }
+
+  if (timesheets.length === 0) {
+    if (timesheetsRaw.length > 0) {
+      warnings.push(
+        'หลังตัดซ้ำและกรองตามหน้าต่าง mobilization ไม่เหลือ timesheet สำหรับวางบิล — ตรวจวันที่กับมอบหมาย (mobilizations)',
+      );
+    } else {
+      warnings.push(
+        'ไม่พบ timesheet ที่พร้อมวางบิล (readyForBilling) ในช่วงเวลาที่เลือก',
+      );
+    }
+    return {
+      lines: [],
+      totalAmount: 0,
+      timesheetCount: 0,
+      warnings: [...new Set(warnings)].filter((w) => !shouldOmitCommercialInvoiceGenerationWarning(w)),
+    };
   }
 
   if (!mainContract) {

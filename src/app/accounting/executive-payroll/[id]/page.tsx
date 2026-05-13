@@ -52,8 +52,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { canView } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { canView, canDelete } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate, runStatusToD8Lifecycle } from '@/lib/payroll/d8';
@@ -145,7 +144,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
     [firestore, isAuthorized],
   );
   const { data: companyProfileForWht } = useDoc<CompanyDocumentProfileForPayrollWht>(companyProfileWhtRef as any);
-  const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const canDeleteRun = useMemo(() => canDelete(currentUser, 'executive_payroll'), [currentUser]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeletingRun, setIsDeletingRun] = useState(false);
   const [payoutBankId, setPayoutBankId] = useState('');
@@ -287,7 +286,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
   };
 
   const handleConfirmDeleteRun = async () => {
-    if (!firestore || !run || !isAdmin || adminExecutivePayrollDeleteBlocked(run)) return;
+    if (!firestore || !run || !canDeleteRun || adminExecutivePayrollDeleteBlocked(run)) return;
     setIsDeletingRun(true);
     try {
       await deleteExecutivePayrollRunCascade(firestore, id);
@@ -373,7 +372,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                 </Button>
               </>
             )}
-            {isAdmin && (
+            {canDeleteRun && (
               <Button
                 type="button"
                 variant="outline"
@@ -383,7 +382,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                 title={
                   adminExecutivePayrollDeleteBlocked(run)
                     ? 'ลบไม่ได้ — งวดล็อกหรืออนุมัติการเงิน/จ่ายแล้ว'
-                    : 'ลบงวดนี้ (เฉพาะผู้ดูแลระบบ)'
+                    : 'ลบงวดนี้ (ผู้มีสิทธิ์ลบ)'
                 }
                 onClick={() => setDeleteDialogOpen(true)}
               >
