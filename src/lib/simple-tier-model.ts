@@ -1,12 +1,13 @@
 /**
  * 3-tier access model — `isAdmin()` ใน firestore.rules รองรับ roleIds / accessGroup admin ให้สอดคล้องกับ isSystemAdmin() ในแอป
  * - admin: system_admin (+ accessGroup/department เป็น admin ตามกฎ)
- * - accounting: accounting_manager | accounting_officer
+ * - accounting: accounting_manager | accounting_officer (ลำดับเดียวกับ getPrimaryLegacyRole / primaryBusinessRoleForAdminGate ในกฎ)
  * - internal: any other active internal user (default)
  */
 import type { User } from '@/lib/types';
+import { getPrimaryLegacyRole } from '@/lib/permission-core';
 
-/** Prefer explicit `role` (snake_case doc) then assignedRoleKey. */
+/** Prefer explicit legacy `role` scalar ก่อน `assignedRoleKey` — ใช้เฉพาะ isSimpleAdmin; อย่าใช้กับ isSimpleAccounting (ต้องสอดคล้องกฎ Firestore) */
 export function getEffectiveSimpleRole(user: Partial<User> | null | undefined): string | null {
   if (!user) return null;
   const r = (user as { role?: string }).role;
@@ -55,7 +56,7 @@ export function isSimpleAdmin(user: Partial<User> | null | undefined): boolean {
 
 export function isSimpleAccounting(user: Partial<User> | null | undefined): boolean {
   if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
-  const rk = getEffectiveSimpleRole(user);
+  const rk = getPrimaryLegacyRole(user as User);
   return rk === 'accounting_manager' || rk === 'accounting_officer';
 }
 
