@@ -2919,6 +2919,10 @@ export interface TaxInvoice {
   paymentReceivedConfirmedByName?: string;
   /** อ้างอิง `receipts/{id}` หลังออกเอกสาร */
   linkedReceiptId?: string;
+  /** รายการ cashbook รับเงินลูกค้า หลังยืนยันรับเงิน + ออกใบเสร็จ */
+  paymentReceivedCashbookEntryId?: string;
+  /** บัญชีที่รับเงินเข้า (สอดคล้อง cashbook) */
+  paymentReceivedBankAccountId?: string;
 }
 
 export type TaxInvoiceStatus = 'DRAFT' | 'ISSUED' | 'CANCELLED';
@@ -2935,6 +2939,10 @@ export interface MoneyReceipt {
   /** วันที่ออกเอกสาร (YYYY-MM-DD) */
   receiptDate: string;
   status: 'ISSUED';
+  /** บัญชีธนาคารที่รับเงิน (ลง cashbook พร้อมกัน) */
+  bankAccountId?: string;
+  cashbookEntryId?: string;
+  cashbookEntryNo?: string;
   createdAt: number;
   updatedAt: number;
   createdByUid?: string;

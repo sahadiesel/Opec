@@ -27,6 +27,7 @@ import type {
   Customer,
   MainContract,
   Purchase,
+  PurchaseRequest,
   PurchaseLine,
   PurchasePaymentMilestone,
   PurchaseOrder,
@@ -1495,10 +1496,12 @@ export function buildPurchaseOrderPrintHtml(params: {
   vendor: Vendor | null | undefined;
   lines: PurchaseLine[] | null | undefined;
   milestones: PurchasePaymentMilestone[] | null | undefined;
+  /** เมื่อ PO อ้าง PR — ชื่อผู้อนุมัติบนปะหน้าต้องเป็นผู้จัดการที่อนุมัติ PR (`decidedByName`) ไม่ใช่ผู้ที่กดยืนยัน PO */
+  linkedPurchaseRequest?: Pick<PurchaseRequest, 'decidedByName' | 'status'> | null;
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
 }): string {
-  const { company, purchase, vendor, lines, milestones, printedAtMs } = params;
+  const { company, purchase, vendor, lines, milestones, printedAtMs, linkedPurchaseRequest } = params;
   const L = params.locale ?? 'th';
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
   const ymd = purchase.purchaseDate?.trim();
@@ -1628,9 +1631,16 @@ export function buildPurchaseOrderPrintHtml(params: {
   ${whtLine}
   ${notesBlock}`;
 
+  const prApproverDisplay =
+    purchase.purchaseRequestId?.trim() &&
+    linkedPurchaseRequest?.status === 'APPROVED' &&
+    linkedPurchaseRequest.decidedByName?.trim()
+      ? linkedPurchaseRequest.decidedByName.trim()
+      : purchase.approvalDecisionByName?.trim() || '';
+
   const footerHtml = buildStandardSignFooterHtml({
     left: { roleLine: printT(L, 'signPreparedPurchasing'), name: purchase.createdByName || '—' },
-    right: { roleLine: printT(L, 'signApproverOps'), name: purchase.approvalDecisionByName || '—' },
+    right: { roleLine: printT(L, 'signApproverOps'), name: prApproverDisplay || '—' },
     belowHtml: approvalNotice,
   });
 

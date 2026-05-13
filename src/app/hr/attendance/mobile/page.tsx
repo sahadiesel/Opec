@@ -240,8 +240,15 @@ function MobileAttendanceInner() {
 
         {!token && (
           <Card>
-            <CardContent className="pt-6 text-sm text-destructive">
-              ไม่พบรหัส QR — สแกน QR จากหน้า Kiosk อีกครั้ง
+            <CardContent className="space-y-2 pt-6 text-sm">
+              <p className="text-destructive font-medium">ไม่พบรหัสในลิงก์ (?t=…)</p>
+              <p className="text-muted-foreground">
+                สแกน QR จากหน้า Kiosk อีกครั้ง หรือให้ผู้ดูแล Kiosk คัดลอกลิงก์จากหน้า Kiosk มาให้ — ต้องล็อกอินระบบบนมือถือด้วยบัญชีพนักงาน/ลูกจ้างภายในก่อนกดลงเวลา
+              </p>
+              <p className="text-xs text-muted-foreground">
+                ถ้า Kiosk เปิดที่ localhost บน PC มือถือจะเปิดไม่ถูกเครื่อง — ตั้งค่า{' '}
+                <span className="font-mono">NEXT_PUBLIC_APP_ORIGIN</span> หรือใช้ IP/LAN ของเครื่อง Kiosk
+              </p>
             </CardContent>
           </Card>
         )}

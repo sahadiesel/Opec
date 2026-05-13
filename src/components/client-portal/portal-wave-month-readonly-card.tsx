@@ -140,6 +140,7 @@ export function PortalWaveMonthReadonlyCard({
           poMonthDailySheets,
           poScopeWaveId,
           alternateMobIds,
+          { onlyWithinMobWindow: true },
         ),
       );
     }
@@ -466,6 +467,7 @@ export function PortalPoMonthUnifiedReadonlyCard({
           poMonthDailySheets,
           poScopeWaveId,
           alternateMobIds,
+          { onlyWithinMobWindow: true },
         ),
       );
     }

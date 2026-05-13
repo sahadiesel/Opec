@@ -153,6 +153,14 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
               <span className="text-muted-foreground">ยอด: </span>
               {receipt.currency} {receipt.amount.toLocaleString()}
             </p>
+            {receipt.cashbookEntryNo ? (
+              <p>
+                <span className="text-muted-foreground">รายการ Cashbook: </span>
+                <Link href="/cashbook" className="font-mono text-primary underline">
+                  {receipt.cashbookEntryNo}
+                </Link>
+              </p>
+            ) : null}
             {taxInv && (
               <p>
                 <Button variant="link" className="h-auto p-0" asChild>

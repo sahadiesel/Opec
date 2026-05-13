@@ -34,11 +34,14 @@ import {
   BillingNoteLine,
   TaxInvoiceTimesheetAttachment,
   CommercialInvoice,
+  BankAccount,
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   formatDateTimeThaiBE,
@@ -74,6 +77,7 @@ import {
 import {
   recordTaxInvoicePaymentNotification,
   confirmPaymentAndIssueMoneyReceipt,
+  expectedMoneyReceiptAmount,
 } from '@/lib/services/money-receipt-service';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -110,6 +114,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [billingApproving, setBillingApproving] = useState(false);
   const [payNotifyLoading, setPayNotifyLoading] = useState(false);
   const [payConfirmLoading, setPayConfirmLoading] = useState(false);
+  const [payConfirmOpen, setPayConfirmOpen] = useState(false);
+  const [payConfirmAmountStr, setPayConfirmAmountStr] = useState('');
+  const [payConfirmEntryDate, setPayConfirmEntryDate] = useState('');
+  const [payConfirmBankId, setPayConfirmBankId] = useState('');
   const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
   const [editShowWht, setEditShowWht] = useState(false);
   const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
@@ -181,6 +189,17 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const isAccountingActor =
     !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser));
+
+  const bankAccountsQuery = useMemoFirebase(
+    () => (firestore && isAccountingActor ? collection(firestore, 'bank_accounts') : null),
+    [firestore, isAccountingActor],
+  );
+  const { data: bankAccountRows } = useCollection<BankAccount>(bankAccountsQuery as any);
+  const receiveBankOptions = useMemo(
+    () =>
+      (bankAccountRows ?? []).filter((b) => b.status === 'ACTIVE' && b.accountType !== 'PETTY_CASH'),
+    [bankAccountRows],
+  );
 
   const canRecordBillingApproval =
     !!currentUser && canRecordTaxInvoiceBillingCustomerApproval(currentUser);
@@ -460,14 +479,45 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
       return;
     }
+    setPayConfirmAmountStr(String(expectedMoneyReceiptAmount(invoice)));
+    setPayConfirmEntryDate(timestampToHtmlDateValue(Date.now()));
+    setPayConfirmBankId('');
+    setPayConfirmOpen(true);
+  };
+
+  const handleSubmitPayConfirmIssueReceipt = async () => {
+    if (!firestore || !invoice || !currentUser) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    if (!payConfirmBankId.trim()) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกบัญชีธนาคารที่รับเงิน' });
+      return;
+    }
+    const raw = payConfirmAmountStr.replace(/,/g, '').trim();
+    const amount = roundMoney2(Number(raw));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({ variant: 'destructive', title: 'ยอดไม่ถูกต้อง', description: 'กรอกตัวเลขยอดรับเงิน' });
+      return;
+    }
     setPayConfirmLoading(true);
     try {
-      const { receiptId, receiptNo } = await confirmPaymentAndIssueMoneyReceipt(
+      const { receiptId, receiptNo, cashbookEntryNo } = await confirmPaymentAndIssueMoneyReceipt(
         firestore,
         invoice,
         currentUser as User,
+        {
+          bankAccountId: payConfirmBankId.trim(),
+          amount,
+          entryDate: payConfirmEntryDate.trim(),
+        },
       );
-      toast({ title: 'ออกใบเสร็จรับเงินแล้ว', description: receiptNo });
+      setPayConfirmOpen(false);
+      toast({
+        title: 'ออกใบเสร็จและลง cashbook แล้ว',
+        description: `${receiptNo} · รายการรับ ${cashbookEntryNo}`,
+      });
       router.push(`/receipts/${receiptId}`);
     } catch (e) {
       console.error(e);
@@ -597,8 +647,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             <CardHeader>
               <CardTitle className="text-base">รับเงิน &amp; ใบเสร็จ (2 ขั้น)</CardTitle>
               <CardDescription>
-                ขั้น 1 แจ้งชำระ (ลูกค้าใน Client Portal หรือบัญชีกดฝั่งนี้) &rarr; ขั้น 2 ยืนยันรับเงิน &rarr; ระบบออก
-                ใบเสร็จรับเงิน
+                ขั้น 1 แจ้งชำระ (ลูกค้าใน Client Portal หรือบัญชีกดฝั่งนี้) &rarr; ขั้น 2 ยืนยันรับเงิน — ระบุยอดและบัญชีรับเงิน
+                เพื่อออกใบเสร็จและลงรายรับรายจ่าย (Cashbook) พร้อมปรับยอดบัญชีธนาคาร
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -626,7 +676,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                   <Button
                     type="button"
                     size="sm"
-                    onClick={() => void handleConfirmPaymentIssueReceipt()}
+                    onClick={() => handleConfirmPaymentIssueReceipt()}
                     disabled={payConfirmLoading}
                   >
                     {payConfirmLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
@@ -652,6 +702,14 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <Button variant="link" className="h-auto p-0" asChild>
                 <Link href={`/receipts/${invoice.linkedReceiptId}`}>ใบเสร็จรับเงิน</Link>
               </Button>
+              {invoice.paymentReceivedCashbookEntryId ? (
+                <>
+                  <span className="text-muted-foreground">·</span>
+                  <Button variant="link" className="h-auto p-0" asChild>
+                    <Link href="/cashbook">ดูรายรับรายจ่าย (Cashbook)</Link>
+                  </Button>
+                </>
+              ) : null}
             </AlertDescription>
           </Alert>
         )}
@@ -1013,6 +1071,90 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             </CardContent>
           </Card>
         )}
+
+        <Dialog
+          open={payConfirmOpen}
+          onOpenChange={(o) => {
+            setPayConfirmOpen(o);
+            if (!o) setPayConfirmLoading(false);
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>ยืนยันรับเงิน · ออกใบเสร็จ · ลง Cashbook</DialogTitle>
+              <DialogDescription>
+                ตรวจยอดที่รับจริงและเลือกบัญชีธนาคารที่เงินเข้า — ระบบจะสร้างใบเสร็จรับเงิน รายการรับในรายรับรายจ่าย
+                และเพิ่มยอดคงเหลือในบัญชีที่เลือก (ขั้นตอนเดียวกัน)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="pay-confirm-amt">ยอดรับ ({invoice?.currency ?? 'THB'})</Label>
+                <Input
+                  id="pay-confirm-amt"
+                  inputMode="decimal"
+                  value={payConfirmAmountStr}
+                  onChange={(e) => setPayConfirmAmountStr(e.target.value)}
+                  placeholder="0.00"
+                  className="font-mono"
+                />
+                {invoice ? (
+                  <p className="text-xs text-muted-foreground">
+                    ยอดตามใบกำกับไม่เกิน{' '}
+                    <span className="font-semibold text-foreground">
+                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                    {showWhtBlock ? (
+                      <>
+                        {' '}
+                        · ถ้าชำระตามยอดสุทธิหลังหัก ณ ที่จ่าย แนะนำ{' '}
+                        <span className="font-semibold text-foreground">
+                          {netAfterWht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pay-confirm-date">วันที่รับเงิน (ลงบัญชี)</Label>
+                <Input
+                  id="pay-confirm-date"
+                  type="date"
+                  value={payConfirmEntryDate}
+                  onChange={(e) => setPayConfirmEntryDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>บัญชีธนาคารที่รับเงิน</Label>
+                <Select value={payConfirmBankId || undefined} onValueChange={setPayConfirmBankId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="เลือกบัญชี…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {receiveBankOptions.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.accountCode} — {b.bankName} · …{String(b.accountNumber ?? '').slice(-4)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {receiveBankOptions.length === 0 ? (
+                  <p className="text-xs text-destructive">ไม่มีบัญชี ACTIVE — ตั้งค่าที่เมนูบัญชีธนาคารก่อน</p>
+                ) : null}
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setPayConfirmOpen(false)} disabled={payConfirmLoading}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={() => void handleSubmitPayConfirmIssueReceipt()} disabled={payConfirmLoading}>
+                {payConfirmLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                ยืนยันและออกใบเสร็จ
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={billingApproveOpen} onOpenChange={setBillingApproveOpen}>
           <DialogContent className="max-w-md">

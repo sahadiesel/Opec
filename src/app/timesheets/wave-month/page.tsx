@@ -663,6 +663,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           monthSheetsForOpenPos,
           poTimesheetScopeId(rosterAssignment.poId),
           alternateMobIds,
+          { onlyWithinMobWindow: true },
         ),
       );
     }
@@ -1163,7 +1164,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                       <p>
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                        <strong>รวมชม.</strong> = ชม.ทำงาน (ไม่รวม standby) — จับคู่ timesheet กับช่องวัน · ช่วงนับตาม mobilization จริง
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (ไม่รวม standby) เฉพาะวันที่อยู่ในช่วง mobilization ของแถว — จับคู่ timesheet กับช่องวัน
+                        (วันที่อยู่นอกหน้าต่างอาจแสดง W พร้อมวงแหวนแต่ไม่รวมในยอดรวม)
                       </p>
                     </CardDescription>
                   </div>
@@ -1206,7 +1208,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                           ))}
                           <TableHead
                             className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 text-[10px] leading-tight px-2"
-                            title="ชม.ทำงาน (เฉพาะวันทำงาน) รวมในแถวนี้ตามการจับคู่ timesheet กับช่องวัน — ไม่รวม standby"
+                            title="ชม.ทำงาน (เฉพาะวันทำงาน) รวมในแถวนี้เฉพาะวันที่อยู่ในช่วง mobilization — ไม่รวม standby และไม่รวมชม.จากวันที่อยู่นอกหน้าต่างแม้เซลล์แสดง W"
                           >
                             รวมชม.
                             <br />
@@ -1257,7 +1259,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 </div>
                               </TableCell>
                               {days.map((d) => {
-                                /** ต้องจับคู่แบบเดียวกับ sumWorkHoursForWaveMonthRow — ห้ามบังคับว่างเมื่ออยู่นอกหน้าต่าง mobilization ถ้า resolve พบใบงานจริง (มิฉะนั้นแถวเป็น "-" ทั้งแถวแต่รวมชม.ยังมีเลข) */
+                                /** จับคู่แบบเดียวกับ resolve ในเซลล์ — นอกหน้าต่าง mobilization อาจแสดง W ถ้ามีใบงานจริง แต่คอลัมน์รวมชม.ไม่นับวันเหล่านั้น (onlyWithinMobWindow ใน sumWorkHoursForWaveMonthRow) */
                                 const inMobWindow = isYmdWithinAssignmentMobTimesheetWindow(
                                   rosterAssignment,
                                   d,

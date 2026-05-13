@@ -12,10 +12,17 @@ import {
   ATTENDANCE_KIOSK_SESSIONS_COLLECTION,
   KIOSK_SESSION_TTL_MS,
 } from '@/lib/attendance/constants';
+import {
+  getAttendanceMobileQrBaseUrl,
+  hasConfiguredPublicAppOrigin,
+  kioskHostnameUnlikelyReachableFromOtherDevices,
+} from '@/lib/attendance/kiosk-public-url';
 import type { AttendanceKioskSessionDoc } from '@/lib/attendance/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { ArrowLeft, CheckCircle2, Copy, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import QRCode from 'qrcode';
 
@@ -41,10 +48,14 @@ export default function HrAttendanceKioskPage() {
 
   const mobileUrl = useMemo(() => {
     if (typeof window === 'undefined' || !token) return '';
-    const u = new URL('/hr/attendance/mobile', window.location.origin);
+    const base = getAttendanceMobileQrBaseUrl();
+    if (!base) return '';
+    const u = new URL('/hr/attendance/mobile', base.endsWith('/') ? base.slice(0, -1) : base);
     u.searchParams.set('t', token);
     return u.toString();
   }, [token]);
+
+  const showKioskHostWarning = kioskHostnameUnlikelyReachableFromOtherDevices() && !hasConfiguredPublicAppOrigin();
 
   useEffect(() => {
     if (!mobileUrl) {
@@ -182,8 +193,34 @@ export default function HrAttendanceKioskPage() {
             <p className="text-sm text-muted-foreground mt-1">
               QR ใช้ครั้งเดียวต่อ 1 คน อายุ 60 วินาที — ระบบจะสร้างโค้ดใหม่ให้อัตโนมัติหลังสแกน
             </p>
+            {hasConfiguredPublicAppOrigin() ? (
+              <p className="text-xs text-muted-foreground mt-2">
+                ใช้ URL สาธารณะจาก <span className="font-mono">NEXT_PUBLIC_APP_ORIGIN</span> ใน QR
+              </p>
+            ) : null}
           </div>
         </div>
+
+        {showKioskHostWarning && (
+          <Alert variant="destructive">
+            <AlertTitle>มือถือสแกนแล้วเปิดไม่ได้ / ไม่ตรงเครื่อง Kiosk</AlertTitle>
+            <AlertDescription className="text-sm space-y-2">
+              <p>
+                ตอนนี้หน้า Kiosk เปิดด้วย <strong>localhost</strong> หรือ <strong>127.0.0.1</strong> — QR จะชี้มาที่เครื่องมือถือเอง
+                ไม่ใช่เครื่องนี้
+              </p>
+              <p className="font-medium">แก้ได้ 2 แบบ (เลือกอย่างใดอย่างหนึ่ง)</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>
+                  ตั้งค่า <span className="font-mono">NEXT_PUBLIC_APP_ORIGIN</span> เป็น URL ที่มือถือเข้าถึงได้
+                  (เช่น <span className="font-mono">https://โดเมนจริง</span> หรือ{' '}
+                  <span className="font-mono">http://192.168.x.x:พอร์ต</span> ใน LAN) แล้ว build/deploy ใหม่
+                </li>
+                <li>หรือเปิดหน้า Kiosk ในเบราว์เซอร์ด้วย IP/LAN ของเครื่องนี้แทน localhost</li>
+              </ul>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card className="shadow-md">
           <CardHeader className="text-center border-b bg-muted/20">
@@ -216,6 +253,28 @@ export default function HrAttendanceKioskPage() {
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               สร้างโค้ดใหม่
             </Button>
+            {mobileUrl ? (
+              <div className="w-full max-w-[min(100%,24rem)] space-y-2 pt-2 border-t">
+                <p className="text-xs font-medium text-muted-foreground">ลิงก์ลงเวลาบนมือถือ (ถ้าสแกนไม่ได้ให้คัดลอกไปวางในเบราว์เซอร์มือถือ)</p>
+                <div className="flex gap-2">
+                  <Input readOnly value={mobileUrl} className="font-mono text-xs h-9" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 gap-1"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(mobileUrl).then(
+                        () => toast({ title: 'คัดลอกลิงก์แล้ว', description: 'วางในเบราว์เซอร์มือถือ (ต้องล็อกอินระบบก่อน)' }),
+                        () => toast({ variant: 'destructive', title: 'คัดลอกไม่ได้', description: 'ลองเลือกข้อความแล้วคัดลอกด้วยมือ' }),
+                      );
+                    }}
+                  >
+                    <Copy className="h-4 w-4" /> คัดลอก
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>

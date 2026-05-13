@@ -137,9 +137,21 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         : null,
     [firestore, canViewPurchases, purchase?.purchaseRequestId]
   );
-  const { data: linkedPr } = useDoc<PurchaseRequest>(prRef as any);
+  const { data: linkedPr, isLoading: isLinkedPrLoading } = useDoc<PurchaseRequest>(prRef as any);
 
   const hasPurchaseRequisition = Boolean(purchase?.purchaseRequestId);
+
+  /** ผู้อนุมัติทางธุรกิจ: ถ้า PO อ้าง PR ใช้ชื่อจาก PR (`decidedByName`) ไม่ใช่ผู้ที่กดยืนยัน PO */
+  const displayOpsApproverName = useMemo(() => {
+    if (
+      purchase?.purchaseRequestId?.trim() &&
+      linkedPr?.status === 'APPROVED' &&
+      linkedPr.decidedByName?.trim()
+    ) {
+      return linkedPr.decidedByName.trim();
+    }
+    return purchase?.approvalDecisionByName?.trim() || '';
+  }, [purchase?.purchaseRequestId, purchase?.approvalDecisionByName, linkedPr?.status, linkedPr?.decidedByName]);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && canViewPurchases ? collection(firestore, 'purchases', id, 'lines') : null),
@@ -314,16 +326,28 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const confirmPoFromApprovedPr = async () => {
     if (!purchaseRef || !canEditPurchases || !purchase) return;
     if (!hasPurchaseRequisition) return;
+    if (isLinkedPrLoading) {
+      toast({ title: 'กรุณารอ', description: 'กำลังโหลดข้อมูล PR' });
+      return;
+    }
+    if (purchase.purchaseRequestId && !linkedPr) {
+      toast({ variant: 'destructive', title: 'ไม่พบ PR', description: 'ไม่สามารถอ่านเอกสาร PR ที่อ้างอิงได้' });
+      return;
+    }
     if (!validateBeforeFinalizePo(true)) return;
-    const name = currentUser?.displayName || currentUser?.email || '';
-    const uid = currentUser?.id;
+    const confirmerName = currentUser?.displayName || currentUser?.email || '';
+    const confirmerUid = currentUser?.id;
+    const prApproverName = linkedPr?.decidedByName?.trim();
+    const prApproverUid = linkedPr?.decidedByUid;
+    const usePrApprover =
+      linkedPr?.status === 'APPROVED' && !!prApproverName;
     try {
       await updateDocumentNonBlocking(purchaseRef, {
         status: 'APPROVED' as PurchaseStatus,
         approvalDecidedAt: Date.now(),
         approvalRequestedAt: deleteField(),
-        approvalDecisionByUid: uid,
-        approvalDecisionByName: name,
+        approvalDecisionByUid: usePrApprover && prApproverUid ? prApproverUid : confirmerUid,
+        approvalDecisionByName: usePrApprover ? prApproverName : confirmerName,
         approvalComment: 'อนุมัติทางธุรกิจตาม PR ที่อนุมัติแล้ว — ยืนยันรายละเอียด PO',
         updatedAt: Date.now(),
       });
@@ -415,6 +439,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         vendor,
         lines: lines ?? [],
         milestones: paymentMilestones ?? [],
+        linkedPurchaseRequest: linkedPr ?? undefined,
         printedAtMs: Date.now(),
         locale: printLocale,
       });
@@ -951,9 +976,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                     {(purchase.status === 'APPROVED' ||
                       purchase.status === 'REJECTED' ||
                       purchase.status === 'RETURNED_FOR_REVISION') &&
-                      (purchase.approvalDecisionByName || purchase.approvalDecidedAt) && (
+                      (displayOpsApproverName || purchase.approvalDecidedAt) && (
                         <p className="text-xs text-muted-foreground">
-                          {purchase.approvalDecisionByName ? `โดย ${purchase.approvalDecisionByName}` : ''}
+                          {displayOpsApproverName ? `โดย ${displayOpsApproverName}` : ''}
                           {purchase.approvalDecidedAt
                             ? ` · ${new Date(purchase.approvalDecidedAt).toLocaleString('th-TH')}`
                             : ''}
@@ -992,7 +1017,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 {purchase.status === 'APPROVED' && (
                   <>
                     <p className="text-sm text-white/90">
-                      อนุมัติโดย {purchase.approvalDecisionByName || '—'}{' '}
+                      อนุมัติโดย {displayOpsApproverName || '—'}{' '}
                       {purchase.approvalDecidedAt
                         ? new Date(purchase.approvalDecidedAt).toLocaleString('th-TH')
                         : ''}

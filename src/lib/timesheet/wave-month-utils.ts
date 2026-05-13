@@ -71,10 +71,10 @@ export function normalHoursCountedAsWork(
 }
 
 /**
- * จับคู่เซลล์รายเดือนกับ daily_timesheet — รองรับกรณี waveId ในเอกสารไม่ตรงกับแถว (เช่น บันทึกจาก wave อื่น/ข้อมูลเก่า)
- * ลำดับ: ตรงกุญแจ wave|คน ก่อน — จากนั้น PO scope (`po_ts_scope_<poId>` จากกระดาน PO) — แล้วจึงค้นตาม worker + วันที่ + assignment
+ * รวมชม.ทำงานในเดือนตามแถวตาราง — ใช้การจับคู่ timesheet เดียวกับช่องรายวัน (ไม่รวมซ้ำข้าม assignment/PO)
+ * @param options.onlyWithinMobWindow — ถ้า true จะนับเฉพาะวันที่อยู่ในช่วง mobilization ตามฟิลด์บน assignment ของแถว
+ *   (สอดคล้องการนับจากกริดเมื่อไม่นับวันที่อยู่นอกหน้าต่างแม้เซลล์แสดง W พร้อมวงแหวน)
  */
-/** รวมชม.ทำงานในเดือนตามแถวตาราง — ใช้การจับคู่ timesheet เดียวกับช่องรายวัน (ไม่รวมซ้ำข้าม assignment/PO) */
 export function sumWorkHoursForWaveMonthRow(
   assignment: Pick<
     Assignment,
@@ -95,9 +95,17 @@ export function sumWorkHoursForWaveMonthRow(
   flatMonthSheets: readonly DailyTimesheet[],
   poScopeWaveId?: string | null,
   alternateAssignmentIds?: readonly string[] | null,
+  options?: { onlyWithinMobWindow?: boolean },
 ): number {
   let sum = 0;
   for (const d of daysYmd) {
+    if (
+      options?.onlyWithinMobWindow &&
+      assignment &&
+      !isYmdWithinAssignmentMobTimesheetWindow(assignment, d)
+    ) {
+      continue;
+    }
     const ts = resolveTimesheetForWaveMonthCell(
       waveId,
       workerId,
@@ -114,6 +122,10 @@ export function sumWorkHoursForWaveMonthRow(
   return sum;
 }
 
+/**
+ * จับคู่เซลล์รายเดือนกับ daily_timesheet — รองรับกรณี waveId ในเอกสารไม่ตรงกับแถว (เช่น บันทึกจาก wave อื่น/ข้อมูลเก่า)
+ * ลำดับ: ตรงกุญแจ wave|คน ก่อน — จากนั้น PO scope (`po_ts_scope_<poId>` จากกระดาน PO) — แล้วจึงค้นตาม worker + วันที่ + assignment
+ */
 export function resolveTimesheetForWaveMonthCell(
   waveId: string,
   workerId: string,
