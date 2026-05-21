@@ -170,6 +170,41 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={printPresetOpen} onOpenChange={setPrintPresetOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>เลือกชุดพิมพ์ใบเสร็จรับเงิน</DialogTitle>
+              <DialogDescription>
+                แต่ละแผ่นแสดง &quot;ต้นฉบับ&quot; หรือ &quot;สำเนา&quot; ใต้ชื่อเอกสาร พร้อมข้อความ &quot;เอกสารออกเป็นชุด&quot;
+              </DialogDescription>
+            </DialogHeader>
+            <RadioGroup
+              value={receiptPrintPreset}
+              onValueChange={(v) => setReceiptPrintPreset(v as 'p1' | 'p2' | 'p3')}
+              className="gap-3"
+            >
+              {(Object.keys(RECEIPT_PRINT_PRESETS) as Array<'p1' | 'p2' | 'p3'>).map(
+                (key) => (
+                  <div key={key} className="flex items-start gap-3 rounded-lg border p-3">
+                    <RadioGroupItem value={key} id={`receipt-print-${key}`} className="mt-1" />
+                    <Label htmlFor={`receipt-print-${key}`} className="cursor-pointer font-normal leading-snug flex-1">
+                      <span className="font-semibold">{RECEIPT_PRINT_PRESETS[key].label}</span>
+                    </Label>
+                  </div>
+                ),
+              )}
+            </RadioGroup>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setPrintPresetOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={handleConfirmPrint}>
+                พิมพ์
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

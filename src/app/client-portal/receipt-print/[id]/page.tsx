@@ -141,6 +141,45 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
           </Button>
         </div>
       </div>
+
+      <Dialog open={printPresetOpen} onOpenChange={setPrintPresetOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{en ? 'Select print type' : 'เลือกชุดพิมพ์ใบเสร็จรับเงิน'}</DialogTitle>
+            <DialogDescription>
+              {en
+                ? 'Each page shows "Original" or "Copy" under the document title, with "Document issued as a set".'
+                : 'แต่ละแผ่นแสดง "ต้นฉบับ" หรือ "สำเนา" ใต้ชื่อเอกสาร พร้อมข้อความ "เอกสารออกเป็นชุด"'}
+            </DialogDescription>
+          </DialogHeader>
+          <RadioGroup
+            value={receiptPrintPreset}
+            onValueChange={(v) => setReceiptPrintPreset(v as 'p1' | 'p2' | 'p3')}
+            className="gap-3"
+          >
+            {(Object.keys(RECEIPT_PRINT_PRESETS) as Array<'p1' | 'p2' | 'p3'>).map(
+              (key) => (
+                <div key={key} className="flex items-start gap-3 rounded-lg border p-3">
+                  <RadioGroupItem value={key} id={`receipt-print-${key}`} className="mt-1" />
+                  <Label htmlFor={`receipt-print-${key}`} className="cursor-pointer font-normal leading-snug flex-1">
+                    <span className="font-semibold">
+                      {en ? RECEIPT_PRINT_PRESETS[key].labelEn : RECEIPT_PRINT_PRESETS[key].label}
+                    </span>
+                  </Label>
+                </div>
+              ),
+            )}
+          </RadioGroup>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setPrintPresetOpen(false)}>
+              {en ? 'Cancel' : 'ยกเลิก'}
+            </Button>
+            <Button type="button" onClick={handleConfirmPrint}>
+              {en ? 'Print' : 'พิมพ์'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
