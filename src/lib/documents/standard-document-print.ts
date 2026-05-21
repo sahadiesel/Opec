@@ -1681,7 +1681,7 @@ export function buildMoneyReceiptPrintHtml(params: {
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,
     documentTitleTh: 'ใบเสร็จรับเงิน',
-    documentTitleEn: 'Money Receipt',
+    documentTitleEn: 'Receipt',
     metaRows: [
       { line: `${printT(L, 'dateIssued')} ${issueStr}` },
       { line: `${printT(L, 'docNo')}: ${receipt.receiptNo}` },
