@@ -33,7 +33,7 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
   tax_invoice: { label: 'Tax Invoice', prefix: 'INV-', padding: 4, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'tax_invoices', fieldName: 'taxInvoiceNo' },
   /** ใบเสร็จรับเงิน (ลูกหนี้) — แยกจากใบกำกับภาษี */
   money_receipt: {
-    label: 'Money receipt (customer)',
+    label: 'Receipt (customer)',
     prefix: 'MR-',
     padding: 5,
     dept: 'accounting',

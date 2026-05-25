@@ -95,6 +95,7 @@ const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'sales_manager',
   'store_officer',
   'operations_manager',
+  'operation_manager',
   'operations_officer',
   'timekeeper',
   'accounting_officer',
@@ -108,7 +109,8 @@ function normalizeAssignedPrimaryRole(roleKey?: string | null): string | null {
   if (!raw) return null;
   /** permission_profiles admin row id; business role on user is system_admin. */
   if (raw === 'admin_admin') return 'system_admin';
-  return PRIMARY_ASSIGNED_ROLE_KEYS.has(raw) ? raw : null;
+  const canonical = raw === 'operation_manager' ? 'operations_manager' : raw;
+  return PRIMARY_ASSIGNED_ROLE_KEYS.has(canonical) ? canonical : null;
 }
 
 /** Maps BusinessRoleKey to core primary key + group + level. */
@@ -231,6 +233,22 @@ export function getPrimaryLegacyRole(user: Partial<User> | null): string | null 
     const normalizedField = normalizeAssignedPrimaryRole(fromRoleField);
     if (normalizedField) return normalizedField;
   }
+
+  const fromRoleId =
+    typeof (user as { roleId?: string }).roleId === 'string' && (user as { roleId?: string }).roleId!.trim() !== ''
+      ? (user as { roleId?: string }).roleId!.trim()
+      : null;
+  const fromRoleIdNorm = normalizeAssignedPrimaryRole(fromRoleId);
+  if (fromRoleIdNorm) return fromRoleIdNorm;
+
+  const fromRoleIds0 =
+    Array.isArray((user as { roleIds?: string[] }).roleIds) &&
+    typeof (user as { roleIds?: string[] }).roleIds![0] === 'string' &&
+    (user as { roleIds?: string[] }).roleIds![0]!.trim() !== ''
+      ? (user as { roleIds?: string[] }).roleIds![0]!.trim()
+      : null;
+  const fromRoleIdsNorm = normalizeAssignedPrimaryRole(fromRoleIds0);
+  if (fromRoleIdsNorm) return fromRoleIdsNorm;
 
   return normalizeAssignedPrimaryRole(profileKeyCandidate);
 }
@@ -469,21 +487,8 @@ export function isSalesManager(user: User | null): boolean {
   return dept === 'sales' && getEffectiveAccessLevel(user) === 'manager';
 }
 
-/**
- * เข้าเมนูบัญชีแบบอ่านอย่างเดียว — ผู้จัดการขาย / ผู้จัดการปฏิบัติการ (ไม่ใช่เจ้าหน้าที่บัญชี)
- * รองรับ matrix manager ฝั่ง operations ที่ legacy role ยังไม่ sync
- */
-export function isAccountingDepartmentReadOnlyObserver(user: User | null): boolean {
-  if (!user) return false;
-  if (!isActiveForApp(user) || !isInternalTypeUser(user)) return false;
-  if (isSystemAdmin(user) || isSimpleAdmin(user) || isSimpleAccounting(user)) return false;
-  if (isSalesManager(user) || isOperationManager(user)) return true;
-  const rk = getPrimaryLegacyRole(user);
-  const g = getEffectiveAccessGroup(user);
-  const lvl = getEffectiveAccessLevel(user);
-  if (g === 'operations' && lvl === 'manager' && !isHrManager(user) && rk !== 'sales_manager' && rk !== 'store_officer') {
-    return true;
-  }
+/** @deprecated ปิดมุมมองบัญชีแบบอ่านอย่างเดียว — แผนกบัญชีเฉพาะ admin / accounting_manager / accounting_officer */
+export function isAccountingDepartmentReadOnlyObserver(_user: User | null): boolean {
   return false;
 }
 

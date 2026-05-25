@@ -126,6 +126,7 @@ export async function executeVendorBillPayment(params: {
       whtRateEffective,
       purchase,
       bill.billVatTreatment,
+      bill,
     );
     amountFromBank = whtBreakdown.netPaid;
   }

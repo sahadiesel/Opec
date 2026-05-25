@@ -101,11 +101,16 @@ export async function recordPettyCashMovement(
   const bankRef = doc(db, 'bank_accounts', params.bankAccountId);
   const bankSnap = await getDoc(bankRef);
   if (!bankSnap.exists()) throw new Error('ไม่พบบัญชีธนาคาร');
-  if (String(bankSnap.data()?.accountType) !== 'PETTY_CASH') {
+  const rawType = bankSnap.data()?.accountType;
+  const typeKey = String(rawType ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+  if (typeKey !== 'PETTY_CASH') {
     throw new Error('รายการนี้รองรับเฉพาะบัญชีประเภท Petty Cash');
   }
   const status = bankSnap.data()?.status;
-  if (status && status !== 'ACTIVE') throw new Error('บัญชีนี้ไม่ ACTIVE');
+  if (status && String(status).trim().toUpperCase() !== 'ACTIVE') throw new Error('บัญชีนี้ไม่ ACTIVE');
 
   const { code: entryNo } = await generateNextDocumentCode(db, 'petty_cash_entry', {
     actor: user.displayName,

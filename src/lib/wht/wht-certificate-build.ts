@@ -87,9 +87,17 @@ function vendorAddressForWhtCertificate(address: string | undefined): {
   };
 }
 
+function isVendorNaturalPerson(v: Pick<Vendor, 'vendorLegalForm'>): boolean {
+  return v.vendorLegalForm === 'NATURAL';
+}
+
 function vendorPayeeCategory(v: Vendor): WithholdingCertificateDocument['payee']['vendorCategory'] {
   const t = (v.taxId || '').replace(/\s/g, '');
   if (!t) return 'OTHER';
+  if (isVendorNaturalPerson(v)) {
+    if (t.length !== 13) return 'FOREIGN';
+    return 'INDIVIDUAL';
+  }
   /** ตัวอย่าง heuristic ต่างชาติ — ปรับได้เมื่อมีฟิลด์ประเทศชัดเจน */
   if (t.length !== 13) return 'FOREIGN';
   return 'COMPANY';
@@ -225,14 +233,18 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
       : roundMoney2(Number(bill.billAmount ?? purchase.totalAmount) || 0);
 
   const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
-  const wh = supplierWithholdingOnVendorBill(grossInclVat, rate, purchase, bill.billVatTreatment);
-  const baseBeforeVat = wh.baseBeforeVat;
-  const { vat: vatAmount } = resolveVendorBillVatAmounts(grossInclVat, bill.billVatTreatment, purchase);
+  const wh = supplierWithholdingOnVendorBill(grossInclVat, rate, purchase, bill.billVatTreatment, bill);
+  const withholdingTaxBase = wh.baseBeforeVat;
+  const { beforeTax: billAmountBeforeVat, vat: vatAmount, gross: billGrossInclVat } = resolveVendorBillVatAmounts(
+    grossInclVat,
+    bill.billVatTreatment,
+    purchase,
+  );
 
   const income = incomeTypeForVendorBillWht(bill, purchase);
 
   const payerBranchIsHead = company?.branchType !== 'branch';
-  const payeeBranchIsHead = vendor.branchType !== 'branch';
+  const payeeBranchIsHead = isVendorNaturalPerson(vendor) || vendor.branchType !== 'branch';
 
   const disp = company?.whtCertificateDisplay;
 
@@ -304,10 +316,10 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
     withholdingFormType,
     payer,
     payee,
-    amountBeforeVat: baseBeforeVat,
+    amountBeforeVat: billAmountBeforeVat,
     vatAmount,
-    grossAmount: grossInclVat,
-    withholdingTaxBase: baseBeforeVat,
+    grossAmount: billGrossInclVat,
+    withholdingTaxBase,
     withholdingTaxRatePercent: rate,
     withholdingTaxAmount: wh.wht,
     netPaidAmount: wh.netPaid,

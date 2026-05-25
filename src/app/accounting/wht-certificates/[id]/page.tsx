@@ -558,7 +558,9 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
               )}
               {isSystemAdmin(currentUser) && (
                 <div className="space-y-2">
-                  <Label>เหตุผลยืนยันออกเอกสารทางการเมื่อไม่มีเลขผู้เสียภาษีคู่ค้า (admin)</Label>
+                  <Label>
+                    เหตุผลยืนยันกรณีพิเศษ (admin) — เก็บเป็นหลักฐานเท่านั้น ไม่ยกเลิกการบังคับเลขผู้เสียภาษีคู่ค้าบนแบบ
+                  </Label>
                   <Textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={2} />
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Checkbox checked={!!wht.payeeTaxIdMissingOverride} disabled />

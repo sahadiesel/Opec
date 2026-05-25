@@ -3,10 +3,16 @@
  * Stored user docs and profile doc ids are expected to be lowercase snake_case.
  */
 
+/** Legacy typo on some user docs / permission_profiles rows (singular operation). */
+const BUSINESS_ROLE_KEY_ALIASES: Record<string, string> = {
+  operation_manager: 'operations_manager',
+};
+
 export function normalizeBusinessRoleKey(roleKey?: string | null): string | null {
   if (!roleKey) return null;
   const trimmed = roleKey.trim().toLowerCase();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) return null;
+  return BUSINESS_ROLE_KEY_ALIASES[trimmed] ?? trimmed;
 }
 
 /** True if normalized assignedRoleKey equals one of the canonical candidates (lowercase). */
@@ -35,6 +41,7 @@ export const BUILTIN_PERMISSION_PROFILE_DOC_IDS = new Set([
   'hr_officer',
   'payroll_officer',
   'operations_manager',
+  'operation_manager',
   'operations_officer',
   'timekeeper',
   'accounting_manager',

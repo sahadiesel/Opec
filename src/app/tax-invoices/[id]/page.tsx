@@ -267,6 +267,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         arEntryId,
         issueDate: issueYmd,
         printDocumentLocale: printLocale,
+        issuedByUid: currentUser.id,
+        issuedByName: (currentUser.displayName || currentUser.email || currentUser.id).trim(),
         updatedAt: Date.now(),
       });
 

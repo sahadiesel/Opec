@@ -23,7 +23,7 @@ import {
   Phone,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { User, BusinessRoleKey, ApprovalStatus, PermissionProfile } from '@/lib/types';
+import { User, BusinessRoleKey, ApprovalStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -59,20 +59,15 @@ import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { 
   isAdminUser, 
-  getFieldsForBusinessRole,
   deriveBusinessRoleKey,
-  normalizeUserAuthorizationFields,
+  getFieldsForBusinessRole,
+  buildUserAuthFirestoreUpdate,
   assertAtLeastOneOperationalAdminAfterChange,
   isOperationalSystemAdmin,
   countOperationalSystemAdmins,
 } from '@/lib/auth-mapping';
 import {
-  getBaselineProfiles,
   SECURITY_SENSITIVE_FIELDS,
-  profileAllowedForTargetUser,
-  validateProfileAssignment,
-  getUserFieldsFromPermissionProfile,
-  deriveBusinessRoleKeyFromPermissionProfile,
 } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
@@ -80,53 +75,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
   normalizeBusinessRoleKey,
-  normalizePermissionProfileDocumentId,
 } from '@/lib/role-key-normalizer';
-
-/** แปลง baseline partial → โปรไฟล์สำหรับกรองสิทธิ์ / บันทึก user เมื่อยังไม่มี doc ใน Firestore */
-function permissionProfileFromBaseline(p: Partial<PermissionProfile>): PermissionProfile {
-  const key = p.profileKey!;
-  return {
-    id: key,
-    profileKey: key,
-    profileNameTh: p.profileNameTh ?? p.profileNameEn ?? key,
-    profileNameEn: p.profileNameEn ?? key,
-    departmentGroup: p.departmentGroup,
-    department: p.department,
-    level: p.level ?? 'viewer',
-    primaryRoleTemplateKey: p.primaryRoleTemplateKey,
-    isActive: p.isActive !== false,
-    permissions: p.permissions ?? {},
-    updatedAt: p.updatedAt ?? Date.now(),
-    updatedBy: p.updatedBy ?? 'baseline',
-    createdAt: p.createdAt,
-    createdBy: p.createdBy,
-    notes: p.notes,
-  };
-}
-
-function resolvePermissionProfileForKey(
-  profileKey: string,
-  loadedProfiles: PermissionProfile[] | null | undefined
-): PermissionProfile | null {
-  const canon = normalizePermissionProfileDocumentId(profileKey) ?? profileKey;
-  const fromDb = loadedProfiles?.find((x) => x.profileKey === canon);
-  if (fromDb) return fromDb;
-  const raw = getBaselineProfiles().find((x) => x.profileKey === canon);
-  if (!raw?.profileKey) return null;
-  return permissionProfileFromBaseline(raw);
-}
-
-function resolvePreferredProfileKeyForUser(user: Partial<User>): string {
-  const roleKey = deriveBusinessRoleKey(user);
-  const raw = (user.permissionProfileKey ?? user.permissionProfileKeys?.[0] ?? '').trim();
-  const current =
-    (raw ? normalizePermissionProfileDocumentId(raw) : null) ?? raw.toLowerCase();
-  if (roleKey === 'payroll_officer' && (current === '' || current === 'hr_officer')) {
-    return 'payroll_officer';
-  }
-  return current;
-}
 
 export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -139,8 +88,6 @@ export default function UsersPage() {
   const [showConfirmCancel, setShowConfirmCancel] = useState(false);
   
   const [editedRole, setEditedRole] = useState<BusinessRoleKey | ''>('');
-  /** Single primary profile key; filtered to same access group as target user. */
-  const [editedProfileKey, setEditedProfileKey] = useState<string>('');
   const [editedStatus, setEditedStatus] = useState<ApprovalStatus>('PENDING');
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -171,32 +118,6 @@ export default function UsersPage() {
   }, [firestore, currentUser, isUserAdmin]);
 
   const { data: users, isLoading: isCollectionLoading } = useCollection<User>(usersQuery as any);
-
-  const profilesQuery = useMemoFirebase(() => {
-    if (!firestore || !isUserAdmin) return null;
-    return collection(firestore, 'permission_profiles');
-  }, [firestore, isUserAdmin]);
-  const { data: profiles } = useCollection<PermissionProfile>(profilesQuery as any);
-
-  const eligibleProfilesForSelected = useMemo(() => {
-    if (!selectedUser) return [];
-    const fromDb = profiles ?? [];
-    const byKey = new Map<string, PermissionProfile>();
-
-    for (const raw of getBaselineProfiles()) {
-      if (!raw.profileKey) continue;
-      const stub = permissionProfileFromBaseline(raw);
-      if (profileAllowedForTargetUser(stub, selectedUser)) {
-        byKey.set(raw.profileKey, stub);
-      }
-    }
-    for (const p of fromDb) {
-      if (p.profileKey && profileAllowedForTargetUser(p, selectedUser)) {
-        byKey.set(p.profileKey, p);
-      }
-    }
-    return Array.from(byKey.values()).sort((a, b) => a.profileKey.localeCompare(b.profileKey));
-  }, [profiles, selectedUser]);
 
   const pendingCount = useMemo(
     () => (users || []).filter((u) => (u.approvalStatus || 'PENDING') === 'PENDING').length,
@@ -234,17 +155,14 @@ export default function UsersPage() {
       deriveBusinessRoleKey(selectedUser);
     const initialStatus = selectedUser.approvalStatus || (selectedUser.isActive ? 'ACTIVE' : 'PENDING');
     const initialNotes = selectedUser.notes || '';
-    const initialProfileKey = resolvePreferredProfileKeyForUser(selectedUser);
-
     const editedRoleNorm =
       editedRole ? normalizeBusinessRoleKey(editedRole) ?? editedRole : '';
     const rolesChanged = editedRoleNorm !== initialRole;
     const statusChanged = editedStatus !== initialStatus;
     const notesChanged = notes !== initialNotes;
-    const profileChanged = editedProfileKey !== initialProfileKey;
 
-    return rolesChanged || statusChanged || notesChanged || profileChanged;
-  }, [selectedUser, editedRole, editedStatus, notes, editedProfileKey]);
+    return rolesChanged || statusChanged || notesChanged;
+  }, [selectedUser, editedRole, editedStatus, notes]);
 
   const isDetailsDirty = useMemo(() => {
     if (!detailsEditUser) return false;
@@ -325,7 +243,6 @@ export default function UsersPage() {
     setSelectedUser(user);
     const rk = deriveBusinessRoleKey(user);
     setEditedRole((normalizeBusinessRoleKey(rk) ?? rk) as BusinessRoleKey);
-    setEditedProfileKey(resolvePreferredProfileKeyForUser(user));
     setEditedStatus(user.approvalStatus || (user.isActive ? 'ACTIVE' : 'PENDING'));
     setNotes(user.notes || '');
     setIsEditDialogOpen(true);
@@ -354,8 +271,8 @@ export default function UsersPage() {
    */
   const handleSaveUser = async () => {
     if (!firestore || !selectedUser || !currentUser) return;
-    if (!editedRole && !editedProfileKey) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกบทบาทหรือโปรไฟล์สิทธิ์อย่างน้อยหนึ่งรายการ' });
+    if (!editedRole) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกบทบาทหน้าที่ (หัวข้อ 2)' });
       return;
     }
     setIsSaving(true);
@@ -372,42 +289,19 @@ export default function UsersPage() {
       // ONLY system_admin can modify roles and statuses.
       // This is a client-side safeguard mirrored in Firestore Rules.
       if (isUserAdmin) {
-        let authPartial: Partial<User> = {};
-
-        if (editedProfileKey) {
-          const profileKeyCanon =
-            normalizePermissionProfileDocumentId(editedProfileKey.trim()) ??
-            editedProfileKey.trim().toLowerCase();
-          const profile = resolvePermissionProfileForKey(profileKeyCanon, profiles);
-          if (!profile) {
-            toast({ variant: 'destructive', title: 'ไม่พบโปรไฟล์', description: profileKeyCanon });
-            setIsSaving(false);
-            return;
-          }
-          const check = validateProfileAssignment(profile, selectedUser);
-          if (!check.ok) {
-            toast({ variant: 'destructive', title: 'ไม่สามารถผูกโปรไฟล์นี้', description: check.message });
-            setIsSaving(false);
-            return;
-          }
-          const derivedRole = deriveBusinessRoleKeyFromPermissionProfile(profile);
-          const roleFields = getFieldsForBusinessRole(derivedRole);
-          const profileFields = getUserFieldsFromPermissionProfile(profile);
-          authPartial = { ...roleFields, ...profileFields };
-        } else if (editedRole) {
-          const rk =
-            (normalizeBusinessRoleKey(editedRole) ?? editedRole) as BusinessRoleKey;
-          authPartial = getFieldsForBusinessRole(rk);
-        }
-
-        authPartial = normalizeUserAuthorizationFields({
-          ...authPartial,
+        const rk = (normalizeBusinessRoleKey(editedRole) ?? editedRole) as BusinessRoleKey;
+        const roleFields = getFieldsForBusinessRole(rk);
+        const authPartial = buildUserAuthFirestoreUpdate(rk, {
           approvalStatus: editedStatus,
           isActive: editedStatus === 'ACTIVE',
         });
 
         const guard = users
-          ? assertAtLeastOneOperationalAdminAfterChange(users, selectedUser.id, authPartial)
+          ? assertAtLeastOneOperationalAdminAfterChange(users, selectedUser.id, {
+              assignedRoleKey: rk,
+              accessGroup: roleFields.accessGroup,
+              approvalStatus: editedStatus,
+            })
           : { ok: true as const };
         if (!guard.ok) {
           toast({ variant: 'destructive', title: 'ไม่สามารถบันทึก', description: guard.message });
@@ -485,12 +379,10 @@ export default function UsersPage() {
               <ShieldCheck className="h-8 w-8 text-primary" /> จัดการผู้ใช้งาน (User Access Management)
             </h1>
             <p className="text-muted-foreground text-lg">
-              กำหนดบทบาทหรือโปรไฟล์สิทธิ์ — บันทึกลงฐานข้อมูลเป็น{' '}
+              กำหนดสิทธิ์ด้วย <b>บทบาทหน้าที่ (Role)</b> อย่างเดียว — บันทึกเป็น{' '}
               <span className="font-mono text-sm">assignedRoleKey</span>,{' '}
-              <span className="font-mono text-sm">permissionProfileKey(s)</span>,{' '}
-              <span className="font-mono text-sm">accessGroup</span> แบบ{' '}
-              <b>lowercase snake_case เท่านั้น</b> (เช่น <span className="font-mono">operations_manager</span>,{' '}
-              <span className="font-mono">operations</span>) ให้ตรงกับ rules และโค้ดทั้ง repo — ผู้ลงทะเบียนผ่านหน้าแรกจะอยู่สถานะ PENDING จนกว่าแอดมินจะอนุมัติที่แท็บ <b>รออนุมัติ</b>
+              <span className="font-mono text-sm">accessGroup</span>,{' '}
+              <span className="font-mono text-sm">accessLevel</span> และลบฟิลด์เก่าที่ซ้ำ (roleId, permissionProfileKey ฯลฯ) อัตโนมัติ
             </p>
           </div>
         </div>
@@ -518,7 +410,7 @@ export default function UsersPage() {
             <AlertTriangle className="h-4 w-4 text-amber-700" />
             <AlertTitle className="text-amber-950">คิวอนุมัติผู้ใช้ใหม่</AlertTitle>
             <AlertDescription className="text-sm">
-              บัญชีสถานะ <b>PENDING</b> (รวมผู้ลงทะเบียนจากหน้าแรก) — กดเมนู ⋮ แล้วเลือก <b>แก้ไขสิทธิ์ (Edit Access)</b> จากนั้นเลือกโปรไฟล์หรือบทบาท และตั้งสถานะเป็น <b>ACTIVE</b>
+              บัญชีสถานะ <b>PENDING</b> — กด ⋮ → <b>แก้ไขสิทธิ์</b> เลือกบทบาทหน้าที่ แล้วตั้งสถานะเป็น <b>ACTIVE</b>
             </AlertDescription>
           </Alert>
         )}
@@ -547,7 +439,7 @@ export default function UsersPage() {
                     <TableHead className="pl-6 py-4">ผู้ใช้งาน (User)</TableHead>
                     <TableHead>สถานะบัญชี</TableHead>
                     <TableHead>บทบาทหน้าที่ (Role)</TableHead>
-                    <TableHead>โปรไฟล์ / แผนก</TableHead>
+                    <TableHead>กลุ่มสิทธิ์</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -555,9 +447,6 @@ export default function UsersPage() {
                   {filteredUsers.map((u) => {
                     const rk = deriveBusinessRoleKey(u);
                     const roleMeta = getRoleCatalogEntry(rk);
-                    const dept = roleMeta?.department;
-                    const pk = resolvePreferredProfileKeyForUser(u);
-                    
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
                         <TableCell className="py-4 pl-6">
@@ -577,7 +466,7 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {u.approvalStatus === 'PENDING' && !u.assignedRoleKey && !u.permissionProfileKey ? (
+                          {u.approvalStatus === 'PENDING' && !u.assignedRoleKey ? (
                             <Badge variant="secondary" className="text-[9px] font-bold bg-amber-50 text-amber-900 border-amber-200">
                               รอแอดมินกำหนดบทบาท
                             </Badge>
@@ -589,16 +478,12 @@ export default function UsersPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1 items-start">
-                            {pk && (
-                              <Badge variant="outline" className="text-[9px] font-mono max-w-[220px] truncate">
-                                {pk}
-                              </Badge>
-                            )}
-                            {dept && (
-                              <Badge variant="secondary" className="text-[9px] capitalize font-bold flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100 w-fit">
-                                <Building2 className="h-2 w-2" /> {dept}
-                              </Badge>
-                            )}
+                            <Badge variant="outline" className="text-[9px] font-mono">
+                              {u.accessGroup || roleMeta?.accessGroup || '—'}
+                            </Badge>
+                            <Badge variant="secondary" className="text-[9px]">
+                              {u.accessLevel || roleMeta?.accessLevel || '—'}
+                            </Badge>
                           </div>
                         </TableCell>
                         <TableCell className="text-right pr-6">
@@ -725,9 +610,10 @@ export default function UsersPage() {
                 <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
               </DialogTitle>
               <DialogDescription>
-                เลือกโปรไฟล์สิทธิ์ (แนะนำ) หรือบทบาทหนึ่งรายการ — โปรไฟล์ถูกกรองตามกลุ่มผู้ใช้ ระบบจะ normalize แล้วบันทึกคีย์เป็น{' '}
-                <span className="font-mono text-xs">lowercase</span> เท่านั้น (ไม่มีตัวพิมพ์ใหญ่หรือคีย์เก่า เช่น{' '}
-                <span className="font-mono line-through opacity-60">OPERATION_MANAGER</span>).
+                เลือกบทบาทหน้าที่หนึ่งรายการ — ระบบบันทึกเฉพาะ{' '}
+                <span className="font-mono text-xs">assignedRoleKey</span>,{' '}
+                <span className="font-mono text-xs">accessGroup</span>,{' '}
+                <span className="font-mono text-xs">accessLevel</span> และลบฟิลด์เก่าที่ซ้ำ (โปรไฟล์สิทธิ์ / roleId ฯลฯ) อัตโนมัติ
               </DialogDescription>
             </DialogHeader>
 
@@ -754,59 +640,17 @@ export default function UsersPage() {
 
                 <div className="space-y-3">
                   <Label className="font-black text-primary uppercase tracking-wider text-[10px]">
-                    2. โปรไฟล์สิทธิ์ (Permission profile)
-                  </Label>
-                  <Select
-                    disabled={!isUserAdmin}
-                    value={editedProfileKey || '__none__'}
-                    onValueChange={(v) => {
-                      if (v === '__none__') {
-                        setEditedProfileKey('');
-                        return;
-                      }
-                      const pk =
-                        normalizePermissionProfileDocumentId(v.trim()) ?? v.trim().toLowerCase();
-                      setEditedProfileKey(pk);
-                      const prof = resolvePermissionProfileForKey(pk, profiles);
-                      if (prof) {
-                        setEditedRole(deriveBusinessRoleKeyFromPermissionProfile(prof));
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-12 font-bold border-2">
-                      <SelectValue placeholder="เลือกโปรไฟล์ (กลุ่มเดียวกับผู้ใช้)" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[280px]">
-                      <SelectItem value="__none__">— ไม่ใช้โปรไฟล์ (ใช้บทบาทด้านล่างแทน) —</SelectItem>
-                      {eligibleProfilesForSelected.map((p) => (
-                        <SelectItem key={p.profileKey} value={p.profileKey}>
-                          <span className="font-mono text-xs">{p.profileKey}</span>
-                          <span className="text-muted-foreground text-xs ml-2">{p.profileNameEn}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {selectedUser && eligibleProfilesForSelected.length === 0 && (
-                    <p className="text-[10px] text-amber-700">
-                      ไม่มีโปรไฟล์ในกลุ่มของผู้ใช้ — ใช้บทบาทด้านล่าง หรือให้ System Admin เปิดหน้า maintenance เพื่อจัดการโปรไฟล์
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-3">
-                  <Label className="font-black text-primary uppercase tracking-wider text-[10px]">
-                    3. บทบาทหน้าที่ (Role — เมื่อไม่ใช้โปรไฟล์)
+                    2. บทบาทหน้าที่ (Role)
                   </Label>
                   <p className="text-[10px] text-muted-foreground -mt-1">
-                    รายการเรียงตามชื่อภาษาไทย — หากไม่เห็นบทบาทให้เลื่อนในเมนู (รวมเจ้าหน้าที่บันทึกเวลา / Timekeeper)
+                    เลือกบทบาทเดียว — บันทึก assignedRoleKey + accessGroup/accessLevel และลบฟิลด์เก่าที่ซ้ำอัตโนมัติ
                   </p>
                   <Select
-                    disabled={!isUserAdmin || !!editedProfileKey}
+                    disabled={!isUserAdmin}
                     value={editedRole || undefined}
                     onValueChange={(v) => {
                       const rk = (normalizeBusinessRoleKey(v) ?? v) as BusinessRoleKey;
                       setEditedRole(rk);
-                      setEditedProfileKey('');
                     }}
                   >
                     <SelectTrigger className="h-12 font-bold border-2">
@@ -834,14 +678,8 @@ export default function UsersPage() {
                 </Label>
                 <Separator className="bg-primary/10" />
                 <div className="space-y-4 flex-1">
-                  {(editedRole || editedProfileKey) ? (
+                  {editedRole ? (
                     <div className="space-y-4">
-                      {editedProfileKey && (
-                        <div className="space-y-2">
-                          <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-tighter">โปรไฟล์ที่เลือก</p>
-                          <Badge variant="outline" className="font-mono text-[10px]">{editedProfileKey}</Badge>
-                        </div>
-                      )}
                       <div className="space-y-2">
                         <p className="text-[9px] font-bold text-muted-foreground tracking-tight">
                           แผนก / ระดับ / คีย์ที่จะบันทึก
@@ -876,7 +714,7 @@ export default function UsersPage() {
                   ) : (
                     <div className="py-20 text-center space-y-3">
                       <Clock className="h-10 w-10 mx-auto text-muted-foreground/30" />
-                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกโปรไฟล์หรือบทบาทหนึ่งรายการ</p>
+                      <p className="text-xs text-muted-foreground italic">กรุณาเลือกบทบาทหน้าที่</p>
                     </div>
                   )}
                 </div>
@@ -904,11 +742,12 @@ export default function UsersPage() {
               </Button>
               <Button 
                 onClick={handleSaveUser} 
-                disabled={isSaving || (!editedRole && !editedProfileKey) || !isDirty} 
+                disabled={isSaving || !editedRole} 
                 className="bg-primary font-black h-12 px-10 shadow-lg text-lg"
+                title={isDirty ? 'บันทึกการเปลี่ยนแปลง' : 'บันทึกซ้ำเพื่อรีเฟรชฟิลด์สิทธิ์ (เช่นรอบ migrate rules)'}
               >
                 {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                บันทึกสิทธิ์
+                {isDirty ? 'บันทึกสิทธิ์' : 'บันทึกสิทธิ์ (รีเฟรช)'}
               </Button>
             </DialogFooter>
           </DialogContent>

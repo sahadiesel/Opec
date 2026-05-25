@@ -45,7 +45,6 @@ import {
   Wallet,
   QrCode,
   ExternalLink,
-  Eye,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -72,7 +71,6 @@ import {
   isPayrollOfficer,
   isTimekeeper,
   getPrimaryLegacyRole,
-  isAccountingDepartmentReadOnlyObserver,
 } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
@@ -225,24 +223,6 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
   },
 ];
 
-/** สี่หน้าที่ผู้จัดการขาย/ปฏิบัติการต้องเข้าถึงได้แบบอ่านอย่างเดียว — แสดงชัดที่หัวเมนูบัญชี */
-const MANAGER_ACCOUNTING_QUICK_NAV: NavItem[] = [
-  {
-    key: 'executive_payroll',
-    title: 'เงินเดือนผู้บริหาร (งวดจ่าย)',
-    href: '/accounting/executive-payroll',
-    icon: Calculator,
-  },
-  {
-    key: 'executive_payroll',
-    title: 'รายชื่อผู้บริหาร',
-    href: '/accounting/executive-payroll/staff',
-    icon: UserSearch,
-  },
-  { key: 'cashbook', title: 'รายรับรายจ่าย (Cashbook)', href: '/cashbook', icon: BookOpen },
-  { key: 'bank_accounts', title: 'บัญชีธนาคาร', href: '/bank-accounts', icon: CreditCard },
-];
-
 function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
   return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
@@ -350,7 +330,7 @@ const navGroups: NavGroup[] = [
       },
       {
         key: 'operations_petty_cash',
-        title: 'เบิกจ่าย Petty Cash (หน้างาน)',
+        title: 'Petty Cash — เบิกหน้างาน',
         href: '/operations/petty-cash',
         icon: Banknote,
       },
@@ -367,6 +347,7 @@ const navGroups: NavGroup[] = [
     audience: 'admin',
     items: [
       { key: 'system_admin', title: 'จัดการผู้ใช้ (User Access)', href: '/users', icon: ShieldCheck },
+      { key: 'system_admin', title: 'เมทริกซ์สิทธิ์ตามเมนู (Menu × Role)', href: '/system-admin/menu-permissions', icon: LockKeyhole },
       { key: 'system_admin', title: 'ตรวจสอบความปลอดภัย (Security)', href: '/system-admin/security-check', icon: ShieldAlert },
       { key: 'document_numbering', title: 'เลขที่เอกสาร (Numbering)', href: '/system-admin/numbering', icon: Hash },
       { key: 'system_admin', title: 'หัวเอกสารบริษัท (Document Header)', href: '/system-admin/document-profile', icon: Building2 },
@@ -476,7 +457,7 @@ function navGroupsForUser(user: User): NavGroup[] {
 function canSeeGroup(group: NavGroup, user: User, admin: boolean): boolean {
   const clientUser = isClient(user);
   const acct =
-    admin || isSimpleAccounting(user) || isSimpleAdmin(user) || isAccountingDepartmentReadOnlyObserver(user);
+    admin || isSimpleAccounting(user) || isSimpleAdmin(user);
 
   if (group.audience === 'admin') return admin;
   if (group.audience === 'accounting') return acct && !clientUser;
@@ -484,16 +465,6 @@ function canSeeGroup(group: NavGroup, user: User, admin: boolean): boolean {
   if (group.audience === 'internal') return !clientUser;
 
   return false;
-}
-
-/** ผู้จัดการขาย/ปฏิบัติการ — แสดงลิงก์ดูบัญชี 4 หน้า (ไม่รวมเจ้าหน้าที่บัญชีเต็มสิทธิ์) */
-function shouldShowManagerAccountingQuickNav(user: User, admin: boolean): boolean {
-  return (
-    !admin &&
-    !isSimpleAdmin(user) &&
-    !isSimpleAccounting(user) &&
-    isAccountingDepartmentReadOnlyObserver(user)
-  );
 }
 
 export function SidebarNav({
@@ -560,16 +531,7 @@ export function SidebarNav({
                 .filter((e): e is AccountingPayrollNavEntry => e != null),
             })).filter((s) => s.visibleEntries.length > 0);
 
-            const managerQuickItems = shouldShowManagerAccountingQuickNav(user, admin)
-              ? MANAGER_ACCOUNTING_QUICK_NAV.filter((it) => canView(user, it.key, profile))
-              : [];
-
-            if (
-              documentSubs.length === 0 &&
-              payrollSubs.length === 0 &&
-              !filterNav(ACCOUNTING_DASHBOARD_ITEM) &&
-              managerQuickItems.length === 0
-            ) {
+            if (documentSubs.length === 0 && payrollSubs.length === 0 && !filterNav(ACCOUNTING_DASHBOARD_ITEM)) {
               return null;
             }
 
@@ -580,46 +542,6 @@ export function SidebarNav({
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
-                    {managerQuickItems.length > 0 && (
-                      <Collapsible
-                        defaultOpen={managerQuickItems.some((it) => pathMatches(pathname, it.href))}
-                        className="group"
-                      >
-                        <SidebarMenuItem>
-                          <CollapsibleTrigger asChild>
-                            <SidebarMenuButton
-                              tooltip="เงินเดือนผู้บริหาร รายรับรายจ่าย และบัญชีธนาคาร (ดูอย่างเดียว)"
-                              className="transition-all duration-200 h-auto min-h-10 py-2"
-                            >
-                              <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
-                              <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'text-left leading-snug line-clamp-2')}>
-                                ผู้จัดการ: ดูข้อมูลบัญชี
-                              </span>
-                              <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
-                            </SidebarMenuButton>
-                          </CollapsibleTrigger>
-                          <CollapsibleContent>
-                            <SidebarMenuSub>
-                              {managerQuickItems.map((item) => {
-                                const active = pathMatches(pathname, item.href);
-                                return (
-                                  <SidebarMenuSubItem key={item.href}>
-                                    <SidebarMenuSubButton asChild isActive={active} size="sm">
-                                      <Link href={item.href}>
-                                        <item.icon
-                                          className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
-                                        />
-                                        <span>{item.title}</span>
-                                      </Link>
-                                    </SidebarMenuSubButton>
-                                  </SidebarMenuSubItem>
-                                );
-                              })}
-                            </SidebarMenuSub>
-                          </CollapsibleContent>
-                        </SidebarMenuItem>
-                      </Collapsible>
-                    )}
                     {filterNav(ACCOUNTING_DASHBOARD_ITEM) && (
                       <SidebarMenuItem>
                         <SidebarMenuButton

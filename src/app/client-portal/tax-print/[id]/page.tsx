@@ -138,6 +138,17 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
     return { fmt, vatRowLabel, showWhtOnDoc, whtAmt, rateDoc, netPayable };
   }, [invoice, billingNote, printLocale]);
 
+  /** สอดคล้องกับ footer พิมพ์: ผู้ออก (ISSUED) → ผู้สร้างร่าง → ใบวางบิล */
+  const preparedByPreview = useMemo(() => {
+    const fromIssued = (invoice?.issuedByName || '').trim();
+    if (fromIssued) return fromIssued;
+    const fromCreated = (invoice?.createdByName || '').trim();
+    if (fromCreated) return fromCreated;
+    const fromBn = (billingNote?.createdBy || '').trim();
+    if (fromBn) return fromBn;
+    return '—';
+  }, [invoice?.issuedByName, invoice?.createdByName, billingNote?.createdBy]);
+
   const companyTitlePreview = useMemo(() => {
     const nameTh = companyProfile?.companyNameTh?.trim();
     const nameEn = companyProfile?.companyNameEn?.trim();
@@ -225,7 +236,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         <AlertTitle>{en ? 'Print copy' : 'สำเนาสำหรับพิมพ์'}</AlertTitle>
         <AlertDescription className="text-sm">
           {en
-            ? 'Printable tax invoice. The money receipt is a separate document (Receipts tab) after OPEC confirms payment.'
+            ? 'Printable tax invoice. The receipt is a separate document (Receipts tab) after OPEC confirms payment.'
             : 'เอกสารนี้เป็นใบกำกับภาษี — ใบเสร็จรับเงินออกแยกหลังฝ่ายบัญชียืนยันรับเงิน (ดูแท็บ ใบเสร็จ) — ไม่ใช่ e-Tax'}
         </AlertDescription>
       </Alert>
@@ -398,7 +409,8 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
         <div className="grid gap-8 border-t border-neutral-200 px-6 py-8 text-center text-xs text-muted-foreground dark:border-neutral-700 sm:grid-cols-2">
           <div>
             <div className="mx-auto mb-8 max-w-[85%] border-t border-dotted border-neutral-400 pt-2 dark:border-neutral-600">
-              {printT(docL, 'signPreparedAccounting')}
+              <div>{printT(docL, 'signPreparedAccounting')}</div>
+              <div className="mt-1 font-medium text-foreground">{preparedByPreview}</div>
             </div>
           </div>
           <div>
@@ -412,14 +424,14 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
       {invoice.paymentNotifiedAt && !invoice.linkedReceiptId && (
         <p className="text-sm text-amber-800">
           {en
-            ? 'Payment reported — waiting for OPEC to confirm and issue the money receipt.'
+            ? 'Payment reported — waiting for OPEC to confirm and issue the receipt.'
             : 'แจ้งชำระแล้ว — รอฝ่ายบัญชียืนยันรับเงินเพื่อออกใบเสร็จ (แท็บ ใบเสร็จ)'}
         </p>
       )}
 
       {invoice.linkedReceiptId && (
         <p className="text-sm text-muted-foreground">
-          {en ? 'Money receipt: ' : 'ใบเสร็จรับเงิน: '}
+          {en ? 'Receipt: ' : 'ใบเสร็จรับเงิน: '}
           <Button variant="link" className="h-auto p-0" asChild>
             <Link href={`/client-portal/receipt-print/${invoice.linkedReceiptId}`}>
               {en ? 'Open receipt' : 'เปิดใบเสร็จ'}

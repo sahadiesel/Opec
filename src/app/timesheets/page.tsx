@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CalendarDays, ChevronRight, Info, FileText, MapPin, Users, Layers } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, collectionGroup, limit, query, where } from 'firebase/firestore';
+import { collection, limit, query, where } from 'firebase/firestore';
+import { usePoLinesFanout } from '@/lib/ops/use-po-lines-fanout';
 import type {
   Assignment,
   Customer,
@@ -45,6 +46,11 @@ import {
 } from '@/lib/ops/timesheet-hub-po-month';
 import { isAssignmentActiveOnWaveRoster, pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { buildPoActiveBundleRows } from '@/components/ops/po-quota-queue';
+import {
+  buildEligibleMainContractIdSet,
+  PO_ACTIVE_MAIN_CONTRACT_STATUS_IN,
+  PO_ACTIVE_PURCHASE_ORDER_STATUS_IN,
+} from '@/lib/ops/po-active-eligibility';
 
 function currentYearMonth(): string {
   const now = new Date();
@@ -124,7 +130,10 @@ function TimesheetHubContent() {
 
   const contractsQuery = useMemoFirebase(() => {
     if (!firestore || !canViewTimesheets) return null;
-    return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
+    return query(
+      collection(firestore, 'main_contracts'),
+      where('status', 'in', [...PO_ACTIVE_MAIN_CONTRACT_STATUS_IN]),
+    );
   }, [firestore, canViewTimesheets]);
 
   const { data: activeContracts, isLoading: contractsLoading } = useCollection<MainContract>(contractsQuery as any);
@@ -145,7 +154,12 @@ function TimesheetHubContent() {
 
   const poQuery = useMemoFirebase(
     () =>
-      firestore && canViewTimesheets ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active')) : null,
+      firestore && canViewTimesheets
+        ? query(
+            collection(firestore, 'purchase_orders'),
+            where('status', 'in', [...PO_ACTIVE_PURCHASE_ORDER_STATUS_IN]),
+          )
+        : null,
     [firestore, canViewTimesheets],
   );
   const { data: pos, isLoading: poLoading } = useCollection<PurchaseOrder>(poQuery as any);
@@ -156,11 +170,12 @@ function TimesheetHubContent() {
   );
   const { data: allMobs, isLoading: mobLoading } = useCollection<Assignment>(mobQuery as any);
 
-  const poLinesQuery = useMemoFirebase(
-    () => (firestore && canViewTimesheets ? collectionGroup(firestore, 'po_lines') : null),
-    [firestore, canViewTimesheets],
+  /** Fan-out per-PO subcollection read แทน collectionGroup (rules production ยังไม่เปิด wildcard read) */
+  const polineFanoutIds = useMemo(
+    () => (canViewTimesheets && pos ? pos.map((p) => p.id).filter(Boolean) : null),
+    [canViewTimesheets, pos],
   );
-  const { data: allPOLines, isLoading: polinesLoading } = useCollection<POLine>(poLinesQuery as any);
+  const { data: allPOLines, isLoading: polinesLoading } = usePoLinesFanout(polineFanoutIds);
 
   const poMonthReviewsQuery = useMemoFirebase(
     () =>
@@ -182,7 +197,7 @@ function TimesheetHubContent() {
   }, [poMonthReviews]);
 
   const landingMainContractIdSet = useMemo(
-    () => new Set((activeContracts ?? []).map((c) => c.id).filter(Boolean)),
+    () => buildEligibleMainContractIdSet(activeContracts),
     [activeContracts],
   );
 

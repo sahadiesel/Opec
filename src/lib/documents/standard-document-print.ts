@@ -9,7 +9,7 @@
  * - ใบสั่งซื้อ (Purchase Order) — ใช้แล้ว: `buildPurchaseOrderPrintHtml`
  * - ใบเสนอราคา (Quotation)
  * - รายการใบแจ้งหนี้ / ใบแจ้งหนี้ (commercial billing / Invoice)
- * - ใบกำกับภาษี (Tax invoice) / ใบเสร็จรับเงิน (Money receipt) แยกเอกสาร
+ * - ใบกำกับภาษี (Tax invoice) / ใบเสร็จรับเงิน (Receipt) แยกเอกสาร
  * - ใบบันทึกเวลา (Timesheet) และเอกสารทางการค้าอื่นที่เพิ่มในอนาคต
  *
  * หลักการเลย์เอาต์:
@@ -1306,8 +1306,17 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   const mainHtml = `${partyHtml}
   ${tableHtml}
   ${totalsHtml}`;
+  const preparedAccountingName = (() => {
+    const fromIssued = (invoice.issuedByName || '').trim();
+    if (fromIssued) return fromIssued;
+    const fromCreated = (invoice.createdByName || '').trim();
+    if (fromCreated) return fromCreated;
+    const fromBillingNote = (billingNote?.createdBy || '').trim();
+    if (fromBillingNote) return fromBillingNote;
+    return '—';
+  })();
   const footerHtml = buildStandardSignFooterHtml({
-    left: { roleLine: printT(L, 'signPreparedAccounting'), name: '—' },
+    left: { roleLine: printT(L, 'signPreparedAccounting'), name: preparedAccountingName },
     right: { roleLine: printT(L, 'signCustomerAuth'), name: '—' },
     belowHtml: '',
   });

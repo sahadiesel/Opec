@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
-import { Vendor, VendorType, User } from '@/lib/types';
+import { Vendor, VendorType, VendorLegalForm, User } from '@/lib/types';
 
 function normalizeVendorPaymentTerms(raw: string | undefined | null): 'Cash' | 'Credit' {
   const s = (raw || '').trim().toLowerCase();
@@ -58,6 +58,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const [formData, setFormData] = useState<Partial<Vendor>>({
     vendorCode: isNew ? getPreviewPattern('vendor') : '',
     vendorName: '',
+    vendorLegalForm: 'JURISTIC',
     vendorType: 'GENERAL_SUPPLIER',
     taxId: '',
     branchType: 'head_office',
@@ -82,6 +83,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     if (vendorData) {
       setFormData({
         ...vendorData,
+        vendorLegalForm: vendorData.vendorLegalForm ?? 'JURISTIC',
         branchType: vendorData.branchType || ((vendorData.branchNo || '00000') === '00000' ? 'head_office' : 'branch'),
         branchNo: (vendorData.branchNo || '00000') === '00000' ? '' : (vendorData.branchNo || ''),
         paymentTerms: normalizeVendorPaymentTerms(vendorData.paymentTerms),
@@ -104,13 +106,20 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     const now = Date.now();
     
     try {
-      const normalizedBranchNo = formData.branchType === 'branch'
-        ? (formData.branchNo || '').trim()
-        : '00000';
-      if (formData.branchType === 'branch' && !normalizedBranchNo) {
-        toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุเลขสาขา" });
+      const legalForm = formData.vendorLegalForm ?? 'JURISTIC';
+      const normalizedBranchNo =
+        legalForm === 'NATURAL'
+          ? '00000'
+          : formData.branchType === 'branch'
+            ? (formData.branchNo || '').trim()
+            : '00000';
+      if (legalForm === 'JURISTIC' && formData.branchType === 'branch' && !normalizedBranchNo) {
+        toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุเลขสาขา' });
         return;
       }
+      const branchTypeToSave: 'head_office' | 'branch' =
+        legalForm === 'NATURAL' ? 'head_office' : formData.branchType === 'branch' ? 'branch' : 'head_office';
+
       if (isNew) {
         // Atomic Code Generation
         const { code: finalCode } = await generateNextDocumentCode(firestore, 'vendor', { actor: currentUser.displayName });
@@ -118,19 +127,23 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         const newRef = doc(collection(firestore, 'vendors'));
         await setDoc(newRef, {
           ...formData,
+          vendorLegalForm: legalForm,
+          branchType: branchTypeToSave,
           branchNo: normalizedBranchNo,
           vendorCode: finalCode,
           id: newRef.id,
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         });
         toast({ title: "เพิ่มคู่ค้าสำเร็จ", description: `รหัสคู่ค้า: ${finalCode}` });
         router.push('/vendors');
       } else {
         await updateDoc(vendorRef!, {
           ...formData,
+          vendorLegalForm: legalForm,
+          branchType: branchTypeToSave,
           branchNo: normalizedBranchNo,
-          updatedAt: now
+          updatedAt: now,
         });
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
         router.back();
@@ -211,9 +224,33 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                     />
                     {isNew && <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>}
                   </div>
-                  <div className="space-y-2 md:col-span-2">
+                  <div className="space-y-2">
                     <Label className="font-bold">ชื่อบริษัท / ร้านค้า (Vendor Name) *</Label>
                     <Input value={formData.vendorName} onChange={e => setFormData({...formData, vendorName: e.target.value})} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold">รูปแบบคู่ค้า</Label>
+                    <Select
+                      value={formData.vendorLegalForm ?? 'JURISTIC'}
+                      onValueChange={(v: VendorLegalForm) =>
+                        setFormData({
+                          ...formData,
+                          vendorLegalForm: v,
+                          ...(v === 'NATURAL' ? { branchType: 'head_office' as const, branchNo: '' } : {}),
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="JURISTIC">นิติบุคคล</SelectItem>
+                        <SelectItem value="NATURAL">บุคคลธรรมดา</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      เลือกบุคคลธรรมดาเมื่อคู่ค้าเป็นบุคคล — ระบบจะไม่แสดงสำนักงานใหญ่/สาขา และพิมพ์หัก ณ ที่จ่ายเป็น «บุคคลธรรมดา»
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label>ประเภทคู่ค้า (Vendor Type)</Label>
@@ -234,22 +271,35 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                     <Label>เลขประจำตัวผู้เสียภาษี (Tax ID)</Label>
                     <Input value={formData.taxId} onChange={e => setFormData({...formData, taxId: e.target.value})} />
                   </div>
-                  <div className="space-y-2">
-                    <Label>ประเภทสาขา</Label>
-                    <Select onValueChange={(v: 'head_office' | 'branch') => setFormData({...formData, branchType: v})} value={(formData.branchType as any) || 'head_office'}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="head_office">สำนักงานใหญ่</SelectItem>
-                        <SelectItem value="branch">สาขา</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {formData.branchType === 'branch' && (
-                    <div className="space-y-2">
-                      <Label>เลขสาขา (Branch No.)</Label>
-                      <Input value={formData.branchNo || ''} onChange={e => setFormData({...formData, branchNo: e.target.value})} placeholder="เช่น 00001" />
-                    </div>
-                  )}
+                  {(formData.vendorLegalForm ?? 'JURISTIC') === 'JURISTIC' ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label>ประเภทสาขา</Label>
+                        <Select
+                          onValueChange={(v: 'head_office' | 'branch') => setFormData({ ...formData, branchType: v })}
+                          value={(formData.branchType as 'head_office' | 'branch') || 'head_office'}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="head_office">สำนักงานใหญ่</SelectItem>
+                            <SelectItem value="branch">สาขา</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {formData.branchType === 'branch' && (
+                        <div className="space-y-2">
+                          <Label>เลขสาขา (Branch No.)</Label>
+                          <Input
+                            value={formData.branchNo || ''}
+                            onChange={(e) => setFormData({ ...formData, branchNo: e.target.value })}
+                            placeholder="เช่น 00001"
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : null}
                   <div className="space-y-2">
                     <Label>ชื่อผู้ติดต่อ (Contact Name)</Label>
                     <Input value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />

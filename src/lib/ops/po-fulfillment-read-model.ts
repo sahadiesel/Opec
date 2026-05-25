@@ -1,4 +1,5 @@
 import type { Assignment, DeploymentStatus, POLine, Position, PurchaseOrder, Wave } from '@/lib/types';
+import { isPoLineActiveForQuota, isPurchaseOrderActiveForPoActiveWorkflow } from '@/lib/ops/po-active-eligibility';
 import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { assignmentHasMobWorkStartedForQuotaDisplay } from '@/lib/ops/mobilization-final-clearance';
@@ -170,9 +171,9 @@ export function buildPoFulfillmentByLine(
       (s, w) => s + plannedOnWaveForPoLine(w, line.id),
       0
     );
-    const requiredQty = line.status === 'active' ? line.quantity : 0;
+    const requiredQty = isPoLineActiveForQuota(line.status) ? line.quantity : 0;
     const remainingSlots =
-      line.status === 'active' ? Math.max(0, line.quantity - assignedCount) : 0;
+      isPoLineActiveForQuota(line.status) ? Math.max(0, line.quantity - assignedCount) : 0;
 
     return {
       lineId: line.id,
@@ -200,7 +201,7 @@ export function aggregateActiveLineTotals(rows: PoLineFulfillmentRow[]): {
   waveCount: number;
 } {
   const { required, assigned, onSite, onStandby, waveCount } = rows
-    .filter((r) => r.lineStatus === 'active')
+    .filter((r) => isPoLineActiveForQuota(r.lineStatus))
     .reduce(
       (acc, r) => ({
         required: acc.required + r.requiredQty,
@@ -241,7 +242,7 @@ export function buildPositionAggregateAcrossActiveContractPos(
 
   const byPos = new Map<string, { required: number; assigned: number }>();
   for (const po of list) {
-    if (po.status !== 'active') continue;
+    if (!isPurchaseOrderActiveForPoActiveWorkflow(po.status)) continue;
     if ((po.poType || 'contract') !== 'contract' || !po.contractId) continue;
     if (!activeMainContractIds.has(po.contractId)) continue;
     const poLines = lines.filter((l) => l.poId === po.id);

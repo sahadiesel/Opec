@@ -21,6 +21,13 @@ export function isValidThaiTaxId(id: string | null | undefined): boolean {
   return THAI_TAX_ID.test(id.trim());
 }
 
+/** ค่าว่างหรือตัวยึดบนแบบ (— / - / en dash) เท่านั้น — ไม่ถือเป็นข้อมูลจริง */
+function isMissingOrWhtPlaceholderValue(value: string | null | undefined): boolean {
+  const s = (value ?? '').trim();
+  if (!s) return true;
+  return /^[—\-–\s]+$/u.test(s);
+}
+
 export function validateWhtCertificateForOfficialIssue(
   doc: Pick<
     WithholdingCertificateDocument,
@@ -40,7 +47,6 @@ export function validateWhtCertificateForOfficialIssue(
     | 'sourceVendorBillId'
     | 'sourceCashbookEntryId'
     | 'incomeTypeCode'
-    | 'payeeTaxIdMissingOverride'
   >,
   options?: { requireCashbookReference?: boolean },
 ): string[] {
@@ -53,28 +59,36 @@ export function validateWhtCertificateForOfficialIssue(
     errors.push('ไม่สามารถออกหนังสือรับรองได้: เลขประจำตัวผู้เสียภาษีของผู้จ่ายต้องเป็นตัวเลข 13 หลัก');
   }
 
+  if (isMissingOrWhtPlaceholderValue(doc.payer?.legalNameTh)) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีชื่อผู้จ่าย (บริษัท) — ตรวจการตั้งค่า company profile');
+  }
+
   if (doc.payer.branchType === 'BRANCH' && !(doc.payer.branchNo || '').trim()) {
     errors.push('ไม่สามารถออกหนังสือรับรองได้: ผู้จ่ายเป็นสาขาแต่ยังไม่มีเลขที่สาขา');
   }
 
   const payeeTax = (doc.payee?.taxId || '').trim();
-  if (!payeeTax) {
-    if (!doc.payeeTaxIdMissingOverride) {
-      errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีเลขประจำตัวผู้เสียภาษีของคู่ค้า — ต้องแก้ทะเบียนคู่ค้า หรือให้ผู้ดูแลระบบยืนยัน override');
-    }
+  if (isMissingOrWhtPlaceholderValue(payeeTax)) {
+    errors.push(
+      'ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก (คู่ค้า) — แก้ทะเบียนคู่ค้าให้ครบก่อน',
+    );
   } else if (doc.payee.vendorCategory !== 'FOREIGN' && !isValidThaiTaxId(payeeTax)) {
     errors.push('ไม่สามารถออกหนังสือรับรองได้: เลขประจำตัวผู้เสียภาษีของคู่ค้า (นิติบุคคลไทย) ต้องเป็นตัวเลข 13 หลัก');
+  }
+
+  if (isMissingOrWhtPlaceholderValue(doc.payee?.displayName)) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีชื่อผู้ถูกหัก (คู่ค้า) — แก้ทะเบียนคู่ค้าให้ครบก่อน');
   }
 
   if (doc.payee.branchType === 'BRANCH' && !(doc.payee.branchNo || '').trim()) {
     errors.push('ไม่สามารถออกหนังสือรับรองได้: คู่ค้าเป็นสาขาแต่ยังไม่มีเลขที่สาขา');
   }
 
-  if (!(doc.payer.addressTh || '').trim()) {
-    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีที่อยู่ผู้จ่าย');
+  if (isMissingOrWhtPlaceholderValue(doc.payer.addressTh)) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีที่อยู่ผู้จ่าย — ตรวจการตั้งค่า company profile');
   }
-  if (!(doc.payee.addressTh || '').trim()) {
-    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีที่อยู่คู่ค้า');
+  if (isMissingOrWhtPlaceholderValue(doc.payee.addressTh)) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยังไม่มีที่อยู่ผู้ถูกหัก (คู่ค้า) — แก้ทะเบียนคู่ค้าให้ครบก่อน');
   }
 
   if (!doc.paymentDate?.trim()) {
@@ -104,13 +118,23 @@ export function validateWhtCertificateForOfficialIssue(
     errors.push('ไม่สามารถออกหนังสือรับรองได้: ยอดก่อน VAT ต้องมากกว่า 0');
   }
 
+  if (roundMoney2(doc.withholdingTaxAmount) < 0.005) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: จำนวนภาษีที่หักต้องมากกว่า 0');
+  }
+
   const gross = roundMoney2(doc.amountBeforeVat + doc.vatAmount);
   if (Math.abs(gross - roundMoney2(doc.grossAmount)) > 0.02) {
     errors.push('ไม่สามารถออกหนังสือรับรองได้: ยอดรวมก่อนหักไม่เท่ากับ (ก่อน VAT + VAT)');
   }
 
-  if (Math.abs(roundMoney2(doc.withholdingTaxBase) - roundMoney2(doc.amountBeforeVat)) > 0.02) {
-    errors.push('ไม่สามารถออกหนังสือรับรองได้: ยอดฐานหัก ณ ที่จ่ายต้องเท่ากับยอดก่อน VAT');
+  const baseWht = roundMoney2(doc.withholdingTaxBase);
+  const grossAmt = roundMoney2(doc.grossAmount);
+  if (baseWht < -0.005) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: ฐานหัก ณ ที่จ่ายต้องไม่ติดลบ');
+  }
+  /** ฐานหักอาจน้อยกว่ายอดก่อน VAT ทั้งใบ (หักเฉพาะบางรายการ เช่น ค่าขนส่ง) — ห้ามเกินยอดรวมจ่ายในใบ */
+  if (baseWht > grossAmt + 0.02) {
+    errors.push('ไม่สามารถออกหนังสือรับรองได้: ฐานหัก ณ ที่จ่ายต้องไม่เกินยอดรวมในใบ (รวม VAT)');
   }
 
   const rate = Number(doc.withholdingTaxRatePercent) || 0;

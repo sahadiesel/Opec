@@ -1,25 +1,26 @@
 rules_version = '2';
-// 3-tier model: admin | accounting | internal (default). ASCII-only comments (Console publish).
-// Supports both snake_case (status, user_type, role) and legacy camelCase (approvalStatus, userType, assignedRoleKey).
+// =====================================================================
+// GENERATED firestore.rules (simplified, matrix-driven)
+// Source: /system-admin/menu-permissions + module-to-firestore-paths.ts
+// Generated: 2026-05-25T05:42:07.442Z
+// By: cli
+// =====================================================================
+// ⚠️ Pre-flight checklist ก่อน deploy:
+//   1. ทุก block ที่มี comment '⚠️ PRESERVE-FROM-ORIGINAL' ต้องวาง match block เดิม
+//      จาก firestore.rules ปัจจุบัน (portal scope / status guard / business logic)
+//   2. ทดสอบใน emulator: firebase emulators:start --only firestore
+//   3. ทดสอบบทบาทสำคัญ: admin / hr_manager / accounting_officer / client_user
+//   4. Deploy: npm run deploy:rules (รอ Google API 503 หาย)
+// =====================================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function userRef() {
-      return /databases/$(database)/documents/users/$(request.auth.uid);
-    }
-
-    function hasUserDoc() {
-      return isSignedIn() && exists(userRef());
-    }
-
-    function userData() {
-      return get(userRef()).data;
-    }
+    // ===== Core helpers =====
+    function isSignedIn() { return request.auth != null; }
+    function userRef() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function hasUserDoc() { return isSignedIn() && exists(userRef()); }
+    function userData() { return get(userRef()).data; }
 
     function isActiveStatus(d) {
       return d != null && (
@@ -30,13 +31,11 @@ service cloud.firestore {
     }
 
     function isInternalTypeData(d) {
-      return d != null
-        && !isCustomerPortalData(d)
-        && (
-          ('user_type' in d && (d.user_type == 'internal' || d.user_type == 'INTERNAL'))
-          || ('userType' in d && d.userType is string && d.userType.lower() == 'internal')
-          || (!('user_type' in d) && !('userType' in d))
-        );
+      return d != null && !isCustomerPortalData(d) && (
+        ('user_type' in d && (d.user_type == 'internal' || d.user_type == 'INTERNAL'))
+        || ('userType' in d && d.userType is string && d.userType.lower() == 'internal')
+        || (!('user_type' in d) && !('userType' in d))
+      );
     }
 
     function isCustomerPortalData(d) {
@@ -46,323 +45,279 @@ service cloud.firestore {
       );
     }
 
-    /** ไม่มี role → คืน '' ให้ทั้งสองแขนของ ternary เป็น string เดียวกัน (หลีกเลี่ยง warning ตอน compile) */
-    function effectiveRoleFromRoleField(d) {
-      return (d != null && 'role' in d && d.role is string && d.role.size() > 0)
-        ? d.role.lower()
+    /** Single role source — assignedRoleKey only; normalize 'operation_manager' typo */
+    function canonicalAssignedRoleKey(d) {
+      return d != null && 'assignedRoleKey' in d && d.assignedRoleKey is string && d.assignedRoleKey.size() > 0
+        ? (d.assignedRoleKey.lower() == 'operation_manager' ? 'operations_manager' : d.assignedRoleKey.lower())
         : '';
     }
 
-    function effectiveRoleFromAssignedKey(d) {
-      return (d != null && 'assignedRoleKey' in d && d.assignedRoleKey is string && d.assignedRoleKey.size() > 0)
-        ? d.assignedRoleKey.lower()
-        : '';
-    }
-
-    /** assignedRoleKeys[0] — สอดคล้องลำดับ getPrimaryLegacyRole ฝั่งแอป */
-    function effectiveRoleFromAssignedKeysFirst(d) {
-      return d != null
-        && 'assignedRoleKeys' in d
-        && d.assignedRoleKeys is list
-        && d.assignedRoleKeys.size() > 0
-        && d.assignedRoleKeys[0] is string
-        && d.assignedRoleKeys[0].size() > 0
-        ? d.assignedRoleKeys[0].lower()
-        : '';
-    }
-
-    /**
-     * ลำดับเดียวกับ getPrimaryLegacyRole ฝั่งแอป (assignedRoleKey -> assignedRoleKeys[0] -> role scalar)
-     * แก้กรณี UI เป็น system_admin แต่ effectiveRole() ในกฎอ่าน role เก่าก่อนจึงทำให้ isAdmin() เป็น false
-     */
-    function primaryBusinessRoleForAdminGate(d) {
-      return d == null
-        ? ''
-        : (
-            effectiveRoleFromAssignedKey(d).size() > 0
-              ? effectiveRoleFromAssignedKey(d)
-              : (
-                  effectiveRoleFromAssignedKeysFirst(d).size() > 0
-                    ? effectiveRoleFromAssignedKeysFirst(d)
-                    : effectiveRoleFromRoleField(d)
-                )
-          );
-    }
-
-    function permissionProfileIndicatesOperationsManager(d) {
-      return d != null && (
-        (
-          'permissionProfileKey' in d
-          && d.permissionProfileKey is string
-          && d.permissionProfileKey.lower() == 'operations_manager'
-        )
-        || (
-          'permissionProfileKeys' in d
-          && d.permissionProfileKeys is list
-          && d.permissionProfileKeys.size() > 0
-          && d.permissionProfileKeys[0] is string
-          && d.permissionProfileKeys[0].lower() == 'operations_manager'
-        )
-      );
-    }
-
-    /**
-     * Legacy effectiveRole: role field ก่อน assignedRoleKey — ยังใช้ในบางกฎเดิม
-     * สำหรับ RBAC ที่ต้องสอดคล้องแอป ให้ใช้ primaryBusinessRoleForAdminGate (assigned ก่อน)
-     */
-    function effectiveRole(d) {
-      return effectiveRoleFromRoleField(d).size() > 0
-        ? effectiveRoleFromRoleField(d)
-        : effectiveRoleFromAssignedKey(d);
-    }
+    function primaryRole(d) { return canonicalAssignedRoleKey(d); }
+    function userRole() { return canonicalAssignedRoleKey(userData()); }
 
     function isInternalUser() {
+      return hasUserDoc() && isActiveStatus(userData()) && isInternalTypeData(userData());
+    }
+
+    function isClientPortalUser() {
+      return hasUserDoc() && isActiveStatus(userData()) && isCustomerPortalData(userData());
+    }
+
+    function isAdmin() { return isInternalUser() && userRole() == 'system_admin'; }
+    function isAccounting() { return isInternalUser() && (userRole() == 'accounting_manager' || userRole() == 'accounting_officer'); }
+
+    /** ใช้ใน append-only collection (audit logs, etc.) */
+    function internalStaffFirestoreActor() {
+      return isSignedIn() && exists(userRef()) && isInternalTypeData(get(userRef()).data) && !isCustomerPortalData(get(userRef()).data);
+    }
+
+    /** Portal scope helper — admin วาง preserved blocks ของ portal เอง */
+    function portalCustomerIdOk() {
+      return isClientPortalUser() && 'customerId' in userData() && userData().customerId is string;
+    }
+
+    function portalOwnsResourceCustomerId() {
+      return portalCustomerIdOk() && resource.data.customerId == userData().customerId;
+    }
+
+
+    // =====================================================================
+    // PRESERVED HELPERS — ดึงจาก firestore.rules เดิม (ใช้โดย preserved match blocks)
+    // =====================================================================
+
+
+    function canReadCustomers() {
       return hasUserDoc()
-        && isInternalTypeData(userData())
-        && !isCustomerPortalData(userData())
-        && isActiveStatus(userData());
+        && (isInternalUser() || isInternalStaffDoc())
+        && !roleIs(userData(), 'store_officer')
+        && !roleIs(userData(), 'accounting_officer');
     }
 
-    /** Internal user document (ไม่บังคับ isActive) — ใช้เฉพาะคอลเลกชันที่ต้องการให้ staff ยัง list ได้แม้สถานะบัญชียังไม่ครบ */
-    function isInternalStaffDoc() {
-      return hasUserDoc()
-        && isInternalTypeData(userData())
-        && !isCustomerPortalData(userData());
-    }
 
-    /** โปรไฟล์ payroll_officer บน user doc — บางบัญชีมีแค่ permissionProfileKey(s) โดยไม่มี role scalar */
-    function permissionProfileIndicatesPayrollOfficer(d) {
-      return d != null && (
-        (
-          'permissionProfileKey' in d
-          && d.permissionProfileKey is string
-          && d.permissionProfileKey.lower() == 'payroll_officer'
-        )
-        || (
-          'permissionProfileKeys' in d
-          && d.permissionProfileKeys is list
-          && d.permissionProfileKeys.hasAny(['payroll_officer', 'PAYROLL_OFFICER'])
-        )
-      );
-    }
 
-    /** เจ้าหน้าที่เงินเดือน — เทียบ cashAdvancePrivilegedReader (บทบาท scalar / assigned keys / profile / roleIds) */
-    function payrollOfficerRoleOrProfile(d) {
-      return d != null
-        && !isCustomerPortalData(d)
-        && (
-          effectiveRoleFromAssignedKey(d) == 'payroll_officer'
-          || effectiveRoleFromAssignedKeysFirst(d) == 'payroll_officer'
-          || effectiveRoleFromRoleField(d) == 'payroll_officer'
-          || permissionProfileIndicatesPayrollOfficer(d)
-          || (
-            'roleIds' in d
-            && d.roleIds is list
-            && d.roleIds.hasAny(['payroll_officer', 'PAYROLL_OFFICER'])
-          )
-        );
-    }
-
-    /** สอดคล้อง getEffectivePermissionProfileKey — primary key ก่อน permissionProfileKeys[0] */
-    function userPrimaryPermissionProfileIdString() {
-      let d = userData();
-      return ('permissionProfileKey' in d && d.permissionProfileKey is string && d.permissionProfileKey.size() > 0)
-        ? d.permissionProfileKey
-        : (
-          ('permissionProfileKeys' in d && d.permissionProfileKeys is list && d.permissionProfileKeys.size() > 0 && d.permissionProfileKeys[0] is string && d.permissionProfileKeys[0].size() > 0)
-            ? d.permissionProfileKeys[0]
-            : ''
-        );
-    }
-
-    /** โปรไฟล์ที่เป็นบทบาท payroll_officer / เปิด worker_payroll.view — บางแถวเก็บแค่ profileKey ไม่มีเมทริกซ์ครบ */
-    function workerPayrollProfileIndicatesPayrollAccess(profileData) {
-      return profileData != null && (
-        (
-          'permissions' in profileData
-          && profileData.permissions is map
-          && 'worker_payroll' in profileData.permissions
-          && profileData.permissions.worker_payroll is map
-          && 'view' in profileData.permissions.worker_payroll
-          && profileData.permissions.worker_payroll.view == true
-        )
-        || (
-          'primaryRoleTemplateKey' in profileData
-          && profileData.primaryRoleTemplateKey is string
-          && profileData.primaryRoleTemplateKey.lower() == 'payroll_officer'
-        )
-        || (
-          'profileKey' in profileData
-          && profileData.profileKey is string
-          && profileData.profileKey.lower() == 'payroll_officer'
-        )
-      );
-    }
-
-    /**
-     * UI ใช้เมทริกซ์ใน permission_profiles — บทบาท scalar บน user doc อาจไม่ใช่ payroll_officer
-     */
-    function workerPayrollViewGrantedViaAssignedPermissionProfile() {
-      let pid = userPrimaryPermissionProfileIdString();
-      return hasUserDoc()
-        && !isCustomerPortalData(userData())
-        && pid.size() > 0
-        && exists(/databases/$(database)/documents/permission_profiles/$(pid))
-        && (
-          workerPayrollProfileIndicatesPayrollAccess(get(/databases/$(database)/documents/permission_profiles/$(pid)).data)
-          || pid.lower() == 'payroll_officer'
-        );
-    }
-
-    /**
-     * เมนูธนาคาร/cashbook ในแอปมาจาก permission_profiles.permissions — เดิม bank_accounts อนุญาตแค่บัญชี·ผู้จัดการปฏิบัติการ
-     * ทำให้ผู้ใช้ที่ได้ bank_accounts.view / cashbook.view จากโปรไฟล์แต่ไม่ใช่บทบาทบัญชีถูก deny list ที่หน้า payroll batch
-     */
-    function bankAccountsOrCashbookViewTrue(profileData) {
-      return profileData != null && (
-        (
-          'permissions' in profileData
-          && profileData.permissions is map
-          && 'bank_accounts' in profileData.permissions
-          && profileData.permissions.bank_accounts is map
-          && 'view' in profileData.permissions.bank_accounts
-          && profileData.permissions.bank_accounts.view == true
-        )
-        || (
-          'permissions' in profileData
-          && profileData.permissions is map
-          && 'cashbook' in profileData.permissions
-          && profileData.permissions.cashbook is map
-          && 'view' in profileData.permissions.cashbook
-          && profileData.permissions.cashbook.view == true
-        )
-      );
-    }
-
-    function bankAccountsViewGrantedViaAssignedPermissionProfile() {
-      let pid = userPrimaryPermissionProfileIdString();
-      return hasUserDoc()
-        && !isCustomerPortalData(userData())
-        && pid.size() > 0
-        && exists(/databases/$(database)/documents/permission_profiles/$(pid))
-        && bankAccountsOrCashbookViewTrue(get(/databases/$(database)/documents/permission_profiles/$(pid)).data);
-    }
-
-    /** อ่าน permission_profiles/{id} เฉพาะแถวที่ผูกกับ user — ไม่เปิด list ทั้งชุด */
-    function profileDocIsAssignedToCurrentUser(profileId) {
-      return hasUserDoc()
-        && profileId is string
-        && profileId.size() > 0
-        && (
-          ('permissionProfileKey' in userData() && userData().permissionProfileKey == profileId)
-          || (
-            'permissionProfileKeys' in userData()
-            && userData().permissionProfileKeys is list
-            && userData().permissionProfileKeys.size() > 0
-            && userData().permissionProfileKeys[0] is string
-            && userData().permissionProfileKeys[0] == profileId
-          )
-        );
-    }
-
-    /**
-     * อ่านข้อมูล payroll / exception / monthly docs — ให้สอดคล้อง workers·daily_timesheets (มี isInternalStaffDoc)
-     * เพื่อให้ payroll_officer และบัญชี internal ที่สถานะยังไม่ active ครบเปิด HR dashboard / list งวดได้
-     */
-    function internalPayrollDataReader() {
-      return isInternalUser()
-        || isInternalStaffDoc()
-        || (
-          hasUserDoc()
-          && !isCustomerPortalData(userData())
-          && payrollOfficerRoleOrProfile(userData())
-        )
-        || workerPayrollViewGrantedViaAssignedPermissionProfile();
-    }
-
-    /** My Profile — อ่านบรรทัด payroll ของตนเอง (ผูก linkedUserId บน workers / office_staff) */
-    function workersLinkedUidMatchesPayroll(workerId) {
-      let w = /databases/$(database)/documents/workers/$(workerId);
-      return exists(w)
-        && 'linkedUserId' in get(w).data
-        && get(w).data.linkedUserId is string
-        && get(w).data.linkedUserId.size() > 0
-        && get(w).data.linkedUserId == request.auth.uid;
-    }
-
-    function officeStaffLinkedUidMatchesPayroll(staffId) {
-      let s = /databases/$(database)/documents/office_staff/$(staffId);
-      return exists(s)
-        && 'linkedUserId' in get(s).data
-        && get(s).data.linkedUserId is string
-        && get(s).data.linkedUserId.size() > 0
-        && get(s).data.linkedUserId == request.auth.uid;
-    }
-
-    function payrollBatchLineOwnedByLinkedWorker() {
-      return resource.data != null
-        && 'workerId' in resource.data
-        && resource.data.workerId is string
-        && workersLinkedUidMatchesPayroll(resource.data.workerId);
-    }
-
-    function officePayrollLineOwnedByLinkedStaff() {
-      return resource.data != null
-        && 'staffId' in resource.data
-        && resource.data.staffId is string
-        && officeStaffLinkedUidMatchesPayroll(resource.data.staffId);
-    }
-
-    /** ตั้งค่า HR เพิ่มเติม (เช่น โควตาวันลาออฟฟิศ) — เทียบ canEditHrStatutoryPayrollSettings ฝั่งแอป */
-    function canEditHrOrgConfigurationDocs() {
+    function canWriteCustomers() {
       return isAdmin()
-        || isOperationsManagerRole()
         || (
-          hasUserDoc()
-          && isInternalUser()
+          isInternalUser()
           && (
-            effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
-            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
-            || effectiveRoleFromRoleField(userData()) == 'hr_manager'
-            || effectiveRoleFromAssignedKey(userData()) == 'hr_officer'
-            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_officer'
-            || effectiveRoleFromRoleField(userData()) == 'hr_officer'
-            || payrollOfficerRoleOrProfile(userData())
+            roleIs(userData(), 'sales_manager')
+            || roleIs(userData(), 'sales_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'accounting_manager')
           )
         );
     }
 
-    /** ค่า epoch ms จากเบราว์เซอร์ — ยอมรับทั้ง int/float และเผื่อ clock skew กับเซิร์ฟเวอร์ */
-    function kioskExpiresMsLooksReasonable(expMs) {
-      return (expMs is int || expMs is float)
-        && expMs > request.time.toMillis() - 300000
-        && expMs <= request.time.toMillis() + 900000;
+
+    function canReadCommercialDocs() {
+      return internalActiveOrStaff()
+        && !roleIs(userData(), 'store_officer');
     }
 
-    /** เซสชันยังไม่หมดอายุ (อ่านจากเอกสารที่สร้างแล้ว) — เผื่อ skew เล็กน้อยตอนพนักงานกดลงเวลา */
-    function kioskSessionStillActive(expMs) {
-      return (expMs is int || expMs is float)
-        && expMs > request.time.toMillis() - 120000;
+
+
+    function canWriteCommercialDocs() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'sales_manager')
+            || roleIs(userData(), 'sales_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
     }
 
-    function attendanceKioskSessionGate(token) {
-      let p = /databases/$(database)/documents/attendance_kiosk_sessions/$(token);
-      return exists(p)
-        && get(p).data.keys().hasAll(['expiresAt', 'active', 'createdByUid', 'createdAt'])
-        && get(p).data.active == true
-        && kioskSessionStillActive(get(p).data.expiresAt);
+
+
+    function canDeleteOpsScheduling() {
+      return isAdmin()
+        || roleIs(userData(), 'operations_manager')
+        || roleIs(userData(), 'hr_manager')
+        || roleIs(userData(), 'accounting_manager');
     }
 
-    function punchSubjectLinkedToCaller(subjectType, subjectId) {
-      let path = subjectType == 'worker'
-        ? /databases/$(database)/documents/workers/$(subjectId)
-        : /databases/$(database)/documents/office_staff/$(subjectId);
-      return exists(path)
-        && 'linkedUserId' in get(path).data
-        && get(path).data.linkedUserId is string
-        && get(path).data.linkedUserId.size() > 0
-        && get(path).data.linkedUserId == request.auth.uid;
+
+
+    function canWriteCommercialInvoicesInternal() {
+      return canIssueCommercialInvoiceSequence();
     }
+
+
+    function commercialInvoiceTransitionToVoid() {
+      return resource.data != null
+        && 'status' in resource.data
+        && resource.data.status != 'VOID'
+        && request.resource.data != null
+        && 'status' in request.resource.data
+        && request.resource.data.status == 'VOID';
+    }
+
+
+
+    function portalIsApprover() {
+      return portalCustomerIdOk()
+        && 'portalRole' in userData()
+        && userData().portalRole == 'approver';
+    }
+
+
+    function portalCommercialInvoiceConfirmKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'status',
+        'customerApprovedAt',
+        'customerApprovedByUid',
+        'customerApprovedByName',
+        'customerApprovalSource',
+        'updatedAt',
+        'updatedByUid',
+        'updatedByName'
+      ]);
+    }
+
+
+    function portalCommercialInvoiceRevisionRequestKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'customerRevisionRequestedAt',
+        'customerRevisionRequestNote',
+        'customerRevisionIssueId',
+        'updatedAt',
+        'updatedByUid',
+        'updatedByName'
+      ]);
+    }
+
+
+
+    function portalCommercialPaymentReportAllowed() {
+      return portalIsApprover()
+        && portalOwnsResourceCustomerId()
+        && resource.data.status == 'ISSUED'
+        && !resource.data.keys().hasAny(['opecPaymentVerifiedAt']);
+    }
+
+
+    function portalCommercialPaymentProofKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'customerPaymentReportedAt',
+        'customerPaymentReportedByUid',
+        'customerPaymentReportedByName',
+        'customerPaymentProofUrl',
+        'customerPaymentProofFileName',
+        'updatedAt',
+        'updatedByUid',
+        'updatedByName'
+      ]);
+    }
+
+
+    function isEmployeeSelfPortalUser() {
+      return hasUserDoc()
+        && isInternalTypeData(userData())
+        && !isCustomerPortalData(userData())
+        && isActiveStatus(userData())
+        && roleIs(userData(), 'employee_self');
+    }
+
+
+
+    function canWriteWorkers() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'hr_officer')
+            || roleIs(userData(), 'payroll_officer')
+            || roleIs(userData(), 'accounting_manager')
+          )
+          && !roleIs(userData(), 'sales_manager')
+        );
+    }
+
+
+
+    function canReadTimesheetsInternal() {
+      return internalActiveOrStaff()
+        && !roleIs(userData(), 'store_officer');
+    }
+
+
+    function portalDailyTimesheetReadableViaWave() {
+      return portalCustomerIdOk()
+        && resource != null
+        && resource.data.keys().hasAll(['waveId'])
+        && resource.data.waveId is string
+        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
+        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.keys().hasAll(['customerId'])
+        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
+    }
+
+
+    function portalDailyTimesheetReadableViaPo() {
+      return portalCustomerIdOk()
+        && resource != null
+        && resource.data.keys().hasAll(['purchaseOrderId'])
+        && resource.data.purchaseOrderId is string
+        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId))
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.keys().hasAll(['customerId'])
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.customerId == userData().customerId;
+    }
+
+
+
+    function canWriteDailyTimesheet() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'hr_officer')
+            || roleIs(userData(), 'sales_manager')
+            || roleIs(userData(), 'sales_officer')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
+    }
+
+
+
+    function portalTimesheetBillingLockKeysOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'status',
+        'lockedAt',
+        'lockedBy',
+        'billingLockedByTaxInvoiceId',
+        'lockedForBillingAt',
+        'updatedAt'
+      ]);
+    }
+
+
+    function internalPayrollDataReader() {
+      return internalActiveOrStaff()
+        && (
+          isAdmin()
+          || roleIsAccounting(userData())
+          || roleIs(userData(), 'payroll_officer')
+          || roleIs(userData(), 'hr_manager')
+          || roleIs(userData(), 'hr_officer')
+          || roleIs(userData(), 'operations_manager')
+          || roleIs(userData(), 'sales_manager')
+          || roleIs(userData(), 'sales_officer')
+        );
+    }
+
+
 
     function attendancePunchCreateValid() {
       let c = request.resource.data;
@@ -397,30 +352,7 @@ service cloud.firestore {
         && punchSubjectLinkedToCaller(c.subjectType, c.subjectId);
     }
 
-    /** คำขอแก้เวลาลงเวลา — สร้างโดย payroll_officer / แอดมิน */
-    function attendanceCorrectionSubmitter() {
-      return hasUserDoc()
-        && isInternalUser()
-        && (
-          isAdmin()
-          || payrollOfficerRoleOrProfile(userData())
-        );
-    }
 
-    /** อนุมัติ/ปฏิเสธคำขอแก้เวลา — HR manager / operations manager / แอดมิน */
-    function attendanceCorrectionManager() {
-      return hasUserDoc()
-        && isInternalUser()
-        && (
-          isAdmin()
-          || (
-            effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
-            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
-            || effectiveRoleFromRoleField(userData()) == 'hr_manager'
-          )
-          || isOperationsManagerRole()
-        );
-    }
 
     function attendanceCorrectionRequestCreateValid() {
       let c = request.resource.data;
@@ -466,6 +398,8 @@ service cloud.firestore {
         && (c.requestedAt is int || c.requestedAt is float);
     }
 
+
+
     function attendanceCorrectionRequestResolveValid() {
       let before = resource.data;
       let after = request.resource.data;
@@ -495,6 +429,8 @@ service cloud.firestore {
           )
         );
     }
+
+
 
     function attendanceDayOverrideCreateValid() {
       let c = request.resource.data;
@@ -528,1188 +464,7 @@ service cloud.firestore {
         && c.appliedByUid == request.auth.uid;
     }
 
-    /**
-     * แอดมินระบบ — ต้องสอดคล้องกับ isSystemAdmin() ฝั่งแอป (role / accessGroup / roleIds ฯลฯ)
-     * มิฉะนั้นผู้ใช้ที่ UI แสดง Administrator แต่ effectiveRole ไม่ใช่ system_admin จะถูกปฏิเสธ
-     * ตอนลง cashbook / อัปเดต bank_accounts (canAccessBankAccountsAndCashbook อ้าง isAdmin)
-     */
-    function stringLowerEqAdmin(v) {
-      return v is string && v.size() > 0 && v.lower() == 'admin';
-    }
 
-    /** สอดคล้องกับ isSystemAdmin() ฝั่งแอป — ผู้ใช้ที่ได้สิทธิ์จาก permissionProfileKey โดยไม่มี role/scalar */
-    function permissionProfileKeyIndicatesSystemAdmin(d) {
-      return d != null
-        && 'permissionProfileKey' in d
-        && d.permissionProfileKey is string
-        && (
-          d.permissionProfileKey.lower() == 'system_admin'
-          || d.permissionProfileKey.lower() == 'admin_admin'
-        );
-    }
-
-    function permissionProfileKeysListIndicatesSystemAdmin(d) {
-      return d != null
-        && 'permissionProfileKeys' in d
-        && d.permissionProfileKeys is list
-        && d.permissionProfileKeys.hasAny([
-          'system_admin', 'SYSTEM_ADMIN', 'admin_admin', 'ADMIN_ADMIN',
-        ]);
-    }
-
-    function userDocIndicatesSystemAdmin(d) {
-      return d != null && (
-        primaryBusinessRoleForAdminGate(d) == 'system_admin'
-        || primaryBusinessRoleForAdminGate(d) == 'admin_admin'
-        || permissionProfileKeyIndicatesSystemAdmin(d)
-        || permissionProfileKeysListIndicatesSystemAdmin(d)
-        || (
-          'roleIds' in d && d.roleIds is list
-          && (
-            d.roleIds.hasAny(['system_admin']) || d.roleIds.hasAny(['SYSTEM_ADMIN'])
-            || d.roleIds.hasAny(['admin_admin']) || d.roleIds.hasAny(['ADMIN_ADMIN'])
-          )
-        )
-        || (('accessGroup' in d) && stringLowerEqAdmin(d.accessGroup))
-        || (('departmentGroup' in d) && stringLowerEqAdmin(d.departmentGroup))
-        || (('department' in d) && stringLowerEqAdmin(d.department))
-      );
-    }
-
-    function isAdmin() {
-      return isInternalUser() && userDocIndicatesSystemAdmin(userData());
-    }
-
-    /** สอดคล้องกับบทบาทบัญชีเมื่อกำหนดผ่าน permission profile แทน role scalar */
-    function permissionProfileKeyIndicatesAccounting(d) {
-      return d != null
-        && 'permissionProfileKey' in d
-        && d.permissionProfileKey is string
-        && (
-          d.permissionProfileKey.lower() == 'accounting_manager'
-          || d.permissionProfileKey.lower() == 'accounting_officer'
-        );
-    }
-
-    function permissionProfileKeysListIndicatesAccounting(d) {
-      return d != null
-        && 'permissionProfileKeys' in d
-        && d.permissionProfileKeys is list
-        && d.permissionProfileKeys.hasAny([
-          'accounting_manager', 'ACCOUNTING_MANAGER',
-          'accounting_officer', 'ACCOUNTING_OFFICER',
-        ]);
-    }
-
-    /**
-     * บัญชีในกฎ — สอดคล้อง isSimpleAccounting ในแอป (ดู assigned/keys ก่อน role)
-     * โปรไฟล์ accounting นับเฉพาะเมื่อยังไม่มี primary จากเมทริกซ์/role (กันโปรไฟล์ค้าง + assigned operations_manager แล้วถูกบล็อก observer)
-     */
-    function isAccounting() {
-      return isInternalUser()
-        && (
-          primaryBusinessRoleForAdminGate(userData()) == 'accounting_manager'
-          || primaryBusinessRoleForAdminGate(userData()) == 'accounting_officer'
-          || (
-            primaryBusinessRoleForAdminGate(userData()).size() == 0
-            && (
-              permissionProfileKeyIndicatesAccounting(userData())
-              || permissionProfileKeysListIndicatesAccounting(userData())
-            )
-          )
-        );
-    }
-
-    function isAccountingOrAdmin() {
-      return isAdmin() || isAccounting();
-    }
-
-    /** hasUserDoc ก่อน — หลีกเลี่ยง userData()/get() ล้ม; ห้ามใช้ if/return แบบ JS (Rules ไม่รองรับ) */
-    function isOperationsManagerRole() {
-      return hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && (
-          effectiveRoleFromAssignedKey(userData()) == 'operations_manager'
-          || (
-            effectiveRoleFromAssignedKey(userData()).size() == 0
-            && (
-              effectiveRoleFromAssignedKeysFirst(userData()) == 'operations_manager'
-              || (
-                effectiveRoleFromAssignedKeysFirst(userData()).size() == 0
-                && (
-                  effectiveRoleFromRoleField(userData()) == 'operations_manager'
-                  || (
-                    effectiveRoleFromRoleField(userData()).size() == 0
-                    && permissionProfileIndicatesOperationsManager(userData())
-                  )
-                )
-              )
-            )
-          )
-        );
-    }
-
-    /** ผู้จัดการขาย / ผู้จัดการปฏิบัติการ — ดูข้อมูลบัญชีได้ ไม่ใช่เจ้าหน้าที่บัญชี (ลำดับบทบาทเดียวกับ getPrimaryLegacyRole ในแอป) */
-    function isAccountingDepartmentReadOnlyObserver() {
-      return hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && !isAdmin()
-        && !isAccounting()
-        && (
-          primaryBusinessRoleForAdminGate(userData()) == 'sales_manager'
-          || primaryBusinessRoleForAdminGate(userData()) == 'operations_manager'
-          || isOperationsManagerRole()
-          || (
-            (
-              ('accessGroup' in userData() && (userData().accessGroup == 'operations' || userData().accessGroup == 'operation'))
-              || ('departmentGroup' in userData() && (userData().departmentGroup == 'operations' || userData().departmentGroup == 'operation'))
-            )
-            && ('accessLevel' in userData() && userData().accessLevel == 'manager')
-            && !(
-              effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
-              || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
-              || effectiveRoleFromRoleField(userData()) == 'hr_manager'
-            )
-            && primaryBusinessRoleForAdminGate(userData()) != 'sales_manager'
-            && primaryBusinessRoleForAdminGate(userData()) != 'store_officer'
-          )
-        );
-    }
-
-    /** บัญชี: master data — ผู้จัดการปฏิบัติการบันทึก Petty Cash / โอน (อัปเดตยอด) ได้ */
-    function canAccessBankAccountsAndCashbook() {
-      return isAccountingOrAdmin() || isOperationsManagerRole();
-    }
-
-    /** เบิกล่วงหน้า — list/get ทั้งชุดเฉพาะบทบาทที่เกี่ยวข้อง (พนักงานเห็นเฉพาะแถวของตนเอง) */
-    function cashAdvancePrivilegedReader() {
-      return isAdmin()
-        || isAccountingOrAdmin()
-        || isOperationsManagerRole()
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && (
-            effectiveRoleFromAssignedKey(userData()) == 'hr_manager'
-            || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_manager'
-            || effectiveRoleFromRoleField(userData()) == 'hr_manager'
-          )
-        )
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && (
-            effectiveRoleFromAssignedKey(userData()) == 'payroll_officer'
-            || effectiveRoleFromAssignedKeysFirst(userData()) == 'payroll_officer'
-            || effectiveRoleFromRoleField(userData()) == 'payroll_officer'
-            || permissionProfileIndicatesPayrollOfficer(userData())
-            || (
-              'roleIds' in userData()
-              && userData().roleIds is list
-              && userData().roleIds.hasAny(['payroll_officer', 'PAYROLL_OFFICER'])
-            )
-          )
-        );
-    }
-
-    // Head of commercial/ops/HR pillar (not system_admin): broad internal business access in app + rules.
-    function isOperationsPillarExecutive() {
-      return hasUserDoc()
-        && isInternalUser()
-        && (
-          primaryBusinessRoleForAdminGate(userData()) == 'operations_manager'
-          || primaryBusinessRoleForAdminGate(userData()) == 'hr_manager'
-          || primaryBusinessRoleForAdminGate(userData()) == 'sales_manager'
-          || (
-            (
-              ('accessGroup' in userData() && (userData().accessGroup == 'operations' || userData().accessGroup == 'operation'))
-              || ('departmentGroup' in userData() && (userData().departmentGroup == 'operations' || userData().departmentGroup == 'operation'))
-            )
-            && ('accessLevel' in userData() && userData().accessLevel == 'manager')
-          )
-        );
-    }
-
-    function isCustomerPortalUserCreate(userId) {
-      let c = request.resource.data;
-      return c.id == userId
-        && c.userType == 'customer_portal'
-        && c.assignedRoleKey == 'client_user'
-        && ('customerId' in c)
-        && c.customerId is string
-        && c.customerId.size() > 0
-        && ('email' in c)
-        && c.email is string;
-    }
-
-    /** สร้างบัญชีพนักงาน/ลูกจ้างจากทะเบียน (พอร์ทัล My Profile) — เฉพาะผู้บริหารสายปฏิบัติการ */
-    function isEmployeeSelfPortalUserCreate(userId) {
-      let c = request.resource.data;
-      return c.id == userId
-        && c.userType == 'internal'
-        && c.assignedRoleKey == 'employee_self'
-        && ('email' in c)
-        && c.email is string
-        && c.email.size() > 0;
-    }
-
-    /** บัญชีพนักงานแบบจำกัดสิทธิ์ (ล็อกอินจากทะเบียนลูกจ้าง) */
-    function isEmployeeSelfPortalUser() {
-      return hasUserDoc()
-        && isInternalTypeData(userData())
-        && !isCustomerPortalData(userData())
-        && isActiveStatus(userData())
-        && effectiveRole(userData()) == 'employee_self';
-    }
-
-    /** พนักงานสร้างคำขอเบิกล่วงหน้าด้วยตนเอง — ห้ามแอบอ้าง UID คนอื่น */
-    function cashAdvanceEmployeeSelfCreateValid() {
-      let c = request.resource.data;
-      return c.keys().hasAll([
-          'subjectLinkedUserId', 'origin', 'status', 'amountBaht', 'reason',
-          'createdAt', 'updatedAt', 'createdByUid', 'createdByName', 'requestNo',
-        ])
-        && c.subjectLinkedUserId is string
-        && c.subjectLinkedUserId == request.auth.uid
-        && c.createdByUid is string
-        && c.createdByUid == request.auth.uid
-        && c.origin == 'employee'
-        && c.status == 'PENDING_PAYROLL_REVIEW';
-    }
-
-    /** สอดคล้อง permissions.ts — hr_officer ถูกบล็อกโมดูล cash_advances */
-    function isHrOfficerRoleScalar() {
-      return hasUserDoc()
-        && (
-          effectiveRoleFromAssignedKey(userData()) == 'hr_officer'
-          || effectiveRoleFromAssignedKeysFirst(userData()) == 'hr_officer'
-          || effectiveRoleFromRoleField(userData()) == 'hr_officer'
-        );
-    }
-
-    /**
-     * แอปให้ internal หลายบทบาทเห็นรายการเบิก (fallback FULL_ACCESS) แต่เดิมกฎอนุญาตเฉพาะ cashAdvancePrivilegedReader
-     * จึง list /hr/cash-advances ไม่ได้ — เปิดอ่านคิวให้ internal ที่ไม่ใช่ employee_self และไม่ใช่ hr_officer
-     */
-    function cashAdvanceInternalQueueReader() {
-      return hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && !isEmployeeSelfPortalUser()
-        && !isHrOfficerRoleScalar();
-    }
-
-    function opsExecClientPortalUpdateOk() {
-      let before = resource.data;
-      let after = request.resource.data;
-      return isOperationsPillarExecutive()
-        && before.userType == 'customer_portal'
-        && after.userType == 'customer_portal'
-        && before.assignedRoleKey == 'client_user'
-        && after.assignedRoleKey == 'client_user'
-        && before.customerId == after.customerId
-        && before.id == after.id;
-    }
-
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function userSecurityFieldChanges() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'userType', 'user_type', 'status', 'approvalStatus', 'isActive',
-        'assignedRoleKey', 'assignedRoleKeys', 'role',
-        'permissionProfileKey', 'permissionProfileKeys',
-        'accessGroup', 'departmentGroup', 'department', 'level', 'roleId', 'roleIds',
-        'customerId', 'portalRole', 'mustResetPassword'
-      ]);
-    }
-
-    function bootstrapUserCreateValid(uid) {
-      let d = request.resource.data;
-      return isOwner(uid)
-        && d.id == uid
-        && (d.userType == 'internal' || (('user_type' in d) && (d.user_type == 'internal' || d.user_type == 'INTERNAL')))
-        && (d.isActive == true || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')))
-        && (d.approvalStatus == 'ACTIVE' || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')));
-    }
-
-    // Self-service signup on home page: Auth user creates own Firestore profile, then signs out; admin approves in Users UI.
-    function selfRegistrationPendingCreateValid(uid) {
-      let d = request.resource.data;
-      return isOwner(uid)
-        && d.id == uid
-        && d.userType == 'internal'
-        && d.isActive == false
-        && d.approvalStatus == 'PENDING'
-        && ('email' in d) && d.email is string && d.email.size() > 0
-        && ('displayName' in d) && d.displayName is string && d.displayName.size() > 0
-        && ('phone' in d) && d.phone is string && d.phone.size() > 0
-        && d.department == 'operations'
-        && d.level == 'viewer'
-        && ('roleIds' in d) && d.roleIds is list && d.roleIds.size() == 0
-        && ('createdAt' in d) && d.createdAt is int
-        && ('updatedAt' in d) && d.updatedAt is int
-        && !('assignedRoleKey' in d)
-        && !('assignedRoleKeys' in d)
-        && !('permissionProfileKey' in d)
-        && !('permissionProfileKeys' in d)
-        && !('role' in d)
-        && !('accessGroup' in d)
-        && !('departmentGroup' in d)
-        && !('customerId' in d)
-        && !('portalRole' in d);
-    }
-
-    function clientPortalUserActive() {
-      return hasUserDoc()
-        && isCustomerPortalData(userData())
-        && isActiveStatus(userData());
-    }
-
-    function portalCustomerIdOk() {
-      let d = userData();
-      return clientPortalUserActive()
-        && d != null
-        && 'customerId' in d
-        && d.customerId is string
-        && d.customerId.size() > 0;
-    }
-
-    function portalOwnsResourceCustomerId() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAny(['customerId'])
-        && resource.data.customerId == userData().customerId;
-    }
-
-    /** Daily timesheet row may omit customerId; allow read when its wave belongs to the portal customer */
-    function portalDailyTimesheetReadableViaWave() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['waveId'])
-        && resource.data.waveId is string
-        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
-    }
-
-    /** อ่าน timesheet รายวันตาม PO เมื่อ PO เป็นของลูกค้า (เอกสาร timesheet รอบ PO+เดือน) */
-    function portalDailyTimesheetReadableViaPo() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['purchaseOrderId'])
-        && resource.data.purchaseOrderId is string
-        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId))
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.customerId == userData().customerId;
-    }
-
-    function portalIsApprover() {
-      return portalCustomerIdOk()
-        && 'portalRole' in userData()
-        && userData().portalRole == 'approver';
-    }
-
-    function portalTaxInvoiceBillingApprovalKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'billingCustomerApprovedAt',
-        'billingCustomerApprovedByUid',
-        'billingCustomerApprovedByName',
-        'billingCustomerApprovalSource',
-        'billingApprovalToken',
-        'billingApprovalEvents',
-        'updatedAt'
-      ]);
-    }
-
-    function portalTaxInvoicePaymentNotifyKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'paymentNotifiedAt',
-        'paymentNotifiedByUid',
-        'paymentNotifiedByName',
-        'paymentNotifySource',
-        'paymentNotificationNote',
-        'updatedAt'
-      ]);
-    }
-
-    function portalTaxInvoicePaymentNotifyAllowed() {
-      return resource.data.status == 'ISSUED'
-        && !('paymentNotifiedAt' in resource.data)
-        && !('paymentReceivedConfirmedAt' in resource.data)
-        && !('linkedReceiptId' in resource.data);
-    }
-
-    /** ลูกค้า (Approver) ยืนยันใบแจ้งหนี้เรียกเก็บ — commercial_invoices */
-    function portalCommercialInvoiceConfirmKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'status',
-        'customerApprovedAt',
-        'customerApprovedByUid',
-        'customerApprovedByName',
-        'customerApprovalSource',
-        'updatedAt',
-        'updatedByUid',
-        'updatedByName'
-      ]);
-    }
-
-    /** ลูกค้าแนบสลิป/หลักฐาน — เอกสารยืนยัน ISSUED แล้ว, ยังไม่รับรอง OPEC */
-    function portalCommercialPaymentProofKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'customerPaymentReportedAt',
-        'customerPaymentReportedByUid',
-        'customerPaymentReportedByName',
-        'customerPaymentProofUrl',
-        'customerPaymentProofFileName',
-        'updatedAt',
-        'updatedByUid',
-        'updatedByName'
-      ]);
-    }
-
-    function portalCommercialPaymentReportAllowed() {
-      return portalIsApprover()
-        && portalOwnsResourceCustomerId()
-        && resource.data.status == 'ISSUED'
-        && !resource.data.keys().hasAny(['opecPaymentVerifiedAt']);
-    }
-
-    /** ลูกหนี้ (AR) จากยืนยันยอด — documentNo คงที่ ไม่ต้องใช้ number_sequences ใน portal */
-    function portalArComFromCommercialCreateOk() {
-      return clientPortalUserActive()
-        && portalIsApprover()
-        && request.resource.data.keys().hasAll(['customerId', 'documentNo', 'referenceType', 'referenceId', 'issueDate', 'dueDate', 'debitAmount', 'creditAmount', 'outstandingAmount', 'status', 'createdAt', 'updatedAt'])
-        && request.resource.data.referenceType == 'COMMERCIAL_INVOICE'
-        && request.resource.data.referenceId is string
-        && request.resource.data.documentNo == ('AR-COM-' + request.resource.data.referenceId)
-        && request.resource.data.customerId == userData().customerId
-        && request.resource.data.status == 'OPEN'
-        && request.resource.data.creditAmount == 0
-        && request.resource.data.debitAmount is number
-        && request.resource.data.debitAmount > 0
-        && request.resource.data.outstandingAmount == request.resource.data.debitAmount
-        && exists(/databases/$(database)/documents/commercial_invoices/$(request.resource.data.referenceId))
-        && get(/databases/$(database)/documents/commercial_invoices/$(request.resource.data.referenceId)).data.customerId == userData().customerId
-        && get(/databases/$(database)/documents/commercial_invoices/$(request.resource.data.referenceId)).data.status == 'ISSUED';
-    }
-
-    /** ลูกค้าแจ้งร้องขอแก้ไข (Open Dispute) — คงสถานะ PENDING_CUSTOMER */
-    function portalCommercialInvoiceRevisionRequestKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'customerRevisionRequestedAt',
-        'customerRevisionRequestNote',
-        'customerRevisionIssueId',
-        'updatedAt',
-        'updatedByUid',
-        'updatedByName'
-      ]);
-    }
-
-    /** ลูกค้า (Approver) ตอบรับ/ปฏิเสธใบเสนอราคา — จาก sent → accepted|rejected */
-    function portalQuotationPortalDecisionKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'status',
-        'updatedAt',
-        'updatedBy',
-        'portalDecisionAt',
-        'portalDecisionByUid',
-        'portalDecisionByName',
-        'portalDecisionSource'
-      ]);
-    }
-
-    /** Portal: read/list only after OPEC marked sent — hide draft/revised from customer */
-    function portalQuotationPortalReadOk() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAny(['customerId'])
-        && resource.data.customerId == userData().customerId
-        && resource.data.status in ['sent', 'accepted', 'rejected', 'expired', 'cancelled'];
-    }
-
-    /** Portal approver: request revision (negotiate) while status stays sent */
-    function portalQuotationNegotiationRequestKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'customerRevisionRequestedAt',
-        'customerRevisionRequestNote',
-        'customerRevisionIssueId',
-        'updatedAt',
-        'updatedBy'
-      ]);
-    }
-
-    function portalTimesheetBillingLockKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'status',
-        'lockedAt',
-        'lockedBy',
-        'billingLockedByTaxInvoiceId',
-        'lockedForBillingAt',
-        'updatedAt'
-      ]);
-    }
-
-    /** Portal: monthly wave review — read-only after manager approved; wave must belong to customer */
-    function portalWaveMonthTimesheetReviewReadable() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['waveId', 'status'])
-        && resource.data.waveId is string
-        && resource.data.status == 'approved'
-        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
-    }
-
-    /** Portal: photo bundle for wave/month — same customer as wave (evidence for billing review; avoids orphan bundle when review doc lags) */
-    function portalWaveMonthTimesheetPhotoBundleReadable() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['waveId'])
-        && resource.data.waveId is string
-        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
-    }
-
-    /** Portal: งวด timesheet ราย PO+เดือน — อ่านได้เมื่อผู้จัดการอนุมัติ (ฉบับเดียวกับ invoice/payroll) */
-    function portalPoMonthTimesheetReviewReadable() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['poId', 'status'])
-        && resource.data.poId is string
-        && resource.data.status == 'approved'
-        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.poId))
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.customerId == userData().customerId;
-    }
-
-    function portalPoMonthTimesheetPhotoBundleReadable() {
-      return portalCustomerIdOk()
-        && resource != null
-        && exists(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id))
-        && get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.status == 'approved'
-        && get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.poId is string
-        && exists(/databases/$(database)/documents/purchase_orders/$(get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.poId))
-        && get(/databases/$(database)/documents/purchase_orders/$(get(/databases/$(database)/documents/po_month_timesheet_reviews/$(resource.id)).data.poId)).data.customerId == userData().customerId;
-    }
-
-    // ---------- Admin-only (no overlapping permissive catch-all) ----------
-    match /users/{userId} {
-      allow get: if isAdmin() || isOwner(userId) || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
-      allow list: if isAdmin() || isOperationsPillarExecutive();
-      allow create: if isAdmin()
-        || (isOwner(userId) && bootstrapUserCreateValid(userId))
-        || (isOwner(userId) && selfRegistrationPendingCreateValid(userId))
-        || (isOperationsPillarExecutive() && isCustomerPortalUserCreate(userId))
-        || (isOperationsPillarExecutive() && isEmployeeSelfPortalUserCreate(userId));
-      allow update: if isAdmin()
-        || (isOwner(userId) && !userSecurityFieldChanges())
-        || opsExecClientPortalUpdateOk();
-      allow delete: if isAdmin()
-        || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
-    }
-
-    match /roles_system_admin/{id} {
-      allow read, write: if isAdmin();
-    }
-
-    match /permission_profiles/{id} {
-      allow get: if isInternalUser()
-        || clientPortalUserActive()
-        || isInternalStaffDoc()
-        || profileDocIsAssignedToCurrentUser(id);
-      allow list: if isInternalUser() || clientPortalUserActive();
-      allow write: if isAdmin();
-    }
-
-    // UI list: admin only; app services append entries as any internal user.
-    // Align create with number_sequences: internal staff doc (pending activation) still runs ISSUE_CODE transactions.
-    match /audit_logs/{id} {
-      allow read: if isAdmin();
-      allow create: if isInternalUser()
-        || isInternalStaffDoc()
-        || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
-      allow update, delete: if isAdmin();
-    }
-
-    // Document codes (customers, workers, POs, vendor bills, etc.) — active internal + staff doc (pending activation).
-    match /number_sequences/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    // ---------- Accounting-only modules ----------
-    match /billing_notes/{id} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver() || portalOwnsResourceCustomerId();
-      allow write: if isAccountingOrAdmin();
-    }
-    match /billing_notes/{billingNoteId}/lines/{lineId} {
-      allow read: if isAccountingOrAdmin()
-        || isAccountingDepartmentReadOnlyObserver()
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/billing_notes/$(billingNoteId))
-            && get(/databases/$(database)/documents/billing_notes/$(billingNoteId)).data.customerId == userData().customerId);
-      allow write: if isAccountingOrAdmin();
-    }
-    match /billing_notes/{billingNoteId}/{document=**} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
-      allow write: if isAccountingOrAdmin();
-    }
-
-    // DRAFT: บัญชีสร้าง/ออกเอกสารจริง — พนักงานภายในดูได้และแนบรูปสลิปขณะยัง DRAFT เท่านั้น
-    // Commercial invoices (draft → customer approval → issued) — not tax invoices; internal creates from timesheet/wave.
-    /** Transition to VOID — restricted to admin (internal ops managers must not void via client). */
-    function commercialInvoiceTransitionToVoid() {
-      return resource.data != null
-        && 'status' in resource.data
-        && resource.data.status != 'VOID'
-        && request.resource.data != null
-        && 'status' in request.resource.data
-        && request.resource.data.status == 'VOID';
-    }
-
-    match /commercial_invoices/{id} {
-      // Portal: same customer. DRAFT = readable so the app can show “not shared yet” instead of a rules error (e.g. from timesheet hub links).
-      // isInternalStaffDoc: list ได้แม้ approval/activation ยังไม่สมบูรณ์ (เทียบ purchase_orders, worker_month_timesheets, …)
-      allow read: if isInternalUser() || isInternalStaffDoc()
-        || (portalCustomerIdOk()
-            && resource.data.customerId == userData().customerId
-            && resource.data.status in ['DRAFT', 'PENDING_CUSTOMER', 'ISSUED', 'VOID']);
-      allow create: if isInternalUser() || isInternalStaffDoc();
-      allow update: if (commercialInvoiceTransitionToVoid() && isAdmin())
-        || (
-          !commercialInvoiceTransitionToVoid()
-          && (
-            isInternalUser() || isInternalStaffDoc()
-            || (
-              portalIsApprover()
-              && portalOwnsResourceCustomerId()
-              && resource.data.status == 'PENDING_CUSTOMER'
-              && request.resource.data.status == 'ISSUED'
-              && portalCommercialInvoiceConfirmKeysOnly()
-            )
-            || (
-              portalIsApprover()
-              && portalOwnsResourceCustomerId()
-              && resource.data.status == 'PENDING_CUSTOMER'
-              && request.resource.data.status == 'PENDING_CUSTOMER'
-              && portalCommercialInvoiceRevisionRequestKeysOnly()
-            )
-            || (
-              portalCommercialPaymentReportAllowed()
-              && request.resource.data.status == 'ISSUED'
-              && portalCommercialPaymentProofKeysOnly()
-            )
-          )
-        );
-      /** Admin cannot hard-delete ISSUED (confirmed billing); internal non-admin still only DRAFT. */
-      allow delete: if (isAdmin() && resource.data.status != 'ISSUED')
-        || ((isInternalUser() || isInternalStaffDoc()) && resource.data.status == 'DRAFT');
-    }
-
-    match /tax_invoices/{id} {
-      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
-      allow create: if isAccountingOrAdmin()
-        && request.resource.data.status == 'DRAFT';
-      allow update: if isAccountingOrAdmin()
-        || (
-          isInternalUser()
-          && resource.data.status == 'DRAFT'
-          && request.resource.data.status == 'DRAFT'
-        )
-        || (
-          portalIsApprover()
-          && portalOwnsResourceCustomerId()
-          && resource.data.status == 'DRAFT'
-          && request.resource.data.status == 'DRAFT'
-          && portalTaxInvoiceBillingApprovalKeysOnly()
-        )
-        || (
-          portalIsApprover()
-          && portalOwnsResourceCustomerId()
-          && portalTaxInvoicePaymentNotifyAllowed()
-          && portalTaxInvoicePaymentNotifyKeysOnly()
-        );
-      allow delete: if isAccountingOrAdmin();
-    }
-    match /tax_invoices/{taxInvoiceId}/{document=**} {
-      allow read: if isInternalUser()
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId))
-            && get(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId)).data.customerId == userData().customerId);
-      allow write: if isAccountingOrAdmin();
-    }
-
-    /** ใบเสร็จรับเงิน (ลูกค้า) — อ้างอิงใบกำกับภาษี; read ให้สอดคล้อง tax_invoices (พนักงานภายในดูได้) */
-    match /receipts/{id} {
-      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
-      allow create, update, delete: if isAccountingOrAdmin();
-    }
-
-    /**
-     * AP Bills — บัญชีเป็นหลัก; ฝั่งคลัง/จัดซื้อต้องลบแถวที่ผูก purchaseId ได้เมื่อลบ PO (cascade)
-     * (มิฉะนั้น getDocs(ap_bills where purchaseId==…) จะ permission-denied แม้ลบ purchases ได้)
-     */
-    function apBillHasPurchaseLink(data) {
-      return data != null
-        && 'purchaseId' in data
-        && (
-          (data.purchaseId is string && data.purchaseId.size() > 0)
-          /** Legacy/import rows may store DocumentReference instead of string — still tied to a PO */
-          || data.purchaseId is path
-        );
-    }
-
-    match /ap_bills/{id} {
-      allow read: if isAccountingOrAdmin()
-        || isAccountingDepartmentReadOnlyObserver()
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && resource.data != null
-          && apBillHasPurchaseLink(resource.data)
-        );
-      allow create, update: if isAccountingOrAdmin();
-      allow delete: if isAccountingOrAdmin()
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && resource.data != null
-          && apBillHasPurchaseLink(resource.data)
-        );
-    }
-
-    match /accounts_receivable/{id} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver() || portalOwnsResourceCustomerId();
-      allow create: if isAccountingOrAdmin() || portalArComFromCommercialCreateOk();
-      allow update, delete: if isAccountingOrAdmin();
-    }
-
-    // Internal users may create rows from store workflow (vendor bill); accounting still controls payment in UI.
-    // isInternalStaffDoc: ฝ่ายคลัง/ผจก. ที่ยัง pending activation — เทียบ purchases / purchase_requests
-    match /accounts_payable/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    /** หัก ณ ที่จ่าย (ผู้รับเงิน) — สะสมรอนำส่งสรรพากร ไม่ตัดบัญชีธนาคารตอนจ่ายคู่ค้า */
-    match /withholding_at_source_items/{id} {
-      allow read: if isAccountingOrAdmin() || isInternalUser() || isInternalStaffDoc();
-      allow write: if isAccountingOrAdmin();
-    }
-
-    match /purchase_vendor_bills/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    /** อ่านบัญชีธนาคารสำหรับเลือกบัญชีตัดจ่าย payroll — รวมเมทริกซ์โปรไฟล์ bank_accounts/cashbook.view */
-    match /bank_accounts/{id} {
-      allow read: if canAccessBankAccountsAndCashbook()
-        || internalPayrollDataReader()
-        || bankAccountsViewGrantedViaAssignedPermissionProfile();
-      allow write: if canAccessBankAccountsAndCashbook();
-    }
-
-    match /cashbook_entries/{id} {
-      allow read: if canAccessBankAccountsAndCashbook()
-        || isAccountingDepartmentReadOnlyObserver();
-      allow write: if canAccessBankAccountsAndCashbook();
-    }
-
-    /** รับ/จ่าย Petty Cash หน้างาน — ไม่ใช่รายการ cashbook หลัก */
-    match /petty_cash_entries/{id} {
-      allow read, write: if canAccessBankAccountsAndCashbook();
-    }
-
-    match /executive_payroll_runs/{id} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
-      allow write: if isAccountingOrAdmin();
-    }
-    match /executive_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
-      allow write: if isAccountingOrAdmin();
-    }
-    match /executive_payroll_runs/{runId}/{document=**} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
-      allow write: if isAccountingOrAdmin();
-    }
-
-    /** รายชื่อผู้บริหาร + ฐานเงินเดือน — ใช้เฉพาะงวด executive payroll (เมนูบัญชี) */
-    match /executive_payroll_staff/{id} {
-      allow read: if isAccountingOrAdmin() || isAccountingDepartmentReadOnlyObserver();
-      allow write: if isAccountingOrAdmin();
-    }
-
-    // ---------- System docs (read widened where app needs) ----------
-    match /system/{docId} {
-      allow read: if isAdmin()
-        || (docId == 'bootstrap' && isSignedIn())
-        || (docId == 'company_profile' && (isInternalUser() || isInternalStaffDoc() || clientPortalUserActive()))
-        || (docId == 'drug_test_panel' && isInternalUser());
-      allow write: if isAdmin();
-    }
-
-    match /approvals/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    // ---------- Client portal ----------
-    match /client_portal/{document=**} {
-      allow read, write: if clientPortalUserActive();
-    }
-
-    // ---------- Core operations (all active internal) ----------
-    match /customers/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc()
-        || (portalCustomerIdOk() && userData().customerId == id);
-      allow write: if isInternalUser() || isInternalStaffDoc();
-    }
-    match /customers/{customerId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    // Portal list/get: customer sees only post-"sent" statuses (draft stays internal-only).
-    match /quotations/{id} {
-      allow read: if isInternalUser() || portalQuotationPortalReadOk();
-      allow create, delete: if isInternalUser();
-      allow update: if isInternalUser()
-        || (
-          portalCustomerIdOk()
-          && portalQuotationPortalReadOk()
-          && resource.data.status == 'sent'
-          && request.resource.data.status == 'sent'
-          && request.resource.data.customerId == resource.data.customerId
-          && !('customerRevisionRequestedAt' in resource.data)
-          && portalQuotationNegotiationRequestKeysOnly()
-        )
-        // Accept/reject quotation: same spirit as negotiation — portal customer for this doc;
-        // omit portalRole == approver (many accounts omit portalRole). Explicit viewers cannot update here.
-        || (
-          portalQuotationPortalReadOk()
-          && (!('portalRole' in userData()) || userData().portalRole != 'viewer')
-          && resource.data.status == 'sent'
-          && request.resource.data.status in ['accepted', 'rejected']
-          && request.resource.data.customerId == resource.data.customerId
-          && portalQuotationPortalDecisionKeysOnly()
-        );
-    }
-    match /quotations/{quotationId}/lines/{lineId} {
-      allow read: if isInternalUser()
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/quotations/$(quotationId))
-            && get(/databases/$(database)/documents/quotations/$(quotationId)).data.customerId == userData().customerId
-            && get(/databases/$(database)/documents/quotations/$(quotationId)).data.status
-              in ['sent', 'accepted', 'rejected', 'expired', 'cancelled']);
-      allow write: if isInternalUser();
-    }
-
-    match /main_contracts/{id} {
-      allow read: if isInternalUser() || portalOwnsResourceCustomerId();
-      allow create: if isInternalUser();
-      allow update: if isInternalUser();
-      allow delete: if isAdmin();
-    }
-    match /main_contracts/{contractId}/{document=**} {
-      allow read, write: if isInternalUser();
-    }
-
-    /** สรุปกลุ่ม PO Active ต่อลูกค้า + โหมดงาน (id = `{customerId}__ONSHORE|OFFSHORE`) — คิวโควต้าใช้ PO โดยตรงได้แม้ยังไม่มีแถวนี้ */
-    match /po_active_bundles/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
-      allow create, update: if isInternalUser();
-      allow delete: if isAdmin();
-    }
-
-    match /sales_contract_terms/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /purchase_orders/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId();
-      allow write: if isInternalUser();
-    }
-    /** PO lines: portal may read workLocation for their PO (site per line). */
-    match /purchase_orders/{purchaseOrderId}/po_lines/{lineId} {
-      allow read: if isInternalUser()
-        || isInternalStaffDoc()
-        || (portalCustomerIdOk()
-          && get(/databases/$(database)/documents/purchase_orders/$(purchaseOrderId)).data.customerId
-            == userData().customerId);
-      allow write: if isInternalUser();
-    }
-    match /purchase_orders/{purchaseOrderId}/{document=**} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /rate_conditions/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /profit_estimates/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /waves/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId();
-      allow write: if isInternalUser();
-    }
-
-    match /mobilizations/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId();
-      /** ให้ payroll_officer / internal_staff อัปเดตสถานะจาก Wave Board (จบงาน → รอ Mob) — เทียบเท่า customer_month_timesheet_documents */
-      allow write: if isInternalUser() || isInternalStaffDoc();
-    }
-    match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /assignments/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /worker_wave_acceptances/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    match /workers/{workerId} {
-      allow read: if isInternalUser()
-        || isInternalStaffDoc()
-        || (isEmployeeSelfPortalUser()
-          && resource.data.keys().hasAll(['linkedUserId'])
-          && resource.data.linkedUserId is string
-          && resource.data.linkedUserId == request.auth.uid)
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/workers/$(workerId))
-            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
-      allow write: if isInternalUser() && !isEmployeeSelfPortalUser();
-    }
-    match /workers/{workerId}/{document=**} {
-      allow read: if isInternalUser()
-        || isInternalStaffDoc()
-        || (isEmployeeSelfPortalUser()
-          && exists(/databases/$(database)/documents/workers/$(workerId))
-          && get(/databases/$(database)/documents/workers/$(workerId)).data.keys().hasAll(['linkedUserId'])
-          && get(/databases/$(database)/documents/workers/$(workerId)).data.linkedUserId is string
-          && get(/databases/$(database)/documents/workers/$(workerId)).data.linkedUserId == request.auth.uid)
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/workers/$(workerId))
-            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
-      allow write: if isInternalUser() && !isEmployeeSelfPortalUser();
-    }
-
-    match /positions/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || clientPortalUserActive();
-      allow write: if isInternalUser();
-    }
-    match /positions/{positionId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    match /labor_cost_contract_terms/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    function officeStaffSelfProfileSensitiveKeys() {
-      return [
-        'staffCode', 'department', 'positionId', 'positionTitle', 'employmentType',
-        'salaryType', 'monthlySalary', 'dailyWage', 'monthlyAttendanceExempt',
-        'excludeFromPayrollRuns', 'payrollBand', 'startDate', 'employmentEndDate',
-        'bankName', 'bankAccountName', 'bankAccountNumber', 'taxId',
-        'socialSecurityNo', 'socialSecurityStatus', 'socialSecurityHospital',
-        'linkedUserId', 'linkedUserDisplayName', 'linkedUserDisplayEmail', 'linkedUserAccessSummary',
-        'supervisorId', 'status', 'createdAt', 'createdBy', 'notes', 'id'
-      ];
-    }
-
-    /** พนักงาน employee_self แก้เฉพาะข้อมูลส่วนตัว — ห้ามแตะเงินเดือนและการผูกบัญชี */
-    function officeStaffSelfProfileUpdateOk() {
-      return isEmployeeSelfPortalUser()
-        && resource.data.linkedUserId == request.auth.uid
-        && request.resource.data.linkedUserId == resource.data.linkedUserId
-        && !request.resource.data.diff(resource.data).affectedKeys()
-             .hasAny(officeStaffSelfProfileSensitiveKeys());
-    }
-
-    /** อ่านสำหรับหน้าคลัง (custody) — รองรับพนักงานภายในที่ยัง pending activation */
-    match /office_staff/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
-      allow create: if isInternalUser() && !isEmployeeSelfPortalUser();
-      allow update: if (isInternalUser() && !isEmployeeSelfPortalUser())
-        || officeStaffSelfProfileUpdateOk();
-      allow delete: if isInternalUser() && !isEmployeeSelfPortalUser();
-    }
-
-    match /worker_document_catalog/{id} {
-      allow read, write: if isInternalUser();
-    }
-
-    // Master registries: match app canManage (internal staff) — isInternalStaffDoc สำหรับบัญชีที่ยัง pending/ยังไม่ active ครบ
-    match /bank_name_catalog/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-    match /sso_hospital_catalog/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    /** บันทึกการออกหนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ) — เลขที่ไม่ซ้ำ */
-    match /withholding_certificate_issues/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
-      allow create: if isInternalUser() || isInternalStaffDoc();
-      allow update, delete: if isAdmin();
-    }
-
-    /**
-     * หนังสือรับรองหัก ณ ที่จ่าย (snapshot + สถานะ) — ควบคุมการแก้ไขหลักในแอป (ISSUED ห้ามแก้ตัวเลข)
-     * กฎระดับนี้ยอมให้เจ้าหน้าที่บัญชีสร้าง/อัปเดตได้; รายละเอียด immutable ตรวจที่ client/server เพิ่มเติม
-     */
-    match /withholding_certificate_documents/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
-      allow create: if isAccountingOrAdmin();
-      allow update: if isAccountingOrAdmin();
-      /**
-       * Delete: accounting/admin — plus internal cleanup when removing a purchase-linked cert during PO cascade
-       * (UI gate still blocks paid vendor bills / paid milestones).
-       */
-      allow delete: if isAccountingOrAdmin()
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && resource.data != null
-          && 'sourcePurchaseId' in resource.data
-          && resource.data.sourcePurchaseId is string
-          && resource.data.sourcePurchaseId.size() > 0
-        );
-    }
-
-    match /withholding_certificate_documents/{docId}/audit_logs/{logId} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
-      allow create: if isAccountingOrAdmin();
-      allow update, delete: if false;
-    }
-
-    match /withholding_certificate_documents/{docId}/xml_export_logs/{logId} {
-      allow read: if isInternalUser() || isInternalStaffDoc();
-      allow create: if isAccountingOrAdmin();
-      allow update, delete: if false;
-    }
-
-    match /payroll_runs/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
-    }
-
-    match /payroll_batches/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
-    }
-    match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read: if internalPayrollDataReader() || payrollBatchLineOwnedByLinkedWorker();
-      allow write: if isInternalUser();
-    }
-    match /payroll_batches/{batchId}/{document=**} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
-    }
-
-    match /payroll_periods/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
-    }
-
-    match /payroll_policies/{id} {
-      /** ลูกจ้าง/พนักงานพอร์ทัลอ่านได้เฉพาะนโยบายปฏิทิน-ตัวคูณค่าจ้างกลาง (แสดงใน My Profile) — ไม่เปิดทั้งคอลเลกชัน */
-      allow read: if internalPayrollDataReader()
-        || (
-          id == 'policy_worker_global_labor'
-          && isSignedIn()
-          && hasUserDoc()
-          && !isCustomerPortalData(userData())
-        );
-      allow write: if isInternalUser();
-    }
-
-    /** ตั้งค่าองค์กร HR (โควตาวันลาออฟฟิศ ฯลฯ) — เขียนจำกัดกว่า payroll_policies */
-    match /hr_configuration/{docId} {
-      allow read: if internalPayrollDataReader();
-      allow write: if canEditHrOrgConfigurationDocs();
-    }
-
-    /**
-     * เซสชัน QR Kiosk — token = doc id; QR ใช้ครั้งเดียว (single-use)
-     * update อนุญาตเฉพาะ "consume" → active true→false พร้อม snapshot ของ subject ที่สแกน
-     */
-    function attendanceKioskSessionConsumeUpdate() {
-      let before = resource.data;
-      let after = request.resource.data;
-      return isSignedIn()
-        && hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && before.active == true
-        && kioskSessionStillActive(before.expiresAt)
-        && after.active == false
-        && after.expiresAt == before.expiresAt
-        && after.createdByUid == before.createdByUid
-        && after.createdAt == before.createdAt
-        && after.consumedByUid == request.auth.uid
-        && (after.consumedAt is int || after.consumedAt is float)
-        && after.consumedSubjectType in ['worker', 'office_staff']
-        && after.consumedSubjectId is string
-        && after.consumedSubjectId.size() > 0
-        && after.consumedDirection in ['IN', 'OUT']
-        && after.diff(before).affectedKeys().hasOnly([
-          'active',
-          'consumedAt',
-          'consumedByUid',
-          'consumedSubjectType',
-          'consumedSubjectId',
-          'consumedDirection',
-        ]);
-    }
-
-    match /attendance_kiosk_sessions/{token} {
-      allow read: if isSignedIn() && hasUserDoc() && (isInternalUser() || isInternalStaffDoc());
-      allow create: if isSignedIn()
-        && hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && request.resource.data.keys().hasAll(['expiresAt', 'active', 'createdByUid', 'createdAt'])
-        && request.resource.data.createdByUid == request.auth.uid
-        && request.resource.data.active == true
-        && kioskExpiresMsLooksReasonable(request.resource.data.expiresAt)
-        && (request.resource.data.createdAt is int || request.resource.data.createdAt is float)
-        && token is string
-        && token.size() >= 16;
-      allow update: if attendanceKioskSessionConsumeUpdate();
-      allow delete: if false;
-    }
-
-    /** บันทึกเข้า/ออกจากมือถือ (หลังสแกน QR) — ผูกกับ linkedUserId ใน workers/office_staff */
-    match /attendance_punches/{id} {
-      allow read: if internalPayrollDataReader();
-      allow create: if attendancePunchCreateValid();
-      allow update, delete: if false;
-    }
-
-    match /attendance_correction_requests/{id} {
-      allow read: if internalPayrollDataReader();
-      allow create: if attendanceCorrectionRequestCreateValid();
-      allow update: if attendanceCorrectionRequestResolveValid();
-      allow delete: if false;
-    }
-
-    match /attendance_day_overrides/{id} {
-      allow read: if internalPayrollDataReader();
-      allow create: if attendanceDayOverrideCreateValid();
-      allow update, delete: if false;
-    }
-
-    /** ใบลาพนักงานออฟฟิศ — สร้างได้เฉพาะเจ้าของ (uid == linkedUserId) หรือ HR/manager */
-    function officeStaffLinkedToCallerById(staffId) {
-      let s = /databases/$(database)/documents/office_staff/$(staffId);
-      return exists(s)
-        && 'linkedUserId' in get(s).data
-        && get(s).data.linkedUserId is string
-        && get(s).data.linkedUserId.size() > 0
-        && get(s).data.linkedUserId == request.auth.uid;
-    }
 
     function leaveRequestOwnedByCaller() {
       return resource.data != null
@@ -1717,6 +472,8 @@ service cloud.firestore {
         && resource.data.staffId is string
         && officeStaffLinkedToCallerById(resource.data.staffId);
     }
+
+
 
     function leaveRequestCreateValid() {
       return isSignedIn()
@@ -1750,14 +507,34 @@ service cloud.firestore {
         );
     }
 
-    /** แก้ฉบับร่าง / ส่งจากร่าง / ยกเลิกร่าง — เจ้าของคำขอ (ผู้สร้าง) หรือ HR ที่อ่าน payroll ได้ */
-    function leaveRequestDraftEditorAllowed() {
-      return internalPayrollDataReader()
-        || (
-          leaveRequestOwnedByCaller()
-          && resource.data.createdByUid == request.auth.uid
-        );
+
+
+    function leaveRequestSelfCancelValid() {
+      return resource.data.status == 'SUBMITTED'
+        && leaveRequestOwnedByCaller()
+        && request.resource.data.status == 'CANCELLED'
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.leaveType == resource.data.leaveType
+        && request.resource.data.days == resource.data.days
+        && request.resource.data.startDate == resource.data.startDate
+        && request.resource.data.endDate == resource.data.endDate;
     }
+
+
+
+    function leaveRequestManagerDecisionValid() {
+      return internalPayrollDataReader()
+        && resource.data.status == 'SUBMITTED'
+        && (request.resource.data.status == 'APPROVED' || request.resource.data.status == 'REJECTED')
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.leaveType == resource.data.leaveType
+        && request.resource.data.days == resource.data.days
+        && request.resource.data.startDate == resource.data.startDate
+        && request.resource.data.endDate == resource.data.endDate
+        && request.resource.data.year == resource.data.year;
+    }
+
+
 
     function leaveRequestDraftUpdateValid() {
       return resource.data.status == 'DRAFT'
@@ -1779,124 +556,1287 @@ service cloud.firestore {
         );
     }
 
-    /** เจ้าของยกเลิกได้เฉพาะคำที่ยังไม่อนุมัติ; HR/manager เปลี่ยน APPROVED/REJECTED ได้ */
-    function leaveRequestSelfCancelValid() {
-      return resource.data.status == 'SUBMITTED'
-        && leaveRequestOwnedByCaller()
-        && request.resource.data.status == 'CANCELLED'
-        && request.resource.data.staffId == resource.data.staffId
-        && request.resource.data.leaveType == resource.data.leaveType
-        && request.resource.data.days == resource.data.days
-        && request.resource.data.startDate == resource.data.startDate
-        && request.resource.data.endDate == resource.data.endDate;
+
+
+    function canReadWorkerPayrollStack() {
+      return internalActiveOrStaff()
+        && !roleIs(userData(), 'store_officer')
+        && (
+          isAdmin()
+          || roleIsAccounting(userData())
+          || roleIs(userData(), 'payroll_officer')
+          || roleIs(userData(), 'hr_manager')
+          || roleIs(userData(), 'hr_officer')
+          || roleIs(userData(), 'operations_manager')
+          || roleIs(userData(), 'sales_manager')
+          || roleIs(userData(), 'sales_officer')
+        );
     }
 
-    function leaveRequestManagerDecisionValid() {
+
+    function canPreparePayroll() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'hr_officer')
+            || roleIs(userData(), 'payroll_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
+    }
+
+
+    function cashAdvancePrivilegedReader() {
+      return isAdmin()
+        || isAccountingOrAdmin()
+        || isOperationsManagerRole()
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && (
+            roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'payroll_officer')
+          )
+        );
+    }
+
+
+    function cashAdvanceInternalQueueReader() {
+      return hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && !isEmployeeSelfPortalUser()
+        && !isHrOfficerRoleScalar();
+    }
+
+
+    function isInternalStaffDoc() {
+      return hasUserDoc()
+        && isInternalTypeData(userData())
+        && !isCustomerPortalData(userData());
+    }
+
+
+    function isHrOfficerRoleScalar() {
+      return hasUserDoc() && roleIs(userData(), 'hr_officer');
+    }
+
+
+    function cashAdvanceEmployeeSelfCreateValid() {
+      let c = request.resource.data;
+      return c.keys().hasAll([
+          'subjectLinkedUserId', 'origin', 'status', 'amountBaht', 'reason',
+          'createdAt', 'updatedAt', 'createdByUid', 'createdByName', 'requestNo',
+        ])
+        && c.subjectLinkedUserId is string
+        && c.subjectLinkedUserId == request.auth.uid
+        && c.createdByUid is string
+        && c.createdByUid == request.auth.uid
+        && c.origin == 'employee'
+        && c.status == 'PENDING_PAYROLL_REVIEW';
+    }
+
+
+    function canReadAccountingInternal() {
+      return isAdmin()
+        || (isInternalUser() && roleIsAccounting(userData()) && !roleIs(userData(), 'store_officer'));
+    }
+
+
+
+    function canReadPurchases() {
+      return procurementReadCore()
+        && !roleIs(userData(), 'sales_manager');
+    }
+
+
+
+    function canWriteAccountingDocs() {
+      return isAdmin()
+        || (isInternalUser() && roleIs(userData(), 'accounting_manager'));
+    }
+
+
+
+    function canWritePurchases() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'store_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
+    }
+
+
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+
+    function isOperationsPillarExecutive() {
+      return hasUserDoc()
+        && isInternalUser()
+        && (
+          roleIs(userData(), 'operations_manager')
+          || roleIs(userData(), 'hr_manager')
+          || roleIs(userData(), 'sales_manager')
+          || isInternalOperationsManagerPartition(userData())
+        );
+    }
+
+
+
+    function bootstrapUserCreateValid(uid) {
+      let d = request.resource.data;
+      return isOwner(uid)
+        && d.id == uid
+        && (d.userType == 'internal' || (('user_type' in d) && (d.user_type == 'internal' || d.user_type == 'INTERNAL')))
+        && (d.isActive == true || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')))
+        && (d.approvalStatus == 'ACTIVE' || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')));
+    }
+
+
+    function selfRegistrationPendingCreateValid(uid) {
+      let d = request.resource.data;
+      return isOwner(uid)
+        && d.id == uid
+        && d.userType == 'internal'
+        && d.isActive == false
+        && d.approvalStatus == 'PENDING'
+        && ('email' in d) && d.email is string && d.email.size() > 0
+        && ('displayName' in d) && d.displayName is string && d.displayName.size() > 0
+        && ('phone' in d) && d.phone is string && d.phone.size() > 0
+        && d.department == 'operations'
+        && d.level == 'viewer'
+        && ('roleIds' in d) && d.roleIds is list && d.roleIds.size() == 0
+        && ('createdAt' in d) && d.createdAt is int
+        && ('updatedAt' in d) && d.updatedAt is int
+        && !('assignedRoleKey' in d)
+        && !('assignedRoleKeys' in d)
+        && !('permissionProfileKey' in d)
+        && !('permissionProfileKeys' in d)
+        && !('role' in d)
+        && !('accessGroup' in d)
+        && !('departmentGroup' in d)
+        && !('customerId' in d)
+        && !('portalRole' in d);
+    }
+
+
+
+    function isCustomerPortalUserCreate(userId) {
+      let c = request.resource.data;
+      return c.id == userId
+        && c.userType == 'customer_portal'
+        && c.assignedRoleKey == 'client_user'
+        && ('customerId' in c)
+        && c.customerId is string
+        && c.customerId.size() > 0
+        && ('email' in c)
+        && c.email is string;
+    }
+
+
+    function isEmployeeSelfPortalUserCreate(userId) {
+      let c = request.resource.data;
+      return c.id == userId
+        && c.userType == 'internal'
+        && c.assignedRoleKey == 'employee_self'
+        && ('email' in c)
+        && c.email is string
+        && c.email.size() > 0;
+    }
+
+
+
+    function userSecurityFieldChanges() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'userType', 'user_type', 'status', 'approvalStatus', 'isActive',
+        'assignedRoleKey', 'assignedRoleKeys', 'role',
+        'permissionProfileKey', 'permissionProfileKeys',
+        'accessGroup', 'departmentGroup', 'department', 'level', 'roleId', 'roleIds',
+        'customerId', 'portalRole', 'mustResetPassword'
+      ]);
+    }
+
+
+
+    function opsExecClientPortalUpdateOk() {
+      let before = resource.data;
+      let after = request.resource.data;
+      return isOperationsPillarExecutive()
+        && before.userType == 'customer_portal'
+        && after.userType == 'customer_portal'
+        && before.assignedRoleKey == 'client_user'
+        && after.assignedRoleKey == 'client_user'
+        && before.customerId == after.customerId
+        && before.id == after.id;
+    }
+
+
+
+    function systemDocReadOk(docId) {
+      return isAdmin()
+        || (docId == 'bootstrap' && isSignedIn())
+        || (docId == 'company_profile' && (canReadQuotationsInternal() || clientPortalUserActive()))
+        || (docId == 'drug_test_panel' && (canReadWorkers() || clientPortalUserActive()));
+    }
+
+
+
+    function systemBootstrapCreateOk(docId) {
+      return docId == 'bootstrap'
+        && isAdmin()
+        && !exists(/databases/$(database)/documents/system/bootstrap);
+    }
+
+
+
+    function numberSequenceAllowsWrite(seqId) {
+      return isAdmin()
+        || (
+          hasUserDoc()
+          && (
+            (seqId == 'main_contract' && canWriteCommercialDocs())
+            || (seqId == 'customer' && canWriteCustomers())
+            || (seqId == 'customer_po' && canWriteCommercialDocs())
+            || (seqId == 'quotation' && canWriteQuotations())
+            || (seqId == 'sales_term' && canWriteCommercialDocs())
+            || (seqId == 'cost_term' && canWriteLaborCostContractTerms())
+            || (seqId == 'billing_note' && canWriteAccountingDocs())
+            || (seqId == 'tax_invoice' && canWriteAccountingDocs())
+            || (seqId == 'money_receipt' && canWriteAccountingDocs())
+            || (seqId == 'commercial_invoice' && canIssueCommercialInvoiceSequence())
+            || (seqId == 'ap_bill' && canWriteAccountingDocs())
+            || (seqId == 'ar' && canWriteAccountingDocs())
+            || (seqId == 'ap' && (canWriteAccountingDocs() || canWritePurchases()))
+            || (seqId == 'cashbook_entry' && canWriteAccountingDocs())
+            || (seqId == 'petty_cash_entry' && bankAccountsWriteAllowed())
+            || (seqId == 'bank_account' && canWriteAccountingDocs())
+            || (seqId == 'petty_cash_account' && canWriteAccountingDocs())
+            || (seqId == 'office_staff' && canWriteWorkers())
+            || (seqId == 'worker' && canWriteWorkers())
+            || (seqId == 'position' && canCreatePositions())
+            || (seqId == 'wave' && canWriteOpsScheduling())
+            || (seqId == 'assignment' && canWriteOpsScheduling())
+            || (seqId == 'purchase_request' && canWritePurchases())
+            || (seqId == 'purchase' && canWritePurchases())
+            || (seqId == 'purchase_vendor_bill' && canWritePurchases())
+            || (seqId == 'cash_advance' && canIssueCashAdvanceSequence())
+            || (seqId == 'vendor' && canCreateVendors())
+            || (seqId == 'store_receive' && canWriteStoreInventory())
+            || (seqId == 'store_issue' && canWriteStoreInventory())
+            || (seqId == 'store_return' && canWriteStoreInventory())
+            || (seqId == 'store_writeoff' && canWriteStoreInventory())
+            || (seqId == 'store_item_equipment' && canWriteStoreInventory())
+            || (seqId == 'store_item_ppe' && canWriteStoreInventory())
+            || (seqId == 'payroll_run' && canPreparePayroll())
+            || (seqId == 'office_payroll_run' && canPrepareOfficePayrollRunDoc())
+            || (seqId == 'executive_payroll_run' && (canWriteAccountingDocs() || canManagePayrollFinancial()))
+            || (seqId == 'executive_payroll_staff' && canWriteAccountingDocs())
+            || (seqId == 'monthly_timesheet' && canWriteDailyTimesheet())
+            || (seqId == 'customer_month_timesheet' && canWriteDailyTimesheet())
+            || (seqId == 'wht_certificate_50' && canWriteAccountingDocs())
+          )
+        );
+    }
+
+
+
+    function clientPortalUserActive() {
+      return hasUserDoc()
+        && isCustomerPortalData(userData())
+        && isActiveStatus(userData());
+    }
+
+
+
+    function roleIs(d, key) {
+      return primaryRole(d) == key;
+    }
+
+
+
+    function internalActiveOrStaff() {
+      return hasUserDoc() && (isInternalUser() || isInternalStaffDoc());
+    }
+
+
+
+    function canIssueCommercialInvoiceSequence() {
+      return internalActiveOrStaff()
+        && !roleIs(userData(), 'store_officer')
+        && (
+          canReadCommercialDocs()
+          || canReadTimesheetsInternal()
+          || canReadAccountingInternal()
+        );
+    }
+
+
+
+    function roleIsAccounting(d) {
+      return roleIs(d, 'accounting_manager') || roleIs(d, 'accounting_officer');
+    }
+
+
+
+    function attendanceKioskSessionGate(token) {
+      let p = /databases/$(database)/documents/attendance_kiosk_sessions/$(token);
+      return exists(p)
+        && get(p).data.keys().hasAll(['expiresAt', 'active', 'createdByUid', 'createdAt'])
+        && get(p).data.active == true
+        && kioskSessionStillActive(get(p).data.expiresAt);
+    }
+
+
+
+    function punchSubjectLinkedToCaller(subjectType, subjectId) {
+      let path = subjectType == 'worker'
+        ? /databases/$(database)/documents/workers/$(subjectId)
+        : /databases/$(database)/documents/office_staff/$(subjectId);
+      return exists(path)
+        && 'linkedUserId' in get(path).data
+        && get(path).data.linkedUserId is string
+        && get(path).data.linkedUserId.size() > 0
+        && get(path).data.linkedUserId == request.auth.uid;
+    }
+
+
+    function attendanceCorrectionSubmitter() {
+      return hasUserDoc()
+        && isInternalUser()
+        && (isAdmin() || roleIs(userData(), 'payroll_officer'));
+    }
+
+
+    function attendanceCorrectionManager() {
+      return hasUserDoc()
+        && isInternalUser()
+        && (isAdmin() || roleIs(userData(), 'hr_manager') || roleIs(userData(), 'operations_manager'));
+    }
+
+
+
+    function officeStaffLinkedToCallerById(staffId) {
+      let s = /databases/$(database)/documents/office_staff/$(staffId);
+      return exists(s)
+        && 'linkedUserId' in get(s).data
+        && get(s).data.linkedUserId is string
+        && get(s).data.linkedUserId.size() > 0
+        && get(s).data.linkedUserId == request.auth.uid;
+    }
+
+
+
+    function leaveRequestDraftEditorAllowed() {
       return internalPayrollDataReader()
-        && resource.data.status == 'SUBMITTED'
-        && (request.resource.data.status == 'APPROVED' || request.resource.data.status == 'REJECTED')
-        && request.resource.data.staffId == resource.data.staffId
-        && request.resource.data.leaveType == resource.data.leaveType
-        && request.resource.data.days == resource.data.days
-        && request.resource.data.startDate == resource.data.startDate
-        && request.resource.data.endDate == resource.data.endDate
-        && request.resource.data.year == resource.data.year;
+        || (
+          leaveRequestOwnedByCaller()
+          && resource.data.createdByUid == request.auth.uid
+        );
     }
 
-    match /leave_requests/{id} {
-      allow read: if internalPayrollDataReader() || leaveRequestOwnedByCaller();
-      allow create: if leaveRequestCreateValid();
-      allow update: if leaveRequestSelfCancelValid() || leaveRequestManagerDecisionValid() || leaveRequestDraftUpdateValid();
-      allow delete: if false;
+
+
+    function isAccountingOrAdmin() {
+      return isAdmin() || isAccounting();
     }
 
-    match /payroll_correction_requests/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
+
+    function isOperationsManagerRole() {
+      return hasUserDoc()
+        && (isInternalUser() || isInternalStaffDoc())
+        && (
+          roleKeyIsOperationsManager(primaryRole(userData()))
+          || isInternalOperationsManagerPartition(userData())
+        );
     }
 
-    /** ใบหัก ณ ที่จ่ายจาก payroll ลูกจ้าง — แยกจาก withholding_certificate_documents (คู่ค้า) */
-    match /payroll_wht_certificates/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
+
+    function procurementReadCore() {
+      return internalActiveOrStaff()
+        && !roleIs(userData(), 'hr_officer')
+        && !roleIs(userData(), 'payroll_officer')
+        && !roleIs(userData(), 'accounting_officer');
     }
 
-    match /office_payroll_runs/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
-    }
-    match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if internalPayrollDataReader() || officePayrollLineOwnedByLinkedStaff();
-      allow write: if isInternalUser();
-    }
-    match /office_payroll_runs/{runId}/{document=**} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
+
+    function isInternalOperationsManagerPartition(d) {
+      return d != null
+        && isInternalTypeData(d)
+        && !isCustomerPortalData(d)
+        && accessLevelIsManager(d)
+        && (
+          ('accessGroup' in d && (d.accessGroup == 'operations' || d.accessGroup == 'operation'))
+          || ('departmentGroup' in d && (d.departmentGroup == 'operations' || d.departmentGroup == 'operation'))
+          || (
+            'department' in d
+            && d.department is string
+            && (d.department.lower() == 'operations' || d.department.lower() == 'operation')
+          )
+        )
+        && primaryRole(d) != 'hr_manager'
+        && primaryRole(d) != 'sales_manager'
+        && primaryRole(d) != 'store_officer';
     }
 
-    match /payment_export_batches/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
+
+
+    function canReadQuotationsInternal() {
+      return internalActiveOrStaff()
+        && !roleIs(userData(), 'store_officer');
+    }
+
+
+    function canWriteQuotations() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'sales_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
+    }
+
+
+
+    function canWriteLaborCostContractTerms() {
+      return canWriteWorkers()
+        || (isInternalUser() && roleIs(userData(), 'sales_manager'));
+    }
+
+
+
+    function bankAccountsWriteAllowed() {
+      return hasUserDoc() && bankAccountsWriteAllowedForUser(userData());
+    }
+
+
+
+    function canWriteOpsScheduling() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+            || roleIs(userData(), 'hr_manager')
+            || roleIs(userData(), 'hr_officer')
+            || roleIs(userData(), 'sales_manager')
+            || roleIs(userData(), 'sales_officer')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
+    }
+
+
+    function canIssueCashAdvanceSequence() {
+      return cashAdvancePrivilegedReader()
+        || (
+          (isInternalUser() || isInternalStaffDoc())
+          && !isEmployeeSelfPortalUser()
+          && !isHrOfficerRoleScalar()
+        )
+        || isEmployeeSelfPortalUser();
+    }
+
+
+
+    function canCreateVendors() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'store_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'sales_manager')
+            || roleIs(userData(), 'accounting_manager')
+          )
+        );
+    }
+
+
+
+    function canWriteStoreInventory() {
+      return isAdmin()
+        || (
+          isInternalUser()
+          && (
+            roleIs(userData(), 'store_officer')
+            || roleIs(userData(), 'operations_manager')
+            || roleIs(userData(), 'operations_officer')
+          )
+        );
+    }
+
+
+
+    function canPrepareOfficePayrollRunDoc() {
+      return isAdmin()
+        || roleIs(userData(), 'hr_manager')
+        || roleIs(userData(), 'hr_officer')
+        || roleIs(userData(), 'payroll_officer')
+        || roleIs(userData(), 'accounting_manager');
+    }
+
+
+
+    function canManagePayrollFinancial() {
+      return isAdmin()
+        || roleIsAccounting(userData())
+        || roleIs(userData(), 'payroll_officer')
+        || roleIs(userData(), 'hr_manager')
+        || roleIs(userData(), 'operations_manager');
+    }
+
+
+    function kioskSessionStillActive(expMs) {
+      return (expMs is int || expMs is float)
+        && expMs > request.time.toMillis() - 120000;
+    }
+
+
+    function roleKeyIsOperationsManager(k) {
+      return k == 'operations_manager' || k == 'operation_manager';
+    }
+
+
+
+    function accessLevelIsManager(d) {
+      return d != null && (
+        ('accessLevel' in d && d.accessLevel is string && d.accessLevel.lower() == 'manager')
+        || ('level' in d && d.level is string && d.level.lower() == 'manager')
+      );
+    }
+
+
+
+    function bankAccountsWriteAllowedForUser(u) {
+      return pettyCashSiteUserDocOk(u)
+        || accountingOrAdminOnUserDoc(u)
+        || roleIs(u, 'accounting_manager');
+    }
+
+
+    function pettyCashSiteUserDocOk(d) {
+      return d != null
+        && isInternalTypeData(d)
+        && !isCustomerPortalData(d)
+        && (
+          roleKeyIsOperationsManager(primaryRole(d))
+          || isInternalOperationsManagerPartition(d)
+        );
+    }
+
+
+    function accountingOrAdminOnUserDoc(d) {
+      return d != null
+        && isInternalTypeData(d)
+        && !isCustomerPortalData(d)
+        && isActiveStatus(d)
+        && (roleIsAdmin(d) || roleIsAccounting(d));
+    }
+
+
+
+    function roleIsAdmin(d) {
+      return roleIs(d, 'system_admin')
+        || roleIs(d, 'admin_admin')
+        || (d != null && ('accessGroup' in d) && stringLowerEqAdmin(d.accessGroup));
+    }
+
+
+    function stringLowerEqAdmin(v) {
+      return v is string && v.size() > 0 && v.lower() == 'admin';
+    }
+
+    // =====================================================================
+    // MATRIX-DERIVED GATES (auto-generated from /system-admin/menu-permissions)
+    // =====================================================================
+
+    // ===== Commercial (การค้า) — Gates =====
+
+    // ----- ทะเบียนลูกค้า (customers) -----
+    function canFullCustomers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบเสนอราคา (quotations) -----
+    function canReadQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function canCreateQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canEditQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- สัญญาหลัก (main_contracts) -----
+    function canReadMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function canCreateMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canEditMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบสั่งซื้อลูกค้า (customer_pos) -----
+    function canReadCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function canCreateCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canEditCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- เงื่อนไขการขาย (sales_contract_terms) -----
+    function canFullSalesContractTerms() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- กฎการคำนวณราคา (rate_conditions) -----
+    function canFullRateConditions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ประมาณการกำไร (profit_estimates) -----
+    function canFullProfitEstimates() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ===== Operations (ปฏิบัติการ) — Gates =====
+
+    // ----- Waves/รอบงาน (waves) -----
+    function canFullWaves() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- การมอบหมาย (assignments) -----
+    function canFullAssignments() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- การส่งตัว (mobilization) -----
+    function canFullMobilization() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบแจ้งหนี้ (commercial invoice) (draft_invoices) -----
+    function canReadCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'sales_manager', 'operations_manager', 'accounting_manager']); }
+    function canCreateCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
+    function canEditCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
+    function canDeleteCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
+    function canApproveCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
+
+    // ----- Petty Cash หน้างาน (operations_petty_cash) -----
+    function canFullOperationsPettyCash() { return (isInternalUser() && userRole() in ['system_admin', 'operations_manager']); }
+
+    // ===== Store / Vendor (คลัง + คู่ค้า) — Gates =====
+
+    // ----- คู่ค้า (vendors) -----
+    function canFullVendors() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบสั่งซื้อ (PO) (purchases) -----
+    function canFullPurchases() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- คลังอุปกรณ์ (store_inventory) -----
+    function canFullStoreInventory() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+
+    // ===== HR & Payroll (บุคคล) — Gates =====
+
+    // ----- ทะเบียนคนงาน (workers) -----
+    function canReadWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function canCreateWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+    function canEditWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ตำแหน่งงาน (positions) -----
+    function canReadPositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function canCreatePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canEditPositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeletePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApprovePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- พนักงานออฟฟิศ (office_staff) -----
+    function canFullOfficeStaff() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- แคตตาล็อกเอกสารบุคลากร (worker_documents) -----
+    function canReadWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function canCreateWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canEditWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- เงื่อนไขต้นทุนแรงงาน (labor_cost_contract_terms) -----
+    function canFullLaborCostContractTerms() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ลงเวลา (timesheets) -----
+    function canReadTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function canCreateTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function canEditTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function canApproveTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- จ่ายเงินคนงาน (worker_payroll) -----
+    function canFullWorkerPayroll() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- รอบจ่ายคนงาน (payroll_runs) -----
+    function canFullPayrollRuns() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- สลิปเงินเดือนคนงาน (payslips) -----
+    function canFullPayslips() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- เงินเดือนออฟฟิศ (office_payroll) -----
+    function canFullOfficePayroll() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ไฟล์โอนเงินธนาคาร (payment_export_batches) -----
+    function canFullPaymentExportBatches() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- เบิกเงินล่วงหน้า (cash_advances) -----
+    function canReadCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function canCreateCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function canEditCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ศูนย์กลาง HR (configuration) (hr_hub) -----
+    function canFullHrHub() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ===== Self / Overview — Gates =====
+
+    // ----- โปรไฟล์ของฉัน (employee_self_profile) -----
+    function canReadEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function canCreateEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function canEditEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function canDeleteEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin']); }
+    function canApproveEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin']); }
+
+    // ----- แดชบอร์ดหลัก (overview_dashboard) -----
+    function canReadOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function canCreateOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canEditOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canApproveOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+
+    // ===== Accounting (บัญชี) — Gates =====
+
+    // ----- แดชบอร์ดบัญชี (accounting_dashboard) -----
+    function canFullAccountingDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบวางบิลลูกหนี้ (billing_notes) -----
+    function canFullBillingNotes() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบกำกับภาษี (tax_invoices) -----
+    function canReadTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canCreateTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+    function canEditTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function canDeleteTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+    function canApproveTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ใบเสร็จรับเงิน (receipts) -----
+    function canFullReceipts() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- รับวางบิลเจ้าหนี้ (ap_bills) -----
+    function canFullApBills() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- ลูกหนี้การค้า (AR) (accounts_receivable) -----
+    function canFullAccountsReceivable() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- เจ้าหนี้การค้า (AP) (accounts_payable) -----
+    function canFullAccountsPayable() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- หัก ณ ที่จ่าย (withholding_tax_items) -----
+    function canFullWithholdingTaxItems() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- สมุดรับ-จ่าย (cashbook) -----
+    function canFullCashbook() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- บัญชีธนาคาร (bank_accounts) -----
+    function canFullBankAccounts() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ----- เงินเดือนผู้บริหาร (executive_payroll) -----
+    function canFullExecutivePayroll() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+
+    // ===== Administration (ระบบ) — Gates =====
+
+    // ----- จัดการระบบ (system_admin) -----
+    function canFullSystemAdmin() { return (isInternalUser() && userRole() in ['system_admin']); }
+
+    // ----- เลขที่เอกสาร (document_numbering) -----
+    function canFullDocumentNumbering() { return (isInternalUser() && userRole() in ['system_admin']); }
+
+    // ----- ประวัติกิจกรรม (audit_logs) -----
+    function canFullAuditLogs() { return (isInternalUser() && userRole() in ['system_admin']); }
+
+    // ===== Client Portal — Gates =====
+
+    // ----- Client Portal (client_portal) -----
+    function canReadClientPortal() { return (isInternalUser() && userRole() in ['system_admin']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function canCreateClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
+    function canEditClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
+    function canDeleteClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
+    function canApproveClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
+
+    // =====================================================================
+    // MATCH BLOCKS (matrix-gated; simple collections only)
+    // =====================================================================
+
+    // ===== Commercial (การค้า) — Match blocks =====
+
+    match /customers/{id} {
+      allow read, write: if canFullCustomers();
+    }
+
+    match /quotations/{id} {
+      allow read:   if canReadQuotations();
+      allow create: if canCreateQuotations();
+      allow update: if canEditQuotations() || canApproveQuotations();
+      allow delete: if canDeleteQuotations();
+    }
+
+    match /quotations/{quotationId}/lines/{lineId} {
+      allow read:   if canReadQuotations();
+      allow create: if canCreateQuotations();
+      allow update: if canEditQuotations() || canApproveQuotations();
+      allow delete: if canDeleteQuotations();
+    }
+
+    match /main_contracts/{id} {
+      allow read:   if canReadMainContracts();
+      allow create: if canCreateMainContracts();
+      allow update: if canEditMainContracts() || canApproveMainContracts();
+      allow delete: if canDeleteMainContracts();
+    }
+
+    match /main_contracts/{contractId}/position_rates/{rateId} {
+      allow read:   if canReadMainContracts();
+      allow create: if canCreateMainContracts();
+      allow update: if canEditMainContracts() || canApproveMainContracts();
+      allow delete: if canDeleteMainContracts();
+    }
+
+    match /main_contracts/{contractId}/{document=**} {
+      allow read:   if canReadMainContracts();
+      allow create: if canCreateMainContracts();
+      allow update: if canEditMainContracts() || canApproveMainContracts();
+      allow delete: if canDeleteMainContracts();
+    }
+
+    match /purchase_orders/{poId}/po_lines/{lineId} {
+      allow read:   if canReadCustomerPos();
+      allow create: if canCreateCustomerPos();
+      allow update: if canEditCustomerPos() || canApproveCustomerPos();
+      allow delete: if canDeleteCustomerPos();
+    }
+
+    match /purchase_orders/{poId}/{document=**} {
+      allow read:   if canReadCustomerPos();
+      allow create: if canCreateCustomerPos();
+      allow update: if canEditCustomerPos() || canApproveCustomerPos();
+      allow delete: if canDeleteCustomerPos();
+    }
+
+    match /po_active_bundles/{id} {
+      allow read:   if canReadCustomerPos();
+      allow create: if canCreateCustomerPos();
+      allow update: if canEditCustomerPos() || canApproveCustomerPos();
+      allow delete: if canDeleteCustomerPos();
+    }
+
+    match /sales_contract_terms/{id} {
+      allow read, write: if canFullSalesContractTerms();
+    }
+
+    match /rate_conditions/{id} {
+      allow read, write: if canFullRateConditions();
+    }
+
+    match /profit_estimates/{id} {
+      allow read, write: if canFullProfitEstimates();
+    }
+
+    // ===== Operations (ปฏิบัติการ) — Match blocks =====
+
+    match /waves/{id} {
+      allow read, write: if canFullWaves();
+    }
+
+    match /worker_wave_acceptances/{id} {
+      allow read, write: if canFullWaves();
+    }
+
+    match /assignments/{id} {
+      allow read, write: if canFullAssignments();
+    }
+
+    match /mobilizations/{id} {
+      allow read, write: if canFullMobilization();
+    }
+
+    match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
+      allow read, write: if canFullMobilization();
+    }
+
+    match /petty_cash_entries/{id} {
+      allow read, write: if canFullOperationsPettyCash();
+    }
+
+    // ===== Store / Vendor (คลัง + คู่ค้า) — Match blocks =====
+
+    match /vendors/{id} {
+      allow read, write: if canFullVendors();
+    }
+
+    match /purchases/{purchaseId} {
+      allow read, write: if canFullPurchases();
+    }
+
+    match /purchases/{purchaseId}/{document=**} {
+      allow read, write: if canFullPurchases();
+    }
+
+    match /purchase_requests/{id} {
+      allow read, write: if canFullPurchases();
+    }
+
+    match /purchase_requests/{prId}/{document=**} {
+      allow read, write: if canFullPurchases();
+    }
+
+    match /purchase_vendor_bills/{id} {
+      allow read, write: if canFullPurchases();
+    }
+
+    match /store_items/{id} {
+      allow read, write: if canFullStoreInventory();
+    }
+
+    match /store_transactions/{id} {
+      allow read, write: if canFullStoreInventory();
+    }
+
+    match /store_receipts/{id} {
+      allow read, write: if canFullStoreInventory();
+    }
+
+    match /store_issue_slips/{id} {
+      allow read, write: if canFullStoreInventory();
+    }
+
+    match /store_return_slips/{id} {
+      allow read, write: if canFullStoreInventory();
+    }
+
+    // ===== HR & Payroll (บุคคล) — Match blocks =====
+
+    match /workers/{workerId}/{document=**} {
+      allow read:   if canReadWorkers();
+      allow create: if canCreateWorkers();
+      allow update: if canEditWorkers() || canApproveWorkers();
+      allow delete: if canDeleteWorkers();
+    }
+
+    match /positions/{id} {
+      allow read:   if canReadPositions();
+      allow create: if canCreatePositions();
+      allow update: if canEditPositions() || canApprovePositions();
+      allow delete: if canDeletePositions();
+    }
+
+    match /positions/{positionId}/{document=**} {
+      allow read:   if canReadPositions();
+      allow create: if canCreatePositions();
+      allow update: if canEditPositions() || canApprovePositions();
+      allow delete: if canDeletePositions();
+    }
+
+    match /office_staff/{id} {
+      allow read, write: if canFullOfficeStaff();
+    }
+
+    match /worker_document_catalog/{id} {
+      allow read:   if canReadWorkerDocCatalog();
+      allow create: if canCreateWorkerDocCatalog();
+      allow update: if canEditWorkerDocCatalog() || canApproveWorkerDocCatalog();
+      allow delete: if canDeleteWorkerDocCatalog();
+    }
+
+    match /labor_cost_contract_terms/{id} {
+      allow read, write: if canFullLaborCostContractTerms();
+    }
+
+    match /exception_requests/{id} {
+      allow read:   if canReadTimesheets();
+      allow create: if canCreateTimesheets();
+      allow update: if canEditTimesheets() || canApproveTimesheets();
+      allow delete: if canDeleteTimesheets();
     }
 
     match /wave_month_timesheet_reviews/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalWaveMonthTimesheetReviewReadable();
-      allow write: if isInternalUser() || isInternalStaffDoc();
+      allow read:   if canReadTimesheets();
+      allow create: if canCreateTimesheets();
+      allow update: if canEditTimesheets() || canApproveTimesheets();
+      allow delete: if canDeleteTimesheets();
     }
 
-    function portalPoLocationMonthTimesheetReadable() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['poId'])
-        && resource.data.poId is string
-        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.poId))
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.customerId == userData().customerId;
-    }
-
-    /** หัวงวด timesheet ราย PO+เดือน+สถานที่ (จาก po_lines) — เฟส B */
-    match /po_location_month_timesheets/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalPoLocationMonthTimesheetReadable();
-      allow write: if isInternalUser() || isInternalStaffDoc();
-    }
-
-    /** งวด timesheet รอบเดือนต่อ PO (หลาย wave) — ใช้ /draft-invoices, /timesheets/po-month, ศูนย์อนุมัติ */
     match /po_month_timesheet_reviews/{id} {
-      allow read: if internalPayrollDataReader() || portalPoMonthTimesheetReviewReadable();
-      allow write: if internalPayrollDataReader();
+      allow read:   if canReadTimesheets();
+      allow create: if canCreateTimesheets();
+      allow update: if canEditTimesheets() || canApproveTimesheets();
+      allow delete: if canDeleteTimesheets();
     }
 
-    match /po_month_timesheet_photo_bundles/{id} {
-      allow read: if isInternalStaffDoc() || portalPoMonthTimesheetPhotoBundleReadable();
-      allow write: if isInternalStaffDoc();
-    }
-
-    match /wave_month_timesheet_photo_bundles/{id} {
-      allow read: if isInternalStaffDoc() || portalWaveMonthTimesheetPhotoBundleReadable();
-      allow write: if isInternalStaffDoc();
+    match /po_location_month_timesheets/{id} {
+      allow read:   if canReadTimesheets();
+      allow create: if canCreateTimesheets();
+      allow update: if canEditTimesheets() || canApproveTimesheets();
+      allow delete: if canDeleteTimesheets();
     }
 
     match /monthly_timesheet_documents/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
+      allow read:   if canReadTimesheets();
+      allow create: if canCreateTimesheets();
+      allow update: if canEditTimesheets() || canApproveTimesheets();
+      allow delete: if canDeleteTimesheets();
     }
 
-    /** แนบรูป/PDF คู่เอกสาร timesheet รายเดือน (TS-) — id = yyyy-MM */
-    match /monthly_timesheet_photo_bundles/{id} {
-      allow read: if isInternalStaffDoc();
-      allow write: if isInternalStaffDoc();
+    match /payroll_runs/{id} {
+      allow read, write: if canFullWorkerPayroll();
     }
 
-    /** เฟส 2 — หัวเอกสาร timesheet รายเดือนต่อลูกค้า × Onshore/Offshore */
-    match /customer_month_timesheet_documents/{id} {
-      allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser() || isInternalStaffDoc();
+    match /payroll_batches/{id} {
+      allow read, write: if canFullWorkerPayroll();
     }
+
+    match /payroll_batches/{batchId}/lines/{lineId} {
+      allow read, write: if canFullWorkerPayroll();
+    }
+
+    match /payroll_batches/{batchId}/{document=**} {
+      allow read, write: if canFullWorkerPayroll();
+    }
+
+    match /payroll_periods/{id} {
+      allow read, write: if canFullWorkerPayroll();
+    }
+
+    match /payroll_policies/{id} {
+      allow read, write: if canFullWorkerPayroll();
+    }
+
+    match /worker_payment_profiles/{id} {
+      allow read, write: if canFullWorkerPayroll();
+    }
+
+    match /payroll_wht_certificates/{id} {
+      allow read, write: if canFullWorkerPayroll();
+    }
+
+    // NOTE: ทับซ้อน worker_payroll — เลือกใช้ฟังก์ชันใดฟังก์ชันหนึ่ง
+    match /payroll_runs/{id} {
+      allow read, write: if canFullPayrollRuns();
+    }
+
+    // NOTE: payslip = batch line
+    match /payroll_batches/{batchId}/lines/{lineId} {
+      allow read, write: if canFullPayslips();
+    }
+
+    match /office_payroll_runs/{id} {
+      allow read, write: if canFullOfficePayroll();
+    }
+
+    match /office_payroll_runs/{runId}/lines/{lineId} {
+      allow read, write: if canFullOfficePayroll();
+    }
+
+    match /office_payroll_runs/{runId}/{document=**} {
+      allow read, write: if canFullOfficePayroll();
+    }
+
+    match /payment_export_batches/{id} {
+      allow read, write: if canFullPaymentExportBatches();
+    }
+
+    match /hr_configuration/{docId} {
+      allow read, write: if canFullHrHub();
+    }
+
+    // ===== Self / Overview — Match blocks =====
+
+    // [overview_dashboard] — แดชบอร์ดหลัก: ไม่มี Firestore path (ไม่มี collection — เป็นแค่หน้า aggregate; ใช้ filter UI เท่านั้น)
+
+    // ===== Accounting (บัญชี) — Match blocks =====
+
+    // [accounting_dashboard] — แดชบอร์ดบัญชี: ไม่มี Firestore path (ไม่มี collection ผูกตรง — ใช้กรอง UI ในเมนูเท่านั้น)
+
+    match /billing_notes/{id} {
+      allow read, write: if canFullBillingNotes();
+    }
+
+    match /billing_notes/{billingNoteId}/lines/{lineId} {
+      allow read, write: if canFullBillingNotes();
+    }
+
+    match /billing_notes/{billingNoteId}/{document=**} {
+      allow read, write: if canFullBillingNotes();
+    }
+
+    match /tax_invoices/{id} {
+      allow read:   if canReadTaxInvoices();
+      allow create: if canCreateTaxInvoices();
+      allow update: if canEditTaxInvoices() || canApproveTaxInvoices();
+      allow delete: if canDeleteTaxInvoices();
+    }
+
+    match /tax_invoices/{taxInvoiceId}/{document=**} {
+      allow read:   if canReadTaxInvoices();
+      allow create: if canCreateTaxInvoices();
+      allow update: if canEditTaxInvoices() || canApproveTaxInvoices();
+      allow delete: if canDeleteTaxInvoices();
+    }
+
+    match /receipts/{id} {
+      allow read, write: if canFullReceipts();
+    }
+
+    match /ap_bills/{id} {
+      allow read, write: if canFullApBills();
+    }
+
+    match /accounts_receivable/{id} {
+      allow read, write: if canFullAccountsReceivable();
+    }
+
+    match /accounts_payable/{id} {
+      allow read, write: if canFullAccountsPayable();
+    }
+
+    match /withholding_at_source_items/{id} {
+      allow read, write: if canFullWithholdingTaxItems();
+    }
+
+    match /withholding_certificate_issues/{id} {
+      allow read, write: if canFullWithholdingTaxItems();
+    }
+
+    match /cashbook_entries/{id} {
+      allow read, write: if canFullCashbook();
+    }
+
+    match /bank_accounts/{id} {
+      allow read, write: if canFullBankAccounts();
+    }
+
+    match /executive_payroll_runs/{id} {
+      allow read, write: if canFullExecutivePayroll();
+    }
+
+    match /executive_payroll_runs/{runId}/lines/{lineId} {
+      allow read, write: if canFullExecutivePayroll();
+    }
+
+    match /executive_payroll_runs/{runId}/{document=**} {
+      allow read, write: if canFullExecutivePayroll();
+    }
+
+    match /executive_payroll_staff/{id} {
+      allow read, write: if canFullExecutivePayroll();
+    }
+
+    // ===== Administration (ระบบ) — Match blocks =====
+
+    match /roles_system_admin/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    match /permission_profiles/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // ===== Client Portal — Match blocks =====
+
+    // =====================================================================
+    // ⚠️ PRESERVED ORIGINAL LOGIC — ต้องคัดลอกจาก firestore.rules ปัจจุบันมาวางที่นี่
+    //   collections เหล่านี้มี business logic ที่ matrix ไม่ครอบคลุม (portal scope,
+    //   status guards, numbering, append-only validation ฯลฯ)
+    // =====================================================================
+
+        // ✅ PRESERVED from original (customers/{customerId}/{document=**})
+
+    match /customers/{customerId}/{document=**} {
+      allow read: if canReadCustomers();
+      allow write: if canWriteCustomers();
+        }
+
+
+        // ✅ PRESERVED from original (purchase_orders/{id})
+
+
+    match /purchase_orders/{id} {
+      allow read: if canReadCommercialDocs() || portalOwnsResourceCustomerId();
+      allow create, update: if canWriteCommercialDocs();
+      allow delete: if isAdmin() || canDeleteOpsScheduling();
+        }
+
+
+        // ✅ PRESERVED from original (commercial_invoices/{id})
+
+    match /commercial_invoices/{id} {
+      allow read: if canReadCommercialInvoices()
+        || (portalCustomerIdOk()
+            && resource.data.customerId == userData().customerId
+            && resource.data.status in ['DRAFT', 'PENDING_CUSTOMER', 'ISSUED', 'VOID']);
+      allow create: if canWriteCommercialInvoicesInternal();
+      allow update: if (commercialInvoiceTransitionToVoid() && isAdmin())
+        || (
+          !commercialInvoiceTransitionToVoid()
+          && (
+            canWriteCommercialInvoicesInternal()
+            || (
+              portalIsApprover()
+              && portalOwnsResourceCustomerId()
+              && resource.data.status == 'PENDING_CUSTOMER'
+              && request.resource.data.status == 'ISSUED'
+              && portalCommercialInvoiceConfirmKeysOnly()
+            )
+            || (
+              portalIsApprover()
+              && portalOwnsResourceCustomerId()
+              && resource.data.status == 'PENDING_CUSTOMER'
+              && request.resource.data.status == 'PENDING_CUSTOMER'
+              && portalCommercialInvoiceRevisionRequestKeysOnly()
+            )
+            || (
+              portalCommercialPaymentReportAllowed()
+              && request.resource.data.status == 'ISSUED'
+              && portalCommercialPaymentProofKeysOnly()
+            )
+          )
+        );
+      /** Admin cannot hard-delete ISSUED (confirmed billing); internal non-admin still only DRAFT. */
+      allow delete: if (isAdmin() && resource.data.status != 'ISSUED')
+        || (canWriteCommercialInvoicesInternal() && resource.data.status == 'DRAFT');
+        }
+
+
+        // ✅ PRESERVED from original (workers/{workerId})
+
+
+    match /workers/{workerId} {
+      allow read: if canReadWorkers()
+        || (isEmployeeSelfPortalUser()
+          && resource.data.keys().hasAll(['linkedUserId'])
+          && resource.data.linkedUserId is string
+          && resource.data.linkedUserId == request.auth.uid)
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/workers/$(workerId))
+            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
+      allow create, update: if canWriteWorkers() && !isEmployeeSelfPortalUser();
+      allow delete: if canDeleteWorkers();
+        }
+
+
+        // ✅ PRESERVED from original (daily_timesheets/{id})
+
 
     match /daily_timesheets/{id} {
-      allow read: if isInternalUser() || isInternalStaffDoc() || portalOwnsResourceCustomerId() || portalDailyTimesheetReadableViaWave() || portalDailyTimesheetReadableViaPo();
-      allow create, delete: if isInternalUser();
-      allow update: if isInternalUser()
+      allow read: if canReadTimesheetsInternal() || portalOwnsResourceCustomerId() || portalDailyTimesheetReadableViaWave() || portalDailyTimesheetReadableViaPo();
+      allow create, delete: if canWriteDailyTimesheet();
+      allow update: if canWriteDailyTimesheet()
         || (
           portalIsApprover()
           && portalOwnsResourceCustomerId()
@@ -1904,14 +1844,61 @@ service cloud.firestore {
           && request.resource.data.status == 'LOCKED'
           && portalTimesheetBillingLockKeysOnly()
         );
-    }
+        }
 
-    match /exception_requests/{id} {
+
+        // ✅ PRESERVED from original (attendance_punches/{id})
+
+    match /attendance_punches/{id} {
       allow read: if internalPayrollDataReader();
-      allow write: if isInternalUser();
-    }
+      allow create: if attendancePunchCreateValid();
+      allow update, delete: if false;
+        }
 
-    /** เบิกเงินล่วงหน้า — HR/Payroll workflow (ยืนยันฝั่งผู้ถือเรื่องเมื่อสร้างจาก office) */
+
+        // ✅ PRESERVED from original (attendance_correction_requests/{id})
+
+
+    match /attendance_correction_requests/{id} {
+      allow read: if internalPayrollDataReader();
+      allow create: if attendanceCorrectionRequestCreateValid();
+      allow update: if attendanceCorrectionRequestResolveValid();
+      allow delete: if false;
+        }
+
+
+        // ✅ PRESERVED from original (attendance_day_overrides/{id})
+
+
+    match /attendance_day_overrides/{id} {
+      allow read: if internalPayrollDataReader();
+      allow create: if attendanceDayOverrideCreateValid();
+      allow update, delete: if false;
+        }
+
+
+        // ✅ PRESERVED from original (leave_requests/{id})
+
+
+    match /leave_requests/{id} {
+      allow read: if internalPayrollDataReader() || leaveRequestOwnedByCaller();
+      allow create: if leaveRequestCreateValid();
+      allow update: if leaveRequestSelfCancelValid() || leaveRequestManagerDecisionValid() || leaveRequestDraftUpdateValid();
+      allow delete: if false;
+        }
+
+
+        // ✅ PRESERVED from original (payroll_correction_requests/{id})
+
+
+    match /payroll_correction_requests/{id} {
+      allow read: if canReadWorkerPayrollStack();
+      allow write: if canPreparePayroll();
+        }
+
+
+        // ✅ PRESERVED from original (cash_advance_requests/{id})
+
     match /cash_advance_requests/{id} {
       /** เงื่อนไขเจ้าของเรื่องมาก่อน — ไม่ต้องประเมิน privileged reader (หลีกเลี่ยง userData() ล้มเมื่อยังไม่มี users/{uid}) */
       allow read: if (
@@ -1938,96 +1925,100 @@ service cloud.firestore {
           && request.resource.data.status == 'PENDING_PAYROLL_REVIEW'
         );
       allow delete: if cashAdvancePrivilegedReader();
-    }
+        }
 
-    match /customer_issues/{id} {
-      allow create: if clientPortalUserActive()
-        && request.resource.data.customerId == userData().customerId;
-      allow read: if isInternalUser()
-        || (portalCustomerIdOk() && resource.data.customerId == userData().customerId);
-      allow update, delete: if isInternalUser();
-    }
 
-    match /worker_payment_profiles/{id} {
-      allow read, write: if isInternalUser();
-    }
+        // ✅ PRESERVED from original (workers/{workerId})
 
-    match /vendors/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
 
-    // PR: ฝ่ายคลัง + ผู้จัดการอนุมัติ — อนุญาต isInternalStaffDoc เหมือน po_month_timesheet_reviews (บัญชียัง pending / activation ยังไม่ครบ)
-    match /purchase_requests/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-    match /purchase_requests/{prId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+    match /workers/{workerId} {
+      allow read: if canReadWorkers()
+        || (isEmployeeSelfPortalUser()
+          && resource.data.keys().hasAll(['linkedUserId'])
+          && resource.data.linkedUserId is string
+          && resource.data.linkedUserId == request.auth.uid)
+        || (portalCustomerIdOk()
+            && exists(/databases/$(database)/documents/workers/$(workerId))
+            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
+            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
+      allow create, update: if canWriteWorkers() && !isEmployeeSelfPortalUser();
+      allow delete: if canDeleteWorkers();
+        }
 
-    // รายการซื้อ/ใบสั่งซื้อ: ฝ่ายคลัง + ผจก.ฝ่ายอนุมัติ — รองรับ isInternalStaffDoc (บัญชี internal ยัง pending activation)
-    match /purchases/{purchaseId} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
-    match /purchases/{purchaseId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
 
-    // คลังสินค้า: เทียบ purchases / purchase_requests — รองรับ isInternalStaffDoc (บัญชียัง pending activation)
-    match /store_items/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+        // ✅ PRESERVED from original (withholding_certificate_documents/{id})
 
-    match /store_transactions/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+    match /withholding_certificate_documents/{id} {
+      allow read: if canReadAccountingInternal() || canReadPurchases();
+      allow create: if canWriteAccountingDocs();
+      allow update: if canWriteAccountingDocs();
+      /**
+       * Delete: accounting/admin — plus internal cleanup when removing a purchase-linked cert during PO cascade
+       * (UI gate still blocks paid vendor bills / paid milestones).
+       */
+      allow delete: if canWriteAccountingDocs()
+        || (
+          canWritePurchases()
+          && resource.data != null
+          && 'sourcePurchaseId' in resource.data
+          && resource.data.sourcePurchaseId is string
+          && resource.data.sourcePurchaseId.size() > 0
+        );
+        }
 
-    match /store_receipts/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
 
-    match /store_issue_slips/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+        // ✅ PRESERVED from original (users/{userId})
 
-    match /store_return_slips/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+    match /users/{userId} {
+      allow get: if isAdmin() || isOwner(userId) || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
+      allow list: if isAdmin() || isOperationsPillarExecutive();
+      allow create: if isAdmin()
+        || (isOwner(userId) && bootstrapUserCreateValid(userId))
+        || (isOwner(userId) && selfRegistrationPendingCreateValid(userId))
+        || (isOperationsPillarExecutive() && isCustomerPortalUserCreate(userId))
+        || (isOperationsPillarExecutive() && isEmployeeSelfPortalUserCreate(userId));
+      allow update: if isAdmin()
+        || (isOwner(userId) && !userSecurityFieldChanges())
+        || opsExecClientPortalUpdateOk();
+      allow delete: if isAdmin()
+        || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
+        }
 
-    match /store_writeoffs/{id} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
 
-    match /store_receipts/{receiptId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+        // ✅ PRESERVED from original (system/{docId})
 
-    match /store_issue_slips/{slipId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+    match /system/{docId} {
+      allow read: if systemDocReadOk(docId);
+      allow create: if systemBootstrapCreateOk(docId);
+      allow update, delete: if isAdmin();
+        }
 
-    match /store_return_slips/{returnId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
 
-    match /store_writeoffs/{writeoffId}/{document=**} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+        // ✅ PRESERVED from original (number_sequences/{id})
 
-    match /{path=**}/po_lines/{lineId} {
-      allow read, write: if isInternalUser() || isInternalStaffDoc();
-    }
+    match /number_sequences/{id} {
+      allow read: if isAdmin() || numberSequenceAllowsWrite(id);
+      allow write: if numberSequenceAllowsWrite(id);
+        }
 
-    match /{path=**}/position_rates/{rateId} {
-      allow read, write: if isInternalUser();
-    }
 
-    match /{path=**}/lines/{lineId} {
-      allow read, write: if isInternalUser();
-    }
+        // ✅ PRESERVED from original (audit_logs/{id})
 
-    // Deny by default (no broad catch-all OR with admin paths).
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /audit_logs/{id} {
+      allow read: if isAdmin();
+      allow create: if internalStaffFirestoreActor()
+        || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
+      allow update, delete: if isAdmin();
+        }
+
+
+        // ✅ PRESERVED from original (client_portal/{document=**})
+
+    match /client_portal/{document=**} {
+      allow read, write: if clientPortalUserActive();
+        }
+
+
   }
 }

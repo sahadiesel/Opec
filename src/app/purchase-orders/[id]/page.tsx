@@ -6,12 +6,10 @@ import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import {
   formatDateThaiBE,
   formatYmdLocalThaiBE,
-  formatStoredDateRangeThaiBE,
 } from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,7 +26,6 @@ import {
   History,
   Info,
   Loader2,
-  ChevronRight,
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, updateDoc, getDocs, writeBatch } from 'firebase/firestore';
@@ -41,7 +38,6 @@ import {
   Position, 
   User,
   Assignment, 
-  Worker,
   Quotation,
   Wave,
   JobMode,
@@ -59,7 +55,9 @@ import {
 import {
   normalizePoActiveBundleId,
   rebuildAllPoActiveBundlesForCustomer,
+  resolvePoActiveBundleKeyForPo,
 } from '@/lib/ops/po-active-bundle';
+import { PoActiveBundleLinesPanel } from '@/components/commercial/po-active-bundle-lines-panel';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -106,8 +104,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   );
   const { data: quotation } = useDoc<Quotation>(quotationRef as any);
 
-  const workersQuery = useMemoFirebase(() => (firestore && canViewPo ? collection(firestore, 'workers') : null), [firestore, canViewPo]);
-  const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
+  const poLinesForPanel = useMemo(
+    () => (poLines ?? []).map((l) => ({ ...l, poId: l.poId || id })),
+    [poLines, id],
+  );
+
+  const poActiveBundleKey = useMemo(
+    () => (po ? resolvePoActiveBundleKeyForPo(po) : ''),
+    [po],
+  );
 
   const fulfillmentRows = useMemo(
     () => buildPoFulfillmentByLine(poLines, allAssignments, poWaves, id),
@@ -327,7 +332,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   }
 
   const customer = customers?.find(c => c.id === po.customerId);
-  const poAssignments = allAssignments || [];
   const displayServiceAgreementNo = (
     (po.serviceAgreementNo || contract?.serviceAgreementNo || '').trim() || ''
   );
@@ -452,7 +456,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             <CardHeader className="pb-2">
               <CardTitle className="text-base">เอกสาร PO Active</CardTitle>
               <CardDescription className="text-xs max-w-3xl">
-                กลุ่ม PO ตามลูกค้าและโหมด Onshore/Offshore — เพิ่ม แก้ไข และลบบรรทัดโควต้า ดูยอดรวมหลายใบ และมอบหมายได้จากเอกสารนี้ (ไม่ต้องสร้าง Wave)
+                หลังกำหนดบรรทัดโควต้าด้านล่างแล้ว — เปิด PO Active เพื่อมอบหมายคนตามตำแหน่ง แล้วทำ Mobilization จากรายการที่มอบหมาย
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2 pt-0">
@@ -464,7 +468,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </Link>
               </Button>
               <Button size="sm" variant="outline" asChild>
-                <Link href={`/assignments?poId=${encodeURIComponent(id)}&openDialog=1`}>มอบหมาย PO นี้</Link>
+                <Link
+                  href={
+                    po.poActiveBundleId
+                      ? `/assignments?poActiveBundleId=${encodeURIComponent(normalizePoActiveBundleId(po.poActiveBundleId))}`
+                      : `/assignments?poActiveBundleId=${encodeURIComponent(poActiveBundleKey)}`
+                  }
+                >
+                  มอบหมาย (PO Active)
+                </Link>
               </Button>
               <Button size="sm" variant="outline" asChild>
                 <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
@@ -640,30 +652,67 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             </div>
           </section>
 
-          {isContractBasedPO && po.status === 'pending' && (
+          {isContractBasedPO && (
             <section className="space-y-4">
-              <Card className="border-dashed border-muted">
-                <CardHeader>
-                  <CardTitle className="text-base">บรรทัดโควต้า (จัดการที่ PO Active)</CardTitle>
-                  <CardDescription>
-                    หลังอนุมัติ PO เป็น Active และสัญญาหลักพร้อม — จัดการโควต้าและมอบหมายได้จากคิวเติมโควต้า (PO Active) และเอกสารกลุ่มต่อลูกค้า หน้านี้เหลือหัว PO และตารางมอบหมายด้านล่าง
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-wrap gap-2 pt-0">
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
-                  </Button>
-                </CardContent>
-              </Card>
+              <h2 className="text-lg font-semibold tracking-tight border-b pb-2">
+                บรรทัดโควต้า (ตำแหน่ง / จำนวนคน)
+              </h2>
+              <PoActiveBundleLinesPanel
+                bundlePos={[po]}
+                bundleLines={poLinesForPanel}
+                allPositions={allPositions}
+                allMobs={allAssignments}
+              />
+              {po.status === 'pending' && (
+                <p className="text-xs text-muted-foreground px-1">
+                  กำหนดตำแหน่งและจำนวนคนที่ต้องการใน PO ก่อน — หลังอนุมัติเป็น Active ให้ไป{' '}
+                  <Link href="/po-active-quota-queue" className="text-primary font-semibold underline">
+                    คิว PO Active
+                  </Link>{' '}
+                  เพื่อมอบหมายคนและ Mobilization
+                </p>
+              )}
+              {po.status === 'active' && (
+                <Card className="border-dashed border-primary/30 bg-muted/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">ขั้นตอนถัดไป (มอบหมาย / Mobilization)</CardTitle>
+                    <CardDescription className="text-sm">
+                      หน้า PO ใช้กำหนดตำแหน่งและโควต้าเท่านั้น — มอบหมายคนและ Pre-Mob ทำที่ PO Active / Assignments
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2 pt-0">
+                    {po.poActiveBundleId && (
+                      <Button size="sm" asChild>
+                        <Link
+                          href={`/po-active/${encodeURIComponent(normalizePoActiveBundleId(po.poActiveBundleId))}`}
+                        >
+                          เปิด PO Active
+                        </Link>
+                      </Button>
+                    )}
+                    <Button size="sm" variant="secondary" asChild>
+                      <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
+                    </Button>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link
+                        href={`/assignments?poActiveBundleId=${encodeURIComponent(
+                          po.poActiveBundleId
+                            ? normalizePoActiveBundleId(po.poActiveBundleId)
+                            : poActiveBundleKey,
+                        )}`}
+                      >
+                        มอบหมายคน (Assign)
+                      </Link>
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
             </section>
           )}
 
-          <section className="space-y-4">
-            <h2 className="text-lg font-semibold tracking-tight border-b pb-2">
-              {isContractBasedPO ? 'Assignments (คนงาน)' : 'วางบิล / เอกสาร'}
-            </h2>
-            <div>
-            {!isContractBasedPO ? (
+          {!isContractBasedPO && (
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold tracking-tight border-b pb-2">วางบิล / เอกสาร</h2>
               <Card className="border-dashed border-2 border-muted">
                 <CardHeader>
                   <CardTitle>ไม่ใช้มอบหมายคนงาน / Wave</CardTitle>
@@ -681,88 +730,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   </Button>
                 </CardContent>
               </Card>
-            ) : (
-            <Card>
-              <CardHeader className="border-b bg-muted/5">
-                <CardTitle>รายชื่อคนงานที่ได้รับมอบหมาย (Project Assignments)</CardTitle>
-                <CardDescription>คนงานทั้งหมดที่ทำงานภายใต้ใบสั่งซื้อโครงการนี้</CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader className="bg-muted/30">
-                    <TableRow>
-                      <TableHead className="pl-6">คนงาน (Worker)</TableHead>
-                      <TableHead>ตำแหน่ง (Position)</TableHead>
-                      <TableHead>ช่วงเวลาทำงาน (Project Period)</TableHead>
-                      <TableHead>สถานะ (Deployment)</TableHead>
-                      <TableHead className="text-right pr-6">จัดการ</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {poAssignments.length > 0 ? (
-                      poAssignments.map(asgn => {
-                        const worker = allWorkers?.find(w => w.id === asgn.workerId);
-                        const pos = allPositions?.find(p => p.id === asgn.positionId);
-                        return (
-                          <TableRow key={asgn.id} className="hover:bg-muted/10 transition-colors">
-                            <TableCell className="pl-6 py-4">
-                              <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-black text-xs">
-                                  {worker?.firstName.charAt(0)}
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="font-bold text-sm text-primary">{worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown'}</span>
-                                  <span className="text-[10px] text-muted-foreground font-mono">{worker?.thaiNationalId}</span>
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="text-[10px] font-bold bg-white">{(pos?.positionName || pos?.positionNameTh) || asgn.positionId}</Badge>
-                            </TableCell>
-                            <TableCell className="text-xs font-medium">
-                              {formatStoredDateRangeThaiBE(asgn.startDate, asgn.endDate)}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="secondary" className="capitalize text-[10px] font-black uppercase tracking-tighter">{asgn.deploymentStatus}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right pr-6">
-                              <Button variant="ghost" size="sm" className="font-bold h-8 group" asChild>
-                                <Link href={`/mobilization/${asgn.id}`}>Manage Pre-Mob <ChevronRight className="h-3 w-3 ml-1 group-hover:translate-x-1 transition-all" /></Link>
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center py-16 text-muted-foreground">
-                          <div className="max-w-xl mx-auto space-y-3 text-sm not-italic">
-                            <p>
-                              ยังไม่มีการมอบหมายคนงานใน PO นี้ — ใช้ปุ่ม Assign หรือ{' '}
-                              <Link className="text-primary underline font-medium" href="/po-active-quota-queue">
-                                คิวเติมโควต้า (PO Active)
-                              </Link>{' '}
-                              (ไม่ต้องสร้าง Wave)
-                            </p>
-                            <div className="flex flex-wrap justify-center gap-2 pt-1">
-                              <Button variant="outline" size="sm" asChild>
-                                <Link href={`/assignments?poId=${encodeURIComponent(id)}&openDialog=1`}>เปิด Assign</Link>
-                              </Button>
-                              <Button variant="outline" size="sm" asChild>
-                                <Link href="/po-active-quota-queue">คิวเติมโควต้า</Link>
-                              </Button>
-                            </div>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-            )}
-            </div>
-          </section>
+            </section>
+          )}
+
+
         </div>
       </div>
     </AppShell>

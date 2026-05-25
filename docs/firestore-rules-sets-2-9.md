@@ -38,7 +38,7 @@
 
 **DoD (ปิดงานเมื่อ)**
 
-- [x] แก้ `firestore.rules` ให้ใช้ helper ชุด Sales ด้านบน (top-level + sub ที่ระบุ)
+- [x] แก้ `firestore.rules` — `primaryRole` / `roleIs` + `canReadCustomers` / `canWriteCustomers` / `canWriteQuotations` บน `customers` + `quotations` (ชุด 2 เริ่มแล้ว)
 - [ ] คุณ UAT: ทดสอบบทบาทหลัก — `store_officer` ไม่เปิด customers; `sales_manager` ไม่แก้ quotation; `hr_officer` อ่านแต่ไม่เขียนลูกค้า/สัญญา; `accounting_officer` อ่าน quotation ได้ถ้า matrix ให้ view; `accounting_manager` เขียน commercial ได้
 - [ ] ถ้า UAT พบว่า matrix ผิดเจตนาธุรกิจ (เช่น sales_manager ควรมี quotation) แก้ที่ `ROLE_PERMISSION_MATRIX` แล้วค่อยปรับ rules ครั้งที่สอง
 
@@ -50,7 +50,7 @@
 
 - `waves`, `mobilizations`, `assignments`, `worker_wave_acceptances`
 
-**Helpers หลังปรับ (implemented)**
+**Helpers หลังปรับ (implemented ใน `firestore.rules`)**
 
 - `canReadOpsScheduling` — view ตาม matrix (ตัด `store_officer`; รวม payroll/accounting แบบ view)
 - `canWriteOpsScheduling` — create/update รวม (สมาชิกเดียวกับ `canCreateOpsScheduling`/`canEditOpsScheduling` เดิม; ไม่รวม `payroll_officer`, `accounting_officer`)
@@ -202,8 +202,9 @@
 
 **DoD**
 
-- [x] ไล่ทุก sequence key ใน `SEQUENCE_REGISTRY` / `generateNextDocumentCode` ว่าตรงกับ rule (`main_contract` ↔ `canWriteCommercialDocs()` / `canUseCommercialSequence`)
-- [x] `system/{docId}` read แยก `bootstrap` / `company_profile` / `drug_test_panel`
+- [x] ไล่ทุก sequence key ใน `SEQUENCE_REGISTRY` → `numberSequenceAllowsWrite(id)` ใน `firestore.rules`
+- [x] `system/{docId}` read แยก `bootstrap` / `company_profile` / `drug_test_panel`; create `bootstrap` เฉพาะเมื่อยังไม่มี doc
+- [x] เพิ่ม `canReadCommercialDocs` / `canWriteCommercialDocs` บน sales pillar ที่ค้าง (main_contracts, PO, rate_conditions, …)
 - [ ] UAT: สร้างเอกสารที่ต้อง gen เลขในหลายโมดูล; client อ่าน worker + drug panel; quotation อ่าน company_profile
 
 ---
@@ -240,9 +241,10 @@
 
 **DoD**
 
-- [x] ค้น repo + เติม `match` ที่ขาด (`worker_payment_profiles`, store slip subs, collection group `lines`)
-- [x] ปรับกลุ่ม collection group ให้ใช้ helper เดียวกับ pillar (ไม่ใช้ `internalRead()` ทั้งก้อน)
-- [x] รายการ regression ด้านบน
+- [x] ค้น repo + เติม `match` ที่ขาด (`worker_payment_profiles`, store slip subs)
+- [x] collection group: `po_lines`, `position_rates` (read), `lines` (read แยก `path[0]` — payroll / office / executive / billing / quotation)
+- [x] `main_contracts/.../position_rates` match เฉพาะ + write ผ่าน `canWriteCommercialDocs`
+- [x] catch-all `/{document=**}` ยัง deny-by-default (`false`)
 - [ ] UAT: หน้าที่ใช้ PO lines / position rates / payslip history / สลิปคลัง / payroll prep
 
 ---
@@ -263,3 +265,16 @@
 | 10 | **9** | Collection groups + `/{document=**}` |
 
 เมื่อเริ่มแต่ละชุด ให้บอกว่า **“เริ่มชุด N”** จะได้แก้เฉพาะบล็อกนั้นและอัปเดตไฟล์นี้ (เช่น ติ๊ก DoD) ตามความคืบหน้า
+
+---
+
+## เก็บกวาดหลังชุด 9 (ทำแล้วใน repo)
+
+| รอบ | เนื้อหา |
+|-----|---------|
+| **A** | ลบ ops-manager / payroll profile `get()` helpers; capability บน commercial / payroll |
+| **B** | ลบ `permissionProfile*` fallback สำหรับ admin/accounting; `isAdmin`/`isAccounting` = `roleIs` เท่านั้น; `permission_profiles` admin-only |
+
+**ก่อน publish:** ตรวจ users ทุกคนมี `assignedRoleKey` (หน้า Users → บันทึกบทบาท) — ไม่มีแล้ว rules จะไม่รู้จัก `permissionProfileKey` เก่า
+
+| **C** | (หลัง role ทุกคน ok) ตัด `primaryBusinessRoleForAdminGate` / `effectiveRoleFrom*` / `profileDocIsAssignedToCurrentUser` — `primaryRole` = `assignedRoleKey` เท่านั้น |

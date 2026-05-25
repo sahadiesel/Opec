@@ -2,20 +2,28 @@
 
 import { Fragment, useMemo } from 'react';
 import Link from 'next/link';
-import { collection, collectionGroup, query, where } from 'firebase/firestore';
+import { collection, query, where } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { usePoLinesFanout } from '@/lib/ops/use-po-lines-fanout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, ShoppingCart, ChevronRight, ClipboardList, Layers, UserPlus } from 'lucide-react';
-import type { Assignment, Customer, JobMode, MainContract, PurchaseOrder, POLine, Wave, Position } from '@/lib/types';
+import type { Assignment, Customer, JobMode, MainContract, PoActiveBundle, PurchaseOrder, POLine, Wave, Position } from '@/lib/types';
 import {
   aggregateActiveLineTotals,
   buildPoFulfillmentByLine,
   type PoLineFulfillmentRow,
 } from '@/lib/ops/po-fulfillment-read-model';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import {
+  buildEligibleMainContractIdSet,
+  isContractPurchaseOrderEligibleForPoActiveBundle,
+  isPoLineActiveForQuota,
+  PO_ACTIVE_MAIN_CONTRACT_STATUS_IN,
+  PO_ACTIVE_PURCHASE_ORDER_STATUS_IN,
+} from '@/lib/ops/po-active-eligibility';
 import { countMobTimesheetSlotsForPoScope } from '@/lib/ops/assignment-mob-eligibility';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 
@@ -73,14 +81,21 @@ export function buildPoActiveBundleRows(
   activeMainContractIdSet: Set<string>,
   contractsLoaded: boolean,
   variant: 'quota-queue' | 'assignment-landing' | 'timesheet-hub',
+  poActiveBundles?: PoActiveBundle[] | undefined,
 ): PoQuotaQueueRow[] {
-  if (!activePOs?.length || !allPOLines || !contractsLoaded || activeMainContractIdSet.size === 0) return [];
+  if (!activePOs?.length || allPOLines === undefined || !contractsLoaded) return [];
 
-  const contractPOs = activePOs.filter(
-    (po) =>
-      (po.poType || 'contract') === 'contract' &&
-      po.contractId &&
-      activeMainContractIdSet.has(po.contractId),
+  const bundlePoIds = new Set<string>();
+  for (const b of poActiveBundles ?? []) {
+    for (const id of b.poIds ?? []) {
+      if (id) bundlePoIds.add(id);
+    }
+  }
+
+  if (activeMainContractIdSet.size === 0 && bundlePoIds.size === 0) return [];
+
+  const contractPOs = activePOs.filter((po) =>
+    isContractPurchaseOrderEligibleForPoActiveBundle(po, activeMainContractIdSet, bundlePoIds),
   );
 
   const groups = new Map<string, PurchaseOrder[]>();
@@ -142,32 +157,51 @@ export function usePoQuotaQueueRows(enabled: boolean): {
   customers: Customer[] | undefined;
   allPositions: Position[] | undefined;
   loading: boolean;
+  loadError: string | null;
 } {
   const firestore = useFirestore();
   const { user: firebaseUser, isUserLoading } = useUser();
 
   const activePoQuery = useMemoFirebase(() => {
     if (!enabled || !firestore || isUserLoading || !firebaseUser) return null;
-    return query(collection(firestore, 'purchase_orders'), where('status', '==', 'active'));
+    return query(
+      collection(firestore, 'purchase_orders'),
+      where('status', 'in', [...PO_ACTIVE_PURCHASE_ORDER_STATUS_IN]),
+    );
   }, [enabled, firestore, firebaseUser, isUserLoading]);
 
-  const { data: activePOs, isLoading: loadingPOs } = useCollection<PurchaseOrder>(activePoQuery as any);
+  const { data: activePOs, isLoading: loadingPOs, error: poLoadError } = useCollection<PurchaseOrder>(
+    activePoQuery as any,
+  );
 
   const activeContractsQuery = useMemoFirebase(() => {
     if (!enabled || !firestore || isUserLoading || !firebaseUser) return null;
-    return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
+    return query(
+      collection(firestore, 'main_contracts'),
+      where('status', 'in', [...PO_ACTIVE_MAIN_CONTRACT_STATUS_IN]),
+    );
   }, [enabled, firestore, firebaseUser, isUserLoading]);
 
-  const { data: activeContracts, isLoading: loadingContracts } = useCollection<MainContract>(
-    activeContractsQuery as any,
-  );
+  const { data: activeContracts, isLoading: loadingContracts, error: contractsLoadError } =
+    useCollection<MainContract>(activeContractsQuery as any);
 
-  const poLinesQuery = useMemoFirebase(() => {
+  const bundlesQuery = useMemoFirebase(() => {
     if (!enabled || !firestore || isUserLoading || !firebaseUser) return null;
-    return collectionGroup(firestore, 'po_lines');
+    return collection(firestore, 'po_active_bundles');
   }, [enabled, firestore, firebaseUser, isUserLoading]);
 
-  const { data: allPOLines, isLoading: loadingLines } = useCollection<POLine>(poLinesQuery as any);
+  const { data: poActiveBundles, error: bundlesLoadError } = useCollection<PoActiveBundle>(bundlesQuery as any);
+
+  /**
+   * fan-out อ่าน `purchase_orders/{poId}/po_lines` รายใบ — ไม่ใช้ collectionGroup
+   * (rules production ปัจจุบันยังไม่เปิด wildcard `{path=**}/po_lines/{lineId}` ให้ list)
+   * รายการ poIds มาจาก activePOs ที่ load สำเร็จแล้ว — กัน subscribe เปล่าเมื่อยังไม่พร้อม
+   */
+  const activePoIds = useMemo(
+    () => (enabled && activePOs ? activePOs.map((p) => p.id).filter(Boolean) : null),
+    [enabled, activePOs],
+  );
+  const { data: allPOLines, isLoading: loadingLines, error: poLinesLoadError } = usePoLinesFanout(activePoIds);
 
   const wavesQuery = useMemoFirebase(() => {
     if (!enabled || !firestore || isUserLoading || !firebaseUser) return null;
@@ -197,10 +231,10 @@ export function usePoQuotaQueueRows(enabled: boolean): {
 
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const activeMainContractIdSet = useMemo(() => {
-    if (activeContracts === undefined) return new Set<string>();
-    return new Set((activeContracts ?? []).map((c) => c.id).filter(Boolean));
-  }, [activeContracts]);
+  const activeMainContractIdSet = useMemo(
+    () => buildEligibleMainContractIdSet(activeContracts),
+    [activeContracts],
+  );
 
   const contractsLoaded = activeContracts !== undefined;
   const queueRows = useMemo(
@@ -213,8 +247,9 @@ export function usePoQuotaQueueRows(enabled: boolean): {
         activeMainContractIdSet,
         contractsLoaded,
         'quota-queue',
+        poActiveBundles ?? undefined,
       ),
-    [activePOs, allPOLines, allMobs, allWaves, activeMainContractIdSet, contractsLoaded],
+    [activePOs, allPOLines, allMobs, allWaves, activeMainContractIdSet, contractsLoaded, poActiveBundles],
   );
   const assignmentLandingRows = useMemo(
     () =>
@@ -226,12 +261,19 @@ export function usePoQuotaQueueRows(enabled: boolean): {
         activeMainContractIdSet,
         contractsLoaded,
         'assignment-landing',
+        poActiveBundles ?? undefined,
       ),
-    [activePOs, allPOLines, allMobs, allWaves, activeMainContractIdSet, contractsLoaded],
+    [activePOs, allPOLines, allMobs, allWaves, activeMainContractIdSet, contractsLoaded, poActiveBundles],
   );
 
   const loading =
     loadingPOs || loadingLines || loadingWaves || loadingMobs || loadingContracts;
+
+  const loadError = useMemo(() => {
+    const err = poLoadError ?? contractsLoadError ?? poLinesLoadError ?? bundlesLoadError;
+    if (!err) return null;
+    return err instanceof Error ? err.message : String(err);
+  }, [poLoadError, contractsLoadError, poLinesLoadError, bundlesLoadError]);
 
   return {
     queueRows,
@@ -239,6 +281,7 @@ export function usePoQuotaQueueRows(enabled: boolean): {
     customers: customers ?? undefined,
     allPositions: allPositions ?? undefined,
     loading,
+    loadError,
   };
 }
 
@@ -325,7 +368,7 @@ export function PoQuotaQueueTable({
         <TableBody>
         {queueRows.map(({ bundleKey, customerId, workMode, pos, totals, lineRows }) => {
           const cust = customers?.find((c) => c.id === customerId);
-          const activeLines = lineRows.filter((r) => r.lineStatus === 'active');
+          const activeLines = lineRows.filter((r) => isPoLineActiveForQuota(r.lineStatus));
           const isOrphan = bundleKey.startsWith('orphan:');
           const orphanPoId = isOrphan ? bundleKey.slice('orphan:'.length) : '';
           /** เปิดหน้ารายการมอบหมายในชุดเท่านั้น — ผู้ใช้กด «สร้างการมอบหมายใหม่» เมื่อต้องการฟอร์ม (ไม่เปิด dialog ทันที) */

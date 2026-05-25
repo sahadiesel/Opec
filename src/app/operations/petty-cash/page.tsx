@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ArrowDownLeft, ArrowUpRight, Banknote, List, Loader2, Plus, Wallet } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatStoredDateThaiBE } from '@/lib/date-thai';
@@ -23,9 +24,10 @@ import { BankAccount, CashbookEntry, PettyCashEntry, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { canView } from '@/lib/permissions';
+import { canCreate, canView } from '@/lib/permissions';
 import { recordPettyCashMovement } from '@/lib/services/cashbook-bank-movement';
 import { useAppUser } from '@/hooks/use-app-user';
+import { FirestorePermissionError } from '@/firebase/errors';
 
 function endOfMonthYmd(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -44,11 +46,27 @@ function compareMovement(
   return a.entryNo.localeCompare(b.entryNo, undefined, { numeric: true });
 }
 
+/** แปลงประเภทบัญชีจากข้อมูลเก่า/สตริงแสดงผล (เช่น "PETTY CASH") ให้เทียบได้ */
+function normalizedBankAccountTypeKey(a: Partial<BankAccount>): string {
+  return String(a.accountType ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+}
+
 /** กอง Petty — รองรับข้อมูลเก่าที่อาจไม่มี accountType แต่ตั้ง bankName เป็น Petty Cash ตอนสร้าง */
 function isPettyCashLikeAccount(a: Partial<BankAccount>): boolean {
-  if (a.accountType === 'PETTY_CASH') return true;
+  if (normalizedBankAccountTypeKey(a) === 'PETTY_CASH') return true;
   const bn = String(a.bankName ?? '').trim().toLowerCase();
   return bn === 'petty cash';
+}
+
+/** ยังใช้กองได้ — ข้อมูลเก่าอาจไม่มีฟิลด์ status (เดิม query status==ACTIVE ทำให้ไม่เห็นกอง) */
+function isPettyBankAccountUsableStatus(a: Partial<BankAccount>): boolean {
+  const s = a.status;
+  if (s == null || String(s).trim() === '') return true;
+  const u = String(s).trim().toUpperCase();
+  return u !== 'INACTIVE';
 }
 
 /** คำอธิบายรายการที่ฝ่ายบัญชีลงในสมุดกลาง — ฝั่ง Petty ไม่ใช่ “รายรับ-รายจ่าย P&L” แต่คือ เงินเข้า-ออกกอง */
@@ -82,24 +100,49 @@ export default function OperationsPettyCashPage() {
 
   const allowed = useMemo(
     () => (currentUser ? canView(currentUser, 'operations_petty_cash') : false),
-    [currentUser]
+    [currentUser],
   );
 
-  const activeBankAccountsQuery = useMemoFirebase(() => {
+  const canCreateBankAccounts = useMemo(
+    () => !!currentUser && canCreate(currentUser, 'bank_accounts'),
+    [currentUser],
+  );
+
+  /** สอดคล้อง cash-advances — กรอง ACTIVE ฝั่ง client (รองรับเอกสารที่ไม่มี status) */
+  const pettyAccountsByTypeQuery = useMemoFirebase(() => {
     if (!firestore || !firebaseUser || !allowed) return null;
-    return query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'));
+    return query(collection(firestore, 'bank_accounts'), where('accountType', '==', 'PETTY_CASH'));
   }, [firestore, firebaseUser, allowed]);
 
-  const { data: activeBankAccounts, isLoading: loadingPetty } = useCollection<BankAccount>(
-    activeBankAccountsQuery as any,
-  );
+  /** รองรับ legacy ที่ยังไม่มี accountType แต่ bankName ตรงตามฟอร์มบัญชี */
+  const pettyAccountsByBankNameQuery = useMemoFirebase(() => {
+    if (!firestore || !firebaseUser || !allowed) return null;
+    return query(collection(firestore, 'bank_accounts'), where('bankName', '==', 'Petty Cash'));
+  }, [firestore, firebaseUser, allowed]);
+
+  const { data: pettyByType, isLoading: loadingPettyByType, error: errorPettyByType } =
+    useCollection<BankAccount>(pettyAccountsByTypeQuery as any);
+  const { data: pettyByName, isLoading: loadingPettyByName, error: errorPettyByName } =
+    useCollection<BankAccount>(pettyAccountsByBankNameQuery as any);
+
+  const mergedPettyBankRows = useMemo(() => {
+    const m = new Map<string, BankAccount>();
+    for (const a of [...(pettyByType ?? []), ...(pettyByName ?? [])]) {
+      m.set(a.id, a);
+    }
+    return [...m.values()];
+  }, [pettyByType, pettyByName]);
+
+  const bankPettyListError = errorPettyByType ?? errorPettyByName;
+  const loadingPetty = loadingPettyByType || loadingPettyByName;
 
   const pettyAccounts = useMemo(
     () =>
-      (activeBankAccounts ?? [])
+      mergedPettyBankRows
         .filter(isPettyCashLikeAccount)
+        .filter(isPettyBankAccountUsableStatus)
         .sort((a, b) => String(a.accountCode || '').localeCompare(String(b.accountCode || ''))),
-    [activeBankAccounts],
+    [mergedPettyBankRows],
   );
 
   const [selectedAccountId, setSelectedAccountId] = useState('');
@@ -314,18 +357,31 @@ export default function OperationsPettyCashPage() {
           </p>
         </div>
 
-        {!loadingPetty && (!pettyAccounts || pettyAccounts.length === 0) && (
+        {bankPettyListError && (
+          <Alert variant="destructive">
+            <AlertTitle>โหลดรายการบัญชีไม่สำเร็จ</AlertTitle>
+            <AlertDescription>
+              {bankPettyListError instanceof FirestorePermissionError
+                ? 'สิทธิ์ Firestore ไม่อนุญาตให้อ่านกอง Petty (bank_accounts) — ตรวจ users/{uid}: assignedRoleKey=operations_manager หรือ accessGroup=operations + accessLevel=manager แล้วให้แอดมินบันทึกบทบาทอีกครั้ง'
+                : bankPettyListError.message}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!loadingPetty && !bankPettyListError && (!pettyAccounts || pettyAccounts.length === 0) && (
           <Card className="border-dashed border-primary/30 bg-primary/5">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Wallet className="h-5 w-5" /> ยังไม่มีบัญชี Petty Cash
               </CardTitle>
               <CardDescription>
-                ให้ฝ่ายบัญชีเปิดบัญชีประเภท Petty Cash ที่เมนูบัญชีธนาคาร หรือกดปุ่มด้านล่าง (ถ้ามีสิทธิ์)
+                {canCreateBankAccounts
+                  ? 'ฝ่ายบัญชีเปิดบัญชีประเภท Petty Cash ที่เมนูบัญชีธนาคาร — ถ้าคุณมีสิทธิ์บัญชีเต็มสามารถสร้างกองได้จากปุ่มด้านล่าง (ฝ่ายปฏิบัติการไม่สร้างกองจากหน้านี้)'
+                  : 'ให้ฝ่ายบัญชีเปิดบัญชีประเภท Petty Cash ที่เมนูบัญชีธนาคาร และตั้งสถานะ ACTIVE — การสร้างกองทำได้เฉพาะฝ่ายบัญชีเท่านั้น'}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {canView(currentUser, 'bank_accounts') && (
+              {canCreateBankAccounts && (
                 <Button asChild className="font-bold">
                   <Link href="/bank-accounts/new?preset=petty">สร้างบัญชี Petty Cash</Link>
                 </Button>

@@ -14,6 +14,7 @@ import {
   UserType,
   PortalRole,
 } from './types';
+import { deleteField } from 'firebase/firestore';
 import { isSystemAdmin, normalizeCurrentUserPermissions } from './permissions';
 import { normalizeBusinessRoleKey, normalizePermissionProfileDocumentId } from './role-key-normalizer';
 import { sanitizeFirestorePayload } from './utils';
@@ -214,11 +215,12 @@ export function deriveBusinessRoleKey(user: Partial<User>): BusinessRoleKey {
   if (u && isSystemAdmin(u)) return 'system_admin';
   const p = primaryBusinessRoleFromUser(user);
   if (p) return p;
-  const fromProfileId =
+  const fromProfileIdRaw =
     normalizePermissionProfileDocumentId(u?.permissionProfileKey ?? '') ||
     normalizePermissionProfileDocumentId(u?.permissionProfileKeys?.[0] ?? '');
-  if (fromProfileId && fromProfileId in BUSINESS_ROLES) {
-    return fromProfileId as BusinessRoleKey;
+  const fromProfileRole = fromProfileIdRaw ? normalizeBusinessRoleKey(fromProfileIdRaw) : null;
+  if (fromProfileRole && fromProfileRole in BUSINESS_ROLES) {
+    return fromProfileRole as BusinessRoleKey;
   }
   if (u?.department && u.level) {
     return businessRoleFromDeptLevel(u.department, u.level);
@@ -248,6 +250,10 @@ function getProfileKeyForRole(roleKey: BusinessRoleKey): string {
 
 /**
  * Primary helper: single-role mapping only.
+ *
+ * `permissionProfileKey` / `permissionProfileKeys` / `roleIds` / `role` / `user_type` / `status`
+ * are mirrored from `assignedRoleKey` to keep older Firestore rules (เช่นกฎที่ deploy ก่อนหน้า)
+ * อ่าน internal/admin gate ออกได้ ระหว่างที่กำลังย้ายไปใช้ assignedRoleKey ล้วน
  */
 export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User> {
   const mapped = normalizeBusinessRoleKey(roleKey);
@@ -258,28 +264,54 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
   const accessLevel = mapBusinessRoleToAccessLevel(rk);
   const dataAccess = deriveDataAccess([rk]);
   const userType: UserType = dataAccess === 'client' ? 'customer_portal' : 'internal';
-  const permissionProfileKey = getProfileKeyForRole(rk);
   const portalRole: PortalRole | undefined = rk === 'client_user' ? 'viewer' : undefined;
   const allowedModules = getDefaultAllowedModules(accessGroup, accessLevel);
+  const profileKey = getProfileKeyForRole(rk);
+  const legacyRole = role?.canonicalRole;
 
   return {
     assignedRoleKey: rk,
-    assignedRoleKeys: [rk],
-    roleId: role.canonicalRole,
-    roleIds: [role.canonicalRole],
-    permissionProfileKey,
-    permissionProfileKeys: [permissionProfileKey],
-    department: role.dept,
-    level: role.level,
     accessGroup,
-    departmentGroup: accessGroup,
     accessLevel,
     allowedModules,
     dataAccess,
     userType,
-    portalRole,
+    permissionProfileKey: profileKey,
+    permissionProfileKeys: [profileKey],
+    roleIds: [profileKey],
+    ...(legacyRole ? { role: legacyRole } : {}),
+    ...(portalRole ? { portalRole } : {}),
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * ฟิลด์เก่าที่ปัจจุบันถูก mirror จาก assignedRoleKey — ไม่ลบ เพื่อให้ rules production
+ * (รวมถึงรุ่นที่ยังอ่าน permissionProfileKey/roleIds/role) ผ่าน internal/admin gate ต่อเนื่อง
+ * ระหว่าง roll-out rules ใหม่
+ */
+export const REDUNDANT_USER_AUTH_FIELDS = [
+  'assignedRoleKeys',
+  'roleId',
+  'department',
+  'level',
+  'departmentGroup',
+] as const;
+
+/** อัปเดต Firestore: ตั้งบทบาท canonical + ลบฟิลด์ซ้ำซ้อนที่ไม่ใช้ (legacy auth fields ยังคง mirror ใน `getFieldsForBusinessRole`) */
+export function buildUserAuthFirestoreUpdate(
+  roleKey: BusinessRoleKey,
+  patch?: Partial<User>,
+): Record<string, unknown> {
+  const fields = normalizeUserAuthorizationFields({
+    ...getFieldsForBusinessRole(roleKey),
+    ...patch,
+  });
+  const out: Record<string, unknown> = { ...sanitizeFirestorePayload(fields) };
+  for (const key of REDUNDANT_USER_AUTH_FIELDS) {
+    out[key] = deleteField();
+  }
+  return out;
 }
 
 /** Map repair UI / legacy strings to a canonical BusinessRoleKey. */
@@ -302,39 +334,33 @@ export function normalizeUserAuthorizationFields(draft: Partial<User>): Partial<
   const roleKey = (mapped in BUSINESS_ROLES ? mapped : raw) as BusinessRoleKey;
 
   const canonical = getFieldsForBusinessRole(roleKey);
-  const merged: Partial<User> = { ...canonical, ...draft };
-
-  merged.assignedRoleKey = roleKey;
-  merged.assignedRoleKeys = [roleKey];
-
-  const br = BUSINESS_ROLES[roleKey];
-  merged.roleId = br.canonicalRole;
-  merged.roleIds = [br.canonicalRole];
-
-  const gRaw = (merged.accessGroup ?? canonical.accessGroup) as string;
+  const gRaw = (draft.accessGroup ?? canonical.accessGroup) as string;
   const g =
     coerceCanonicalAccessPartition(gRaw) ??
     (canonical.accessGroup as 'admin' | 'operations' | 'accounting' | 'client');
-  merged.accessGroup = g;
-  merged.departmentGroup = g;
 
-  if (merged.permissionProfileKey) {
-    const pk =
-      normalizePermissionProfileDocumentId(String(merged.permissionProfileKey).trim()) ??
-      merged.permissionProfileKey;
-    merged.permissionProfileKey = pk;
-    merged.permissionProfileKeys = [pk];
-  } else {
-    merged.permissionProfileKey = canonical.permissionProfileKey;
-    merged.permissionProfileKeys = canonical.permissionProfileKeys;
-  }
+  /** Mirror approvalStatus → status (ถ้า rules ใน production บางชุดอ่าน `status` แทน `approvalStatus`) */
+  const approvalStatus = draft.approvalStatus ?? null;
+  const statusMirror =
+    approvalStatus === 'ACTIVE' ? 'active' : approvalStatus === 'PENDING' ? 'pending' : null;
 
-  if (!merged.accessLevel) merged.accessLevel = canonical.accessLevel;
-  if (!merged.department) merged.department = canonical.department;
-  if (!merged.level) merged.level = canonical.level;
-
-  merged.updatedAt = Date.now();
-  return sanitizeFirestorePayload(merged);
+  return sanitizeFirestorePayload({
+    assignedRoleKey: roleKey,
+    accessGroup: g,
+    accessLevel: draft.accessLevel ?? canonical.accessLevel,
+    allowedModules: draft.allowedModules ?? canonical.allowedModules,
+    dataAccess: draft.dataAccess ?? canonical.dataAccess,
+    userType: draft.userType ?? canonical.userType,
+    permissionProfileKey: canonical.permissionProfileKey,
+    permissionProfileKeys: canonical.permissionProfileKeys,
+    roleIds: canonical.roleIds,
+    ...(canonical.role ? { role: canonical.role } : {}),
+    ...(draft.portalRole != null ? { portalRole: draft.portalRole } : {}),
+    ...(approvalStatus != null ? { approvalStatus } : {}),
+    ...(draft.isActive != null ? { isActive: draft.isActive } : {}),
+    ...(statusMirror != null ? { status: statusMirror } : {}),
+    updatedAt: Date.now(),
+  }) as Partial<User>;
 }
 
 /** Full auth payload for setup-admin / emergency repair (role-based only). */

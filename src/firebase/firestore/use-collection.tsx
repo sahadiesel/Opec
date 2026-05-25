@@ -105,6 +105,11 @@ export function useCollection<T = any>(
           return;
         }
 
+        if (error.code !== 'permission-denied') {
+          setError(error);
+          return;
+        }
+
         const path: string =
           memoizedTargetRefOrQuery.type === 'collection'
             ? (memoizedTargetRefOrQuery as CollectionReference).path

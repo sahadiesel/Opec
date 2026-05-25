@@ -16,9 +16,9 @@ import {
 import { parseISO } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { usePoLinesFanout } from '@/lib/ops/use-po-lines-fanout';
 import {
   collection,
-  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -348,15 +348,9 @@ export function PoDailyBoardCard({
     };
   }, [firestore, monthYm, waves, poIdsKey]);
 
-  const poLinesGroupQuery = useMemoFirebase(
-    () => (firestore && poIds.length ? collectionGroup(firestore, 'po_lines') : null),
-    [firestore, poIds.length],
-  );
-  const { data: allPoLines } = useCollection<POLine>(poLinesGroupQuery as any);
-  const bundlePoLines = useMemo(() => {
-    const set = new Set(poIds);
-    return (allPoLines ?? []).filter((l) => set.has(l.poId));
-  }, [allPoLines, poIds]);
+  /** Fan-out per-PO subcollection read แทน collectionGroup (rules production ยังไม่เปิด wildcard read) */
+  const { data: bundlePoLinesData } = usePoLinesFanout(poIds);
+  const bundlePoLines = useMemo(() => bundlePoLinesData ?? [], [bundlePoLinesData]);
 
   const contractIds = useMemo(
     () => [...new Set(posList.map((p) => (p.contractId || '').trim()).filter(Boolean))],

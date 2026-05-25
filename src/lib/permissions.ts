@@ -20,7 +20,6 @@ import {
   canManageWaveRecords,
   isOperationManager,
   isSalesManager,
-  isAccountingDepartmentReadOnlyObserver,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
@@ -77,7 +76,6 @@ export {
   canManageWaveRecords,
   isOperationManager,
   isSalesManager,
-  isAccountingDepartmentReadOnlyObserver,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
@@ -194,7 +192,7 @@ export const SYSTEM_MODULES = [
   {
     group: 'Operations (ปฏิบัติการ)',
     key: 'operations_petty_cash',
-    label: 'เบิกจ่าย Petty Cash (หน้างาน)',
+    label: 'Petty Cash — เบิกจ่ายหน้างาน',
   },
   { group: 'Operations (ปฏิบัติการ)', key: 'vendors', label: 'คู่ค้า/ผู้ขาย (Vendors)' },
   { group: 'Operations (ปฏิบัติการ)', key: 'purchases', label: 'ใบสั่งซื้อ(Purchase Order)' },
@@ -209,7 +207,7 @@ export const SYSTEM_MODULES = [
   {
     group: 'บัญชี (Accounting)',
     key: 'receipts',
-    label: 'ใบเสร็จรับเงิน (ลูกค้า) — หลังยืนยันรับเงิน (Money receipt)',
+    label: 'ใบเสร็จรับเงิน (ลูกค้า) — หลังยืนยันรับเงิน (Receipt)',
   },
   { group: 'บัญชี (Accounting)', key: 'ap_bills', label: 'รับวางบิลเจ้าหนี้ (AP Bills)' },
   { group: 'บัญชี (Accounting)', key: 'accounts_receivable', label: 'ลูกหนี้การค้า (AR)' },
@@ -331,6 +329,20 @@ export function getOperationsOfficerModulePermission(moduleKey: ModuleKey): Modu
   return { ...NO_ACCESS };
 }
 
+/** สิทธิ์โมดูลสำหรับ `store_officer` — คลัง/จัดซื้อเท่านั้น (ไม่ใช่ลูกค้า/บัญชี/ payroll เต็มรูปแบบ) */
+export function getStoreOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
+  if (moduleKey === 'overview_dashboard') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'employee_self_profile') {
+    return { ...READ_ONLY, create: true, edit: true };
+  }
+  if (moduleKey === 'vendors' || moduleKey === 'purchases' || moduleKey === 'store_inventory') {
+    return { ...FULL_ACCESS };
+  }
+  return { ...NO_ACCESS };
+}
+
 /** สิทธิ์โมดูลสำหรับ `timekeeper` — เน้นลงเวลา + ดูทะเบียนประกอบ (ไม่มีคลัง/จัดซื้อ/manpower) */
 export function getTimekeeperModulePermission(moduleKey: ModuleKey): ModulePermission {
   if (moduleKey === 'overview_dashboard') {
@@ -408,14 +420,6 @@ export function isInternalUser(user: User | null): boolean {
   return isSimpleInternalEligible(u);
 }
 
-const ACCOUNTING_OBSERVER_PAYROLL_VIEW_KEYS = new Set<ModuleKey>([
-  'office_payroll',
-  'worker_payroll',
-  'payroll_runs',
-  'payslips',
-  'payment_export_batches',
-]);
-
 export function getPermissions(
   user: User | null,
   rawModuleKey: string,
@@ -478,15 +482,13 @@ export function getPermissions(
     isSimpleInternalEligible(u) &&
     !isSimpleAccounting(u) &&
     !isOperationsOfficer(u) &&
-    !isTimekeeper(u) &&
-    !isAccountingDepartmentReadOnlyObserver(u)
+    !isTimekeeper(u)
   ) {
     return { view: true, create: false, edit: true, delete: false, approve: false };
   }
 
   if (ACCOUNTING_ONLY_MODULE_KEYS.has(moduleKey)) {
     if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
-    if (isAccountingDepartmentReadOnlyObserver(u)) return clonePermission(READ_ONLY);
     return clonePermission(NO_ACCESS);
   }
 
@@ -528,28 +530,29 @@ export function getPermissions(
     if (isSystemAdmin(u) || isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
     if (isSimpleAccounting(u)) return clonePermission(FULL_ACCESS);
     if (isPayrollOfficer(u) || isHrManager(u) || isOperationManager(u)) return clonePermission(FULL_ACCESS);
-    /** มุมมองบัญชีแบบอ่านอย่างเดียว (ผู้จัดการขาย / ผจก.ปฏิบัติการฯ) — ดูคิวจ่ายเบิกล่วงหน้าได้ ไม่บันทึก */
-    if (isAccountingDepartmentReadOnlyObserver(u)) return clonePermission(READ_ONLY);
     return clonePermission(NO_ACCESS);
   }
 
   /**
-   * Petty Cash หน้างาน — เฉพาะผู้จัดการปฏิบัติการ (operations_manager) + แอดมิน
-   * ต้องสอดคล้อง firestore `canAccessBankAccountsAndCashbook` — ถ้าเปิดในแอปกว้างกว่า rules
-   * จะ query bank_accounts ได้ว่างทั้งที่มีกอง Petty อยู่จริง
+   * Petty Cash หน้างาน — ผู้จัดการปฏิบัติการ (operations_manager) + แอดมิน
+   * รองรับ matrix / assigned role ที่ยังไม่ sync กับ getPrimaryLegacyRole (เช่นเดียวกับ draft_invoices)
+   * ต้องสอดคล้อง firestore — ถ้าเปิดในแอปกว้างกว่า rules จะ query bank_accounts ได้ว่างทั้งที่มีกอง Petty อยู่จริง
    */
   if (moduleKey === 'operations_petty_cash') {
     if (isSystemAdmin(u) || isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
     if (isOperationManager(u)) return clonePermission(FULL_ACCESS);
+    if (
+      isOperationsPillarExecutive(u) &&
+      isOperationGroupMember(u) &&
+      getEffectiveAccessLevel(u) === 'manager' &&
+      getEffectiveAccessGroup(u) === 'operations' &&
+      !isHrManager(u) &&
+      getPrimaryLegacyRole(u) !== 'sales_manager' &&
+      getPrimaryLegacyRole(u) !== 'store_officer'
+    ) {
+      return clonePermission(FULL_ACCESS);
+    }
     return clonePermission(NO_ACCESS);
-  }
-
-  /**
-   * ผู้จัดการขาย / ผู้จัดการปฏิบัติการ (มุมมองบัญชีแบบอ่านอย่างเดียว) —
-   * เงินเดือน สลิป ไฟล์โอน ฯลฯ ใต้เมนูบัญชี: ดูและพิมพ์ได้ ไม่สร้าง/ไม่แก้ไข
-   */
-  if (isAccountingDepartmentReadOnlyObserver(u) && ACCOUNTING_OBSERVER_PAYROLL_VIEW_KEYS.has(moduleKey)) {
-    return clonePermission(READ_ONLY);
   }
 
   /** HR Officer: จัดการทะเบียนเอกสารกลางได้ แต่ไม่ลบ (manager/admin ผ่าน FULL_ACCESS ด้านล่าง) */
@@ -568,6 +571,10 @@ export function getPermissions(
 
   if (isTimekeeper(u)) {
     return clonePermission(getTimekeeperModulePermission(moduleKey));
+  }
+
+  if (isStoreOfficer(u)) {
+    return clonePermission(getStoreOfficerModulePermission(moduleKey));
   }
 
   if (isOperationsOfficer(u)) {
@@ -677,7 +684,13 @@ const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
   'profit_estimates',
 ];
 
-const OPS_PILLAR_UI_KEYS: ModuleKey[] = ['waves', 'assignments', 'mobilization', 'draft_invoices'];
+const OPS_PILLAR_UI_KEYS: ModuleKey[] = [
+  'waves',
+  'assignments',
+  'mobilization',
+  'draft_invoices',
+  'operations_petty_cash',
+];
 const STORE_PILLAR_UI_KEYS: ModuleKey[] = ['vendors', 'purchases', 'store_inventory'];
 const ACCOUNTING_PILLAR_UI_KEYS: ModuleKey[] = [
   'accounting_dashboard',
@@ -691,6 +704,11 @@ const ACCOUNTING_PILLAR_UI_KEYS: ModuleKey[] = [
   'cashbook',
   'bank_accounts',
   'office_payroll',
+  'worker_payroll',
+  'payroll_runs',
+  'payslips',
+  'payment_export_batches',
+  'cash_advances',
   'executive_payroll',
 ];
 

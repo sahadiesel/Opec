@@ -144,17 +144,27 @@ export function effectiveVendorBillWithholdingEnabled(
   return !!purchase.supplierWithholdingEnabled;
 }
 
-/** หัก ณ ที่จ่าย: ฐานก่อนภาษีตามการตั้งค่า VAT บนใบวางบิล (หรือสัดส่วน PO) */
+/** หัก ณ ที่จ่าย: ฐาน = ยอดก่อนภาษีตาม VAT/สัดส่วนใบ — หรือใช้ supplierWithholdingTaxBaseBill บนใบถ้ามี (ไม่เกิน gross ของงวดจ่าย) */
 export function supplierWithholdingOnVendorBill(
   grossInclVat: number,
   ratePercent: number,
   purchase: Pick<Purchase, 'totalAmount' | 'amountBeforeTax' | 'vatAmount'>,
   billVatTreatment: VendorBillVatTreatmentOverride | null | undefined,
+  bill?: Pick<PurchaseVendorBill, 'supplierWithholdingTaxBaseBill'> | null,
 ): { wht: number; netPaid: number; baseBeforeVat: number } {
   const rate = Math.max(0, Number(ratePercent) || 0);
   const { beforeTax, gross } = resolveVendorBillVatAmounts(grossInclVat, billVatTreatment, purchase);
-  const wht = rate > 0.005 ? roundMoney2((beforeTax * rate) / 100) : 0;
-  return { wht, netPaid: roundMoney2(gross - wht), baseBeforeVat: beforeTax };
+  const overrideRaw = bill?.supplierWithholdingTaxBaseBill;
+  const hasOverride =
+    overrideRaw !== undefined &&
+    overrideRaw !== null &&
+    Number.isFinite(Number(overrideRaw)) &&
+    Number(overrideRaw) >= 0;
+  const baseForWht = hasOverride
+    ? roundMoney2(Math.min(Math.max(0, Number(overrideRaw)), gross))
+    : beforeTax;
+  const wht = rate > 0.005 ? roundMoney2((baseForWht * rate) / 100) : 0;
+  return { wht, netPaid: roundMoney2(gross - wht), baseBeforeVat: baseForWht };
 }
 
 /** อัตราตามเมนูบัญชี (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) */

@@ -117,7 +117,7 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
 
       <Alert>
         <Info className="h-4 w-4" />
-        <AlertTitle>{en ? 'Money receipt' : 'ใบเสร็จรับเงิน'}</AlertTitle>
+        <AlertTitle>{en ? 'Receipt' : 'ใบเสร็จรับเงิน'}</AlertTitle>
         <AlertDescription className="text-sm">
           {en
             ? 'This receipt was issued after OPEC confirmed payment. Not e-Tax print.'
@@ -127,7 +127,7 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-primary">{en ? 'Money receipt' : 'ใบเสร็จรับเงิน'}</h1>
+          <h1 className="text-2xl font-bold text-primary">{en ? 'Receipt' : 'ใบเสร็จรับเงิน'}</h1>
           <p className="font-mono text-lg font-semibold">{receipt.receiptNo}</p>
           <p className="text-sm text-muted-foreground">
             {en ? 'Tax inv.' : 'อ้างอิง ใบกำกับ'}: {receipt.taxInvoiceNo} · {formatStoredDateThaiBE(receipt.receiptDate)}

@@ -451,7 +451,11 @@ ${payer.phone || payer.email ? `<div class="field">โทรศัพท์ / �
 <div class="field">เลขประจำตัวผู้เสียภาษี: ${escapeHtml(payee.taxId || '—')}</div>
 <div class="field">ประเภทคู่ค้า: ${escapeHtml(payeeCategoryTh(payee.vendorCategory))}${payee.countryCode ? ` · รหัสประเทศ ${escapeHtml(payee.countryCode)}` : ''}</div>
 <div class="field">ที่อยู่ (ภาษาไทย): ${escapeHtml(payeeAddrTh)}</div>
-<div class="field">สาขา: ${payeeIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payeeIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payeeIsHead && payee.branchNo ? payee.branchNo : '__________')}</div>
+${
+  payee.vendorCategory === 'INDIVIDUAL'
+    ? ''
+    : `<div class="field">สาขา: ${payeeIsHead ? '☑' : '☐'} สำนักงานใหญ่ &nbsp; ${payeeIsHead ? '☐' : '☑'} สาขาเลขที่ ${escapeHtml(!payeeIsHead && payee.branchNo ? payee.branchNo : '__________')}</div>`
+}
 
 <div class="sec">3. รายละเอียดการจ่ายเงิน</div>
 <div class="field">ประเภทเงินได้: ${incomeTypeCheckboxes(doc)}</div>

@@ -13,7 +13,6 @@ import {
   canSeeOperationsPillarUi,
   canSeeStorePillarUi,
   canSeeAccountingPillarUi,
-  isAccountingDepartmentReadOnlyObserver,
   isClient,
   isPrimaryHrOfficer,
 } from '@/lib/permissions';
@@ -246,8 +245,7 @@ const SORTED_PREFIXES = [...MODULE_PREFIXES].sort((a, b) => b[0].length - a[0].l
 export function userMayAccessPath(user: User, profile: PermissionProfile | null, pathname: string): boolean {
   const p = (pathname.split('?')[0] || '/').trim() || '/';
   const admin = isSystemAdmin(user) || isSimpleAdmin(user);
-  const accounting =
-    admin || isSimpleAccounting(user) || isAccountingDepartmentReadOnlyObserver(user);
+  const accounting = admin || isSimpleAccounting(user);
 
   if (admin) return true;
 
@@ -337,10 +335,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return true;
   }
 
-  /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) — บัญชีเต็ม หรือมุมมองบัญชีแบบอ่านอย่างเดียว */
+  /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) */
   if (
     !admin &&
-    (isSimpleAccounting(user) || isAccountingDepartmentReadOnlyObserver(user)) &&
+    isSimpleAccounting(user) &&
     (p === '/payroll/batches' ||
       p.startsWith('/payroll/batches/') ||
       p === '/accounting/worker-payroll' ||
@@ -349,10 +347,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return true;
   }
 
-  /** บัญชี: คิวจ่ายเบิกล่วงหน้าหลังผู้จัดการอนุมัติ — บัญชีเต็ม หรือมุมมองบัญชีแบบอ่านอย่างเดียว */
+  /** บัญชี: คิวจ่ายเบิกล่วงหน้าหลังผู้จัดการอนุมัติ */
   if (
     !admin &&
-    (isSimpleAccounting(user) || isAccountingDepartmentReadOnlyObserver(user)) &&
+    isSimpleAccounting(user) &&
     (p === '/accounting/cash-advances-payout' || p.startsWith('/accounting/cash-advances-payout/'))
   ) {
     return true;

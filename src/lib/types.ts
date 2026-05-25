@@ -2741,15 +2741,25 @@ export interface PurchaseVendorBill {
    * เมื่อเลือก preset ระบบจะซิงค์ค่านี้ให้ตรงกับอัตรา preset
    */
   supplierWithholdingRatePercentBill?: number;
+  /**
+   * ฐานเงินที่ใช้คำนวณหัก ณ ที่จ่าย (ก่อนภาษี) เฉพาะใบนี้ — เมื่อไม่ระบุ ระบบใช้ยอดก่อนภาษีตามสัดส่วน/VAT ของใบ
+   * ใช้เมื่อฐานหักตามกฎไม่เท่ากับยอดก่อนภาษีที่แสดงในใบวางบิล (ค่าไม่เกินยอดรวมในใบก่อนหัก ณ ที่จ่าย)
+   */
+  supplierWithholdingTaxBaseBill?: number | null;
   createdAt: number;
   updatedAt: number;
 }
+
+/** นิติบุคคล (บริษัท/ห้าง) vs บุคคลธรรมดา — ใช้ซ่อนสาขาในฟอร์มและพิมพ์หัก ณ ที่จ่ายให้ถูกต้อง */
+export type VendorLegalForm = 'JURISTIC' | 'NATURAL';
 
 export interface Vendor {
   id: string;
   vendorCode: string;
   vendorName: string;
   vendorType: VendorType;
+  /** ไม่ระบุ = ถือเป็นนิติบุคคล (พฤติกรรมเดิม) */
+  vendorLegalForm?: VendorLegalForm;
   taxId: string;
   branchType?: 'head_office' | 'branch';
   branchNo: string;
@@ -2892,6 +2902,12 @@ export interface TaxInvoice {
   /** ภาษาเอกสารฉบับพิมพ์ ณ เวลาออกฉบับจริง (ISSUED) — ล็อกเพื่อให้พิมพ์ตรงกับลูกค้า/หน้าจอ (ไม่พึ่ง localStorage ฝ่ายเดียว) */
   printDocumentLocale?: 'th' | 'en';
   notes?: string;
+  /** ผู้สร้างร่างใบกำกับ (จากใบเรียกเก็บ / บัญชี) */
+  createdByUid?: string;
+  createdByName?: string;
+  /** ผู้ยืนยันออกเอกสารจริง (ISSUED) */
+  issuedByUid?: string;
+  issuedByName?: string;
   /** แนบรูปสลิป/เอกสารขณะสถานะ DRAFT */
   timesheetPaperAttachments?: TaxInvoiceTimesheetAttachment[];
   /** อ้างอิงแถวลูกหนี้ (AR) หลังออกเอกสารจริง */

@@ -6,7 +6,7 @@ import { canView } from '@/lib/permissions';
 import { PoQuotaQueueCardShell, usePoQuotaQueueRows } from '@/components/ops/po-quota-queue';
 import { useMemo } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Info } from 'lucide-react';
+import { Info, AlertCircle } from 'lucide-react';
 
 export default function PoActiveQuotaQueuePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -16,7 +16,7 @@ export default function PoActiveQuotaQueuePage() {
     [currentUser],
   );
 
-  const { queueRows, customers, allPositions, loading } = usePoQuotaQueueRows(canSee);
+  const { queueRows, customers, allPositions, loading, loadError } = usePoQuotaQueueRows(canSee);
 
   if (userLoading || !currentUser) {
     return null;
@@ -42,6 +42,14 @@ export default function PoActiveQuotaQueuePage() {
             (สายสัญญาที่สัญญาหลักยัง active — แสดงครบทุกชุดที่มีบรรทัดโควต้า แม้เต็มแล้ว เพื่อเข้าไปจัดการมอบหมายต่อ)
           </AlertDescription>
         </Alert>
+
+        {loadError && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>โหลดข้อมูล PO Active ไม่สำเร็จ</AlertTitle>
+            <AlertDescription className="text-sm">{loadError}</AlertDescription>
+          </Alert>
+        )}
 
         <PoQuotaQueueCardShell
           queueRows={queueRows}

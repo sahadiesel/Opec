@@ -7,7 +7,8 @@ import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, collectionGroup, doc, query, where } from 'firebase/firestore';
+import { collection, doc, query, where } from 'firebase/firestore';
+import { usePoLinesFanout } from '@/lib/ops/use-po-lines-fanout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -101,12 +102,12 @@ export default function PoActiveBundleDetailPage({
     return list.filter((p) => poIdsSet.has(p.id));
   }, [customerActivePos, poIdsSet]);
 
-  const linesQuery = useMemoFirebase(() => {
-    if (!firestore || !canSee) return null;
-    return collectionGroup(firestore, 'po_lines');
-  }, [firestore, canSee]);
-
-  const { data: allLines } = useCollection<POLine>(linesQuery as any);
+  /** Fan-out per-PO subcollection read แทน collectionGroup (rules production ยังไม่เปิด wildcard read) */
+  const bundlePoIdList = useMemo(
+    () => (canSee ? Array.from(poIdsSet) : null),
+    [canSee, poIdsSet],
+  );
+  const { data: allLines } = usePoLinesFanout(bundlePoIdList);
 
   const bundleLines = useMemo(() => {
     if (!allLines?.length || !poIdsSet.size) return [];

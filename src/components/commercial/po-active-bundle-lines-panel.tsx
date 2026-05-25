@@ -39,6 +39,7 @@ import type {
   PurchaseOrder,
 } from '@/lib/types';
 import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
+import { isMainContractEligibleForPoActiveWorkflow } from '@/lib/ops/po-active-eligibility';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { defaultLaborDailyFromPosition } from '@/lib/payroll/timesheet-labor-base-cost';
@@ -193,7 +194,7 @@ function AddLineDialogWithRates({
     [rates, allPositions],
   );
   const isLinkedSourceReady =
-    (po?.poType || 'contract') === 'contract' && mc?.status === 'active';
+    (po?.poType || 'contract') === 'contract' && isMainContractEligibleForPoActiveWorkflow(mc?.status);
 
   if (!po) return null;
 
@@ -383,10 +384,9 @@ export function PoActiveBundleLinesPanel({
       <CardHeader className="border-b bg-muted/30">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle>บรรทัดโควต้า (อ่านจาก Customer PO)</CardTitle>
+            <CardTitle>บรรทัดโควต้า (ตำแหน่ง / จำนวนคน)</CardTitle>
             <CardDescription>
-              จำนวนและตำแหน่งตามบรรทัดใน PO — แก้ที่หน้า Customer PO เท่านั้น · ปุ่มลูกศรดูรายชื่อที่มอบหมายในบรรทัดนี้ ·
-              ถ้ายังว่างใช้ Assign เพื่อเติมคน
+              กำหนดตำแหน่งและจำนวนคนที่ต้องการใน PO — มอบหมายคนจริงทำที่ PO Active / Assignments (ไม่ใช่หน้านี้)
             </CardDescription>
           </div>
           {canEditPo && bundlePos.length > 0 && (

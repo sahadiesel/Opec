@@ -48,7 +48,6 @@ import {
   collection,
   doc,
   increment,
-  collectionGroup,
   getDocs,
   writeBatch,
   setDoc,
@@ -56,6 +55,7 @@ import {
   query,
   where,
 } from 'firebase/firestore';
+import { usePoLinesFanout } from '@/lib/ops/use-po-lines-fanout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -104,6 +104,11 @@ import {
   resolvePoActiveBundleKeyForPo,
 } from '@/lib/ops/po-active-bundle';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
+import {
+  buildEligibleMainContractIdSet,
+  filterPurchaseOrdersForPoActiveWorkflow,
+  PO_ACTIVE_MAIN_CONTRACT_STATUS_IN,
+} from '@/lib/ops/po-active-eligibility';
 import { buildPoActiveBundleRows, PoAssignmentBundleLandingPanel } from '@/components/ops/po-quota-queue';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { dedupeAssignmentsByWorkerAndWave, pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
@@ -204,11 +209,12 @@ function AssignmentsPageContent() {
   const posQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'purchase_orders') : null), [firestore, isAuthorized]);
   const { data: allPOs } = useCollection<PurchaseOrder>(posQuery as any);
 
-  const poLinesQuery = useMemoFirebase(() => {
-    if (!firestore || !isAuthorized) return null;
-    return collectionGroup(firestore, 'po_lines');
-  }, [firestore, isAuthorized]);
-  const { data: allPOLines, isLoading: isPOLinesLoading } = useCollection<POLine>(poLinesQuery as any);
+  /** Fan-out per-PO subcollection read แทน collectionGroup (rules production ยังไม่เปิด wildcard read) */
+  const poIdsForLines = useMemo(
+    () => (isAuthorized && allPOs ? allPOs.map((p) => p.id).filter(Boolean) : null),
+    [isAuthorized, allPOs],
+  );
+  const { data: allPOLines, isLoading: isPOLinesLoading } = usePoLinesFanout(poIdsForLines);
 
   /** Backfill workerName บน mobilizations เก่า — client portal อ่านชื่อจากฟิลด์นี้เมื่ออ่าน workers ไม่ได้ */
   useEffect(() => {
@@ -267,7 +273,10 @@ function AssignmentsPageContent() {
 
   const landingContractsQuery = useMemoFirebase(() => {
     if (!firestore || !showAssignmentBundleLanding) return null;
-    return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
+    return query(
+      collection(firestore, 'main_contracts'),
+      where('status', 'in', [...PO_ACTIVE_MAIN_CONTRACT_STATUS_IN]),
+    );
   }, [firestore, showAssignmentBundleLanding]);
 
   const { data: landingActiveContracts, isLoading: landingContractsLoading } = useCollection<MainContract>(
@@ -283,13 +292,13 @@ function AssignmentsPageContent() {
     landingCustomersQuery as any,
   );
 
-  const landingMainContractIdSet = useMemo(() => {
-    if (landingActiveContracts === undefined) return new Set<string>();
-    return new Set((landingActiveContracts ?? []).map((c) => c.id).filter(Boolean));
-  }, [landingActiveContracts]);
+  const landingMainContractIdSet = useMemo(
+    () => buildEligibleMainContractIdSet(landingActiveContracts),
+    [landingActiveContracts],
+  );
 
   const activePOsForLanding = useMemo(
-    () => (allPOs || []).filter((p) => p.status === 'active'),
+    () => filterPurchaseOrdersForPoActiveWorkflow(allPOs),
     [allPOs],
   );
 
@@ -319,7 +328,10 @@ function AssignmentsPageContent() {
     (landingContractsLoading || landingCustomersLoading || isAssignmentsLoading || isPOLinesLoading);
 
   const contractActivePOs = useMemo(
-    () => (allPOs || []).filter((p) => p.status === 'active' && (p.poType || 'contract') === 'contract'),
+    () =>
+      filterPurchaseOrdersForPoActiveWorkflow(allPOs).filter(
+        (p) => (p.poType || 'contract') === 'contract',
+      ),
     [allPOs],
   );
 

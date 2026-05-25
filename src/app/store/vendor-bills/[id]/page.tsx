@@ -92,6 +92,7 @@ import { buildWhtAuditLogEntry } from '@/lib/wht/wht-certificate-audit';
 import { assignWhtCertificateNumberIfMissing } from '@/lib/wht/wht-certificate-assign-number';
 import {
   effectiveWhtCertificateDocumentNo,
+  validateWhtCertificateForOfficialIssue,
   validateWhtCertificateForOfficialPrint,
   validateWhtCertificateForPayeeCopies12Print,
   validateWhtCertificateForPreviewPrint,
@@ -348,6 +349,10 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [whtPresetDialogOpen, setWhtPresetDialogOpen] = useState(false);
   const [whtPresetChoice, setWhtPresetChoice] = useState<VendorBillWhtPresetCategory>('SERVICE');
   const [whtPresetSaving, setWhtPresetSaving] = useState(false);
+  /** ฐานหัก ณ ที่จ่าย (ก่อนภาษี) กำหนดมือ — ไม่เท่ากับยอดก่อนภาษีในใบ */
+  const [whtTaxBaseDialogOpen, setWhtTaxBaseDialogOpen] = useState(false);
+  const [whtTaxBaseInput, setWhtTaxBaseInput] = useState('');
+  const [whtTaxBaseSaving, setWhtTaxBaseSaving] = useState(false);
   /** พรีวิว + เลือกชุดพิมพ์หัก ณ ที่จ่าย (หลังจ่ายแล้ว) */
   const [whtHubOpen, setWhtHubOpen] = useState(false);
   const [vatMode, setVatMode] = useState<VatModeUi>('AUTO');
@@ -467,6 +472,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     Number.isFinite(Number(bill.supplierWithholdingRatePercentBill));
   /** แก้ % มือบนบิล โดยไม่ได้เลือกเมนูประเภท (preset จะซิงค์ % ลงบิลด้วย — แยกด้วยฟิลด์ preset) */
   const hasManualWhtOnly = hasManualBillWhtRate && !hasVendorBillWhtPreset;
+  const hasManualWhtTaxBase = useMemo(
+    () =>
+      bill?.supplierWithholdingTaxBaseBill != null &&
+      Number.isFinite(Number(bill.supplierWithholdingTaxBaseBill)),
+    [bill?.supplierWithholdingTaxBaseBill],
+  );
 
   const vendorPayeeBankDisplay = useMemo(() => {
     if (!vendor) return null;
@@ -487,7 +498,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         ? Number(linkedMilestone.amount) || 0
         : Number(bill.billAmount ?? purchase.totalAmount) || 0;
     if (grossInclVat < 0.01) return null;
-    return supplierWithholdingOnVendorBill(grossInclVat, rate, purchase, effectiveVatTreatmentForSlice);
+    return supplierWithholdingOnVendorBill(grossInclVat, rate, purchase, effectiveVatTreatmentForSlice, bill);
   }, [purchase, linkedMilestone, bill, whtEnabledEffective, effectiveVatTreatmentForSlice]);
 
   const canPrintWithholdingSummary = !!withholdingPreview && withholdingPreview.wht > 0.005;
@@ -510,7 +521,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     const rate = effectiveVendorBillWhtRatePercent(bill, purchase);
     if (rate < 0.005) return null;
     if (payoutGrossInclVat < 0.01) return null;
-    return supplierWithholdingOnVendorBill(payoutGrossInclVat, rate, purchase, effectiveVatTreatmentForSlice);
+    return supplierWithholdingOnVendorBill(payoutGrossInclVat, rate, purchase, effectiveVatTreatmentForSlice, bill);
   }, [purchase, bill, payoutGrossInclVat, whtEnabledEffective, effectiveVatTreatmentForSlice]);
 
   const canPrintWithholdingAtPayout = !!withholdingAtPayout && withholdingAtPayout.wht > 0.005;
@@ -656,7 +667,10 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         ...draftCore,
         createdByUid: currentUser.id,
       };
-      const pvErrs = validateWhtCertificateForPreviewPrint(previewDoc, 'COPY_PAYEE_TAX_RETURN');
+      const pvErrs = [
+        ...validateWhtCertificateForPreviewPrint(previewDoc, 'COPY_PAYEE_TAX_RETURN'),
+        ...validateWhtCertificateForOfficialIssue(previewDoc, { requireCashbookReference: false }),
+      ];
       if (pvErrs.length) {
         toast({ variant: 'destructive', title: 'พิมพ์ตัวอย่างไม่ได้', description: pvErrs.join(' ') });
         return;
@@ -1006,10 +1020,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         patch.supplierWithholdingEnabledBill = deleteField();
         patch.vendorBillWhtPresetCategory = deleteField();
         patch.supplierWithholdingRatePercentBill = deleteField();
+        patch.supplierWithholdingTaxBaseBill = deleteField();
       } else if (accountingWhtDraftMode === 'off') {
         patch.supplierWithholdingEnabledBill = false;
         patch.vendorBillWhtPresetCategory = deleteField();
         patch.supplierWithholdingRatePercentBill = deleteField();
+        patch.supplierWithholdingTaxBaseBill = deleteField();
       } else {
         patch.supplierWithholdingEnabledBill = true;
         patch.vendorBillWhtPresetCategory = accountingWhtDraftPreset;
@@ -1189,6 +1205,79 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       setWhtPresetDialogOpen(false);
     } finally {
       setWhtPresetSaving(false);
+    }
+  };
+
+  const openWhtTaxBaseDialog = () => {
+    if (!bill) return;
+    const o = bill.supplierWithholdingTaxBaseBill;
+    setWhtTaxBaseInput(
+      o != null && Number.isFinite(Number(o)) ? String(roundMoney2(Number(o))) : '',
+    );
+    setWhtTaxBaseDialogOpen(true);
+  };
+
+  const saveWhtTaxBaseOverride = async () => {
+    if (!billRef || !bill || (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') || !canPay) return;
+    const t = whtTaxBaseInput.trim();
+    setWhtTaxBaseSaving(true);
+    try {
+      if (t === '') {
+        await updateDocumentNonBlocking(billRef, {
+          supplierWithholdingTaxBaseBill: deleteField(),
+          updatedAt: Date.now(),
+        });
+        toast({
+          title: 'ใช้ฐานตามใบวางบิล',
+          description: 'คำนวณจากยอดก่อนภาษีตามสัดส่วน / VAT ของใบ',
+        });
+        setWhtTaxBaseDialogOpen(false);
+        return;
+      }
+      const n = parseFloat(t.replace(',', '.'));
+      if (!Number.isFinite(n) || n < 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ยอดไม่ถูกต้อง',
+          description: 'ระบุตัวเลข ≥ 0 หรือเว้นว่างเพื่อคืนค่าอัตโนมัติ',
+        });
+        return;
+      }
+      const cap = Math.max(0, roundMoney2(grossInclVatForBill));
+      const capped = roundMoney2(Math.min(Math.max(0, n), cap));
+      await updateDocumentNonBlocking(billRef, {
+        supplierWithholdingTaxBaseBill: capped,
+        updatedAt: Date.now(),
+      });
+      toast({
+        title: 'บันทึกฐานหัก ณ ที่จ่ายแล้ว',
+        description:
+          cap > 0.005 && capped + 0.001 < n
+            ? `ปรับให้ไม่เกินยอดรวมในใบ (ก่อนหัก ณ ที่จ่าย) ฿${cap.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+            : `ใช้ฐาน ฿${capped.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+      });
+      setWhtTaxBaseDialogOpen(false);
+    } finally {
+      setWhtTaxBaseSaving(false);
+    }
+  };
+
+  const clearWhtTaxBaseOverride = async () => {
+    if (!billRef || !bill || (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') || !canPay) return;
+    setWhtTaxBaseSaving(true);
+    try {
+      await updateDocumentNonBlocking(billRef, {
+        supplierWithholdingTaxBaseBill: deleteField(),
+        updatedAt: Date.now(),
+      });
+      setWhtTaxBaseInput('');
+      toast({
+        title: 'ใช้ฐานตามใบวางบิล',
+        description: 'คำนวณจากยอดก่อนภาษีตามสัดส่วน / VAT ของใบ',
+      });
+      setWhtTaxBaseDialogOpen(false);
+    } finally {
+      setWhtTaxBaseSaving(false);
     }
   };
 
@@ -2092,7 +2181,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           (PO ลง {poWhtRatePercent}% — แก้ % มือเฉพาะใบนี้)
                         </span>
                       ) : null}{' '}
-                      · ฐานก่อนภาษี (ประมาณการ) ฿
+                      ·{' '}
+                      {hasManualWhtTaxBase ? (
+                        <span className="text-amber-900 dark:text-amber-200 font-medium">
+                          ฐานหัก ณ ที่จ่าย (กำหนดมือ) ฿
+                        </span>
+                      ) : (
+                        <span>ฐานก่อนภาษี (ประมาณการ) ฿</span>
+                      )}
                       {withholdingPreview.baseBeforeVat.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                       })}{' '}
@@ -2128,8 +2224,18 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         <Pencil className="h-3.5 w-3.5" />
                         แก้ไขรายการหัก ณ ที่จ่าย
                       </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 font-semibold border-violet-400/80 bg-background"
+                        onClick={() => openWhtTaxBaseDialog()}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        กำหนดฐานหัก
+                      </Button>
                       <p className="text-[11px] text-muted-foreground leading-snug min-w-0 flex-1">
-                        เลือกประเภทเงินได้ (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) — ระบบจะคำนวณยอดหักและยอดโอนสุทธิใหม่
+                        เลือกประเภทเงินได้ (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) — กำหนดฐานหักเมื่อยอดที่ต้องหักไม่เท่ากับยอดก่อนภาษีในใบ — ระบบจะคำนวณยอดหักและยอดโอนสุทธิใหม่
                         {hasVendorBillWhtPreset ? (
                           <span className="block mt-1 text-foreground font-medium">
                             ปัจจุบัน:{' '}
@@ -2752,6 +2858,63 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   onClick={() => void saveBillWhtRateOverride()}
                 >
                   {whtRateSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  บันทึก
+                </Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={whtTaxBaseDialogOpen} onOpenChange={setWhtTaxBaseDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>กำหนดฐานหัก ณ ที่จ่าย (เฉพาะใบนี้)</DialogTitle>
+              <DialogDescription className="text-sm leading-relaxed">
+                ปกติระบบใช้ยอดก่อนภาษีตามสัดส่วน / VAT ของใบวางบิล — ถ้าฐานหักตามเอกสารไม่เท่ากับยอดนั้น ให้ระบุจำนวนเงินก่อนภาษีที่ใช้คูณอัตราหัก ณ ที่จ่าย (ไม่เกินยอดรวมในใบก่อนหัก ณ ที่จ่าย ฿
+                {grossInclVatForBill.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="wht-tax-base-bill">ฐานเงินก่อนภาษีสำหรับคำนวณหัก (บาท)</Label>
+              <Input
+                id="wht-tax-base-bill"
+                type="text"
+                inputMode="decimal"
+                className="font-mono h-11"
+                value={whtTaxBaseInput}
+                onChange={(e) => setWhtTaxBaseInput(e.target.value)}
+                placeholder="เว้นว่าง = ใช้ยอดจากใบอัตโนมัติ"
+              />
+            </div>
+            <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                {hasManualWhtTaxBase ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={whtTaxBaseSaving}
+                    onClick={() => void clearWhtTaxBaseOverride()}
+                  >
+                    คืนค่าอัตโนมัติ
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={whtTaxBaseSaving}
+                  onClick={() => setWhtTaxBaseDialogOpen(false)}
+                >
+                  ยกเลิก
+                </Button>
+                <Button
+                  type="button"
+                  className="font-semibold"
+                  disabled={whtTaxBaseSaving}
+                  onClick={() => void saveWhtTaxBaseOverride()}
+                >
+                  {whtTaxBaseSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   บันทึก
                 </Button>
               </div>

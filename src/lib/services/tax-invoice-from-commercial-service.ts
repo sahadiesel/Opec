@@ -147,6 +147,8 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     currency: com.currency || 'THB',
     status: 'DRAFT',
     notes: `จากใบเรียกเก็บ ${com.invoiceNo} — ใบกำกับภาษี+ใบวางบิล (ยังไม่ e-Tax) — ใบเสร็จรับเงินอีกขั้นหลังรับเงินจริง`,
+    createdByUid: actor.id,
+    createdByName: (actor.displayName || actor.email || actor.id).trim(),
     ...(com.customerApprovedAt
       ? {
           billingCustomerApprovedAt: com.customerApprovedAt,
