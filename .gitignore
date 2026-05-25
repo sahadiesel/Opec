@@ -47,3 +47,7 @@ firestore-debug.log
 ui-debug.log
 firestore.rules.*.bak
 firestore.rules.simplified.draft
+firestore.rules.deduped
+firestore.rules.inlined
+firestore.rules.minimal
+firestore.rules.deployed.txt

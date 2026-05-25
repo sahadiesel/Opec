@@ -2,7 +2,7 @@ rules_version = '2';
 // =====================================================================
 // GENERATED firestore.rules (simplified, matrix-driven)
 // Source: /system-admin/menu-permissions + module-to-firestore-paths.ts
-// Generated: 2026-05-25T08:30:50.561Z
+// Generated: 2026-05-25T08:59:53.124Z
 // By: cli
 // =====================================================================
 // ! Pre-flight checklist  deploy:
@@ -66,1303 +66,369 @@ service cloud.firestore {
     function portalOwnsResourceCustomerId() {
       return portalCustomerIdOk() && resource.data.customerId == userData().customerId;
     }
-    // =====================================================================
-    // PRESERVED HELPERS -  firestore.rules  ( preserved match blocks)
-    // =====================================================================
-    function canReadCustomers() {
-      return hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && !roleIs(userData(), 'store_officer')
-        && !roleIs(userData(), 'accounting_officer');
-    }
-    function canWriteCustomers() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'sales_manager')
-            || roleIs(userData(), 'sales_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function canReadCommercialDocs() {
-      return internalActiveOrStaff()
-        && !roleIs(userData(), 'store_officer');
-    }
-    function canWriteCommercialDocs() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'sales_manager')
-            || roleIs(userData(), 'sales_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function canDeleteOpsScheduling() {
-      return isAdmin()
-        || roleIs(userData(), 'operations_manager')
-        || roleIs(userData(), 'hr_manager')
-        || roleIs(userData(), 'accounting_manager');
-    }
-    function canWriteCommercialInvoicesInternal() {
-      return canIssueCommercialInvoiceSequence();
-    }
-    function commercialInvoiceTransitionToVoid() {
-      return resource.data != null
-        && 'status' in resource.data
-        && resource.data.status != 'VOID'
-        && request.resource.data != null
-        && 'status' in request.resource.data
-        && request.resource.data.status == 'VOID';
-    }
-    function portalIsApprover() {
-      return portalCustomerIdOk()
-        && 'portalRole' in userData()
-        && userData().portalRole == 'approver';
-    }
-    function portalCommercialInvoiceConfirmKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'status',
-        'customerApprovedAt',
-        'customerApprovedByUid',
-        'customerApprovedByName',
-        'customerApprovalSource',
-        'updatedAt',
-        'updatedByUid',
-        'updatedByName'
-      ]);
-    }
-    function portalCommercialInvoiceRevisionRequestKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'customerRevisionRequestedAt',
-        'customerRevisionRequestNote',
-        'customerRevisionIssueId',
-        'updatedAt',
-        'updatedByUid',
-        'updatedByName'
-      ]);
-    }
-    function portalCommercialPaymentReportAllowed() {
-      return portalIsApprover()
-        && portalOwnsResourceCustomerId()
-        && resource.data.status == 'ISSUED'
-        && !resource.data.keys().hasAny(['opecPaymentVerifiedAt']);
-    }
-    function portalCommercialPaymentProofKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'customerPaymentReportedAt',
-        'customerPaymentReportedByUid',
-        'customerPaymentReportedByName',
-        'customerPaymentProofUrl',
-        'customerPaymentProofFileName',
-        'updatedAt',
-        'updatedByUid',
-        'updatedByName'
-      ]);
-    }
-    function isEmployeeSelfPortalUser() {
-      return hasUserDoc()
-        && isInternalTypeData(userData())
-        && !isCustomerPortalData(userData())
-        && isActiveStatus(userData())
-        && roleIs(userData(), 'employee_self');
-    }
-    function canWriteWorkers() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'hr_officer')
-            || roleIs(userData(), 'payroll_officer')
-            || roleIs(userData(), 'accounting_manager')
-          )
-          && !roleIs(userData(), 'sales_manager')
-        );
-    }
-    function canReadTimesheetsInternal() {
-      return internalActiveOrStaff()
-        && !roleIs(userData(), 'store_officer');
-    }
-    function portalDailyTimesheetReadableViaWave() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['waveId'])
-        && resource.data.waveId is string
-        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
-    }
-    function portalDailyTimesheetReadableViaPo() {
-      return portalCustomerIdOk()
-        && resource != null
-        && resource.data.keys().hasAll(['purchaseOrderId'])
-        && resource.data.purchaseOrderId is string
-        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId))
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.keys().hasAll(['customerId'])
-        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.customerId == userData().customerId;
-    }
-    function canWriteDailyTimesheet() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'hr_officer')
-            || roleIs(userData(), 'sales_manager')
-            || roleIs(userData(), 'sales_officer')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function portalTimesheetBillingLockKeysOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'status',
-        'lockedAt',
-        'lockedBy',
-        'billingLockedByTaxInvoiceId',
-        'lockedForBillingAt',
-        'updatedAt'
-      ]);
-    }
-    function internalPayrollDataReader() {
-      return internalActiveOrStaff()
-        && (
-          isAdmin()
-          || roleIsAccounting(userData())
-          || roleIs(userData(), 'payroll_officer')
-          || roleIs(userData(), 'hr_manager')
-          || roleIs(userData(), 'hr_officer')
-          || roleIs(userData(), 'operations_manager')
-          || roleIs(userData(), 'sales_manager')
-          || roleIs(userData(), 'sales_officer')
-        );
-    }
-    function attendancePunchCreateValid() {
-      let c = request.resource.data;
-      return isSignedIn()
-        && hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && c.keys().hasAll([
-          'subjectType',
-          'subjectId',
-          'subjectNameSnapshot',
-          'direction',
-          'punchedAt',
-          'linkedUserId',
-          'kioskToken',
-          'source',
-          'createdAt',
-        ])
-        && c.subjectType in ['worker', 'office_staff']
-        && c.subjectId is string
-        && c.subjectId.size() > 0
-        && c.subjectNameSnapshot is string
-        && c.subjectNameSnapshot.size() > 0
-        && c.subjectNameSnapshot.size() < 500
-        && c.direction in ['IN', 'OUT']
-        && (c.punchedAt is int || c.punchedAt is float)
-        && c.linkedUserId == request.auth.uid
-        && c.kioskToken is string
-        && c.kioskToken.size() > 0
-        && c.source == 'kiosk_mobile'
-        && (c.createdAt is int || c.createdAt is float)
-        && attendanceKioskSessionGate(c.kioskToken)
-        && punchSubjectLinkedToCaller(c.subjectType, c.subjectId);
-    }
-    function attendanceCorrectionRequestCreateValid() {
-      let c = request.resource.data;
-      return attendanceCorrectionSubmitter()
-        && c.keys().hasAll([
-          'subjectType',
-          'subjectId',
-          'subjectNameSnapshot',
-          'subjectKey',
-          'payrollMonth',
-          'workDateYmd',
-          'previousInAtMs',
-          'previousOutAtMs',
-          'proposedInAtMs',
-          'proposedOutAtMs',
-          'reason',
-          'status',
-          'requestedByUid',
-          'requestedAt',
-        ])
-        && c.subjectType in ['worker', 'office_staff']
-        && c.subjectId is string
-        && c.subjectId.size() > 0
-        && c.subjectNameSnapshot is string
-        && c.subjectNameSnapshot.size() > 0
-        && c.subjectNameSnapshot.size() < 500
-        && c.subjectKey is string
-        && c.subjectKey.size() > 0
-        && c.subjectKey.size() < 500
-        && c.payrollMonth is string
-        && c.payrollMonth.size() == 7
-        && c.workDateYmd is string
-        && c.workDateYmd.size() == 10
-        && (c.previousInAtMs == null || c.previousInAtMs is int || c.previousInAtMs is float)
-        && (c.previousOutAtMs == null || c.previousOutAtMs is int || c.previousOutAtMs is float)
-        && (c.proposedInAtMs == null || c.proposedInAtMs is int || c.proposedInAtMs is float)
-        && (c.proposedOutAtMs == null || c.proposedOutAtMs is int || c.proposedOutAtMs is float)
-        && c.reason is string
-        && c.reason.size() > 0
-        && c.reason.size() < 2000
-        && c.status == 'PENDING_MANAGER_APPROVAL'
-        && c.requestedByUid == request.auth.uid
-        && (c.requestedAt is int || c.requestedAt is float);
-    }
-    function attendanceCorrectionRequestResolveValid() {
-      let before = resource.data;
-      let after = request.resource.data;
-      return attendanceCorrectionManager()
-        && before.status == 'PENDING_MANAGER_APPROVAL'
-        && after.status in ['APPROVED', 'REJECTED']
-        && after.subjectKey == before.subjectKey
-        && after.workDateYmd == before.workDateYmd
-        && after.subjectType == before.subjectType
-        && after.subjectId == before.subjectId
-        && after.diff(before).affectedKeys().hasOnly([
-          'status',
-          'reviewedByUid',
-          'reviewedByName',
-          'reviewedAt',
-          'rejectReason',
-        ])
-        && after.reviewedByUid == request.auth.uid
-        && (after.reviewedAt is int || after.reviewedAt is float)
-        && (
-          (after.status == 'APPROVED')
-          || (
-            after.status == 'REJECTED'
-            && after.rejectReason is string
-            && after.rejectReason.size() > 0
-            && after.rejectReason.size() < 2000
-          )
-        );
-    }
-    function attendanceDayOverrideCreateValid() {
-      let c = request.resource.data;
-      return attendanceCorrectionManager()
-        && c.keys().hasAll([
-          'subjectType',
-          'subjectId',
-          'subjectKey',
-          'payrollMonth',
-          'workDateYmd',
-          'effectiveInAtMs',
-          'effectiveOutAtMs',
-          'correctionRequestId',
-          'appliedAt',
-          'appliedByUid',
-        ])
-        && c.subjectType in ['worker', 'office_staff']
-        && c.subjectId is string
-        && c.subjectId.size() > 0
-        && c.subjectKey is string
-        && c.subjectKey.size() > 0
-        && c.payrollMonth is string
-        && c.payrollMonth.size() == 7
-        && c.workDateYmd is string
-        && c.workDateYmd.size() == 10
-        && (c.effectiveInAtMs == null || c.effectiveInAtMs is int || c.effectiveInAtMs is float)
-        && (c.effectiveOutAtMs == null || c.effectiveOutAtMs is int || c.effectiveOutAtMs is float)
-        && c.correctionRequestId is string
-        && c.correctionRequestId.size() > 0
-        && (c.appliedAt is int || c.appliedAt is float)
-        && c.appliedByUid == request.auth.uid;
-    }
-    function leaveRequestOwnedByCaller() {
-      return resource.data != null
-        && 'staffId' in resource.data
-        && resource.data.staffId is string
-        && officeStaffLinkedToCallerById(resource.data.staffId);
-    }
-    function leaveRequestCreateValid() {
-      return isSignedIn()
-        && hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && request.resource.data.keys().hasAll([
-          'staffId',
-          'staffNameSnapshot',
-          'leaveType',
-          'startDate',
-          'endDate',
-          'days',
-          'reason',
-          'isHalfDay',
-          'year',
-          'status',
-          'createdByUid',
-          'createdAt',
-          'updatedAt',
-        ])
-        && request.resource.data.createdByUid == request.auth.uid
-        && request.resource.data.status in ['DRAFT', 'SUBMITTED']
-        && (request.resource.data.status == 'DRAFT'
-          || (request.resource.data.reason is string && request.resource.data.reason.size() > 0))
-        && request.resource.data.leaveType in ['SICK', 'PERSONAL', 'VACATION']
-        && request.resource.data.days is number
-        && request.resource.data.days > 0
-        && (
-          internalPayrollDataReader()
-          || officeStaffLinkedToCallerById(request.resource.data.staffId)
-        );
-    }
-    function leaveRequestSelfCancelValid() {
-      return resource.data.status == 'SUBMITTED'
-        && leaveRequestOwnedByCaller()
-        && request.resource.data.status == 'CANCELLED'
-        && request.resource.data.staffId == resource.data.staffId
-        && request.resource.data.leaveType == resource.data.leaveType
-        && request.resource.data.days == resource.data.days
-        && request.resource.data.startDate == resource.data.startDate
-        && request.resource.data.endDate == resource.data.endDate;
-    }
-    function leaveRequestManagerDecisionValid() {
-      return internalPayrollDataReader()
-        && resource.data.status == 'SUBMITTED'
-        && (request.resource.data.status == 'APPROVED' || request.resource.data.status == 'REJECTED')
-        && request.resource.data.staffId == resource.data.staffId
-        && request.resource.data.leaveType == resource.data.leaveType
-        && request.resource.data.days == resource.data.days
-        && request.resource.data.startDate == resource.data.startDate
-        && request.resource.data.endDate == resource.data.endDate
-        && request.resource.data.year == resource.data.year;
-    }
-    function leaveRequestDraftUpdateValid() {
-      return resource.data.status == 'DRAFT'
-        && request.resource.data.staffId == resource.data.staffId
-        && request.resource.data.createdByUid == resource.data.createdByUid
-        && leaveRequestDraftEditorAllowed()
-        && request.resource.data.leaveType in ['SICK', 'PERSONAL', 'VACATION']
-        && request.resource.data.days is number
-        && request.resource.data.days > 0
-        && request.resource.data.status in ['DRAFT', 'SUBMITTED', 'CANCELLED']
-        && (
-          request.resource.data.status == 'DRAFT'
-          || (
-            request.resource.data.status == 'SUBMITTED'
-            && request.resource.data.reason is string
-            && request.resource.data.reason.size() > 0
-          )
-          || request.resource.data.status == 'CANCELLED'
-        );
-    }
-    function canReadWorkerPayrollStack() {
-      return internalActiveOrStaff()
-        && !roleIs(userData(), 'store_officer')
-        && (
-          isAdmin()
-          || roleIsAccounting(userData())
-          || roleIs(userData(), 'payroll_officer')
-          || roleIs(userData(), 'hr_manager')
-          || roleIs(userData(), 'hr_officer')
-          || roleIs(userData(), 'operations_manager')
-          || roleIs(userData(), 'sales_manager')
-          || roleIs(userData(), 'sales_officer')
-        );
-    }
-    function canPreparePayroll() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'hr_officer')
-            || roleIs(userData(), 'payroll_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function cashAdvancePrivilegedReader() {
-      return isAdmin()
-        || isAccountingOrAdmin()
-        || isOperationsManagerRole()
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && (
-            roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'payroll_officer')
-          )
-        );
-    }
-    function cashAdvanceInternalQueueReader() {
-      return hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && !isEmployeeSelfPortalUser()
-        && !isHrOfficerRoleScalar();
-    }
-    function isInternalStaffDoc() {
-      return hasUserDoc()
-        && isInternalTypeData(userData())
-        && !isCustomerPortalData(userData());
-    }
-    function isHrOfficerRoleScalar() {
-      return hasUserDoc() && roleIs(userData(), 'hr_officer');
-    }
-    function cashAdvanceEmployeeSelfCreateValid() {
-      let c = request.resource.data;
-      return c.keys().hasAll([
-          'subjectLinkedUserId', 'origin', 'status', 'amountBaht', 'reason',
-          'createdAt', 'updatedAt', 'createdByUid', 'createdByName', 'requestNo',
-        ])
-        && c.subjectLinkedUserId is string
-        && c.subjectLinkedUserId == request.auth.uid
-        && c.createdByUid is string
-        && c.createdByUid == request.auth.uid
-        && c.origin == 'employee'
-        && c.status == 'PENDING_PAYROLL_REVIEW';
-    }
-    function canReadAccountingInternal() {
-      return isAdmin()
-        || (isInternalUser() && roleIsAccounting(userData()) && !roleIs(userData(), 'store_officer'));
-    }
-    function canReadPurchases() {
-      return procurementReadCore()
-        && !roleIs(userData(), 'sales_manager');
-    }
-    function canWriteAccountingDocs() {
-      return isAdmin()
-        || (isInternalUser() && roleIs(userData(), 'accounting_manager'));
-    }
-    function canWritePurchases() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'store_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-    function isOperationsPillarExecutive() {
-      return hasUserDoc()
-        && isInternalUser()
-        && (
-          roleIs(userData(), 'operations_manager')
-          || roleIs(userData(), 'hr_manager')
-          || roleIs(userData(), 'sales_manager')
-          || isInternalOperationsManagerPartition(userData())
-        );
-    }
-    function bootstrapUserCreateValid(uid) {
-      let d = request.resource.data;
-      return isOwner(uid)
-        && d.id == uid
-        && (d.userType == 'internal' || (('user_type' in d) && (d.user_type == 'internal' || d.user_type == 'INTERNAL')))
-        && (d.isActive == true || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')))
-        && (d.approvalStatus == 'ACTIVE' || (('status' in d) && (d.status == 'active' || d.status == 'ACTIVE')));
-    }
-    function selfRegistrationPendingCreateValid(uid) {
-      let d = request.resource.data;
-      return isOwner(uid)
-        && d.id == uid
-        && d.userType == 'internal'
-        && d.isActive == false
-        && d.approvalStatus == 'PENDING'
-        && ('email' in d) && d.email is string && d.email.size() > 0
-        && ('displayName' in d) && d.displayName is string && d.displayName.size() > 0
-        && ('phone' in d) && d.phone is string && d.phone.size() > 0
-        && d.department == 'operations'
-        && d.level == 'viewer'
-        && ('roleIds' in d) && d.roleIds is list && d.roleIds.size() == 0
-        && ('createdAt' in d) && d.createdAt is int
-        && ('updatedAt' in d) && d.updatedAt is int
-        && !('assignedRoleKey' in d)
-        && !('assignedRoleKeys' in d)
-        && !('permissionProfileKey' in d)
-        && !('permissionProfileKeys' in d)
-        && !('role' in d)
-        && !('accessGroup' in d)
-        && !('departmentGroup' in d)
-        && !('customerId' in d)
-        && !('portalRole' in d);
-    }
-    function isCustomerPortalUserCreate(userId) {
-      let c = request.resource.data;
-      return c.id == userId
-        && c.userType == 'customer_portal'
-        && c.assignedRoleKey == 'client_user'
-        && ('customerId' in c)
-        && c.customerId is string
-        && c.customerId.size() > 0
-        && ('email' in c)
-        && c.email is string;
-    }
-    function isEmployeeSelfPortalUserCreate(userId) {
-      let c = request.resource.data;
-      return c.id == userId
-        && c.userType == 'internal'
-        && c.assignedRoleKey == 'employee_self'
-        && ('email' in c)
-        && c.email is string
-        && c.email.size() > 0;
-    }
-    function userSecurityFieldChanges() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'userType', 'user_type', 'status', 'approvalStatus', 'isActive',
-        'assignedRoleKey', 'assignedRoleKeys', 'role',
-        'permissionProfileKey', 'permissionProfileKeys',
-        'accessGroup', 'departmentGroup', 'department', 'level', 'roleId', 'roleIds',
-        'customerId', 'portalRole', 'mustResetPassword'
-      ]);
-    }
-    function opsExecClientPortalUpdateOk() {
-      let before = resource.data;
-      let after = request.resource.data;
-      return isOperationsPillarExecutive()
-        && before.userType == 'customer_portal'
-        && after.userType == 'customer_portal'
-        && before.assignedRoleKey == 'client_user'
-        && after.assignedRoleKey == 'client_user'
-        && before.customerId == after.customerId
-        && before.id == after.id;
-    }
-    function systemDocReadOk(docId) {
-      return isAdmin()
-        || (docId == 'bootstrap' && isSignedIn())
-        || (docId == 'company_profile' && (canReadQuotationsInternal() || clientPortalUserActive()))
-        || (docId == 'drug_test_panel' && (canReadWorkers() || clientPortalUserActive()));
-    }
-    function systemBootstrapCreateOk(docId) {
-      return docId == 'bootstrap'
-        && isAdmin()
-        && !exists(/databases/$(database)/documents/system/bootstrap);
-    }
-    function numberSequenceAllowsWrite(seqId) {
-      return isAdmin()
-        || (
-          hasUserDoc()
-          && (
-            (seqId == 'main_contract' && canWriteCommercialDocs())
-            || (seqId == 'customer' && canWriteCustomers())
-            || (seqId == 'customer_po' && canWriteCommercialDocs())
-            || (seqId == 'quotation' && canWriteQuotations())
-            || (seqId == 'sales_term' && canWriteCommercialDocs())
-            || (seqId == 'cost_term' && canWriteLaborCostContractTerms())
-            || (seqId == 'billing_note' && canWriteAccountingDocs())
-            || (seqId == 'tax_invoice' && canWriteAccountingDocs())
-            || (seqId == 'money_receipt' && canWriteAccountingDocs())
-            || (seqId == 'commercial_invoice' && canIssueCommercialInvoiceSequence())
-            || (seqId == 'ap_bill' && canWriteAccountingDocs())
-            || (seqId == 'ar' && canWriteAccountingDocs())
-            || (seqId == 'ap' && (canWriteAccountingDocs() || canWritePurchases()))
-            || (seqId == 'cashbook_entry' && canWriteAccountingDocs())
-            || (seqId == 'petty_cash_entry' && bankAccountsWriteAllowed())
-            || (seqId == 'bank_account' && canWriteAccountingDocs())
-            || (seqId == 'petty_cash_account' && canWriteAccountingDocs())
-            || (seqId == 'office_staff' && canWriteWorkers())
-            || (seqId == 'worker' && canWriteWorkers())
-            || (seqId == 'position' && canCreatePositions())
-            || (seqId == 'wave' && canWriteOpsScheduling())
-            || (seqId == 'assignment' && canWriteOpsScheduling())
-            || (seqId == 'purchase_request' && canWritePurchases())
-            || (seqId == 'purchase' && canWritePurchases())
-            || (seqId == 'purchase_vendor_bill' && canWritePurchases())
-            || (seqId == 'cash_advance' && canIssueCashAdvanceSequence())
-            || (seqId == 'vendor' && canCreateVendors())
-            || (seqId == 'store_receive' && canWriteStoreInventory())
-            || (seqId == 'store_issue' && canWriteStoreInventory())
-            || (seqId == 'store_return' && canWriteStoreInventory())
-            || (seqId == 'store_writeoff' && canWriteStoreInventory())
-            || (seqId == 'store_item_equipment' && canWriteStoreInventory())
-            || (seqId == 'store_item_ppe' && canWriteStoreInventory())
-            || (seqId == 'payroll_run' && canPreparePayroll())
-            || (seqId == 'office_payroll_run' && canPrepareOfficePayrollRunDoc())
-            || (seqId == 'executive_payroll_run' && (canWriteAccountingDocs() || canManagePayrollFinancial()))
-            || (seqId == 'executive_payroll_staff' && canWriteAccountingDocs())
-            || (seqId == 'monthly_timesheet' && canWriteDailyTimesheet())
-            || (seqId == 'customer_month_timesheet' && canWriteDailyTimesheet())
-            || (seqId == 'wht_certificate_50' && canWriteAccountingDocs())
-          )
-        );
-    }
-    function clientPortalUserActive() {
-      return hasUserDoc()
-        && isCustomerPortalData(userData())
-        && isActiveStatus(userData());
-    }
-    function roleIs(d, key) {
-      return primaryRole(d) == key;
-    }
-    function internalActiveOrStaff() {
-      return hasUserDoc() && (isInternalUser() || isInternalStaffDoc());
-    }
-    function canIssueCommercialInvoiceSequence() {
-      return internalActiveOrStaff()
-        && !roleIs(userData(), 'store_officer')
-        && (
-          canReadCommercialDocs()
-          || canReadTimesheetsInternal()
-          || canReadAccountingInternal()
-        );
-    }
-    function roleIsAccounting(d) {
-      return roleIs(d, 'accounting_manager') || roleIs(d, 'accounting_officer');
-    }
-    function attendanceKioskSessionGate(token) {
-      let p = /databases/$(database)/documents/attendance_kiosk_sessions/$(token);
-      return exists(p)
-        && get(p).data.keys().hasAll(['expiresAt', 'active', 'createdByUid', 'createdAt'])
-        && get(p).data.active == true
-        && kioskSessionStillActive(get(p).data.expiresAt);
-    }
-    function punchSubjectLinkedToCaller(subjectType, subjectId) {
-      let path = subjectType == 'worker'
-        ? /databases/$(database)/documents/workers/$(subjectId)
-        : /databases/$(database)/documents/office_staff/$(subjectId);
-      return exists(path)
-        && 'linkedUserId' in get(path).data
-        && get(path).data.linkedUserId is string
-        && get(path).data.linkedUserId.size() > 0
-        && get(path).data.linkedUserId == request.auth.uid;
-    }
-    function attendanceCorrectionSubmitter() {
-      return hasUserDoc()
-        && isInternalUser()
-        && (isAdmin() || roleIs(userData(), 'payroll_officer'));
-    }
-    function attendanceCorrectionManager() {
-      return hasUserDoc()
-        && isInternalUser()
-        && (isAdmin() || roleIs(userData(), 'hr_manager') || roleIs(userData(), 'operations_manager'));
-    }
-    function officeStaffLinkedToCallerById(staffId) {
-      let s = /databases/$(database)/documents/office_staff/$(staffId);
-      return exists(s)
-        && 'linkedUserId' in get(s).data
-        && get(s).data.linkedUserId is string
-        && get(s).data.linkedUserId.size() > 0
-        && get(s).data.linkedUserId == request.auth.uid;
-    }
-    function leaveRequestDraftEditorAllowed() {
-      return internalPayrollDataReader()
-        || (
-          leaveRequestOwnedByCaller()
-          && resource.data.createdByUid == request.auth.uid
-        );
-    }
-    function isAccountingOrAdmin() {
-      return isAdmin() || isAccounting();
-    }
-    function isOperationsManagerRole() {
-      return hasUserDoc()
-        && (isInternalUser() || isInternalStaffDoc())
-        && (
-          roleKeyIsOperationsManager(primaryRole(userData()))
-          || isInternalOperationsManagerPartition(userData())
-        );
-    }
-    function procurementReadCore() {
-      return internalActiveOrStaff()
-        && !roleIs(userData(), 'hr_officer')
-        && !roleIs(userData(), 'payroll_officer')
-        && !roleIs(userData(), 'accounting_officer');
-    }
-    function isInternalOperationsManagerPartition(d) {
-      return d != null
-        && isInternalTypeData(d)
-        && !isCustomerPortalData(d)
-        && accessLevelIsManager(d)
-        && (
-          ('accessGroup' in d && (d.accessGroup == 'operations' || d.accessGroup == 'operation'))
-          || ('departmentGroup' in d && (d.departmentGroup == 'operations' || d.departmentGroup == 'operation'))
-          || (
-            'department' in d
-            && d.department is string
-            && (d.department.lower() == 'operations' || d.department.lower() == 'operation')
-          )
-        )
-        && primaryRole(d) != 'hr_manager'
-        && primaryRole(d) != 'sales_manager'
-        && primaryRole(d) != 'store_officer';
-    }
-    function canReadQuotationsInternal() {
-      return internalActiveOrStaff()
-        && !roleIs(userData(), 'store_officer');
-    }
-    function canWriteQuotations() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'sales_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function canWriteLaborCostContractTerms() {
-      return canWriteWorkers()
-        || (isInternalUser() && roleIs(userData(), 'sales_manager'));
-    }
-    function bankAccountsWriteAllowed() {
-      return hasUserDoc() && bankAccountsWriteAllowedForUser(userData());
-    }
-    function canWriteOpsScheduling() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-            || roleIs(userData(), 'hr_manager')
-            || roleIs(userData(), 'hr_officer')
-            || roleIs(userData(), 'sales_manager')
-            || roleIs(userData(), 'sales_officer')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function canIssueCashAdvanceSequence() {
-      return cashAdvancePrivilegedReader()
-        || (
-          (isInternalUser() || isInternalStaffDoc())
-          && !isEmployeeSelfPortalUser()
-          && !isHrOfficerRoleScalar()
-        )
-        || isEmployeeSelfPortalUser();
-    }
-    function canCreateVendors() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'store_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'sales_manager')
-            || roleIs(userData(), 'accounting_manager')
-          )
-        );
-    }
-    function canWriteStoreInventory() {
-      return isAdmin()
-        || (
-          isInternalUser()
-          && (
-            roleIs(userData(), 'store_officer')
-            || roleIs(userData(), 'operations_manager')
-            || roleIs(userData(), 'operations_officer')
-          )
-        );
-    }
-    function canPrepareOfficePayrollRunDoc() {
-      return isAdmin()
-        || roleIs(userData(), 'hr_manager')
-        || roleIs(userData(), 'hr_officer')
-        || roleIs(userData(), 'payroll_officer')
-        || roleIs(userData(), 'accounting_manager');
-    }
-    function canManagePayrollFinancial() {
-      return isAdmin()
-        || roleIsAccounting(userData())
-        || roleIs(userData(), 'payroll_officer')
-        || roleIs(userData(), 'hr_manager')
-        || roleIs(userData(), 'operations_manager');
-    }
-    function kioskSessionStillActive(expMs) {
-      return (expMs is int || expMs is float)
-        && expMs > request.time.toMillis() - 120000;
-    }
-    function roleKeyIsOperationsManager(k) {
-      return k == 'operations_manager' || k == 'operation_manager';
-    }
-    function accessLevelIsManager(d) {
-      return d != null && (
-        ('accessLevel' in d && d.accessLevel is string && d.accessLevel.lower() == 'manager')
-        || ('level' in d && d.level is string && d.level.lower() == 'manager')
-      );
-    }
-    function bankAccountsWriteAllowedForUser(u) {
-      return pettyCashSiteUserDocOk(u)
-        || accountingOrAdminOnUserDoc(u)
-        || roleIs(u, 'accounting_manager');
-    }
-    function pettyCashSiteUserDocOk(d) {
-      return d != null
-        && isInternalTypeData(d)
-        && !isCustomerPortalData(d)
-        && (
-          roleKeyIsOperationsManager(primaryRole(d))
-          || isInternalOperationsManagerPartition(d)
-        );
-    }
-    function accountingOrAdminOnUserDoc(d) {
-      return d != null
-        && isInternalTypeData(d)
-        && !isCustomerPortalData(d)
-        && isActiveStatus(d)
-        && (roleIsAdmin(d) || roleIsAccounting(d));
-    }
-    function roleIsAdmin(d) {
-      return roleIs(d, 'system_admin')
-        || roleIs(d, 'admin_admin')
-        || (d != null && ('accessGroup' in d) && stringLowerEqAdmin(d.accessGroup));
-    }
-    function stringLowerEqAdmin(v) {
-      return v is string && v.size() > 0 && v.lower() == 'admin';
-    }
+    // ===== Matrix role sets (deduped) =====
+    function rs0() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function rs1() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function rs2() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+    function rs3() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'sales_manager', 'operations_manager', 'accounting_manager']); }
+    function rs4() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
+    function rs5() { return (isInternalUser() && userRole() in ['system_admin', 'operations_manager']); }
+    function rs6() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function rs7() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+    function rs8() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function rs9() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
+    function rs10() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function rs11() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function rs12() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function rs13() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function rs14() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function rs15() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    function rs16() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
+    function rs17() { return (isInternalUser() && userRole() in ['system_admin']); }
+    function rs18() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function rs19() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
+    function rs20() { return (isInternalUser() && userRole() in ['system_admin']) || (isClientPortalUser() && userRole() in ['client_user']); }
     // =====================================================================
     // MATRIX-DERIVED GATES (auto-generated from /system-admin/menu-permissions)
     // =====================================================================
     // ===== Commercial - Gates =====
     // -----  (customers) -----
-    function canFullCustomers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (quotations) -----
-    function canReadQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function canCreateQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canEditQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (main_contracts) -----
-    function canReadMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function canCreateMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canEditMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (customer_pos) -----
-    function canReadCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function canCreateCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canEditCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (sales_contract_terms) -----
-    function canFullSalesContractTerms() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (rate_conditions) -----
-    function canFullRateConditions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (profit_estimates) -----
-    function canFullProfitEstimates() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // ===== Operations - Gates =====
     // ----- Waves/ (waves) -----
-    function canFullWaves() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     // -----  (assignments) -----
-    function canFullAssignments() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     // -----  (mobilization) -----
-    function canFullMobilization() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     // -----  (commercial invoice) (draft_invoices) -----
-    function canReadCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'sales_manager', 'operations_manager', 'accounting_manager']); }
-    function canCreateCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
-    function canEditCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
-    function canDeleteCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
-    function canApproveCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
     // ----- Petty Cash  (operations_petty_cash) -----
-    function canFullOperationsPettyCash() { return (isInternalUser() && userRole() in ['system_admin', 'operations_manager']); }
     // ===== Store / Vendor - Gates =====
     // -----  (vendors) -----
-    function canFullVendors() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (PO) (purchases) -----
-    function canFullPurchases() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (store_inventory) -----
-    function canFullStoreInventory() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     // ===== HR & Payroll - Gates =====
     // -----  (workers) -----
-    function canReadWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function canCreateWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    function canEditWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     // -----  (positions) -----
-    function canReadPositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    function canCreatePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canEditPositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeletePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApprovePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (office_staff) -----
-    function canFullOfficeStaff() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (worker_documents) -----
-    function canReadWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    function canCreateWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canEditWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (labor_cost_contract_terms) -----
-    function canFullLaborCostContractTerms() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (timesheets) -----
-    function canReadTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function canCreateTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    function canEditTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    function canApproveTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     // -----  (worker_payroll) -----
-    function canFullWorkerPayroll() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (payroll_runs) -----
-    function canFullPayrollRuns() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (payslips) -----
-    function canFullPayslips() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (office_payroll) -----
-    function canFullOfficePayroll() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (payment_export_batches) -----
-    function canFullPaymentExportBatches() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  (cash_advances) -----
-    function canReadCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
-    function canCreateCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
-    function canEditCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // -----  HR (configuration) (hr_hub) -----
-    function canFullHrHub() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // ===== Self / Overview - Gates =====
     // -----  (employee_self_profile) -----
-    function canReadEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
-    function canCreateEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
-    function canEditEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
-    function canDeleteEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin']); }
-    function canApproveEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin']); }
     // -----  (overview_dashboard) -----
-    function canReadOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    function canCreateOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canEditOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canApproveOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     // ===== Accounting - Gates =====
     // -----  (accounting_dashboard) -----
-    function canFullAccountingDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (billing_notes) -----
-    function canFullBillingNotes() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (tax_invoices) -----
-    function canReadTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canCreateTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    function canEditTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function canDeleteTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    function canApproveTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (receipts) -----
-    function canFullReceipts() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (ap_bills) -----
-    function canFullApBills() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (AR) (accounts_receivable) -----
-    function canFullAccountsReceivable() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (AP) (accounts_payable) -----
-    function canFullAccountsPayable() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----    (withholding_tax_items) -----
-    function canFullWithholdingTaxItems() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // ----- - (cashbook) -----
-    function canFullCashbook() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (bank_accounts) -----
-    function canFullBankAccounts() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // -----  (executive_payroll) -----
-    function canFullExecutivePayroll() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     // ===== Administration - Gates =====
     // -----  (system_admin) -----
-    function canFullSystemAdmin() { return (isInternalUser() && userRole() in ['system_admin']); }
     // -----  (document_numbering) -----
-    function canFullDocumentNumbering() { return (isInternalUser() && userRole() in ['system_admin']); }
     // -----  (audit_logs) -----
-    function canFullAuditLogs() { return (isInternalUser() && userRole() in ['system_admin']); }
     // ===== Client Portal - Gates =====
     // ----- Client Portal (client_portal) -----
-    function canReadClientPortal() { return (isInternalUser() && userRole() in ['system_admin']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function canCreateClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
-    function canEditClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
-    function canDeleteClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
-    function canApproveClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
     // =====================================================================
     // MATCH BLOCKS (matrix-gated; simple collections only)
     // =====================================================================
     // ===== Commercial - Match blocks =====
     match /customers/{id} {
-      allow read, write: if canFullCustomers();
+      allow read, write: if rs0();
     }
     match /quotations/{id} {
-      allow read:   if canReadQuotations();
-      allow create: if canCreateQuotations();
-      allow update: if canEditQuotations() || canApproveQuotations();
-      allow delete: if canDeleteQuotations();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /quotations/{quotationId}/lines/{lineId} {
-      allow read:   if canReadQuotations();
-      allow create: if canCreateQuotations();
-      allow update: if canEditQuotations() || canApproveQuotations();
-      allow delete: if canDeleteQuotations();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /main_contracts/{id} {
-      allow read:   if canReadMainContracts();
-      allow create: if canCreateMainContracts();
-      allow update: if canEditMainContracts() || canApproveMainContracts();
-      allow delete: if canDeleteMainContracts();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /main_contracts/{contractId}/position_rates/{rateId} {
-      allow read:   if canReadMainContracts();
-      allow create: if canCreateMainContracts();
-      allow update: if canEditMainContracts() || canApproveMainContracts();
-      allow delete: if canDeleteMainContracts();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /main_contracts/{contractId}/{document=**} {
-      allow read:   if canReadMainContracts();
-      allow create: if canCreateMainContracts();
-      allow update: if canEditMainContracts() || canApproveMainContracts();
-      allow delete: if canDeleteMainContracts();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /purchase_orders/{poId}/po_lines/{lineId} {
-      allow read:   if canReadCustomerPos();
-      allow create: if canCreateCustomerPos();
-      allow update: if canEditCustomerPos() || canApproveCustomerPos();
-      allow delete: if canDeleteCustomerPos();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /purchase_orders/{poId}/{document=**} {
-      allow read:   if canReadCustomerPos();
-      allow create: if canCreateCustomerPos();
-      allow update: if canEditCustomerPos() || canApproveCustomerPos();
-      allow delete: if canDeleteCustomerPos();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /po_active_bundles/{id} {
-      allow read:   if canReadCustomerPos();
-      allow create: if canCreateCustomerPos();
-      allow update: if canEditCustomerPos() || canApproveCustomerPos();
-      allow delete: if canDeleteCustomerPos();
+      allow read:   if rs1();
+      allow create: if rs0();
+      allow update: if rs0() || rs0();
+      allow delete: if rs0();
     }
     match /sales_contract_terms/{id} {
-      allow read, write: if canFullSalesContractTerms();
+      allow read, write: if rs0();
     }
     match /rate_conditions/{id} {
-      allow read, write: if canFullRateConditions();
+      allow read, write: if rs0();
     }
     match /profit_estimates/{id} {
-      allow read, write: if canFullProfitEstimates();
+      allow read, write: if rs0();
     }
     // ===== Operations - Match blocks =====
     match /waves/{id} {
-      allow read, write: if canFullWaves();
+      allow read, write: if rs2();
     }
     match /worker_wave_acceptances/{id} {
-      allow read, write: if canFullWaves();
+      allow read, write: if rs2();
     }
     match /assignments/{id} {
-      allow read, write: if canFullAssignments();
+      allow read, write: if rs2();
     }
     match /mobilizations/{id} {
-      allow read, write: if canFullMobilization();
+      allow read, write: if rs2();
     }
     match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
-      allow read, write: if canFullMobilization();
+      allow read, write: if rs2();
     }
     match /petty_cash_entries/{id} {
-      allow read, write: if canFullOperationsPettyCash();
+      allow read, write: if rs5();
     }
     // ===== Store / Vendor - Match blocks =====
     match /vendors/{id} {
-      allow read, write: if canFullVendors();
+      allow read, write: if rs6();
     }
     match /purchases/{purchaseId} {
-      allow read, write: if canFullPurchases();
+      allow read, write: if rs6();
     }
     match /purchases/{purchaseId}/{document=**} {
-      allow read, write: if canFullPurchases();
+      allow read, write: if rs6();
     }
     match /purchase_requests/{id} {
-      allow read, write: if canFullPurchases();
+      allow read, write: if rs6();
     }
     match /purchase_requests/{prId}/{document=**} {
-      allow read, write: if canFullPurchases();
+      allow read, write: if rs6();
     }
     match /purchase_vendor_bills/{id} {
-      allow read, write: if canFullPurchases();
+      allow read, write: if rs6();
     }
     match /store_items/{id} {
-      allow read, write: if canFullStoreInventory();
+      allow read, write: if rs7();
     }
     match /store_transactions/{id} {
-      allow read, write: if canFullStoreInventory();
+      allow read, write: if rs7();
     }
     match /store_receipts/{id} {
-      allow read, write: if canFullStoreInventory();
+      allow read, write: if rs7();
     }
     match /store_issue_slips/{id} {
-      allow read, write: if canFullStoreInventory();
+      allow read, write: if rs7();
     }
     match /store_return_slips/{id} {
-      allow read, write: if canFullStoreInventory();
+      allow read, write: if rs7();
     }
     // ===== HR & Payroll - Match blocks =====
     match /workers/{workerId}/{document=**} {
-      allow read:   if canReadWorkers();
-      allow create: if canCreateWorkers();
-      allow update: if canEditWorkers() || canApproveWorkers();
-      allow delete: if canDeleteWorkers();
+      allow read:   if rs8();
+      allow create: if rs2();
+      allow update: if rs2() || rs9();
+      allow delete: if rs0();
     }
     match /positions/{id} {
-      allow read:   if canReadPositions();
-      allow create: if canCreatePositions();
-      allow update: if canEditPositions() || canApprovePositions();
-      allow delete: if canDeletePositions();
+      allow read:   if rs10();
+      allow create: if rs11();
+      allow update: if rs11() || rs11();
+      allow delete: if rs11();
     }
     match /positions/{positionId}/{document=**} {
-      allow read:   if canReadPositions();
-      allow create: if canCreatePositions();
-      allow update: if canEditPositions() || canApprovePositions();
-      allow delete: if canDeletePositions();
+      allow read:   if rs10();
+      allow create: if rs11();
+      allow update: if rs11() || rs11();
+      allow delete: if rs11();
     }
     match /office_staff/{id} {
-      allow read, write: if canFullOfficeStaff();
+      allow read, write: if rs0();
     }
     match /worker_document_catalog/{id} {
-      allow read:   if canReadWorkerDocCatalog();
-      allow create: if canCreateWorkerDocCatalog();
-      allow update: if canEditWorkerDocCatalog() || canApproveWorkerDocCatalog();
-      allow delete: if canDeleteWorkerDocCatalog();
+      allow read:   if rs10();
+      allow create: if rs11();
+      allow update: if rs11() || rs0();
+      allow delete: if rs0();
     }
     match /labor_cost_contract_terms/{id} {
-      allow read, write: if canFullLaborCostContractTerms();
+      allow read, write: if rs11();
     }
     match /exception_requests/{id} {
-      allow read:   if canReadTimesheets();
-      allow create: if canCreateTimesheets();
-      allow update: if canEditTimesheets() || canApproveTimesheets();
-      allow delete: if canDeleteTimesheets();
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
     }
     match /wave_month_timesheet_reviews/{id} {
-      allow read:   if canReadTimesheets();
-      allow create: if canCreateTimesheets();
-      allow update: if canEditTimesheets() || canApproveTimesheets();
-      allow delete: if canDeleteTimesheets();
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
     }
     match /po_month_timesheet_reviews/{id} {
-      allow read:   if canReadTimesheets();
-      allow create: if canCreateTimesheets();
-      allow update: if canEditTimesheets() || canApproveTimesheets();
-      allow delete: if canDeleteTimesheets();
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
     }
     match /po_location_month_timesheets/{id} {
-      allow read:   if canReadTimesheets();
-      allow create: if canCreateTimesheets();
-      allow update: if canEditTimesheets() || canApproveTimesheets();
-      allow delete: if canDeleteTimesheets();
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
     }
     match /monthly_timesheet_documents/{id} {
-      allow read:   if canReadTimesheets();
-      allow create: if canCreateTimesheets();
-      allow update: if canEditTimesheets() || canApproveTimesheets();
-      allow delete: if canDeleteTimesheets();
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
     }
     match /payroll_runs/{id} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /payroll_batches/{id} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /payroll_batches/{batchId}/{document=**} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /payroll_periods/{id} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /payroll_policies/{id} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /worker_payment_profiles/{id} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     match /payroll_wht_certificates/{id} {
-      allow read, write: if canFullWorkerPayroll();
+      allow read, write: if rs0();
     }
     // NOTE:  worker_payroll - 
     match /payroll_runs/{id} {
-      allow read, write: if canFullPayrollRuns();
+      allow read, write: if rs0();
     }
     // NOTE: payslip = batch line
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read, write: if canFullPayslips();
+      allow read, write: if rs0();
     }
     match /office_payroll_runs/{id} {
-      allow read, write: if canFullOfficePayroll();
+      allow read, write: if rs0();
     }
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read, write: if canFullOfficePayroll();
+      allow read, write: if rs0();
     }
     match /office_payroll_runs/{runId}/{document=**} {
-      allow read, write: if canFullOfficePayroll();
+      allow read, write: if rs0();
     }
     match /payment_export_batches/{id} {
-      allow read, write: if canFullPaymentExportBatches();
+      allow read, write: if rs0();
     }
     match /hr_configuration/{docId} {
-      allow read, write: if canFullHrHub();
+      allow read, write: if rs11();
     }
     // ===== Self / Overview - Match blocks =====
     // [overview_dashboard] - :  Firestore path ( collection -  aggregate;  filter UI )
     // ===== Accounting - Match blocks =====
     // [accounting_dashboard] - :  Firestore path ( collection  -  UI )
     match /billing_notes/{id} {
-      allow read, write: if canFullBillingNotes();
+      allow read, write: if rs19();
     }
     match /billing_notes/{billingNoteId}/lines/{lineId} {
-      allow read, write: if canFullBillingNotes();
+      allow read, write: if rs19();
     }
     match /billing_notes/{billingNoteId}/{document=**} {
-      allow read, write: if canFullBillingNotes();
+      allow read, write: if rs19();
     }
     match /tax_invoices/{id} {
-      allow read:   if canReadTaxInvoices();
-      allow create: if canCreateTaxInvoices();
-      allow update: if canEditTaxInvoices() || canApproveTaxInvoices();
-      allow delete: if canDeleteTaxInvoices();
+      allow read:   if rs6();
+      allow create: if rs19();
+      allow update: if rs6() || rs19();
+      allow delete: if rs19();
     }
     match /tax_invoices/{taxInvoiceId}/{document=**} {
-      allow read:   if canReadTaxInvoices();
-      allow create: if canCreateTaxInvoices();
-      allow update: if canEditTaxInvoices() || canApproveTaxInvoices();
-      allow delete: if canDeleteTaxInvoices();
+      allow read:   if rs6();
+      allow create: if rs19();
+      allow update: if rs6() || rs19();
+      allow delete: if rs19();
     }
     match /receipts/{id} {
-      allow read, write: if canFullReceipts();
+      allow read, write: if rs19();
     }
     match /ap_bills/{id} {
-      allow read, write: if canFullApBills();
+      allow read, write: if rs19();
     }
     match /accounts_receivable/{id} {
-      allow read, write: if canFullAccountsReceivable();
+      allow read, write: if rs19();
     }
     match /accounts_payable/{id} {
-      allow read, write: if canFullAccountsPayable();
+      allow read, write: if rs19();
     }
     match /withholding_at_source_items/{id} {
-      allow read, write: if canFullWithholdingTaxItems();
+      allow read, write: if rs19();
     }
     match /withholding_certificate_issues/{id} {
-      allow read, write: if canFullWithholdingTaxItems();
+      allow read, write: if rs19();
     }
     match /cashbook_entries/{id} {
-      allow read, write: if canFullCashbook();
+      allow read, write: if rs19();
     }
     match /bank_accounts/{id} {
-      allow read, write: if canFullBankAccounts();
+      allow read, write: if rs19();
     }
     match /executive_payroll_runs/{id} {
-      allow read, write: if canFullExecutivePayroll();
+      allow read, write: if rs19();
     }
     match /executive_payroll_runs/{runId}/lines/{lineId} {
-      allow read, write: if canFullExecutivePayroll();
+      allow read, write: if rs19();
     }
     match /executive_payroll_runs/{runId}/{document=**} {
-      allow read, write: if canFullExecutivePayroll();
+      allow read, write: if rs19();
     }
     match /executive_payroll_staff/{id} {
-      allow read, write: if canFullExecutivePayroll();
+      allow read, write: if rs19();
     }
     // ===== Administration - Match blocks =====
     match /roles_system_admin/{id} {
@@ -1377,210 +443,53 @@ service cloud.firestore {
     //   collections  business logic  matrix  (portal scope,
     //   status guards, numbering, append-only validation )
     // =====================================================================
-        //  PRESERVED from original (customers/{customerId}/{document=**})
+    // PRESERVED-PATH (simplified fallback): customers/{customerId}/{document=**}
     match /customers/{customerId}/{document=**} {
-      allow read: if canReadCustomers();
-      allow write: if canWriteCustomers();
-        }
-        //  PRESERVED from original (purchase_orders/{id})
-    match /purchase_orders/{id} {
-      allow read: if canReadCommercialDocs() || portalOwnsResourceCustomerId();
-      allow create, update: if canWriteCommercialDocs();
-      allow delete: if isAdmin() || canDeleteOpsScheduling();
-        }
-        //  PRESERVED from original (commercial_invoices/{id})
+      allow read: if isInternalUser() || (isClientPortalUser() && customerId == userData().customerId);
+      allow write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): commercial_invoices/{id}
     match /commercial_invoices/{id} {
-      allow read: if canReadCommercialInvoices()
-        || (portalCustomerIdOk()
-            && resource.data.customerId == userData().customerId
-            && resource.data.status in ['DRAFT', 'PENDING_CUSTOMER', 'ISSUED', 'VOID']);
-      allow create: if canWriteCommercialInvoicesInternal();
-      allow update: if (commercialInvoiceTransitionToVoid() && isAdmin())
-        || (
-          !commercialInvoiceTransitionToVoid()
-          && (
-            canWriteCommercialInvoicesInternal()
-            || (
-              portalIsApprover()
-              && portalOwnsResourceCustomerId()
-              && resource.data.status == 'PENDING_CUSTOMER'
-              && request.resource.data.status == 'ISSUED'
-              && portalCommercialInvoiceConfirmKeysOnly()
-            )
-            || (
-              portalIsApprover()
-              && portalOwnsResourceCustomerId()
-              && resource.data.status == 'PENDING_CUSTOMER'
-              && request.resource.data.status == 'PENDING_CUSTOMER'
-              && portalCommercialInvoiceRevisionRequestKeysOnly()
-            )
-            || (
-              portalCommercialPaymentReportAllowed()
-              && request.resource.data.status == 'ISSUED'
-              && portalCommercialPaymentProofKeysOnly()
-            )
-          )
-        );
-      /** Admin cannot hard-delete ISSUED (confirmed billing); internal non-admin still only DRAFT. */
-      allow delete: if (isAdmin() && resource.data.status != 'ISSUED')
-        || (canWriteCommercialInvoicesInternal() && resource.data.status == 'DRAFT');
-        }
-        //  PRESERVED from original (workers/{workerId})
-    match /workers/{workerId} {
-      allow read: if canReadWorkers()
-        || (isEmployeeSelfPortalUser()
-          && resource.data.keys().hasAll(['linkedUserId'])
-          && resource.data.linkedUserId is string
-          && resource.data.linkedUserId == request.auth.uid)
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/workers/$(workerId))
-            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
-      allow create, update: if canWriteWorkers() && !isEmployeeSelfPortalUser();
-      allow delete: if canDeleteWorkers();
-        }
-        //  PRESERVED from original (daily_timesheets/{id})
+      allow read, write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): daily_timesheets/{id}
     match /daily_timesheets/{id} {
-      allow read: if canReadTimesheetsInternal() || portalOwnsResourceCustomerId() || portalDailyTimesheetReadableViaWave() || portalDailyTimesheetReadableViaPo();
-      allow create, delete: if canWriteDailyTimesheet();
-      allow update: if canWriteDailyTimesheet()
-        || (
-          portalIsApprover()
-          && portalOwnsResourceCustomerId()
-          && resource.data.status != 'LOCKED'
-          && request.resource.data.status == 'LOCKED'
-          && portalTimesheetBillingLockKeysOnly()
-        );
-        }
-        //  PRESERVED from original (attendance_punches/{id})
-    match /attendance_punches/{id} {
-      allow read: if internalPayrollDataReader();
-      allow create: if attendancePunchCreateValid();
-      allow update, delete: if false;
-        }
-        //  PRESERVED from original (attendance_correction_requests/{id})
+      allow read, write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): attendance_correction_requests/{id}
     match /attendance_correction_requests/{id} {
-      allow read: if internalPayrollDataReader();
-      allow create: if attendanceCorrectionRequestCreateValid();
-      allow update: if attendanceCorrectionRequestResolveValid();
-      allow delete: if false;
-        }
-        //  PRESERVED from original (attendance_day_overrides/{id})
-    match /attendance_day_overrides/{id} {
-      allow read: if internalPayrollDataReader();
-      allow create: if attendanceDayOverrideCreateValid();
-      allow update, delete: if false;
-        }
-        //  PRESERVED from original (leave_requests/{id})
+      allow read, write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): leave_requests/{id}
     match /leave_requests/{id} {
-      allow read: if internalPayrollDataReader() || leaveRequestOwnedByCaller();
-      allow create: if leaveRequestCreateValid();
-      allow update: if leaveRequestSelfCancelValid() || leaveRequestManagerDecisionValid() || leaveRequestDraftUpdateValid();
-      allow delete: if false;
-        }
-        //  PRESERVED from original (payroll_correction_requests/{id})
-    match /payroll_correction_requests/{id} {
-      allow read: if canReadWorkerPayrollStack();
-      allow write: if canPreparePayroll();
-        }
-        //  PRESERVED from original (cash_advance_requests/{id})
+      allow read, write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): cash_advance_requests/{id}
     match /cash_advance_requests/{id} {
-      /**  -  privileged reader ( userData()  users/{uid}) */
-      allow read: if (
-          isSignedIn()
-          && resource.data.keys().hasAll(['subjectLinkedUserId'])
-          && resource.data.subjectLinkedUserId is string
-          && resource.data.subjectLinkedUserId == request.auth.uid
-        )
-        || cashAdvancePrivilegedReader()
-        || cashAdvanceInternalQueueReader();
-      allow create: if cashAdvancePrivilegedReader()
-        || (
-             (isInternalUser() || isInternalStaffDoc())
-             && !isEmployeeSelfPortalUser()
-             && !isHrOfficerRoleScalar()
-           )
-        || (isEmployeeSelfPortalUser() && cashAdvanceEmployeeSelfCreateValid());
-      allow update: if cashAdvancePrivilegedReader()
-        || (
-          isSignedIn()
-          && resource.data.keys().hasAll(['subjectLinkedUserId'])
-          && resource.data.subjectLinkedUserId == request.auth.uid
-          && resource.data.status == 'PENDING_SUBJECT_CONFIRMATION'
-          && request.resource.data.status == 'PENDING_PAYROLL_REVIEW'
-        );
-      allow delete: if cashAdvancePrivilegedReader();
-        }
-        //  PRESERVED from original (workers/{workerId})
-    match /workers/{workerId} {
-      allow read: if canReadWorkers()
-        || (isEmployeeSelfPortalUser()
-          && resource.data.keys().hasAll(['linkedUserId'])
-          && resource.data.linkedUserId is string
-          && resource.data.linkedUserId == request.auth.uid)
-        || (portalCustomerIdOk()
-            && exists(/databases/$(database)/documents/workers/$(workerId))
-            && 'assignedCustomerIds' in get(/databases/$(database)/documents/workers/$(workerId)).data
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
-            && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds.hasAny([userData().customerId]));
-      allow create, update: if canWriteWorkers() && !isEmployeeSelfPortalUser();
-      allow delete: if canDeleteWorkers();
-        }
-        //  PRESERVED from original (withholding_certificate_documents/{id})
+      allow read, write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): withholding_certificate_documents/{id}
     match /withholding_certificate_documents/{id} {
-      allow read: if canReadAccountingInternal() || canReadPurchases();
-      allow create: if canWriteAccountingDocs();
-      allow update: if canWriteAccountingDocs();
-      /**
-       * Delete: accounting/admin - plus internal cleanup when removing a purchase-linked cert during PO cascade
-       * (UI gate still blocks paid vendor bills / paid milestones).
-       */
-      allow delete: if canWriteAccountingDocs()
-        || (
-          canWritePurchases()
-          && resource.data != null
-          && 'sourcePurchaseId' in resource.data
-          && resource.data.sourcePurchaseId is string
-          && resource.data.sourcePurchaseId.size() > 0
-        );
-        }
-        //  PRESERVED from original (users/{userId})
-    match /users/{userId} {
-      allow get: if isAdmin() || isOwner(userId) || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
-      allow list: if isAdmin() || isOperationsPillarExecutive();
-      allow create: if isAdmin()
-        || (isOwner(userId) && bootstrapUserCreateValid(userId))
-        || (isOwner(userId) && selfRegistrationPendingCreateValid(userId))
-        || (isOperationsPillarExecutive() && isCustomerPortalUserCreate(userId))
-        || (isOperationsPillarExecutive() && isEmployeeSelfPortalUserCreate(userId));
-      allow update: if isAdmin()
-        || (isOwner(userId) && !userSecurityFieldChanges())
-        || opsExecClientPortalUpdateOk();
-      allow delete: if isAdmin()
-        || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
-        }
-        //  PRESERVED from original (system/{docId})
+      allow read, write: if isInternalUser();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): system/{docId}
     match /system/{docId} {
-      allow read: if systemDocReadOk(docId);
-      allow create: if systemBootstrapCreateOk(docId);
-      allow update, delete: if isAdmin();
-        }
-        //  PRESERVED from original (number_sequences/{id})
-    match /number_sequences/{id} {
-      allow read: if isAdmin() || numberSequenceAllowsWrite(id);
-      allow write: if numberSequenceAllowsWrite(id);
-        }
-        //  PRESERVED from original (audit_logs/{id})
+      allow read, write: if isAdmin();
+    }
+    //    generated gate  path 
+    // PRESERVED-PATH (simplified fallback): audit_logs/{id}
     match /audit_logs/{id} {
-      allow read: if isAdmin();
-      allow create: if internalStaffFirestoreActor()
-        || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
+      allow read: if isInternalUser();
+      allow create: if internalStaffFirestoreActor();
       allow update, delete: if isAdmin();
-        }
-        //  PRESERVED from original (client_portal/{document=**})
-    match /client_portal/{document=**} {
-      allow read, write: if clientPortalUserActive();
-        }
+    }
+    //    generated gate  path 
   }
 }
