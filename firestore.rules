@@ -554,5 +554,17 @@ service cloud.firestore {
     match /petty_cash_entries/{id} {
       allow read, write: if isInternalUser() && userRole() in ['system_admin', 'operations_manager', 'accounting_manager', 'accounting_officer'];
     }
+    // permission_profiles: every signed-in user reads their own role's profile
+    // to compute UI permissions; only admin can edit role templates.
+    match /permission_profiles/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    // menu_permission_overrides: same pattern - all users read effective
+    // matrix to render UI; only admin writes overrides.
+    match /menu_permission_overrides/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }
