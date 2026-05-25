@@ -119,6 +119,62 @@ const EXTRA_BLOCKS = `
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+    // ===== Broad READ fallback for internal staff =====
+    // Matrix gates above narrow write access by role, but every internal
+    // user needs READ visibility on core business collections to do their
+    // jobs (officers below manager level still need to see contracts,
+    // quotes, workers, positions, vendors, POs, assignments, etc.).
+    // These blocks are evaluated independently from the matrix blocks;
+    // either passing grants read. Writes remain matrix-constrained.
+    match /main_contracts/{id} { allow read: if isInternalUser(); }
+    match /main_contracts/{contractId}/position_rates/{rateId} { allow read: if isInternalUser(); }
+    match /main_contracts/{contractId}/{document=**} { allow read: if isInternalUser(); }
+    match /quotations/{id} { allow read: if isInternalUser(); }
+    match /quotations/{quotationId}/lines/{lineId} { allow read: if isInternalUser(); }
+    match /quotations/{quotationId}/{document=**} { allow read: if isInternalUser(); }
+    match /vendors/{id} { allow read: if isInternalUser(); }
+    match /positions/{id} { allow read: if isInternalUser(); }
+    match /position_templates/{id} { allow read: if isInternalUser(); }
+    match /assignments/{id} { allow read: if isInternalUser(); }
+    match /waves/{id} { allow read: if isInternalUser(); }
+    match /mobilization/{id} { allow read: if isInternalUser(); }
+    match /purchase_orders/{id} { allow read: if isInternalUser(); }
+    match /rate_conditions/{id} { allow read: if isInternalUser(); }
+    match /profit_estimates/{id} { allow read: if isInternalUser(); }
+    match /sales_contract_terms/{id} { allow read: if isInternalUser(); }
+    match /tax_invoices/{id} { allow read: if isInternalUser(); }
+    match /billing_notes/{id} { allow read: if isInternalUser(); }
+    match /receipts/{id} { allow read: if isInternalUser(); }
+    match /ap_bills/{id} { allow read: if isInternalUser(); }
+    match /accounts_receivable/{id} { allow read: if isInternalUser(); }
+    match /accounts_payable/{id} { allow read: if isInternalUser(); }
+    match /withholding_tax_items/{id} { allow read: if isInternalUser(); }
+    match /cashbook/{id} { allow read: if isInternalUser(); }
+    match /payroll_runs/{id} { allow read: if isInternalUser(); }
+    match /payslips/{id} { allow read: if isInternalUser(); }
+    match /office_payroll/{id} { allow read: if isInternalUser(); }
+    match /worker_payroll/{id} { allow read: if isInternalUser(); }
+    match /payment_export_batches/{id} { allow read: if isInternalUser(); }
+    match /employees/{id} { allow read: if isInternalUser(); }
+    match /worker_documents/{id} { allow read: if isInternalUser(); }
+    match /timesheets/{id} { allow read: if isInternalUser(); }
+    match /hr_hub/{id} { allow read: if isInternalUser(); }
+    match /store_inventory/{id} { allow read: if isInternalUser(); }
+    match /vendor_bills/{id} { allow read: if isInternalUser(); }
+    match /vendor_bills/{billId}/{document=**} { allow read: if isInternalUser(); }
+    match /labor_cost_contract_terms/{id} { allow read: if isInternalUser(); }
+    match /office_staff/{id} { allow read: if isInternalUser(); }
+    // Payroll subcollections: each batch/run has nested 'lines' read via collectionGroup
+    match /{parent}/{batchId}/lines/{lineId} { allow read: if isInternalUser(); }
+    // Document numbering / counters used by services across roles
+    match /document_numbering/{id} { allow read: if isInternalUser(); allow write: if isAdmin(); }
+    match /counters/{id} { allow read: if isInternalUser(); allow write: if isAdmin(); }
+    // Master data / lookups used pervasively across UI
+    match /bank_master/{id} { allow read: if isInternalUser(); }
+    match /departments/{id} { allow read: if isInternalUser(); }
+    match /branches/{id} { allow read: if isInternalUser(); }
+    match /document_categories/{id} { allow read: if isInternalUser(); }
+    match /worker_doc_catalog/{id} { allow read: if isInternalUser(); }
 `;
 
 function insertExtraBlocks(text) {
